@@ -1,0 +1,600 @@
+import { useEffect, useId, useState } from 'react'
+import { Controller, useForm, useWatch } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { format, parseISO } from 'date-fns'
+
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { cn } from '@/lib/utils'
+
+import { usePeople, usePmLookups } from '../../hooks/use-pm'
+import type { TaskRow } from '../../types/pm.types'
+import {
+  CalendarIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  PauseIcon,
+  PlayIcon,
+} from './field-icons'
+import { FieldPopover, PersonAvatar, PopupHeader } from './field-popup'
+import { fieldStyles } from './field-styles'
+import {
+  entriesByPerson,
+  formatClock,
+  formatDuration,
+  formatTime12,
+  formatTimeOption,
+  fromDay,
+  manualEntry,
+  minutesOf,
+  newEntryId,
+  parseDuration,
+  QUARTER_TIMES,
+  TIME_NOTES_MAX,
+  type TimeEntryForm,
+  timeEntrySchema,
+  timerEntry,
+  toDay,
+  trackedMinutes,
+} from './field-utils'
+import { MonthCalendar } from './month-calendar'
+import { RemoveButton } from './remove-button'
+import type { TaskCellProps } from './task-cell-types'
+import { useTaskSave } from './use-task-save'
+
+/** Seconds since `startedAt`, ticking each second while a timer runs. */
+function useElapsed(startedAt: string | null): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!startedAt) return
+    const timer = window.setInterval(() => {
+      setNow(Date.now())
+    }, 1000)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [startedAt])
+  if (!startedAt) return 0
+  return Math.max(0, Math.floor((now - parseISO(startedAt).getTime()) / 1000))
+}
+
+/**
+ * Time Tracked column (1:91537, 1:83704): the time tracked with a bar against the estimate, a
+ * red clock while the timer runs; the popup has the timer field, the time entries per person
+ * and a manual entry.
+ */
+export function TimeTrackedCell({ task }: TaskCellProps) {
+  const [open, setOpen] = useState(false)
+  const tracked = trackedMinutes(task)
+  const running = task.timerStartedAt !== null
+  const elapsed = useElapsed(task.timerStartedAt)
+  const estimate = task.timeEstimateMinutes ?? 0
+  const percent = estimate > 0 ? Math.min(100, Math.round((tracked / estimate) * 100)) : 0
+
+  return (
+    <FieldPopover
+      open={open}
+      onOpenChange={setOpen}
+      label="Time Tracked"
+      className="w-[min(31rem,calc(100vw-1rem))] px-3 py-3.5"
+      trigger={
+        <button
+          type="button"
+          aria-label={
+            running
+              ? `Time Tracked: timer running ${formatClock(elapsed)}`
+              : tracked > 0
+                ? `Time Tracked: ${formatDuration(tracked)}`
+                : `Track time on ${task.name}`
+          }
+          className={fieldStyles.cell}
+        >
+          <span
+            className={cn(
+              fieldStyles.cellIcon,
+              running && 'bg-[rgba(236,71,79,0.1)] text-[#DC3545] [&_svg]:h-3',
+            )}
+          >
+            {running ? <PauseIcon /> : <ClockIcon />}
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            {running ? (
+              <span className="truncate text-[0.8125rem] font-medium text-[#DC3545] tabular-nums">
+                {formatClock(elapsed)}
+              </span>
+            ) : (
+              <span className="truncate">{tracked > 0 ? formatDuration(tracked) : 'Add time'}</span>
+            )}
+            {estimate > 0 && (
+              <span className="h-1 w-full overflow-hidden rounded-full bg-[#E7E7E7]">
+                <span
+                  className="block h-full rounded-full bg-[#7127EA]"
+                  style={{ width: `${percent}%` }}
+                />
+              </span>
+            )}
+          </span>
+          <ChevronDownIcon className={fieldStyles.cellChevron} />
+        </button>
+      }
+    >
+      <TimeTrackedPanel
+        task={task}
+        onClose={() => {
+          setOpen(false)
+        }}
+      />
+    </FieldPopover>
+  )
+}
+
+function TimeTrackedPanel({ task, onClose }: { task: TaskRow; onClose: () => void }) {
+  const { data: lookups } = usePmLookups()
+  const meId = lookups?.me.id ?? ''
+  const tracked = trackedMinutes(task)
+  const estimate = task.timeEstimateMinutes ?? 0
+
+  return (
+    <div className="flex flex-col gap-3">
+      <PopupHeader title="Time Tracked" onClose={onClose} />
+      <TimerField task={task} meId={meId} />
+      {estimate > 0 && <TrackedBar tracked={tracked} estimate={estimate} />}
+      <TimeEntries task={task} meId={meId} />
+      <ManualEntry task={task} meId={meId} />
+    </div>
+  )
+}
+
+/** "Time Tracked Bar Progress Popup": tracked time against what is left of the estimate. */
+function TrackedBar({ tracked, estimate }: { tracked: number; estimate: number }) {
+  const remaining = Math.max(0, estimate - tracked)
+  const percent = Math.min(100, Math.round((tracked / estimate) * 100))
+  return (
+    <div className="rounded-[0.5625rem] bg-[rgba(221,221,221,0.2)] px-3 py-2">
+      <div className="flex justify-between text-[0.71875rem] font-medium text-[#626262]">
+        <span>
+          Tracked:{' '}
+          <strong className="font-semibold text-[#7127EA]">{formatDuration(tracked)}</strong>
+        </span>
+        <span>
+          Remaining:{' '}
+          <strong className="font-semibold text-[#4382EE]">{formatDuration(remaining)}</strong>
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label="Tracked against estimate"
+        aria-valuenow={percent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        className="mt-1.5 h-[0.45rem] overflow-hidden rounded-full bg-[#E7E7E7]"
+      >
+        <div className="h-full rounded-full bg-[#7127EA]" style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * "Enter Time Input Field & Record Time Section": idle "Enter Time (ex: 3h 30min) or Start
+ * Timer" with a purple play, recording "00 : 00 : 00" in red with a pause, then the recorded
+ * time in purple with play to start again. Pausing records the run as a time entry.
+ */
+function TimerField({ task, meId }: { task: TaskRow; meId: string }) {
+  const { save, isPending } = useTaskSave()
+  const elapsed = useElapsed(task.timerStartedAt)
+  const [typed, setTyped] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [lastRun, setLastRun] = useState<number | null>(null)
+  const running = task.timerStartedAt !== null
+  const errorId = useId()
+
+  const start = () => {
+    setError(null)
+    void save(task.id, { timerStartedAt: new Date().toISOString() })
+  }
+
+  const pause = async () => {
+    if (!task.timerStartedAt) return
+    const now = new Date()
+    const entry = timerEntry(meId, task.timerStartedAt, now)
+    const seconds = Math.floor((now.getTime() - parseISO(task.timerStartedAt).getTime()) / 1000)
+    if (await save(task.id, { timeEntries: [...task.timeEntries, entry], timerStartedAt: null })) {
+      setLastRun(seconds)
+    }
+  }
+
+  const enter = async () => {
+    const minutes = parseDuration(typed)
+    if (minutes === null) {
+      setError('Enter a time such as 3h 30min')
+      return
+    }
+    setError(null)
+    const entry = manualEntry(meId, minutes, new Date())
+    if (await save(task.id, { timeEntries: [...task.timeEntries, entry] })) setTyped('')
+  }
+
+  const state = running ? 'recording' : lastRun !== null ? 'paused' : 'idle'
+
+  return (
+    <div>
+      <div
+        data-state={state}
+        className={cn(
+          'flex h-[3.1rem] items-center gap-2 rounded-[0.8125rem] border-[1.5px] bg-white pr-2 pl-3.5',
+          state === 'recording' && 'border-[#B7192C]',
+          state === 'paused' && 'border-[#7127EA]',
+          state === 'idle' && 'border-[#E9E9E9] focus-within:border-[#A181FF]',
+        )}
+      >
+        {state === 'idle' ? (
+          <label className="min-w-0 flex-1">
+            <span className="sr-only">Enter time</span>
+            <input
+              value={typed}
+              onChange={(event) => {
+                setTyped(event.target.value)
+                if (error) setError(null)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  void enter()
+                }
+              }}
+              aria-invalid={error !== null}
+              aria-describedby={error ? errorId : undefined}
+              placeholder="Enter Time (ex: 3h 30min) or Start Timer"
+              className="w-full bg-transparent text-[0.9375rem] text-[#3D3D3D] outline-none placeholder:text-[#5D5D5D]"
+            />
+          </label>
+        ) : (
+          <span
+            role="timer"
+            aria-label={state === 'recording' ? 'Timer running' : 'Time recorded'}
+            className="flex-1 text-[0.9375rem] text-[#3D3D3D] tabular-nums"
+          >
+            {formatClock(state === 'recording' ? elapsed : (lastRun ?? 0))}
+          </span>
+        )}
+        {state === 'recording' ? (
+          <button
+            type="button"
+            onClick={() => {
+              void pause()
+            }}
+            disabled={isPending}
+            aria-label="Pause timer"
+            className="flex size-[2.2rem] shrink-0 items-center justify-center rounded-full border border-[#DC3545] bg-[rgba(236,71,79,0.15)] text-[#DC3545]"
+          >
+            <PauseIcon className="size-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={start}
+            disabled={isPending}
+            aria-label="Start timer"
+            className="flex size-[2.2rem] shrink-0 items-center justify-center rounded-full border border-[#7127EA] bg-[#DFD7FF] text-[#7127EA]"
+          >
+            <PlayIcon className="size-4" />
+          </button>
+        )}
+      </div>
+      {error && (
+        <p id={errorId} role="alert" className={cn(fieldStyles.error, 'mt-1')}>
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Time Entries: one group per person with their total; each entry's day, range and length. */
+function TimeEntries({ task, meId }: { task: TaskRow; meId: string }) {
+  const people = usePeople()
+  const { save } = useTaskSave()
+  const groups = entriesByPerson(task.timeEntries)
+  // Your own entries start open; the set holds the groups toggled away from that.
+  const [toggled, setToggled] = useState<ReadonlySet<string>>(() => new Set())
+  const total = trackedMinutes(task)
+
+  const toggle = (id: string) => {
+    setToggled((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  return (
+    <section aria-label="Time Entries" className={cn(fieldStyles.panel, 'p-2.5')}>
+      <div className="flex items-center justify-between px-1">
+        <h4 className={fieldStyles.sectionTitle}>Time Entries</h4>
+        <span className="rounded-md bg-[#DFD7FF] px-2 py-0.5 text-[0.6875rem] font-semibold text-[#7127EA]">
+          {formatDuration(total)}
+        </span>
+      </div>
+      {groups.length === 0 ? (
+        <p className={cn(fieldStyles.muted, 'mt-2 px-1')}>No time tracked yet</p>
+      ) : (
+        <ul
+          className={cn(
+            fieldStyles.scroll,
+            'mt-2 flex max-h-56 flex-col gap-1.5 overflow-y-auto pr-1',
+          )}
+        >
+          {groups.map((group) => {
+            const person = people.get(group.employeeId)
+            const name = person?.name ?? 'Unknown'
+            const isOpen = (group.employeeId === meId) !== toggled.has(group.employeeId)
+            return (
+              <li key={group.employeeId} className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  onClick={() => {
+                    toggle(group.employeeId)
+                  }}
+                  className="flex h-9 items-center gap-2 rounded-[0.5625rem] border border-[#E9E9E9] bg-white px-2 text-xs font-medium text-[#5D5D5D]"
+                >
+                  <ChevronRightIcon
+                    className={cn(
+                      'size-3.5 text-[#7127EA] transition-transform',
+                      isOpen && 'rotate-90',
+                    )}
+                  />
+                  <PersonAvatar person={person} className="size-6" />
+                  <span className="truncate">{name}</span>
+                  <span className="ml-auto font-medium text-[#7127EA]">
+                    {formatDuration(group.minutes)}
+                  </span>
+                </button>
+                {isOpen && (
+                  <ul aria-label={`Entries of ${name}`} className="flex flex-col gap-1">
+                    {group.entries.map((entry) => (
+                      <li
+                        key={entry.id}
+                        className="flex min-h-8 items-center gap-2 rounded-[0.5625rem] border border-[#E9E9E9] bg-white px-2.5 py-1 text-[0.6875rem] font-medium text-[#5D5D5D]"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">
+                            {format(fromDay(entry.date), 'EEE, MMM d')}, {formatTime12(entry.start)}{' '}
+                            - {formatTime12(entry.end)}
+                          </span>
+                          {entry.notes && (
+                            <span className="block truncate text-[#909090]">{entry.notes}</span>
+                          )}
+                        </span>
+                        <span className="font-medium text-[#7127EA]">
+                          {formatDuration(entry.minutes)}
+                        </span>
+                        <RemoveButton
+                          label={`Delete entry of ${formatTime12(entry.start)}`}
+                          onClick={() => {
+                            void save(task.id, {
+                              timeEntries: task.timeEntries.filter(
+                                (other) => other.id !== entry.id,
+                              ),
+                            })
+                          }}
+                          className="ml-0"
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+/** Select Day & Date, Start Time and Stop Time (15-minute steps) and notes (165 characters). */
+function ManualEntry({ task, meId }: { task: TaskRow; meId: string }) {
+  const { save, isPending } = useTaskSave()
+  const [dayOpen, setDayOpen] = useState(false)
+  const notesId = useId()
+  const form = useForm<TimeEntryForm>({
+    resolver: zodResolver(timeEntrySchema),
+    defaultValues: { date: toDay(new Date()), start: '', end: '', notes: '' },
+  })
+  const { errors } = form.formState
+  const start = useWatch({ control: form.control, name: 'start' })
+  const notes = useWatch({ control: form.control, name: 'notes' })
+
+  const submit = form.handleSubmit(async (values) => {
+    const entry = {
+      id: newEntryId(),
+      employeeId: meId,
+      date: values.date,
+      start: values.start,
+      end: values.end,
+      minutes: minutesOf(values.end) - minutesOf(values.start),
+      notes: values.notes.trim(),
+    }
+    if (await save(task.id, { timeEntries: [...task.timeEntries, entry] })) {
+      form.reset({ date: values.date, start: '', end: '', notes: '' })
+    }
+  })
+
+  return (
+    <form
+      noValidate
+      aria-label="Add time entry"
+      onSubmit={(event) => {
+        void submit(event)
+      }}
+      className={cn(fieldStyles.card, 'flex flex-col gap-2.5 p-2.5')}
+    >
+      <Controller
+        control={form.control}
+        name="date"
+        render={({ field }) => (
+          <FieldPopover
+            open={dayOpen}
+            onOpenChange={setDayOpen}
+            label="Select Day & Date"
+            className="w-[22rem] p-1"
+            trigger={
+              <button
+                type="button"
+                aria-label={`Day: ${format(fromDay(field.value), 'EEE, MMM d, yyyy')}`}
+                className="flex h-10 items-center gap-2.5 rounded-[0.5625rem] border border-[#E9E9E9] bg-white pr-2.5 pl-1.5 text-xs font-medium text-[#676565]"
+              >
+                <span className={fieldStyles.cellIcon}>
+                  <CalendarIcon />
+                </span>
+                {format(fromDay(field.value), 'EEE, MMM d, yyyy')}
+                <ChevronDownIcon className="ml-auto h-[0.4rem] w-[0.75rem] text-[#7127EA]" />
+              </button>
+            }
+          >
+            <MonthCalendar
+              selected={field.value}
+              compact
+              className="border-0"
+              onSelect={(day) => {
+                field.onChange(day)
+                setDayOpen(false)
+              }}
+            />
+          </FieldPopover>
+        )}
+      />
+      <div className="grid grid-cols-2 gap-2">
+        <Controller
+          control={form.control}
+          name="start"
+          render={({ field }) => (
+            <TimeSelect
+              label="Start Time"
+              value={field.value}
+              error={errors.start?.message}
+              options={QUARTER_TIMES.map((time) => ({
+                value: time,
+                label: formatTimeOption(time),
+              }))}
+              onChange={(value) => {
+                field.onChange(value)
+                const end = form.getValues('end')
+                if (end && end <= value) form.setValue('end', '')
+              }}
+            />
+          )}
+        />
+        <Controller
+          control={form.control}
+          name="end"
+          render={({ field }) => (
+            <TimeSelect
+              label="Stop Time"
+              value={field.value}
+              error={errors.end?.message}
+              options={QUARTER_TIMES.filter((time) => !start || time > start).map((time) => ({
+                value: time,
+                label: start
+                  ? `${formatTimeOption(time)} (${formatDuration(minutesOf(time) - minutesOf(start))})`
+                  : formatTimeOption(time),
+              }))}
+              onChange={field.onChange}
+            />
+          )}
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <textarea
+          aria-label="Notes"
+          {...form.register('notes')}
+          rows={2}
+          maxLength={TIME_NOTES_MAX}
+          placeholder="Add Notes"
+          aria-describedby={notesId}
+          aria-invalid={errors.notes !== undefined}
+          className="resize-none rounded-[0.5625rem] border border-[#E9E9E9] px-2.5 py-2 text-xs tracking-[0.01em] text-[#3D3D3D] outline-none placeholder:text-[#909090] focus:border-[#A181FF]"
+        />
+        <span id={notesId} className="self-end text-[0.625rem] text-[#909090]">
+          {notes.length}/{TIME_NOTES_MAX}
+        </span>
+        {errors.notes?.message && (
+          <span role="alert" className={fieldStyles.error}>
+            {errors.notes.message}
+          </span>
+        )}
+      </div>
+      <button type="submit" disabled={isPending} className={cn(fieldStyles.save, 'flex-none')}>
+        Save
+      </button>
+    </form>
+  )
+}
+
+interface TimeSelectProps {
+  label: string
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (value: string) => void
+  error?: string | undefined
+}
+
+function TimeSelect({ label, value, options, onChange, error }: TimeSelectProps) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          aria-label={value ? `${label}: ${formatTimeOption(value)}` : label}
+          aria-invalid={error !== undefined}
+          className={cn(
+            'flex h-10 min-w-0 items-center gap-2 rounded-[0.5625rem] border bg-white pr-2.5 pl-1.5 text-left text-xs tracking-[0.01em] outline-none focus-visible:border-[#A181FF]',
+            error ? 'border-[#DC3545]' : 'border-[#E9E9E9]',
+          )}
+        >
+          <span className={fieldStyles.cellIcon}>
+            <ClockIcon />
+          </span>
+          <span className={cn('truncate', value ? 'font-medium text-[#676565]' : 'text-[#909090]')}>
+            {value ? formatTimeOption(value) : label}
+          </span>
+          <ChevronDownIcon className="ml-auto h-[0.4rem] w-[0.75rem] shrink-0 text-[#7127EA]" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="start"
+          className={cn(fieldStyles.scroll, 'max-h-60 w-48 rounded-[0.625rem] p-1.5')}
+        >
+          {options.map((option) => (
+            <DropdownMenuItem
+              key={option.value}
+              onSelect={() => {
+                onChange(option.value)
+              }}
+              className={cn(
+                'rounded-md py-1.5 text-xs text-[#4F4F4F]',
+                option.value === value && 'bg-[#EEE7FF]',
+              )}
+            >
+              {option.label}
+            </DropdownMenuItem>
+          ))}
+          {options.length === 0 && (
+            <p className="px-4 py-2 text-xs text-[#909090]">No later time on this day</p>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {error && (
+        <span role="alert" className={fieldStyles.error}>
+          {error}
+        </span>
+      )}
+    </div>
+  )
+}

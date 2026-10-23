@@ -1,0 +1,127 @@
+import { screen, within } from '@testing-library/react'
+import type { UserEvent } from '@testing-library/user-event'
+import { describe, expect, it } from 'vitest'
+
+import { renderApp } from '@/test/test-utils'
+
+/** Opens a Radix select by its label and picks an option. */
+async function choose(user: UserEvent, label: string, option: string) {
+  await user.click(await screen.findByRole('combobox', { name: label }))
+  await user.click(await screen.findByRole('option', { name: option }))
+}
+
+describe('Settings navigation', () => {
+  it('opens the Control Panel from /settings with the Settings sub-menu expanded', async () => {
+    const { router } = renderApp('/settings')
+
+    expect(
+      await screen.findByRole('heading', { name: 'General Settings', level: 1 }),
+    ).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/settings/control-panel/general')
+
+    const sidebar = screen.getByRole('navigation', { name: 'Main' })
+    expect(within(sidebar).getByRole('button', { name: 'Settings' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    expect(within(sidebar).getByRole('link', { name: 'Control Panel' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+    expect(within(sidebar).getByRole('link', { name: 'Biometric Devices' })).toBeInTheDocument()
+
+    const panel = screen.getByRole('navigation', { name: 'Control Panel' })
+    expect(within(panel).getByRole('link', { name: 'General Settings' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+  })
+})
+
+describe('Branches', () => {
+  it('validates, then creates a branch under a company, location and area', async () => {
+    const { user, router } = renderApp('/settings/control-panel/branches')
+
+    const table = await screen.findByRole('table', { name: 'Branches' })
+    expect(await within(table).findByRole('link', { name: 'Lahore Head Office' })).toBeVisible()
+
+    await user.click(screen.getByRole('link', { name: 'Add Branch' }))
+    expect(await screen.findByRole('heading', { name: 'Branch Create', level: 1 })).toBeVisible()
+    expect(
+      await screen.findByRole('group', { name: 'Branch location on the map' }),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Enter the branch name')).toBeVisible()
+    expect(screen.getByText('Select a company')).toBeVisible()
+    expect(screen.getByRole('combobox', { name: 'Location' })).toBeDisabled()
+
+    await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Gulberg Annex')
+    await choose(user, 'Company', 'Top Edge Technologies')
+    await choose(user, 'Location', 'Lahore')
+    await choose(user, 'Area', 'Gulberg')
+    // A new branch starts at its location's coordinates.
+    expect(screen.getByRole('textbox', { name: 'Latitude' })).toHaveValue('31.5136')
+
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('link', { name: 'Gulberg Annex' })).toBeVisible()
+    expect(router.state.location.pathname).toBe('/settings/control-panel/branches')
+    expect(await screen.findByText('Branch “Gulberg Annex” created')).toBeInTheDocument()
+  })
+
+  it('asks before leaving a form with unsaved changes', async () => {
+    const { user, router } = renderApp('/settings/control-panel/branches/new')
+
+    await user.type(await screen.findByRole('textbox', { name: 'Name' }), 'Draft branch')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    const dialog = await screen.findByRole('alertdialog', { name: 'Discard your changes?' })
+    await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }))
+    expect(router.state.location.pathname).toBe('/settings/control-panel/branches/new')
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Draft branch')
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard' }),
+    )
+    expect(await screen.findByRole('table', { name: 'Branches' })).toBeInTheDocument()
+  })
+})
+
+describe('Job titles', () => {
+  it('requires Max Head Count once Limit Head Count is ticked and reports duplicates', async () => {
+    const { user } = renderApp('/settings/control-panel/job-titles/new')
+
+    expect(await screen.findByRole('heading', { name: 'Job Title', level: 1 })).toBeVisible()
+    expect(screen.queryByRole('textbox', { name: 'Max Head Count' })).not.toBeInTheDocument()
+
+    await user.type(screen.getByRole('textbox', { name: 'Name' }), 'HR Manager')
+    await user.click(screen.getByRole('checkbox', { name: 'Limit Head Count' }))
+    const maxHeadCount = await screen.findByRole('textbox', { name: 'Max Head Count' })
+
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Enter the maximum head count')).toBeVisible()
+
+    await user.type(maxHeadCount, '3')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    // "HR Manager" already exists: the API's field error lands on Name.
+    expect(await screen.findByText('Choose a different name for this job title')).toBeVisible()
+  })
+})
+
+describe('Locations', () => {
+  it('puts a location back when the API refuses to delete it', async () => {
+    const { user } = renderApp('/settings/control-panel/locations')
+
+    const table = await screen.findByRole('table', { name: 'Locations' })
+    await user.click(await within(table).findByRole('button', { name: 'Actions for Lahore' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete' }),
+    )
+
+    expect(await screen.findByText(/still has 2 branches and 2 areas/)).toBeInTheDocument()
+    expect(await within(table).findByRole('link', { name: 'Lahore' })).toBeVisible()
+  })
+})

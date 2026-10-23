@@ -1,0 +1,303 @@
+@import '@fontsource/poppins/300.css';
+@import '@fontsource/poppins/400.css';
+@import '@fontsource/poppins/500.css';
+@import '@fontsource/poppins/600.css';
+/* Inter: the design's forms and dialogs, and the older pages (docs/figma-typography.md). */
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Class-based dark mode: <html class="dark">, driven by the ui store. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens.
+ * Source: Figma "HRango - UI design" (Warning Section frames 2129:1705 and siblings).
+ *   Figma variable  - read from the file's variables
+ *   render          - sampled from the exported frame render
+ *   chosen          - not in the design (dark theme, hover states)
+ */
+:root {
+  --radius: 0.375rem;
+
+  --background: #f1f5f9; /* render: page */
+  --foreground: #1e293b; /* Figma variable "Mirage" */
+  --heading: #000000; /* Figma variable "Black": card titles, table headers */
+  --card: #ffffff;
+  --card-foreground: #1e293b;
+  --popover: #ffffff;
+  --popover-foreground: #1e293b;
+
+  --primary: #8b5cf6; /* Figma variable "Cornflower Blue": Save button */
+  --primary-foreground: #ffffff;
+  --secondary: #e8edf9; /* render: top bar buttons */
+  --secondary-foreground: #17263a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b; /* chosen */
+  --accent: #f1f5f9;
+  --accent-foreground: #1e293b;
+  --destructive: #d83838; /* Figma: Cancel/required red used elsewhere in the file */
+  --destructive-foreground: #ffffff;
+  --success: #2cbd4d; /* Figma: Save button in Settings */
+  --success-foreground: #ffffff;
+  --check: #293749; /* Figma: checked checkbox in Settings */
+  --nav-foreground: #303030; /* Figma: Control Panel menu text */
+  --nav-active: #ebeff8; /* Figma: Control Panel active row */
+  --nav-active-foreground: #263871;
+
+  --border: #e2e8f0; /* chosen: card and table rules */
+  --input: #cbd5e1; /* Figma variable "Geyser": field outlines */
+  --ring: #8b5cf6;
+
+  --label: #94a3b8; /* Figma variable "Gull Gray": field labels */
+  --field-foreground: #334155; /* Figma variable "Pickled Bluewood": field text */
+  --chip: #d9d9d9; /* Figma variable "dark txt": chip outline and selected fill */
+  --chip-foreground: #94a3b8;
+  --chip-active-foreground: #1e293b;
+  --pager-active: #3366ff; /* render: active page */
+  --pager-border: #d9d9d9;
+  --topbar: #ffffff;
+
+  /* Text colours read from the Figma text layers (docs/figma-typography.md). */
+  --title: #303030; /* page titles, table headers and cells */
+  --grey: #707070; /* Figma variable "grey": sub menus, Requests cells, placeholders */
+  --tab: #5c5c5c; /* tabs not chosen */
+  --person: #505050; /* person name in Requests and Attendance tables */
+  --field-value: #475569; /* field values (Inter) */
+  --pill: #e8eaec; /* sub menu: current row */
+
+  --sidebar: #17263a; /* render + Figma style "Primary" */
+  --sidebar-foreground: #ffffff;
+  --sidebar-muted: #b9bdc4; /* Figma: menu text and icon colour */
+  --sidebar-subtle: #d1d4d8; /* Figma: job title */
+  --sidebar-child: #d9d9d9; /* Figma: a menu group's pages */
+  --sidebar-accent: #293749; /* Figma Side Menu: current row */
+  --sidebar-hover: #1c2b3f; /* chosen */
+  --sidebar-border: #293749; /* Figma: sidebar dividers */
+  --sidebar-link-active: #60a5fa; /* render: current Settings sub-page (blue) */
+  --sidebar-scrollbar: #2f4159; /* chosen: thumb a shade lighter than the navy */
+  --sidebar-scrollbar-hover: #4b5f7b;
+}
+
+.dark {
+  --background: #0d141f;
+  --foreground: #e4e9f1;
+  --heading: #f2f5f9;
+  --card: #162030;
+  --card-foreground: #e4e9f1;
+  --popover: #1c2738;
+  --popover-foreground: #e4e9f1;
+
+  --primary: #8b5cf6;
+  --primary-foreground: #ffffff;
+  --secondary: #1f2b3d;
+  --secondary-foreground: #e4e9f1;
+  --muted: #1a2536;
+  --muted-foreground: #9ba7b9;
+  --accent: #22304a;
+  --accent-foreground: #f2f5f9;
+  --destructive: #e0474c;
+  --destructive-foreground: #ffffff;
+  --success: #2fae4a;
+  --success-foreground: #ffffff;
+  --check: #8ea3c4;
+  --nav-foreground: #d2d9e3;
+  --nav-active: #22304a;
+  --nav-active-foreground: #c7d4ff;
+
+  --border: #2b3a50;
+  --input: #33435a;
+  --ring: #a78bfa;
+
+  --label: #8391a7;
+  --field-foreground: #d2d9e3;
+  --chip: #33435a;
+  --chip-foreground: #8391a7;
+  --chip-active-foreground: #f2f5f9;
+  --pager-active: #5c85ff;
+  --pager-border: #33435a;
+  --topbar: #162030;
+
+  --title: #e4e9f1;
+  --grey: #a3aebd;
+  --tab: #9ba7b9;
+  --person: #d2d9e3;
+  --field-value: #d2d9e3;
+  --pill: #22304a;
+
+  --sidebar: #101a28;
+  --sidebar-foreground: #ffffff;
+  --sidebar-muted: #b9bdc4;
+  --sidebar-subtle: #d1d4d8;
+  --sidebar-child: #d9d9d9;
+  --sidebar-accent: #1c2a3d;
+  --sidebar-hover: #172334;
+  --sidebar-border: #22324a;
+  --sidebar-link-active: #7cb4ff;
+  --sidebar-scrollbar: #24344b;
+  --sidebar-scrollbar-hover: #3b4e69;
+}
+
+@theme inline {
+  --font-sans: 'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-inter: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --color-title: var(--title);
+  --color-grey: var(--grey);
+  --color-tab: var(--tab);
+  --color-person: var(--person);
+  --color-field-value: var(--field-value);
+  --color-pill: var(--pill);
+  --color-sidebar-child: var(--sidebar-child);
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 6px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-heading: var(--heading);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-check: var(--check);
+  --color-nav-foreground: var(--nav-foreground);
+  --color-nav-active: var(--nav-active);
+  --color-nav-active-foreground: var(--nav-active-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-label: var(--label);
+  --color-field-foreground: var(--field-foreground);
+  --color-chip: var(--chip);
+  --color-chip-foreground: var(--chip-foreground);
+  --color-chip-active-foreground: var(--chip-active-foreground);
+  --color-pager-active: var(--pager-active);
+  --color-pager-border: var(--pager-border);
+  --color-topbar: var(--topbar);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-subtle: var(--sidebar-subtle);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-link-active: var(--sidebar-link-active);
+}
+
+/*
+ * Thin scrollbar that blends into the navy sidebar: a rounded thumb a shade
+ * lighter than the background, brighter while hovered, no track.
+ * Chromium and Safari use the ::-webkit-scrollbar rules (they ignore them once
+ * scrollbar-color is set, hence the @supports); Firefox uses the standard ones.
+ */
+@utility scrollbar-sidebar {
+  &::-webkit-scrollbar {
+    width: 0.375rem;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background-color: var(--sidebar-scrollbar);
+  }
+  &:hover::-webkit-scrollbar-thumb {
+    background-color: var(--sidebar-scrollbar-hover);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--sidebar-scrollbar) transparent;
+    &:hover {
+      scrollbar-color: var(--sidebar-scrollbar-hover) transparent;
+    }
+  }
+}
+
+/* Thin scrollbar for light surfaces (lists, dialogs). */
+@utility scrollbar-thin {
+  &::-webkit-scrollbar {
+    width: 0.375rem;
+    height: 0.375rem;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background-color: var(--input);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--input) transparent;
+  }
+}
+
+/* The purple horizontal scrollbar under the Scheduling grid, as drawn. */
+@utility scrollbar-brand {
+  &::-webkit-scrollbar {
+    height: 0.625rem;
+    width: 0.625rem;
+  }
+  &::-webkit-scrollbar-track {
+    background-color: var(--muted);
+    border-radius: 9999px;
+  }
+  &::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background-color: var(--primary);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    scrollbar-width: auto;
+    scrollbar-color: var(--primary) var(--muted);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    color-scheme: light;
+    /*
+     * Fluid UI scale for large monitors: 100% (the browser default, usually
+     * 16px) up to 1920px wide, growing linearly to 125% at 2560px and beyond.
+     * Everything sized in rem (Tailwind spacing, type, the sidebar) scales
+     * with it, so a 1440p or 4K screen at 100% OS scaling is not tiny.
+     * Media-query breakpoints are unaffected (they always use 16px rems).
+     */
+    font-size: clamp(100%, calc(100% + (100vw - 1920px) * 0.00625), 125%);
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}

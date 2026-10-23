@@ -1,0 +1,13 @@
+// Public API of the Benefits feature. Import from '@/features/benefits', not from deep paths.
+export { benefitKeys, benefitsApi } from './api/benefits.api'
+export * from './categories'
+export { BenefitEmployeesPage } from './components/employees/employees-page'
+export { EnrollmentWindowsPage } from './components/enrollment/enrollment-windows-page'
+export { BenefitFilesPage } from './components/files/files-page'
+export { NewPlanYearPage } from './components/plan-years/new-plan-year-page'
+export { PlanYearsPage } from './components/plan-years/plan-years-page'
+export { AddPlanPage } from './components/plans/add-plan-page'
+export { PlansPage } from './components/plans/plans-page'
+export * from './constants'
+export * from './routing'
+export * from './types/benefits.types'
