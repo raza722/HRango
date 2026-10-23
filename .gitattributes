@@ -1,0 +1,8 @@
+# Keep LF line endings in the working tree on every platform: Prettier (`endOfLine: "lf"`) and
+# .editorconfig want LF, and with core.autocrlf=true on Windows every checkout would otherwise
+# turn into a whole-file diff.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.woff binary
+*.woff2 binary
