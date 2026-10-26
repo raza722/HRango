@@ -1,7 +1,24 @@
-import { fireEvent, screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
+import type { UserEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 
+import { DEMO_USER } from '@/mocks/auth/handlers'
+import { useAuthStore } from '@/stores/auth-store'
 import { renderApp } from '@/test/test-utils'
+
+/** Opens a Radix select by its label and picks an option. */
+async function choose(user: UserEvent, label: string | RegExp, option: string | RegExp) {
+  await user.click(await screen.findByRole('combobox', { name: label }))
+  await user.click(await screen.findByRole('option', { name: option }))
+}
+
+/** Signs in with only these permission codes (the API sends them with the user). */
+function withPermissions(codes: string[]) {
+  useAuthStore.getState().setSession({
+    token: useAuthStore.getState().token ?? '',
+    user: { ...DEMO_USER, permissions: codes.map((code) => ({ code, scope: 'company' })) },
+  })
+}
 
 describe('Roster list', () => {
   it('lists the roster groups with their enrolled counts', async () => {
@@ -24,13 +41,27 @@ describe('Roster list', () => {
       within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete' }),
     )
 
-    expect(await screen.findByText(/has 22 enrolled employees/)).toBeInTheDocument()
+    expect(
+      await screen.findByText(/Employees are enrolled in this roster group/),
+    ).toBeInTheDocument()
     expect(await screen.findByText('Hybrid Work')).toBeVisible()
+  })
+
+  it('hides the actions the user has no permission for', async () => {
+    renderApp('/roster')
+    withPermissions(['roster.groups.view', 'roster.enrolments.view'])
+
+    expect(await screen.findByRole('button', { name: 'View Hybrid Work' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Enroll employees in Hybrid Work' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Add New' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Edit Hybrid Work' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete Hybrid Work' })).not.toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Hybrid Work is active' })).toBeDisabled()
   })
 })
 
 describe('Roster group dialog', () => {
-  it('adds a group whose working days follow "Apply For All"', async () => {
+  it('adds a group whose working days follow the time slot of "Apply For All"', async () => {
     const { user, router } = renderApp('/roster')
 
     await user.click(await screen.findByRole('button', { name: 'Add New' }))
@@ -38,22 +69,19 @@ describe('Roster group dialog', () => {
     expect(router.state.location.search).toMatchObject({ dialog: 'add' })
 
     await user.type(within(dialog).getByRole('textbox', { name: 'Group Title' }), 'Night Shift')
-    fireEvent.change(within(dialog).getByLabelText('Clock In', { selector: 'input' }), {
-      target: { value: '22:00' },
-    })
-    fireEvent.change(within(dialog).getByLabelText('Clock Out', { selector: 'input' }), {
-      target: { value: '06:00' },
-    })
+    await choose(user, 'Time Slot', /Swing Shift Doctors/)
     expect(within(dialog).getByRole('status', { name: 'Defined minutes' })).toHaveTextContent(
-      '480 minutes',
+      '510 minutes',
     )
 
     await user.click(within(dialog).getByRole('checkbox', { name: 'Apply For All' }))
-    expect(within(dialog).getByLabelText('Monday clock in')).toHaveValue('22:00')
-    expect(within(dialog).getByLabelText('Monday clock in')).toBeDisabled()
+    expect(within(dialog).getByRole('combobox', { name: 'Monday time slot' })).toBeDisabled()
+    expect(within(dialog).getByRole('combobox', { name: 'Monday time slot' })).toHaveTextContent(
+      /Swing Shift Doctors/,
+    )
     expect(
       within(dialog).getByRole('status', { name: 'Friday defined minutes' }),
-    ).toHaveTextContent('480 minutes')
+    ).toHaveTextContent('510 minutes')
     expect(
       within(dialog).getByRole('status', { name: 'Sunday defined minutes' }),
     ).toHaveTextContent('Day off')
@@ -63,6 +91,16 @@ describe('Roster group dialog', () => {
     expect(await screen.findByText('Roster group “Night Shift” created')).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Add Roster Group' })).not.toBeInTheDocument()
     expect(await screen.findByText('Night Shift')).toBeVisible()
+  })
+
+  it('wants a time slot on every working day', async () => {
+    const { user } = renderApp('/roster?dialog=add')
+
+    const dialog = await screen.findByRole('dialog', { name: 'Add Roster Group' })
+    await user.type(within(dialog).getByRole('textbox', { name: 'Group Title' }), 'Half week')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect((await within(dialog).findAllByText('Select a time slot')).length).toBe(5)
   })
 
   it('shows a group read-only in View', async () => {
@@ -78,7 +116,8 @@ describe('Roster group dialog', () => {
     expect(
       within(dialog).getByRole('status', { name: 'Sunday defined minutes' }),
     ).toHaveTextContent('65 minutes')
-    expect(within(dialog).getAllByText('4:15 PM').length).toBeGreaterThan(0)
+    expect(within(dialog).getAllByText(/4:15 PM/).length).toBeGreaterThan(0)
+    expect(within(dialog).getAllByText(/Hybrid Evening/).length).toBeGreaterThan(0)
   })
 })
 
@@ -91,16 +130,24 @@ describe('Enrollment dialog', () => {
       name: 'Enroll Employee in “Hybrid Work” Roster',
     })
     expect(await within(dialog).findByText('Showing 1 to 10 of 22 entries')).toBeVisible()
-
-    // Sort by name, A to Z.
-    await user.click(within(dialog).getByRole('button', { name: 'Name' }))
     const active = within(dialog).getByRole('table', { name: 'Active enrollments' })
-    expect(await within(active).findByText('Areeba Hameed')).toBeVisible()
     expect(within(active).getAllByRole('row')[1]).toHaveTextContent('Areeba Hameed')
 
+    // Someone already on a roster for those dates is refused by the API (409).
     await user.click(within(dialog).getByRole('button', { name: 'Enroll New Employee' }))
+    await user.click(await within(dialog).findByRole('checkbox', { name: /Dr Kamal/ }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(
+      await within(dialog).findByText(/already on a roster for these dates/),
+    ).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('checkbox', { name: /Dr Kamal/ }))
+    // Typing searches the server (`q`); the list then holds only the matches.
+    await user.type(within(dialog).getByRole('searchbox', { name: 'Search employees' }), 'Imran')
+    await waitFor(() => {
+      expect(within(dialog).queryByRole('checkbox', { name: /Dr Kamal/ })).not.toBeInTheDocument()
+    })
     await user.click(await within(dialog).findByRole('checkbox', { name: /Imran Butt/ }))
-    expect(within(dialog).getByRole('checkbox', { name: /Dr Kamal/ })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByText('Imran Butt enrolled')).toBeInTheDocument()
@@ -115,7 +162,9 @@ describe('Enrollment dialog', () => {
 
     await user.click(within(dialog).getByRole('tab', { name: 'Discontinued' }))
     const left = await within(dialog).findByRole('table', { name: 'Discontinued enrollments' })
-    expect(await within(left).findByText('Areeba Hameed')).toBeVisible()
+    await waitFor(() => {
+      expect(within(left).getByText('Areeba Hameed')).toBeVisible()
+    })
     expect(within(left).getByText('Talha Aziz')).toBeVisible()
   })
 })

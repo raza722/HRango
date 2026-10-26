@@ -3,7 +3,14 @@ export { boardQueryOptions, schedulingApi, schedulingKeys } from './api/scheduli
 export { RestDayDialog } from './components/dialogs/rest-day-dialog'
 export { EmployeeSelector, type SelectorFilter } from './components/fields/employee-selector'
 export { SchedulingPage } from './components/scheduling-page'
-export { useActiveShift, useScheduleBoard } from './hooks/use-scheduling'
+export { SCHEDULING_PERMISSIONS } from './constants'
+export {
+  useActiveShift,
+  useBreakTypeOptions,
+  useRosterGroupOptions,
+  useScheduleBoard,
+  useTimeSlotOptions,
+} from './hooks/use-scheduling'
 export {
   SCHEDULING_SEARCH_DEFAULTS,
   type SchedulingSearch,
@@ -23,10 +30,12 @@ export {
   eachDay,
   formatRange,
   nextDay,
+  patternDates,
   periodRange,
   repeatDates,
   scheduleDates,
   weekBands,
+  weekdayNumber,
   weekdayOf,
 } from './utils/schedule-dates'
-export { formatClock, formatHours, plannedMinutes, spanMinutes } from './utils/shift-hours'
+export { clockOf, formatClock, formatHours, plannedMinutes, spanMinutes } from './utils/shift-hours'

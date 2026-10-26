@@ -1,9 +1,11 @@
 /**
- * Scheduling: which shift each employee works on each day. A schedule entry is
- * one employee on one date: a shift (times from a time roster) or a rest day.
- * Entries are created in batches (Create Scheduling, Apply Default Shift,
- * Create New Rest Day) and changed one by one or many at once on the board.
+ * Scheduling (`/api/scheduling/...`): which shift each employee works on which date. A
+ * shift is one time slot on one work date; rest days and holidays come alongside. Shapes
+ * follow the backend (`backend/app/schemas/scheduling.py`): ids are strings, dates
+ * `yyyy-MM-dd`, times `HH:mm:ss`, date-times local wall clock `yyyy-MM-ddTHH:mm:ss`.
  */
+
+import type { PaginationMeta } from '@/types/api'
 
 /** Board tabs: your own schedule, everyone, or the people who report to you. */
 export const SCHEDULE_SCOPES = ['my', 'all', 'subordinates'] as const
@@ -13,255 +15,405 @@ export type ScheduleScope = (typeof SCHEDULE_SCOPES)[number]
 export const SCHEDULE_VIEWS = ['week', 'month', 'year'] as const
 export type ScheduleView = (typeof SCHEDULE_VIEWS)[number]
 
-export const EMPLOYEE_STATUSES = ['active', 'inactive'] as const
-export type EmployeeStatus = (typeof EMPLOYEE_STATUSES)[number]
+/** `hr.employee.status` values the board can filter on. */
+export const EMPLOYEE_STATUS_FILTERS = [
+  'active',
+  'probation',
+  'notice',
+  'inactive',
+  'left',
+] as const
+export type EmployeeStatusFilter = (typeof EMPLOYEE_STATUS_FILTERS)[number]
 
-export const EMPLOYMENT_TYPES = ['permanent', 'probation', 'contract', 'intern'] as const
-export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number]
-
-export const GENDERS = ['female', 'male'] as const
-export type Gender = (typeof GENDERS)[number]
-
-export const BREAK_TYPES = ['lunch', 'rest', 'personal', 'prayer'] as const
-export type BreakType = (typeof BREAK_TYPES)[number]
-
-/** Monday first, as the weekday chips are drawn. */
-export const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const
-export type Weekday = (typeof WEEKDAYS)[number]
-
-/** "Repeat": 0 = none, otherwise every 1–8 weeks. */
+/** "Repeat": 0 = none (every week of the range), otherwise every 1–8 weeks. */
 export const REPEAT_WEEKS = [0, 1, 2, 3, 4, 5, 6, 7, 8] as const
 export type RepeatWeeks = (typeof REPEAT_WEEKS)[number]
 
-export interface ScheduleBreak {
-  type: BreakType
-  /** `yyyy-MM-dd`: the break applies on these dates of the schedule. */
-  startDate: string
-  endDate: string
-  /** `HH:mm`. */
-  startTime: string
-  endTime: string
-  description: string
-  /** The break is part of the paid shift time. */
-  inclusive: boolean
-}
+// --- the board ------------------------------------------------------------------------------
 
-/** How the working time of a slot is counted. */
-export interface TimeSlotRules {
-  /** Name shown on the board, e.g. "Night Shift". */
-  name: string
-  isOvernight: boolean
-  /** The employee may decide the order of breaks and work ("Reverse Decision"). */
-  reverseDecision: boolean
-  /** `flexible`: a number of workable hours per day; `total`: hours per period. */
-  mode: 'fixed' | 'flexible' | 'total'
-  workableMinutes: number | null
-  totalMinutes: number | null
-  shortOvertime: boolean
-  fullOvertime: boolean
-  /** Allowed overtime when either overtime box is ticked. */
-  overtimeMinutes: number | null
-}
-
-export interface ScheduleEntry {
-  id: string
-  employeeId: string
-  /** `yyyy-MM-dd`. */
-  date: string
-  kind: 'shift' | 'rest'
-  /** Time roster (Roster → roster group) the times came from. */
-  rosterGroupId: string | null
-  /** `HH:mm`; `null` on rest days. A clock out before the clock in ends the next day. */
-  clockIn: string | null
-  clockOut: string | null
-  workFromHome: boolean
-  geoFenceIds: string[]
-  breaks: ScheduleBreak[]
-  slot: TimeSlotRules
-  /** Rest days only. */
-  restDayPayable: boolean
-  /** Entries created together share a batch (one Create Scheduling run). */
-  batchId: string
-  createdAt: string
-  updatedAt: string
-}
-
-/** A person on the board. */
-export interface ScheduleEmployee {
+/** A person on the board, with planned minutes and shifts in the requested range. */
+export interface BoardEmployee {
   id: string
   code: string
   name: string
-  designation: string
-  department: string
-  status: EmployeeStatus
-  /** Usual slot, shown as the badge under the name ("Day Shift"). */
-  defaultSlot: string
+  designationName: string | null
+  departmentName: string | null
+  status: string
+  defaultTimeSlotId: string | null
+  defaultTimeSlotName: string | null
+  plannedMinutes: number
+  shiftCount: number
+}
+
+/** A shift on the board. */
+export interface BoardShift {
+  id: string
+  workDate: string
+  /** Local wall clock; `endAt` is the next day for an overnight shift. */
+  startAt: string
+  endAt: string
+  timeSlotId: string
+  timeSlotCode: string
+  timeSlotName: string
+  timeSlotColor: string | null
+  isFlexible: boolean
+  isOvernight: boolean
+  geoFenceId: string | null
+  geoFenceName: string | null
+  isWfh: boolean
+  plannedMinutes: number
+  scheduleBatchId: string | null
+  rowVersion: string
+}
+
+export interface BoardRestDay {
+  id: string
+  restDate: string
+  isPayable: boolean
+  restDayRuleId: string | null
+  requestId: string | null
+}
+
+export interface BoardHoliday {
+  holidayDate: string
+  holidayId: string
+  holidayName: string
+  holidayType: string
+  attendanceExempt: boolean
 }
 
 export interface BoardRow {
-  employee: ScheduleEmployee
-  entries: ScheduleEntry[]
-  /** Planned minutes of the shifts in the period. */
-  plannedMinutes: number
-  /** Has a shift on today's date. */
-  onShiftToday: boolean
+  employee: BoardEmployee
+  shifts: BoardShift[]
+  restDays: BoardRestDay[]
+  holidays: BoardHoliday[]
 }
 
-export interface BoardParams {
+export interface DayTotal {
+  workDate: string
+  plannedMinutes: number
+  shiftCount: number
+}
+
+/** `GET /scheduling/schedules`. */
+export interface BoardPage {
+  data: BoardRow[]
+  meta: PaginationMeta
+  /** Planned minutes per date over every matching employee (not just this page). */
+  dayTotals: DayTotal[]
+}
+
+export interface YearMonth {
+  /** 1–12; only months with something planned are sent. */
+  month: number
+  plannedMinutes: number
+  shiftCount: number
+  restDays: number
+}
+
+export interface YearRow {
+  employee: BoardEmployee
+  months: YearMonth[]
+}
+
+/** `GET /scheduling/schedules/year`. */
+export interface YearPage {
+  data: YearRow[]
+  meta: PaginationMeta
+}
+
+/** The planner's filters, as the API names them. */
+export interface BoardFilters {
+  search?: string
+  employeeId?: string
+  departmentId?: string
+  branchId?: string
+  locationId?: string
+  designationId?: string
+  employmentTypeId?: string
+  employeeGroupId?: string
+  gradeId?: string
+  employeeStatus?: string
+  timeSlotId?: string
+  rosterGroupId?: string
+}
+
+export interface BoardParams extends BoardFilters {
   scope: ScheduleScope
-  /** `yyyy-MM-dd`, inclusive. */
+  /** `yyyy-MM-dd`, inclusive (at most 93 days). */
   from: string
   to: string
   page: number
   pageSize: number
-  search?: string
-  status?: EmployeeStatus
-  group?: string
-  locationId?: string
-  branchId?: string
-  department?: string
-  employeeId?: string
-  employmentType?: EmploymentType
-  rosterGroupId?: string
 }
 
-export interface BoardPage {
-  data: BoardRow[]
-  meta: { page: number; pageSize: number; total: number; totalPages: number }
-  /** Planned minutes per date across every matching employee. */
-  dayTotals: Record<string, number>
+export interface YearParams extends BoardFilters {
+  scope: ScheduleScope
+  year: number
+  page: number
+  pageSize: number
 }
 
-/** "Active Status" box: the signed-in person's shift today. */
+/** "Active Status" box: the signed-in person's shift today (from the My board). */
 export interface ActiveShift {
   slotName: string | null
+  /** `HH:mm`. */
   clockIn: string | null
   clockOut: string | null
 }
 
-export type GeoFenceShape =
-  | { type: 'circle'; latitude: number; longitude: number; radiusMeters: number }
-  | { type: 'polygon'; points: { latitude: number; longitude: number }[] }
+// --- one shift ------------------------------------------------------------------------------
 
-export interface GeoFence {
+export interface ScheduleBreakDetail {
   id: string
-  name: string
-  shape: GeoFenceShape
+  breakTypeId: string
+  breakTypeName: string
+  startAt: string
+  endAt: string
+  isInclusive: boolean
+}
+
+/** `GET /scheduling/schedules/{id}`. */
+export interface ScheduleDetail {
+  id: string
+  employeeId: string
+  employeeCode: string
+  employeeName: string
+  workDate: string
+  startAt: string
+  endAt: string
+  timeSlotId: string
+  timeSlotCode: string
+  timeSlotName: string
+  timeSlotColor: string | null
+  isFlexible: boolean
+  isOvernight: boolean
+  fullOvertime: boolean
+  shortOvertime: boolean
+  scheduleBatchId: string | null
+  geoFenceId: string | null
+  geoFenceName: string | null
+  isWfh: boolean
+  plannedMinutes: number
+  isRestDay: boolean
+  breaks: ScheduleBreakDetail[]
+  createdAt: string
+  updatedAt: string | null
+  rowVersion: string
+}
+
+/** A break sent with a shift or a batch. */
+export interface BreakInput {
+  breakTypeId: string
+  /** `HH:mm`. */
+  startTime: string
+  endTime: string
+  /** Counts as working time. */
+  isInclusive: boolean
+}
+
+/** `POST /scheduling/schedules` (add) and `PUT /scheduling/schedules/{id}` (edit). */
+export interface ScheduleInput {
+  /** Required when adding; an edit keeps the employee (swap moves a shift to someone else). */
+  employeeId?: string
+  workDate: string
+  timeSlotId: string
+  /** Both or neither: other times than the slot's for this day (`HH:mm`). */
+  startTime: string | null
+  endTime: string | null
+  geoFenceId: string | null
+  isWfh: boolean
+  /** This shift's breaks; leave out to take the time slot's breaks. */
+  breaks?: BreakInput[] | null
+  rowVersion?: string
+}
+
+/** `POST /scheduling/schedules/{id}/swap`: exchange with a shift, or give it to someone. */
+export interface SwapInput {
+  withScheduleId?: string
+  withEmployeeId?: string
+  rowVersion?: string
+}
+
+// --- batches --------------------------------------------------------------------------------
+
+/** Create Scheduling: a time slot or a roster group's week over a date range. */
+export interface ScheduleBatchInput {
+  startDate: string
+  endDate: string
+  timeSlotId: string | null
+  rosterGroupId: string | null
+  /** 1 = Monday … 7 = Sunday; empty = every day. */
+  weekdays: number[]
+  /** 0 = every week, 1–8 = a cycle of n weeks of which the first `step` are on. */
+  repeatEveryWeeks: number
+  step: number
+  geoFenceId: string | null
+  isWfh: boolean
+  /** With a roster group and none: its members enrolled on each date. */
+  employeeIds: string[]
+  /** Replaces the time slots' breaks on every shift; `null` keeps them. */
+  breaks: BreakInput[] | null
+  /** Replace shifts already planned on these dates instead of refusing (409). */
+  replaceExisting: boolean
+}
+
+/** Apply Default Shift: each person's roster (when enrolled) or default time slot. */
+export interface DefaultShiftInput {
+  startDate: string
+  endDate: string
+  employeeIds: string[]
+  replaceExisting: boolean
+}
+
+export interface ScheduleBatchResult {
+  id: string
+  batchKind: string
+  startDate: string
+  endDate: string
+  timeSlotId: string | null
+  timeSlotName: string | null
+  rosterGroupId: string | null
+  rosterGroupTitle: string | null
+  weekdays: number[]
+  repeatEveryWeeks: number
+  step: number
+  geoFenceId: string | null
+  isWfh: boolean
+  createdCount: number
+  replacedCount: number
+  skippedRestDays: number
+  skippedNoShift: number
   createdAt: string
 }
 
-export type GeoFenceInput = Omit<GeoFence, 'id' | 'createdAt'>
-
-/** Filters of the Select Employees panels. */
-export interface EmployeeFilters {
-  employeeId?: string
-  locationId?: string
-  designation?: string
-  department?: string
-  grade?: string
-  employmentType?: EmploymentType
-  group?: string
-  branchId?: string
-  gender?: Gender
-  status?: EmployeeStatus
+/** `POST /scheduling/schedules/bulk-delete`: ids (Multi Delete) or a range (Delete Scheduling). */
+export interface BulkDeleteInput {
+  ids?: string[]
+  startDate?: string
+  endDate?: string
+  employeeIds?: string[]
+  allEmployees?: boolean
+  /** Also delete rest days in the range (range only). */
+  deleteRestDays?: boolean
 }
 
-/** A person in the Select Employees lists. */
+export interface BulkDeleteResult {
+  deletedSchedules: number
+  deletedRestDays: number
+}
+
+/** `POST /scheduling/schedules/bulk-edit`: only the fields given change. */
+export interface BulkEditInput {
+  ids: string[]
+  timeSlotId?: string
+  geoFenceId?: string
+  clearGeoFence?: boolean
+  isWfh?: boolean
+}
+
+export interface BulkEditResult {
+  updatedSchedules: number
+}
+
+// --- rest days (Scheduling settings) --------------------------------------------------------
+
+/** `POST /scheduling/settings/rest-days`: a rule that makes rest days. */
+export interface RestDayRuleInput {
+  fromDate: string
+  toDate: string
+  /** 1 = Monday … 7 = Sunday. */
+  weekdays: number[]
+  repeatEveryWeeks: number
+  step: number
+  isPayable: boolean
+  employeeIds: string[]
+}
+
+export interface RestDayRule {
+  id: string
+  fromDate: string
+  toDate: string
+  weekdays: number[]
+  repeatEveryWeeks: number
+  step: number
+  isPayable: boolean
+  employeeCount: number
+  /** Rest days this rule made (dates already rest days are not counted). */
+  restDayCount: number
+  createdAt: string
+  updatedAt: string | null
+  rowVersion: string
+}
+
+/** `POST /scheduling/settings/rest-days/delete-range`. */
+export interface RestDayRangeDeleteInput {
+  startDate: string
+  endDate: string
+  employeeIds: string[]
+  allEmployees: boolean
+}
+
+// --- pickers ----------------------------------------------------------------------------------
+
+/** `GET /scheduling/options/{time-slots,break-types,roster-groups}`. */
+export interface SchedulingOption {
+  id: string
+  name: string
+  code: string | null
+  startTime: string | null
+  endTime: string | null
+  isOvernight: boolean | null
+  isFlexible: boolean | null
+}
+
+/** A geo fence to pick (`GET /attendance/settings/geo-fences`, the fields used here). */
+export interface GeoFenceOption {
+  id: string
+  name: string
+  code?: string
+  shape?: string
+  radiusM?: number | null
+  isActive?: boolean
+}
+
+/** `GET /organisation/lookups/{kind}`. */
+export interface LookupItem {
+  id: string
+  name: string
+  code: string | null
+  parentId: string | null
+}
+
+export const ORG_LOOKUP_KINDS = [
+  'locations',
+  'branches',
+  'departments',
+  'designations',
+  'grades',
+  'employee-groups',
+  'employment-types',
+] as const
+export type OrgLookupKind = (typeof ORG_LOOKUP_KINDS)[number]
+
+/** A person in the Select Employees lists (`GET /employees/lookup`). */
 export interface PickableEmployee {
   id: string
   code: string
   name: string
-  designation: string
+  designationName: string | null
+  jobTitleName: string | null
+  departmentName: string | null
+  branchName: string | null
+  status: string
+  photoUrl: string | null
 }
 
-export interface SchedulingLookups {
-  departments: string[]
-  designations: string[]
-  groups: string[]
-  grades: string[]
-  employees: PickableEmployee[]
+/** Filters of the Select Employees panels the lookup understands. */
+export interface EmployeeFilters {
+  search?: string
+  branchId?: string
+  departmentId?: string
 }
 
-export interface RepeatRule {
-  /** 1–8: "Every Week" … "Every 8 Week". */
-  everyWeeks: number
-  /** `yyyy-MM-dd`. */
-  from: string
-  to: string
-  weekdays: Weekday[]
-  /** Consecutive weeks scheduled in each cycle (1 = only the first week). */
-  step: number
-}
-
-/** Create Scheduling: both wizard steps together. */
-export interface CreateScheduleInput {
-  startDate: string
-  endDate: string
-  rosterGroupId: string
-  geoFenceIds: string[]
-  repeat: RepeatRule | null
-  /** Roster weekend days become rest days instead of being left empty. */
-  restDays: boolean
-  workFromHome: boolean
-  breaks: ScheduleBreak[]
-  slot: TimeSlotRules
-  /** Times of the slot; `null` keeps each weekday's roster times. */
-  clockIn: string | null
-  clockOut: string | null
-  employeeIds: string[]
-}
-
-export interface ApplyDefaultShiftInput {
-  startDate: string
-  endDate: string
-  rosterGroupId: string
-  employeeIds: string[]
-}
-
-export interface DeleteScheduleInput {
-  startDate: string
-  endDate: string
-  deleteRestDays: boolean
-  allEmployees: boolean
-  employeeIds: string[]
-}
-
-export interface RestDayInput {
-  startDate: string
-  repeat: RepeatRule
-  payable: boolean
-  employeeIds: string[]
-}
-
-/** Fields "Edit Scheduling" / "Scheduling Edit" can change. */
-export interface EntryPatch {
-  rosterGroupId?: string
-  geoFenceIds?: string[]
-  workFromHome?: boolean
-  /** Turns the entry into a rest day (true) or back into a shift (false). */
-  restDay?: boolean
-  slot?: Partial<TimeSlotRules>
-  breaks?: ScheduleBreak[]
-}
-
-export interface SwapInput {
-  entryId: string
-  targetEmployeeId: string
-  targetDate: string
-}
-
-/** One row of an imported CSV. */
-export interface ImportRow {
-  employeeCode: string
-  date: string
-  clockIn: string | null
-  clockOut: string | null
-  restDay: boolean
-}
-
-export interface BatchResult {
-  created: number
-  updated: number
-  deleted: number
-  skipped: number
-}
+export * from './mock-store.types'

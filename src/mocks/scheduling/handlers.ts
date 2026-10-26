@@ -1,36 +1,35 @@
-import { format } from 'date-fns'
+import { addDays, format, parseISO } from 'date-fns'
 import { http, HttpResponse } from 'msw'
 import { z } from 'zod'
 
-import type { RosterGroup } from '@/features/roster'
 import {
-  type ActiveShift,
-  type BatchResult,
+  type BoardEmployee,
   type BoardPage,
+  type BoardRestDay,
   type BoardRow,
-  BREAK_TYPES,
-  eachDay,
-  EMPLOYEE_STATUSES,
-  EMPLOYMENT_TYPES,
-  GENDERS,
+  type BoardShift,
+  type BreakType,
+  type BulkDeleteResult,
+  type BulkEditResult,
+  type DayTotal,
   type GeoFence,
-  type PickableEmployee,
+  patternDates,
   plannedMinutes,
-  repeatDates,
-  scheduleDates,
+  type ScheduleBatchResult,
+  type ScheduleBreak,
+  type ScheduleDetail,
   type ScheduleEntry,
-  type SchedulingLookups,
-  type TimeSlotRules,
-  weekdayOf,
+  type SchedulingOption,
   WEEKDAYS,
+  type YearMonth,
+  type YearPage,
 } from '@/features/scheduling'
 import type { ApiItem } from '@/types/api'
 
-import { geoFenceSettings } from '../attendance/settings-db'
 import { createMockCollection } from '../collection'
 import { DIRECTORY, type DirectoryEmployee, findEmployee } from '../employees/seed'
-import { rosterGroups } from '../roster/handlers'
-import { branches } from '../settings/handlers'
+import { enrollments, rosterGroups } from '../roster/handlers'
+import { branches, jobTitles } from '../settings/handlers'
 import { apiPath, createId, errorResponse, latency, readPageParams, requireAuth } from '../utils'
 import {
   CURRENT_EMPLOYEE_ID,
@@ -39,8 +38,25 @@ import {
   seedEntries,
   seedGeoFences,
   seedRestDayBatches,
-  slotFor,
 } from './seed'
+import {
+  apiTime,
+  breakTypes,
+  isOvernightSlot,
+  type MockTimeSlot,
+  resetTimeSlotsDb,
+  slotByTimes,
+  timeSlots,
+  workableMinutesOf,
+} from './time-slots'
+
+/*
+ * `/api/scheduling/schedules` and `/api/scheduling/options/...` as the backend serves them
+ * (`backend/app/routers/scheduling.py`). The records keep the old one-entry-per-day shape the
+ * other modules' mocks read and write; the handlers answer in the API's shapes. The settings
+ * tabs (`/scheduling/settings/...`: rest days, break types, holidays) are mocked by
+ * Attendance (`src/mocks/attendance/settings-handlers.ts`).
+ */
 
 export const scheduleEntries = createMockCollection<ScheduleEntry>({
   storageKey: 'hrms-mock-schedule-entries',
@@ -60,761 +76,1048 @@ export function resetSchedulingDb(): void {
   scheduleEntries.reset()
   geoFences.reset()
   restDayBatches.reset()
+  resetTimeSlotsDb()
 }
 
 const base = (path: string) => apiPath(`/scheduling${path}`)
-const invalid = (message = 'Some fields are not valid.') =>
-  errorResponse(422, message, { code: 'VALIDATION_FAILED' })
 const today = () => format(new Date(), 'yyyy-MM-dd')
-const ok = (result: Partial<BatchResult>) =>
-  HttpResponse.json<ApiItem<BatchResult>>({
-    data: { created: 0, updated: 0, deleted: 0, skipped: 0, ...result },
-  })
+const nextDate = (day: string) => format(addDays(parseISO(day), 1), 'yyyy-MM-dd')
+/** A stand-in for SQL Server's rowversion: changes whenever the record is saved. */
+const rowVersionOf = (updatedAt: string) => Date.parse(updatedAt).toString(16).padStart(16, '0')
+const slugOf = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-')
 
 async function readBody<T>(request: Request, schema: z.ZodType<T>) {
   const body: unknown = await request.json().catch(() => null)
   return schema.safeParse(body)
 }
 
-// --- validation ----------------------------------------------------------------
-
-const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
-const ids = z.array(z.string().min(1))
-
-const breakSchema = z.object({
-  type: z.enum(BREAK_TYPES),
-  startDate: day,
-  endDate: day,
-  startTime: time,
-  endTime: time,
-  description: z.string().max(200),
-  inclusive: z.boolean(),
-})
-
-const slotSchema = z.object({
-  name: z.string().trim().min(1).max(60),
-  isOvernight: z.boolean(),
-  reverseDecision: z.boolean(),
-  mode: z.enum(['fixed', 'flexible', 'total']),
-  workableMinutes: z.number().int().min(0).max(1440).nullable(),
-  totalMinutes: z.number().int().min(0).max(100_000).nullable(),
-  shortOvertime: z.boolean(),
-  fullOvertime: z.boolean(),
-  overtimeMinutes: z.number().int().min(0).max(1440).nullable(),
-})
-
-const repeatSchema = z.object({
-  everyWeeks: z.number().int().min(1).max(8),
-  from: day,
-  to: day,
-  weekdays: z.array(z.enum(WEEKDAYS)).min(1),
-  step: z.number().int().min(1).max(8),
-})
-
-const createSchema = z.object({
-  startDate: day,
-  endDate: day,
-  rosterGroupId: z.string().min(1),
-  geoFenceIds: ids,
-  repeat: repeatSchema.nullable(),
-  restDays: z.boolean(),
-  workFromHome: z.boolean(),
-  breaks: z.array(breakSchema).max(20),
-  slot: slotSchema,
-  clockIn: time.nullable(),
-  clockOut: time.nullable(),
-  employeeIds: ids.min(1),
-})
-
-const patchSchema = z.object({
-  rosterGroupId: z.string().min(1).optional(),
-  geoFenceIds: ids.optional(),
-  workFromHome: z.boolean().optional(),
-  restDay: z.boolean().optional(),
-  slot: slotSchema.partial().optional(),
-  breaks: z.array(breakSchema).max(20).optional(),
-})
-
-const shapeSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('circle'),
-    latitude: z.number().min(-90).max(90),
-    longitude: z.number().min(-180).max(180),
-    radiusMeters: z.number().min(10).max(50_000),
-  }),
-  z.object({
-    type: z.literal('polygon'),
-    points: z
-      .array(
-        z.object({
-          latitude: z.number().min(-90).max(90),
-          longitude: z.number().min(-180).max(180),
-        }),
-      )
-      .min(3)
-      .max(50),
-  }),
-])
-
-// --- helpers -------------------------------------------------------------------
-
-const ROSTER_DAY_INDEX = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 } as const
-
-/** The roster's times for a date: a working day's clock in/out, or a weekend. */
-function rosterDay(group: RosterGroup, date: string) {
-  const pattern = group.days[ROSTER_DAY_INDEX[weekdayOf(date)]]
-  if (!pattern || pattern.isWeekend || !pattern.clockIn || !pattern.clockOut) return null
-  return { clockIn: pattern.clockIn, clockOut: pattern.clockOut }
-}
-
-function entryAt(employeeId: string, date: string) {
-  return scheduleEntries
-    .all()
-    .find((entry) => entry.employeeId === employeeId && entry.date === date)
-}
-
-/** Writes an entry for an employee and date, replacing whatever was there. */
-function upsert(
-  entry: Omit<ScheduleEntry, 'id' | 'createdAt' | 'updatedAt'>,
-): 'created' | 'updated' {
-  const now = new Date().toISOString()
-  const existing = entryAt(entry.employeeId, entry.date)
-  if (existing) {
-    scheduleEntries.update(existing.id, { ...existing, ...entry, updatedAt: now })
-    return 'updated'
-  }
-  scheduleEntries.insert({ ...entry, id: createId('se'), createdAt: now, updatedAt: now })
-  return 'created'
-}
-
-function knownEmployees(employeeIds: readonly string[]) {
-  return [...new Set(employeeIds)].filter((id) => findEmployee(id))
-}
-
-const isOvernightPair = (clockIn: string, clockOut: string) => clockOut < clockIn
-
-function toPickable(employee: DirectoryEmployee): PickableEmployee {
-  return {
-    id: employee.id,
-    code: profileOf(employee).code,
-    name: employee.name,
-    designation: employee.jobTitle,
-  }
-}
-
-function locationOf(employee: DirectoryEmployee): string | null {
-  return employee.branchId ? (branches.find(employee.branchId)?.locationId ?? null) : null
-}
-
-/** Employees matching the Select Employees / board filters. */
-function filterEmployees(url: URL): DirectoryEmployee[] {
-  const param = (key: string) => url.searchParams.get(key) ?? ''
-  const search = param('search').trim().toLowerCase()
-  return DIRECTORY.filter((employee) => {
-    const profile = profileOf(employee)
-    const checks: [string, string | null][] = [
-      ['employeeId', employee.id],
-      ['department', employee.department],
-      ['designation', employee.jobTitle],
-      ['grade', profile.grade],
-      ['group', profile.group],
-      ['employmentType', profile.employmentType],
-      ['gender', profile.gender],
-      ['branchId', employee.branchId],
-      ['locationId', locationOf(employee)],
-      ['status', profile.status],
-    ]
-    if (!checks.every(([key, value]) => !param(key) || param(key) === value)) return false
-    return (
-      !search ||
-      [employee.name, profile.code, employee.jobTitle, employee.department].some((text) =>
-        text.toLowerCase().includes(search),
-      )
-    )
+function invalid(error: z.ZodError) {
+  const fieldErrors = Object.fromEntries(
+    error.issues.map((issue) => [String(issue.path[0] ?? 'body'), issue.message]),
+  )
+  return errorResponse(422, 'Some fields are not valid.', {
+    code: 'VALIDATION_FAILED',
+    fieldErrors,
   })
 }
 
-// --- handlers ------------------------------------------------------------------
+const fieldError = (status: number, code: string, field: string, message: string) =>
+  errorResponse(status, message, { code, fieldErrors: { [field]: message } })
+
+const notFound = () => errorResponse(404, 'The schedule was not found.', { code: 'NOT_FOUND' })
+
+// --- validation ------------------------------------------------------------------------------
+
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/)
+const id = z.union([z.string().min(1), z.number().int()]).transform(String)
+
+const breakSchema = z.object({
+  breakTypeId: id,
+  startTime: time,
+  endTime: time,
+  isInclusive: z.boolean().default(false),
+})
+
+const batchSchema = z.object({
+  startDate: day,
+  endDate: day,
+  timeSlotId: id.nullish(),
+  rosterGroupId: id.nullish(),
+  weekdays: z.array(z.number().int().min(1).max(7)).max(7).default([]),
+  repeatEveryWeeks: z.number().int().min(0).max(8).default(0),
+  step: z.number().int().min(1).max(8).default(1),
+  geoFenceId: id.nullish(),
+  isWfh: z.boolean().default(false),
+  employeeIds: z.array(id).max(5000).default([]),
+  breaks: z.array(breakSchema).max(20).nullish(),
+  replaceExisting: z.boolean().default(false),
+})
+
+const defaultShiftSchema = z.object({
+  startDate: day,
+  endDate: day,
+  employeeIds: z.array(id).min(1).max(5000),
+  replaceExisting: z.boolean().default(false),
+})
+
+const scheduleSchema = z.object({
+  employeeId: id.nullish(),
+  workDate: day,
+  timeSlotId: id,
+  startTime: time.nullish(),
+  endTime: time.nullish(),
+  geoFenceId: id.nullish(),
+  isWfh: z.boolean().default(false),
+  breaks: z.array(breakSchema).max(20).nullish(),
+  rowVersion: z.string().nullish(),
+})
+
+const swapSchema = z.object({
+  withScheduleId: id.nullish(),
+  withEmployeeId: id.nullish(),
+  rowVersion: z.string().nullish(),
+})
+
+const bulkDeleteSchema = z.object({
+  ids: z.array(id).max(5000).nullish(),
+  startDate: day.nullish(),
+  endDate: day.nullish(),
+  employeeIds: z.array(id).max(5000).default([]),
+  allEmployees: z.boolean().default(false),
+  deleteRestDays: z.boolean().default(false),
+})
+
+const bulkEditSchema = z.object({
+  ids: z.array(id).min(1).max(5000),
+  timeSlotId: id.nullish(),
+  geoFenceId: id.nullish(),
+  clearGeoFence: z.boolean().default(false),
+  isWfh: z.boolean().nullish(),
+})
+
+// --- records ⇄ API shapes ----------------------------------------------------------------------
+
+const hhmm = (value: string) => value.slice(0, 5)
+
+/** The old records' break kinds ⇄ the seeded break types. */
+const BREAK_KIND_BY_TYPE: Record<string, BreakType> = {
+  bt_lunch: 'lunch',
+  bt_prayer: 'prayer',
+  bt_rest: 'rest',
+}
+const typeIdOf = (kind: BreakType) =>
+  Object.entries(BREAK_KIND_BY_TYPE).find(([, value]) => value === kind)?.[0] ?? 'bt_rest'
+
+/** The slot an entry follows: its id when known, else the slot with the same clock times. */
+function slotOf(entry: ScheduleEntry): MockTimeSlot {
+  const known = entry.timeSlotId ? timeSlots.find(entry.timeSlotId) : undefined
+  const byTimes = known ?? slotByTimes(entry.clockIn, entry.clockOut)
+  return (
+    byTimes ?? {
+      id: 'ts_custom',
+      code: 'TS-CUSTOM',
+      name: entry.slot.name,
+      color: null,
+      startTime: entry.clockIn ?? '09:00',
+      endTime: entry.clockOut ?? '17:00',
+      isFlexible: entry.slot.mode === 'flexible',
+      workableMinutes: entry.slot.workableMinutes,
+      fullOvertime: entry.slot.fullOvertime,
+      shortOvertime: entry.slot.shortOvertime,
+      breaks: [],
+      createdAt: entry.createdAt,
+    }
+  )
+}
+
+/** Local wall-clock start and end; an end at or before the start is the next day. */
+function span(date: string, clockIn: string, clockOut: string) {
+  const overnight = hhmm(clockOut) <= hhmm(clockIn)
+  return {
+    startAt: `${date}T${apiTime(hhmm(clockIn))}`,
+    endAt: `${overnight ? nextDate(date) : date}T${apiTime(hhmm(clockOut))}`,
+    isOvernight: overnight,
+  }
+}
+
+const fenceOf = (entry: ScheduleEntry) => {
+  const fenceId = entry.geoFenceIds[0] ?? null
+  return {
+    geoFenceId: fenceId,
+    geoFenceName: fenceId ? (geoFences.find(fenceId)?.name ?? null) : null,
+  }
+}
+
+function toBoardShift(entry: ScheduleEntry): BoardShift {
+  const slot = slotOf(entry)
+  const times = span(entry.date, entry.clockIn ?? slot.startTime, entry.clockOut ?? slot.endTime)
+  return {
+    id: entry.id,
+    workDate: entry.date,
+    startAt: times.startAt,
+    endAt: times.endAt,
+    timeSlotId: slot.id,
+    timeSlotCode: slot.code,
+    timeSlotName: slot.name,
+    timeSlotColor: slot.color,
+    isFlexible: slot.isFlexible,
+    isOvernight: times.isOvernight,
+    ...fenceOf(entry),
+    isWfh: entry.workFromHome,
+    plannedMinutes: plannedMinutes(entry),
+    scheduleBatchId: entry.batchId,
+    rowVersion: rowVersionOf(entry.updatedAt),
+  }
+}
+
+function toRestDay(entry: ScheduleEntry): BoardRestDay {
+  return {
+    id: entry.id,
+    restDate: entry.date,
+    isPayable: entry.restDayPayable,
+    restDayRuleId: restDayBatches.find(entry.batchId) ? entry.batchId : null,
+    requestId: null,
+  }
+}
+
+function toDetail(entry: ScheduleEntry): ScheduleDetail {
+  const shift = toBoardShift(entry)
+  const employee = findEmployee(entry.employeeId)
+  const slot = slotOf(entry)
+  return {
+    ...shift,
+    employeeId: entry.employeeId,
+    employeeCode: employee ? profileOf(employee).code : entry.employeeId,
+    employeeName: employee?.name ?? 'Unknown employee',
+    fullOvertime: slot.fullOvertime,
+    shortOvertime: slot.shortOvertime,
+    isRestDay: false,
+    breaks: entry.breaks.map((item, index) => {
+      const typeId = typeIdOf(item.type)
+      const times = span(entry.date, item.startTime, item.endTime)
+      return {
+        id: `${entry.id}_b${index}`,
+        breakTypeId: typeId,
+        breakTypeName: breakTypes.find(typeId)?.name ?? item.description,
+        startAt: times.startAt,
+        endAt: times.endAt,
+        isInclusive: item.inclusive,
+      }
+    }),
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+  }
+}
+
+/** The old record's breaks for a shift: the ones sent, or the slot's own. */
+function recordBreaks(
+  date: string,
+  slot: MockTimeSlot,
+  sent: z.infer<typeof breakSchema>[] | null | undefined,
+): ScheduleBreak[] {
+  const rows = sent ?? slot.breaks
+  return rows.map((row) => ({
+    type: BREAK_KIND_BY_TYPE[row.breakTypeId] ?? 'personal',
+    startDate: date,
+    endDate: date,
+    startTime: hhmm(row.startTime),
+    endTime: hhmm(row.endTime),
+    description: breakTypes.find(row.breakTypeId)?.name ?? 'Break',
+    inclusive: row.isInclusive,
+  }))
+}
+
+interface ShiftFields {
+  employeeId: string
+  date: string
+  slot: MockTimeSlot
+  rosterGroupId: string | null
+  clockIn?: string | null | undefined
+  clockOut?: string | null | undefined
+  geoFenceId: string | null | undefined
+  isWfh: boolean
+  breaks: z.infer<typeof breakSchema>[] | null | undefined
+  batchId: string
+}
+
+/** A shift as the old record (the other mocks read clock times and slot rules). */
+function shiftRecord(fields: ShiftFields): Omit<ScheduleEntry, 'id' | 'createdAt' | 'updatedAt'> {
+  const { slot } = fields
+  const clockIn = fields.clockIn ? hhmm(fields.clockIn) : slot.startTime
+  const clockOut = fields.clockOut ? hhmm(fields.clockOut) : slot.endTime
+  return {
+    employeeId: fields.employeeId,
+    date: fields.date,
+    kind: 'shift',
+    rosterGroupId: fields.rosterGroupId,
+    timeSlotId: slot.id,
+    clockIn,
+    clockOut,
+    workFromHome: fields.isWfh,
+    geoFenceIds: fields.geoFenceId ? [fields.geoFenceId] : [],
+    breaks: recordBreaks(fields.date, slot, fields.breaks),
+    slot: {
+      name: slot.name,
+      isOvernight: isOvernightSlot({ startTime: clockIn, endTime: clockOut }),
+      reverseDecision: false,
+      mode: slot.isFlexible ? 'flexible' : 'fixed',
+      workableMinutes: slot.isFlexible ? workableMinutesOf(slot) : null,
+      totalMinutes: null,
+      shortOvertime: slot.shortOvertime,
+      fullOvertime: slot.fullOvertime,
+      overtimeMinutes: null,
+    },
+    restDayPayable: false,
+    batchId: fields.batchId,
+  }
+}
+
+const entriesOn = (employeeId: string, date: string) =>
+  scheduleEntries.all().filter((entry) => entry.employeeId === employeeId && entry.date === date)
+const shiftOn = (employeeId: string, date: string) =>
+  entriesOn(employeeId, date).find((entry) => entry.kind === 'shift')
+const restOn = (employeeId: string, date: string) =>
+  entriesOn(employeeId, date).find((entry) => entry.kind === 'rest')
+
+function insertShift(record: Omit<ScheduleEntry, 'id' | 'createdAt' | 'updatedAt'>) {
+  const now = new Date().toISOString()
+  return scheduleEntries.insert({ ...record, id: createId('se'), createdAt: now, updatedAt: now })
+}
+
+// --- the board ---------------------------------------------------------------------------------
+
+/** The usual slot of a mock person (`hr.employee.default_time_slot_id`). */
+const defaultSlotOf = (employee: DirectoryEmployee) =>
+  timeSlots.find(profileOf(employee).defaultSlot === 'Night Shift' ? 'rg_swing' : 'rg_morning')
+
+const enrolmentOn = (employeeId: string, date: string) =>
+  enrollments
+    .all()
+    .find(
+      (item) =>
+        item.employeeId === employeeId &&
+        item.startDate <= date &&
+        (item.endDate === null || item.endDate >= date),
+    )
+
+/** People the board shows: the tab, then the API's filters (ids from the lookups). */
+function boardPeople(url: URL, from: string, to: string): DirectoryEmployee[] {
+  const param = (key: string) => url.searchParams.get(key) ?? ''
+  const tab = param('tab') || 'all'
+  const q = param('q').trim().toLowerCase()
+  const inRange = scheduleEntries.all().filter((entry) => entry.date >= from && entry.date <= to)
+  return DIRECTORY.filter((employee) => {
+    const profile = profileOf(employee)
+    if (tab === 'my' && employee.id !== CURRENT_EMPLOYEE_ID) return false
+    if (tab === 'subordinates' && profile.managerId !== CURRENT_EMPLOYEE_ID) return false
+    if (q && !`${employee.name} ${profile.code}`.toLowerCase().includes(q)) return false
+    const branch = employee.branchId ? branches.find(employee.branchId) : undefined
+    const designation = jobTitles.find(param('designationId'))
+    const checks: [string, boolean][] = [
+      ['employeeId', employee.id === param('employeeId')],
+      ['departmentId', `dep_${slugOf(employee.department)}` === param('departmentId')],
+      ['branchId', employee.branchId === param('branchId')],
+      ['locationId', branch?.locationId === param('locationId')],
+      ['designationId', designation?.name === employee.jobTitle],
+      ['gradeId', `gr_${slugOf(profile.grade)}` === param('gradeId')],
+      ['employeeGroupId', `grp_${slugOf(profile.group)}` === param('employeeGroupId')],
+      ['employmentTypeId', `et_${profile.employmentType}` === param('employmentTypeId')],
+      ['employeeStatus', profile.status === param('employeeStatus')],
+      [
+        'timeSlotId',
+        inRange.some(
+          (entry) =>
+            entry.employeeId === employee.id &&
+            entry.kind === 'shift' &&
+            slotOf(entry).id === param('timeSlotId'),
+        ),
+      ],
+      [
+        'rosterGroupId',
+        enrollments
+          .all()
+          .some(
+            (item) =>
+              item.employeeId === employee.id &&
+              item.rosterGroupId === param('rosterGroupId') &&
+              item.startDate <= to &&
+              (item.endDate === null || item.endDate >= from),
+          ),
+      ],
+    ]
+    return checks.every(([key, matches]) => !param(key) || matches)
+  })
+}
+
+function boardEmployee(
+  employee: DirectoryEmployee,
+  shifts: readonly ScheduleEntry[],
+): BoardEmployee {
+  const profile = profileOf(employee)
+  const slot = defaultSlotOf(employee)
+  return {
+    id: employee.id,
+    code: profile.code,
+    name: employee.name,
+    designationName: employee.jobTitle,
+    departmentName: employee.department,
+    status: profile.status,
+    defaultTimeSlotId: slot?.id ?? null,
+    defaultTimeSlotName: slot?.name ?? null,
+    plannedMinutes: shifts.reduce((sum, entry) => sum + plannedMinutes(entry), 0),
+    shiftCount: shifts.length,
+  }
+}
+
+function rangeOf(url: URL) {
+  const from = url.searchParams.get('from') ?? today()
+  const to = url.searchParams.get('to') ?? from
+  return { from, to }
+}
+
+function entriesIn(from: string, to: string) {
+  const byEmployee = new Map<string, ScheduleEntry[]>()
+  for (const entry of scheduleEntries.all()) {
+    if (entry.date < from || entry.date > to) continue
+    byEmployee.set(entry.employeeId, [...(byEmployee.get(entry.employeeId) ?? []), entry])
+  }
+  return byEmployee
+}
+
+const byDate = (a: ScheduleEntry, b: ScheduleEntry) => a.date.localeCompare(b.date)
+
+// --- writes ------------------------------------------------------------------------------------
+
+type BatchInput = z.infer<typeof batchSchema>
+
+/** Who a batch schedules on a date: those named, or the roster's members that day. */
+function batchPeople(input: BatchInput, date: string): string[] {
+  if (input.employeeIds.length > 0) return input.employeeIds
+  if (!input.rosterGroupId) return []
+  return enrollments
+    .all()
+    .filter(
+      (item) =>
+        item.rosterGroupId === input.rosterGroupId &&
+        item.startDate <= date &&
+        (item.endDate === null || item.endDate >= date),
+    )
+    .map((item) => item.employeeId)
+}
+
+/** The slot a roster group plans on a date, or null on its day off. */
+function rosterSlotOn(groupId: string, date: string): MockTimeSlot | null {
+  const group = rosterGroups.find(groupId)
+  const weekday = (parseISO(date).getDay() + 6) % 7
+  const pattern = group?.days[weekday]
+  if (!pattern || pattern.isWeekend || !pattern.timeSlotId) return null
+  return timeSlots.find(pattern.timeSlotId) ?? null
+}
+
+interface PlannedShift {
+  employeeId: string
+  date: string
+  slot: MockTimeSlot
+  rosterGroupId: string | null
+}
+
+/**
+ * Writes planned shifts: rest days are skipped, existing shifts refuse the whole batch (409)
+ * unless `replaceExisting`, which replaces them.
+ */
+function writeBatch(
+  planned: readonly PlannedShift[],
+  options: {
+    replaceExisting: boolean
+    geoFenceId?: string | null | undefined
+    isWfh?: boolean
+    breaks?: z.infer<typeof breakSchema>[] | null | undefined
+  },
+): { created: number; replaced: number; skippedRestDays: number; batchId: string } | Response {
+  const working = planned.filter((item) => !restOn(item.employeeId, item.date))
+  const skippedRestDays = planned.length - working.length
+  const taken = working.filter((item) => shiftOn(item.employeeId, item.date))
+  if (taken.length > 0 && !options.replaceExisting) {
+    return fieldError(
+      409,
+      'SCHEDULE_DAY_TAKEN',
+      'employeeIds',
+      'Some employees already have a shift on these dates. Replace them or pick other dates.',
+    )
+  }
+  const batchId = createId('batch')
+  for (const item of taken) {
+    const existing = shiftOn(item.employeeId, item.date)
+    if (existing) scheduleEntries.remove(existing.id)
+  }
+  for (const item of working) {
+    insertShift(
+      shiftRecord({
+        ...item,
+        geoFenceId: options.geoFenceId,
+        isWfh: options.isWfh ?? false,
+        breaks: options.breaks,
+        batchId,
+      }),
+    )
+  }
+  return { created: working.length, replaced: taken.length, skippedRestDays, batchId }
+}
+
+function batchResult(
+  kind: string,
+  input: { startDate: string; endDate: string },
+  written: { created: number; replaced: number; skippedRestDays: number; batchId: string },
+  extra: Partial<ScheduleBatchResult> = {},
+): ScheduleBatchResult {
+  return {
+    id: written.batchId,
+    batchKind: kind,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    timeSlotId: null,
+    timeSlotName: null,
+    rosterGroupId: null,
+    rosterGroupTitle: null,
+    weekdays: [],
+    repeatEveryWeeks: 0,
+    step: 1,
+    geoFenceId: null,
+    isWfh: false,
+    createdCount: written.created,
+    replacedCount: written.replaced,
+    skippedRestDays: written.skippedRestDays,
+    skippedNoShift: 0,
+    createdAt: new Date().toISOString(),
+    ...extra,
+  }
+}
+
+const options = (items: SchedulingOption[]) =>
+  HttpResponse.json<{ data: SchedulingOption[] }>({ data: items })
+
+const option = (fields: Pick<SchedulingOption, 'id' | 'name'> & Partial<SchedulingOption>) => ({
+  code: null,
+  startTime: null,
+  endTime: null,
+  isOvernight: null,
+  isFlexible: null,
+  ...fields,
+})
+
+// --- handlers ----------------------------------------------------------------------------------
 
 export const schedulingHandlers = [
-  http.get(base('/board'), async ({ request }) => {
+  // Static paths before `/schedules/:id`.
+  http.get(base('/schedules/year'), async ({ request }) => {
     await latency()
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
     const url = new URL(request.url)
-    const scope = url.searchParams.get('scope') ?? 'all'
-    const from = url.searchParams.get('from') ?? today()
-    const to = url.searchParams.get('to') ?? from
-    const rosterGroupId = url.searchParams.get('rosterGroupId')
+    const year = Number(url.searchParams.get('year') ?? new Date().getFullYear())
+    const from = `${year}-01-01`
+    const to = `${year}-12-31`
     const { page, pageSize } = readPageParams(url)
-
-    const inRange = scheduleEntries.all().filter((entry) => entry.date >= from && entry.date <= to)
-    const byEmployee = new Map<string, ScheduleEntry[]>()
-    for (const entry of inRange) {
-      const list = byEmployee.get(entry.employeeId) ?? []
-      list.push(entry)
-      byEmployee.set(entry.employeeId, list)
-    }
-
-    const people = filterEmployees(url).filter((employee) => {
-      if (scope === 'my') return employee.id === CURRENT_EMPLOYEE_ID
-      if (scope === 'subordinates') return profileOf(employee).managerId === CURRENT_EMPLOYEE_ID
-      return true
+    const people = boardPeople(url, from, to)
+    const byEmployee = entriesIn(from, to)
+    const total = people.length
+    const data = people.slice((page - 1) * pageSize, page * pageSize).map((employee) => {
+      const entries = byEmployee.get(employee.id) ?? []
+      const shifts = entries.filter((entry) => entry.kind === 'shift')
+      const months: YearMonth[] = []
+      for (let month = 1; month <= 12; month += 1) {
+        const prefix = `${year}-${String(month).padStart(2, '0')}`
+        const inMonth = entries.filter((entry) => entry.date.startsWith(prefix))
+        if (inMonth.length === 0) continue
+        const monthShifts = inMonth.filter((entry) => entry.kind === 'shift')
+        months.push({
+          month,
+          plannedMinutes: monthShifts.reduce((sum, entry) => sum + plannedMinutes(entry), 0),
+          shiftCount: monthShifts.length,
+          restDays: inMonth.length - monthShifts.length,
+        })
+      }
+      return { employee: boardEmployee(employee, shifts), months }
     })
-    const matching = rosterGroupId
-      ? people.filter((employee) =>
-          (byEmployee.get(employee.id) ?? []).some(
-            (entry) => entry.rosterGroupId === rosterGroupId,
-          ),
-        )
-      : people
+    return HttpResponse.json<YearPage>({
+      data,
+      meta: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) },
+    })
+  }),
 
-    const dayTotals: Record<string, number> = {}
-    for (const employee of matching) {
-      for (const entry of byEmployee.get(employee.id) ?? []) {
-        dayTotals[entry.date] = (dayTotals[entry.date] ?? 0) + plannedMinutes(entry)
+  http.get(base('/schedules/export'), async ({ request }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const url = new URL(request.url)
+    const { from, to } = rangeOf(url)
+    const byEmployee = entriesIn(from, to)
+    const lines = [
+      'Employee Code,Employee Name,Designation,Department,Date,Schedule,Planned Minutes',
+    ]
+    for (const employee of boardPeople(url, from, to)) {
+      const profile = profileOf(employee)
+      for (const entry of (byEmployee.get(employee.id) ?? []).sort(byDate)) {
+        const schedule =
+          entry.kind === 'rest'
+            ? 'Rest day'
+            : `${slotOf(entry).name} ${entry.clockIn ?? ''}-${entry.clockOut ?? ''}${entry.workFromHome ? ' WFH' : ''}`
+        lines.push(
+          [
+            profile.code,
+            employee.name,
+            employee.jobTitle,
+            employee.department,
+            entry.date,
+            schedule,
+            String(plannedMinutes(entry)),
+          ].join(','),
+        )
       }
     }
-
-    const total = matching.length
-    const totalPages = Math.max(1, Math.ceil(total / pageSize))
-    const now = today()
-    const rows = matching
-      .slice((page - 1) * pageSize, page * pageSize)
-      .map((employee): BoardRow => {
-        const entries = (byEmployee.get(employee.id) ?? []).sort((a, b) =>
-          a.date.localeCompare(b.date),
-        )
-        const profile = profileOf(employee)
-        return {
-          employee: {
-            id: employee.id,
-            code: profile.code,
-            name: employee.name,
-            designation: employee.jobTitle,
-            department: employee.department,
-            status: profile.status,
-            defaultSlot: profile.defaultSlot,
-          },
-          entries,
-          plannedMinutes: entries.reduce((sum, entry) => sum + plannedMinutes(entry), 0),
-          onShiftToday: scheduleEntries
-            .all()
-            .some(
-              (entry) =>
-                entry.employeeId === employee.id && entry.date === now && entry.kind === 'shift',
-            ),
-        }
-      })
-
-    return HttpResponse.json<BoardPage>({
-      data: rows,
-      meta: { page, pageSize, total, totalPages },
-      dayTotals,
-    })
-  }),
-
-  http.get(base('/active-shift'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const entry = entryAt(CURRENT_EMPLOYEE_ID, today())
-    const shift: ActiveShift =
-      entry?.kind === 'shift'
-        ? { slotName: entry.slot.name, clockIn: entry.clockIn, clockOut: entry.clockOut }
-        : { slotName: entry ? 'Rest Day' : null, clockIn: null, clockOut: null }
-    return HttpResponse.json<ApiItem<ActiveShift>>({ data: shift })
-  }),
-
-  http.get(base('/lookups'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const sorted = (values: string[]) => [...new Set(values)].sort((a, b) => a.localeCompare(b))
-    const profiles = DIRECTORY.map(profileOf)
-    return HttpResponse.json<ApiItem<SchedulingLookups>>({
-      data: {
-        departments: sorted(DIRECTORY.map((employee) => employee.department)),
-        designations: sorted(DIRECTORY.map((employee) => employee.jobTitle)),
-        groups: sorted(profiles.map((profile) => profile.group)),
-        grades: sorted(profiles.map((profile) => profile.grade)),
-        employees: DIRECTORY.map(toPickable),
+    return new HttpResponse(lines.join('\n'), {
+      headers: {
+        'Content-Type': 'text/csv',
+        'Content-Disposition': `attachment; filename="schedule_${from}_${to}.csv"`,
       },
     })
   }),
 
-  http.get(base('/employees'), async ({ request }) => {
+  http.get(base('/schedules'), async ({ request }) => {
     await latency()
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
     const url = new URL(request.url)
-    for (const [key, values] of [
-      ['employmentType', EMPLOYMENT_TYPES],
-      ['gender', GENDERS],
-      ['status', EMPLOYEE_STATUSES],
-    ] as const) {
-      const value = url.searchParams.get(key)
-      if (value && !(values as readonly string[]).includes(value)) return invalid()
+    const { from, to } = rangeOf(url)
+    const { page, pageSize } = readPageParams(url)
+    const people = boardPeople(url, from, to)
+    const byEmployee = entriesIn(from, to)
+
+    const totals = new Map<string, DayTotal>()
+    for (const employee of people) {
+      for (const entry of byEmployee.get(employee.id) ?? []) {
+        if (entry.kind !== 'shift') continue
+        const current = totals.get(entry.date) ?? {
+          workDate: entry.date,
+          plannedMinutes: 0,
+          shiftCount: 0,
+        }
+        totals.set(entry.date, {
+          ...current,
+          plannedMinutes: current.plannedMinutes + plannedMinutes(entry),
+          shiftCount: current.shiftCount + 1,
+        })
+      }
     }
-    return HttpResponse.json<ApiItem<PickableEmployee[]>>({
-      data: filterEmployees(url).map(toPickable),
+
+    const total = people.length
+    const rows = people.slice((page - 1) * pageSize, page * pageSize).map((employee): BoardRow => {
+      const entries = (byEmployee.get(employee.id) ?? []).sort(byDate)
+      const shifts = entries.filter((entry) => entry.kind === 'shift')
+      return {
+        employee: boardEmployee(employee, shifts),
+        shifts: shifts.map(toBoardShift),
+        restDays: entries.filter((entry) => entry.kind === 'rest').map(toRestDay),
+        holidays: [],
+      }
+    })
+
+    return HttpResponse.json<BoardPage>({
+      data: rows,
+      meta: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) },
+      dayTotals: [...totals.values()].sort((a, b) => a.workDate.localeCompare(b.workDate)),
     })
   }),
 
-  http.get(base('/entries/:id'), async ({ request, params }) => {
+  http.post(base('/schedules/batches'), async ({ request }) => {
     await latency()
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
-    const entry = scheduleEntries.find(String(params.id))
-    return entry
-      ? HttpResponse.json<ApiItem<ScheduleEntry>>({ data: entry })
-      : errorResponse(404, 'The schedule entry was not found.', { code: 'NOT_FOUND' })
+    const parsed = await readBody(request, batchSchema)
+    if (!parsed.success) return invalid(parsed.error)
+    const input = parsed.data
+    if (Boolean(input.timeSlotId) === Boolean(input.rosterGroupId)) {
+      return fieldError(
+        422,
+        'VALIDATION_FAILED',
+        'timeSlotId',
+        'Pick either a time slot or a roster group.',
+      )
+    }
+    if (input.endDate < input.startDate) {
+      return fieldError(
+        422,
+        'VALIDATION_FAILED',
+        'endDate',
+        'The end date is before the start date.',
+      )
+    }
+    if (input.timeSlotId && input.employeeIds.length === 0) {
+      return fieldError(422, 'VALIDATION_FAILED', 'employeeIds', 'Select at least one employee.')
+    }
+    const slot = input.timeSlotId ? timeSlots.find(input.timeSlotId) : undefined
+    if (input.timeSlotId && !slot) {
+      return fieldError(422, 'VALIDATION_FAILED', 'timeSlotId', 'The time slot was not found.')
+    }
+    const group = input.rosterGroupId ? rosterGroups.find(input.rosterGroupId) : undefined
+    if (input.rosterGroupId && !group) {
+      return fieldError(
+        422,
+        'VALIDATION_FAILED',
+        'rosterGroupId',
+        'The roster group was not found.',
+      )
+    }
+    const weekdays = input.weekdays.map((number) => WEEKDAYS[number - 1] ?? 'mon')
+    const dates = patternDates(
+      input.startDate,
+      input.endDate,
+      weekdays,
+      input.repeatEveryWeeks,
+      input.step,
+    )
+    const planned: PlannedShift[] = []
+    let skippedNoShift = 0
+    for (const date of dates) {
+      for (const employeeId of batchPeople(input, date)) {
+        if (!findEmployee(employeeId)) continue
+        const daySlot = slot ?? (group ? rosterSlotOn(group.id, date) : null)
+        if (!daySlot) {
+          skippedNoShift += 1
+          continue
+        }
+        planned.push({ employeeId, date, slot: daySlot, rosterGroupId: group?.id ?? null })
+      }
+    }
+    const written = writeBatch(planned, input)
+    if (written instanceof Response) return written
+    return HttpResponse.json<ApiItem<ScheduleBatchResult>>(
+      {
+        data: batchResult('create', input, written, {
+          timeSlotId: slot?.id ?? null,
+          timeSlotName: slot?.name ?? null,
+          rosterGroupId: group?.id ?? null,
+          rosterGroupTitle: group?.title ?? null,
+          weekdays: input.weekdays,
+          repeatEveryWeeks: input.repeatEveryWeeks,
+          step: input.step,
+          geoFenceId: input.geoFenceId ?? null,
+          isWfh: input.isWfh,
+          skippedNoShift,
+        }),
+      },
+      { status: 201 },
+    )
+  }),
+
+  http.post(base('/schedules/default-shift'), async ({ request }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const parsed = await readBody(request, defaultShiftSchema)
+    if (!parsed.success) return invalid(parsed.error)
+    const input = parsed.data
+    if (input.endDate < input.startDate) {
+      return fieldError(
+        422,
+        'VALIDATION_FAILED',
+        'endDate',
+        'The end date is before the start date.',
+      )
+    }
+    const planned: PlannedShift[] = []
+    let skippedNoShift = 0
+    for (const date of patternDates(input.startDate, input.endDate, [], 0, 1)) {
+      for (const employeeId of input.employeeIds) {
+        const employee = findEmployee(employeeId)
+        if (!employee) continue
+        // The roster they are enrolled in that day, else their default time slot.
+        const enrolment = enrolmentOn(employeeId, date)
+        const daySlot = enrolment
+          ? rosterSlotOn(enrolment.rosterGroupId, date)
+          : (defaultSlotOf(employee) ?? null)
+        if (!daySlot) {
+          skippedNoShift += 1
+          continue
+        }
+        planned.push({
+          employeeId,
+          date,
+          slot: daySlot,
+          rosterGroupId: enrolment?.rosterGroupId ?? null,
+        })
+      }
+    }
+    const written = writeBatch(planned, { replaceExisting: input.replaceExisting })
+    if (written instanceof Response) return written
+    return HttpResponse.json<ApiItem<ScheduleBatchResult>>(
+      { data: batchResult('default_shift', input, written, { skippedNoShift }) },
+      { status: 201 },
+    )
+  }),
+
+  http.post(base('/schedules/bulk-delete'), async ({ request }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const parsed = await readBody(request, bulkDeleteSchema)
+    if (!parsed.success) return invalid(parsed.error)
+    const input = parsed.data
+    let doomed: ScheduleEntry[]
+    if (input.ids && input.ids.length > 0) {
+      const wanted = new Set(input.ids)
+      // "Rest Days will not be Deleted."
+      doomed = scheduleEntries
+        .all()
+        .filter((entry) => wanted.has(entry.id) && entry.kind === 'shift')
+    } else {
+      const { startDate, endDate } = input
+      if (!startDate || !endDate) {
+        return fieldError(422, 'VALIDATION_FAILED', 'startDate', 'Give shift ids or a date range.')
+      }
+      if (!input.allEmployees && input.employeeIds.length === 0) {
+        return fieldError(
+          422,
+          'VALIDATION_FAILED',
+          'employeeIds',
+          'Select employees, or all employees.',
+        )
+      }
+      const chosen = new Set(input.employeeIds)
+      doomed = scheduleEntries
+        .all()
+        .filter(
+          (entry) =>
+            entry.date >= startDate &&
+            entry.date <= endDate &&
+            (input.allEmployees || chosen.has(entry.employeeId)) &&
+            (input.deleteRestDays || entry.kind === 'shift'),
+        )
+    }
+    doomed.forEach((entry) => scheduleEntries.remove(entry.id))
+    return HttpResponse.json<ApiItem<BulkDeleteResult>>({
+      data: {
+        deletedSchedules: doomed.filter((entry) => entry.kind === 'shift').length,
+        deletedRestDays: doomed.filter((entry) => entry.kind === 'rest').length,
+      },
+    })
+  }),
+
+  http.post(base('/schedules/bulk-edit'), async ({ request }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const parsed = await readBody(request, bulkEditSchema)
+    if (!parsed.success) return invalid(parsed.error)
+    const input = parsed.data
+    const slot = input.timeSlotId ? timeSlots.find(input.timeSlotId) : undefined
+    if (input.timeSlotId && !slot) {
+      return fieldError(422, 'VALIDATION_FAILED', 'timeSlotId', 'The time slot was not found.')
+    }
+    let updated = 0
+    const now = new Date().toISOString()
+    for (const shiftId of input.ids) {
+      const entry = scheduleEntries.find(shiftId)
+      if (entry?.kind !== 'shift') continue
+      // A new slot brings its times and breaks; the rest stays.
+      const current = slot
+        ? {
+            ...entry,
+            ...shiftRecord({
+              employeeId: entry.employeeId,
+              date: entry.date,
+              slot,
+              rosterGroupId: entry.rosterGroupId,
+              geoFenceId: entry.geoFenceIds[0],
+              isWfh: entry.workFromHome,
+              breaks: null,
+              batchId: entry.batchId,
+            }),
+          }
+        : entry
+      scheduleEntries.update(entry.id, {
+        ...current,
+        geoFenceIds: input.clearGeoFence
+          ? []
+          : input.geoFenceId
+            ? [input.geoFenceId]
+            : current.geoFenceIds,
+        workFromHome: input.isWfh ?? current.workFromHome,
+        updatedAt: now,
+      })
+      updated += 1
+    }
+    return HttpResponse.json<ApiItem<BulkEditResult>>({ data: { updatedSchedules: updated } })
   }),
 
   http.post(base('/schedules'), async ({ request }) => {
     await latency()
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
-    const parsed = await readBody(request, createSchema)
-    if (!parsed.success) return invalid()
+    const parsed = await readBody(request, scheduleSchema)
+    if (!parsed.success) return invalid(parsed.error)
     const input = parsed.data
-    if (input.endDate < input.startDate) {
-      return errorResponse(422, 'The end date is before the start date.', {
-        fieldErrors: { endDate: 'Pick a date on or after the start date' },
-      })
+    const employeeId = input.employeeId ?? ''
+    if (!findEmployee(employeeId)) {
+      return fieldError(422, 'VALIDATION_FAILED', 'employeeId', 'Select the employee.')
     }
-    const group = rosterGroups.find(input.rosterGroupId)
-    if (!group) {
-      return errorResponse(422, 'Select a time roster.', {
-        fieldErrors: { rosterGroupId: 'Select a time roster' },
-      })
+    const slot = timeSlots.find(input.timeSlotId)
+    if (!slot)
+      return fieldError(422, 'VALIDATION_FAILED', 'timeSlotId', 'The time slot was not found.')
+    if (restOn(employeeId, input.workDate)) {
+      return fieldError(409, 'REST_DAY', 'workDate', 'This date is a rest day for the employee.')
     }
-    const dates = scheduleDates(input.startDate, input.endDate, input.repeat)
-    if (dates.length === 0) {
-      return errorResponse(422, 'These dates and repeat settings leave no days to schedule.', {
-        code: 'NO_DATES',
-      })
-    }
-    const result: BatchResult = { created: 0, updated: 0, deleted: 0, skipped: 0 }
-    const batchId = createId('batch')
-    for (const employeeId of knownEmployees(input.employeeIds)) {
-      for (const date of dates) {
-        const roster = rosterDay(group, date)
-        if (!roster && !input.restDays) {
-          result.skipped += 1
-          continue
-        }
-        const clockIn = roster ? (input.clockIn ?? roster.clockIn) : null
-        const clockOut = roster ? (input.clockOut ?? roster.clockOut) : null
-        const outcome = upsert({
-          employeeId,
-          date,
-          kind: roster ? 'shift' : 'rest',
-          rosterGroupId: group.id,
-          clockIn,
-          clockOut,
-          workFromHome: roster ? input.workFromHome : false,
-          geoFenceIds: roster ? input.geoFenceIds : [],
-          breaks: roster ? input.breaks : [],
-          slot: {
-            ...input.slot,
-            isOvernight:
-              input.slot.isOvernight ||
-              (clockIn !== null && clockOut !== null && isOvernightPair(clockIn, clockOut)),
-          },
-          restDayPayable: false,
-          batchId,
-        })
-        result[outcome] += 1
-      }
-    }
-    return ok(result)
-  }),
-
-  http.post(base('/apply-default'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(
-      request,
-      z.object({
-        startDate: day,
-        endDate: day,
-        rosterGroupId: z.string().min(1),
-        employeeIds: ids.min(1),
-      }),
-    )
-    if (!parsed.success) return invalid()
-    const input = parsed.data
-    const group = rosterGroups.find(input.rosterGroupId)
-    if (!group) return invalid('Select a roster group.')
-    if (input.endDate < input.startDate) return invalid('The end date is before the start date.')
-    const result: BatchResult = { created: 0, updated: 0, deleted: 0, skipped: 0 }
-    const batchId = createId('batch')
-    for (const employeeId of knownEmployees(input.employeeIds)) {
-      for (const date of eachDay(input.startDate, input.endDate)) {
-        const roster = rosterDay(group, date)
-        const outcome = upsert({
-          employeeId,
-          date,
-          kind: roster ? 'shift' : 'rest',
-          rosterGroupId: group.id,
-          clockIn: roster?.clockIn ?? null,
-          clockOut: roster?.clockOut ?? null,
-          workFromHome: false,
-          geoFenceIds: [],
-          breaks: [],
-          slot: slotFor(group, roster ? isOvernightPair(roster.clockIn, roster.clockOut) : false),
-          restDayPayable: false,
-          batchId,
-        })
-        result[outcome] += 1
-      }
-    }
-    return ok(result)
-  }),
-
-  http.post(base('/delete-range'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(
-      request,
-      z.object({
-        startDate: day,
-        endDate: day,
-        deleteRestDays: z.boolean(),
-        allEmployees: z.boolean(),
-        employeeIds: ids,
-      }),
-    )
-    if (!parsed.success) return invalid()
-    const input = parsed.data
-    if (!input.allEmployees && input.employeeIds.length === 0) {
-      return invalid('Select at least one employee.')
-    }
-    const chosen = new Set(input.employeeIds)
-    const doomed = scheduleEntries
-      .all()
-      .filter(
-        (entry) =>
-          entry.date >= input.startDate &&
-          entry.date <= input.endDate &&
-          (input.allEmployees || chosen.has(entry.employeeId)) &&
-          (input.deleteRestDays || entry.kind === 'shift'),
+    if (shiftOn(employeeId, input.workDate)) {
+      return fieldError(
+        409,
+        'SCHEDULE_DAY_TAKEN',
+        'workDate',
+        'The employee already has a shift on this date.',
       )
-    doomed.forEach((entry) => scheduleEntries.remove(entry.id))
-    return ok({ deleted: doomed.length })
-  }),
-
-  http.post(base('/rest-days'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(
-      request,
-      z.object({
-        startDate: day,
-        repeat: repeatSchema,
-        payable: z.boolean(),
-        employeeIds: ids.min(1),
-      }),
-    )
-    if (!parsed.success) return invalid()
-    const input = parsed.data
-    const dates = repeatDates(input.repeat).filter((date) => date >= input.startDate)
-    if (dates.length === 0) return invalid('These settings do not land on any day.')
-    const result: BatchResult = { created: 0, updated: 0, deleted: 0, skipped: 0 }
-    const batchId = createId('batch')
-    for (const employeeId of knownEmployees(input.employeeIds)) {
-      for (const date of dates) {
-        const previous = entryAt(employeeId, date)
-        const outcome = upsert({
-          employeeId,
-          date,
-          kind: 'rest',
-          rosterGroupId: previous?.rosterGroupId ?? null,
-          clockIn: null,
-          clockOut: null,
-          workFromHome: false,
-          geoFenceIds: [],
-          breaks: [],
-          slot: previous?.slot ?? {
-            name: 'Rest Day',
-            isOvernight: false,
-            reverseDecision: false,
-            mode: 'fixed',
-            workableMinutes: null,
-            totalMinutes: null,
-            shortOvertime: false,
-            fullOvertime: false,
-            overtimeMinutes: null,
-          },
-          restDayPayable: input.payable,
-          batchId,
-        })
-        result[outcome] += 1
-      }
     }
-    restDayBatches.insert({
-      id: batchId,
-      startDate: input.startDate,
-      repeat: input.repeat,
-      payable: input.payable,
-      employeeIds: knownEmployees(input.employeeIds),
-      dates,
-      createdAt: new Date().toISOString(),
-    })
-    return ok(result)
-  }),
-
-  http.patch(base('/entries/:id'), async ({ request, params }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const existing = scheduleEntries.find(String(params.id))
-    if (!existing)
-      return errorResponse(404, 'The schedule entry was not found.', { code: 'NOT_FOUND' })
-    const parsed = await readBody(request, patchSchema)
-    if (!parsed.success) return invalid()
-    const updated = applyPatch(existing, parsed.data)
-    if (updated instanceof Response) return updated
-    scheduleEntries.update(existing.id, updated)
-    return HttpResponse.json<ApiItem<ScheduleEntry>>({ data: updated })
-  }),
-
-  http.post(base('/entries/bulk-update'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(request, z.object({ ids: ids.min(1), patch: patchSchema }))
-    if (!parsed.success) return invalid()
-    let updated = 0
-    for (const id of parsed.data.ids) {
-      const existing = scheduleEntries.find(id)
-      if (!existing) continue
-      const next = applyPatch(existing, parsed.data.patch)
-      if (next instanceof Response) return next
-      scheduleEntries.update(existing.id, next)
-      updated += 1
-    }
-    return ok({ updated })
-  }),
-
-  http.post(base('/entries/bulk-delete'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(request, z.object({ ids: ids.min(1) }))
-    if (!parsed.success) return invalid()
-    let deleted = 0
-    let skipped = 0
-    for (const id of parsed.data.ids) {
-      const entry = scheduleEntries.find(id)
-      // "Rest Days will not be Deleted."
-      if (!entry || entry.kind === 'rest') {
-        skipped += 1
-        continue
-      }
-      scheduleEntries.remove(id)
-      deleted += 1
-    }
-    return ok({ deleted, skipped })
-  }),
-
-  http.delete(base('/entries/:id'), async ({ request, params }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const removed = scheduleEntries.remove(String(params.id))
-    return removed
-      ? new HttpResponse(null, { status: 204 })
-      : errorResponse(404, 'The schedule entry was not found.', { code: 'NOT_FOUND' })
-  }),
-
-  http.post(base('/entries/swap'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(
-      request,
-      z.object({
-        entryId: z.string().min(1),
-        targetEmployeeId: z.string().min(1),
-        targetDate: day,
-      }),
-    )
-    if (!parsed.success) return invalid()
-    const { entryId, targetEmployeeId, targetDate } = parsed.data
-    const source = scheduleEntries.find(entryId)
-    if (!source)
-      return errorResponse(404, 'The schedule entry was not found.', { code: 'NOT_FOUND' })
-    if (!findEmployee(targetEmployeeId)) return invalid('Pick an employee to swap with.')
-    if (source.employeeId === targetEmployeeId && source.date === targetDate) return ok({})
-    const now = new Date().toISOString()
-    const target = entryAt(targetEmployeeId, targetDate)
-    if (target) {
-      scheduleEntries.update(target.id, {
-        ...target,
-        employeeId: source.employeeId,
-        date: source.date,
-        updatedAt: now,
-      })
-    }
-    scheduleEntries.update(source.id, {
-      ...source,
-      employeeId: targetEmployeeId,
-      date: targetDate,
-      updatedAt: now,
-    })
-    return ok({ updated: target ? 2 : 1 })
-  }),
-
-  http.post(base('/import'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(
-      request,
-      z.object({
-        rows: z
-          .array(
-            z.object({
-              employeeCode: z.string().min(1),
-              date: day,
-              clockIn: time.nullable(),
-              clockOut: time.nullable(),
-              restDay: z.boolean(),
-            }),
-          )
-          .min(1)
-          .max(5000),
-      }),
-    )
-    if (!parsed.success) return invalid('The file has rows that could not be read.')
-    const byCode = new Map(
-      DIRECTORY.map((employee) => [profileOf(employee).code.toLowerCase(), employee]),
-    )
-    const result: BatchResult = { created: 0, updated: 0, deleted: 0, skipped: 0 }
-    const batchId = createId('batch')
-    for (const row of parsed.data.rows) {
-      const employee = byCode.get(row.employeeCode.toLowerCase())
-      const isShift = !row.restDay && row.clockIn !== null && row.clockOut !== null
-      if (!employee || (!row.restDay && !isShift)) {
-        result.skipped += 1
-        continue
-      }
-      const outcome = upsert({
-        employeeId: employee.id,
-        date: row.date,
-        kind: isShift ? 'shift' : 'rest',
+    const entry = insertShift(
+      shiftRecord({
+        employeeId,
+        date: input.workDate,
+        slot,
         rosterGroupId: null,
-        clockIn: isShift ? row.clockIn : null,
-        clockOut: isShift ? row.clockOut : null,
-        workFromHome: false,
-        geoFenceIds: [],
-        breaks: [],
-        slot: {
-          ...slotFor({ title: 'Imported Shift', days: [] }),
-          isOvernight:
-            isShift &&
-            row.clockIn !== null &&
-            row.clockOut !== null &&
-            isOvernightPair(row.clockIn, row.clockOut),
-        },
-        restDayPayable: false,
-        batchId,
-      })
-      result[outcome] += 1
-    }
-    return ok(result)
+        clockIn: input.startTime,
+        clockOut: input.endTime,
+        geoFenceId: input.geoFenceId,
+        isWfh: input.isWfh,
+        breaks: input.breaks,
+        batchId: createId('batch'),
+      }),
+    )
+    return HttpResponse.json<ApiItem<ScheduleDetail>>({ data: toDetail(entry) }, { status: 201 })
   }),
 
-  http.get(apiPath('/geo-fences'), async ({ request }) => {
+  http.get(base('/schedules/:id'), async ({ request, params }) => {
     await latency()
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
-    // Fences switched off in Attendance → Settings → Geo Fencing are not offered.
-    const inactive = new Set(
-      geoFenceSettings
-        .all()
-        .filter((item) => !item.active)
-        .map((item) => item.id),
-    )
-    return HttpResponse.json<ApiItem<GeoFence[]>>({
-      data: geoFences
-        .all()
-        .filter((fence) => !inactive.has(fence.id))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    })
+    const entry = scheduleEntries.find(String(params.id))
+    if (entry?.kind !== 'shift') return notFound()
+    return HttpResponse.json<ApiItem<ScheduleDetail>>({ data: toDetail(entry) })
   }),
 
-  http.post(apiPath('/geo-fences'), async ({ request }) => {
+  http.put(base('/schedules/:id'), async ({ request, params }) => {
     await latency()
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
-    const parsed = await readBody(
-      request,
-      z.object({ name: z.string().trim().min(1).max(80), shape: shapeSchema }),
-    )
-    if (!parsed.success) return invalid()
-    const name = parsed.data.name.trim()
-    if (geoFences.all().some((fence) => fence.name.toLowerCase() === name.toLowerCase())) {
-      return errorResponse(409, 'A geo fence with this name already exists.', {
-        code: 'DUPLICATE_NAME',
-        fieldErrors: { name: 'Choose a different name' },
+    const entry = scheduleEntries.find(String(params.id))
+    if (entry?.kind !== 'shift') return notFound()
+    const parsed = await readBody(request, scheduleSchema)
+    if (!parsed.success) return invalid(parsed.error)
+    const input = parsed.data
+    const slot = timeSlots.find(input.timeSlotId)
+    if (!slot)
+      return fieldError(422, 'VALIDATION_FAILED', 'timeSlotId', 'The time slot was not found.')
+    if (input.rowVersion && input.rowVersion !== rowVersionOf(entry.updatedAt)) {
+      return errorResponse(409, 'Someone else changed this shift. Reload it.', {
+        code: 'CONCURRENCY',
       })
     }
-    const fence: GeoFence = {
-      id: createId('gf'),
-      name,
-      shape: parsed.data.shape,
-      createdAt: new Date().toISOString(),
+    if (input.workDate !== entry.date) {
+      if (restOn(entry.employeeId, input.workDate)) {
+        return fieldError(409, 'REST_DAY', 'workDate', 'This date is a rest day for the employee.')
+      }
+      if (shiftOn(entry.employeeId, input.workDate)) {
+        return fieldError(
+          409,
+          'SCHEDULE_DAY_TAKEN',
+          'workDate',
+          'The employee already has a shift on this date.',
+        )
+      }
     }
-    geoFences.insert(fence)
-    return HttpResponse.json<ApiItem<GeoFence>>({ data: fence }, { status: 201 })
+    const next: ScheduleEntry = {
+      ...entry,
+      ...shiftRecord({
+        employeeId: entry.employeeId,
+        date: input.workDate,
+        slot,
+        rosterGroupId: entry.rosterGroupId,
+        clockIn: input.startTime,
+        clockOut: input.endTime,
+        geoFenceId: input.geoFenceId,
+        isWfh: input.isWfh,
+        breaks: input.breaks,
+        batchId: entry.batchId,
+      }),
+      updatedAt: new Date().toISOString(),
+    }
+    scheduleEntries.update(entry.id, next)
+    return HttpResponse.json<ApiItem<ScheduleDetail>>({ data: toDetail(next) })
+  }),
+
+  http.delete(base('/schedules/:id'), async ({ request, params }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const entry = scheduleEntries.find(String(params.id))
+    if (entry?.kind !== 'shift') return notFound()
+    scheduleEntries.remove(entry.id)
+    return new HttpResponse(null, { status: 204 })
+  }),
+
+  http.post(base('/schedules/:id/swap'), async ({ request, params }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const source = scheduleEntries.find(String(params.id))
+    if (source?.kind !== 'shift') return notFound()
+    const parsed = await readBody(request, swapSchema)
+    if (!parsed.success) return invalid(parsed.error)
+    const { withScheduleId, withEmployeeId } = parsed.data
+    const now = new Date().toISOString()
+    if (withScheduleId) {
+      const other = scheduleEntries.find(withScheduleId)
+      if (other?.kind !== 'shift') return notFound()
+      scheduleEntries.update(other.id, { ...other, employeeId: source.employeeId, updatedAt: now })
+      const moved = { ...source, employeeId: other.employeeId, updatedAt: now }
+      scheduleEntries.update(source.id, moved)
+      return HttpResponse.json<ApiItem<ScheduleDetail>>({ data: toDetail(moved) })
+    }
+    if (!withEmployeeId || !findEmployee(withEmployeeId)) {
+      return fieldError(422, 'VALIDATION_FAILED', 'withEmployeeId', 'Pick a shift or an employee.')
+    }
+    if (restOn(withEmployeeId, source.date)) {
+      return fieldError(409, 'REST_DAY', 'withEmployeeId', 'That date is a rest day for them.')
+    }
+    if (shiftOn(withEmployeeId, source.date)) {
+      return fieldError(
+        409,
+        'SCHEDULE_DAY_TAKEN',
+        'withEmployeeId',
+        'They already have a shift on this date.',
+      )
+    }
+    const given = { ...source, employeeId: withEmployeeId, updatedAt: now }
+    scheduleEntries.update(source.id, given)
+    return HttpResponse.json<ApiItem<ScheduleDetail>>({ data: toDetail(given) })
+  }),
+
+  http.get(base('/options/time-slots'), async ({ request }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    return options(
+      timeSlots
+        .all()
+        .sort((a, b) => a.code.localeCompare(b.code))
+        .map((slot) =>
+          option({
+            id: slot.id,
+            name: slot.name,
+            code: slot.code,
+            startTime: apiTime(slot.startTime),
+            endTime: apiTime(slot.endTime),
+            isOvernight: isOvernightSlot(slot),
+            isFlexible: slot.isFlexible,
+          }),
+        ),
+    )
+  }),
+
+  http.get(base('/options/break-types'), async ({ request }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    return options(breakTypes.all().map((type) => option({ id: type.id, name: type.name })))
+  }),
+
+  http.get(base('/options/roster-groups'), async ({ request }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    return options(
+      rosterGroups
+        .all()
+        .filter((group) => group.isActive)
+        .sort((a, b) => a.title.localeCompare(b.title))
+        .map((group) => option({ id: group.id, name: group.title })),
+    )
   }),
 ]
-
-/** Applies an edit to one entry; a new time roster brings that weekday's times. */
-function applyPatch(
-  entry: ScheduleEntry,
-  patch: z.infer<typeof patchSchema>,
-): ScheduleEntry | Response {
-  let next: ScheduleEntry = { ...entry, updatedAt: new Date().toISOString() }
-  if (patch.rosterGroupId && patch.rosterGroupId !== entry.rosterGroupId) {
-    const group = rosterGroups.find(patch.rosterGroupId)
-    if (!group) return invalid('Select a time roster.')
-    const roster = rosterDay(group, entry.date) ?? firstWorkingDay(group)
-    next = {
-      ...next,
-      rosterGroupId: group.id,
-      clockIn: roster?.clockIn ?? next.clockIn,
-      clockOut: roster?.clockOut ?? next.clockOut,
-      slot: { ...next.slot, name: group.title },
-    }
-  }
-  if (patch.restDay === true) next = { ...next, kind: 'rest', clockIn: null, clockOut: null }
-  if (patch.restDay === false && next.kind === 'rest') {
-    const group = next.rosterGroupId ? rosterGroups.find(next.rosterGroupId) : undefined
-    const roster = group ? (rosterDay(group, next.date) ?? firstWorkingDay(group)) : null
-    if (!roster) return invalid('Pick a time roster to turn this rest day into a shift.')
-    next = { ...next, kind: 'shift', clockIn: roster.clockIn, clockOut: roster.clockOut }
-  }
-  if (patch.geoFenceIds) next.geoFenceIds = patch.geoFenceIds
-  if (patch.workFromHome !== undefined) next.workFromHome = patch.workFromHome
-  if (patch.breaks) next.breaks = patch.breaks
-  if (patch.slot) {
-    // A partial schema leaves out keys that were not sent.
-    next.slot = { ...next.slot, ...(patch.slot as Partial<TimeSlotRules>) }
-  }
-  return next
-}
-
-function firstWorkingDay(group: RosterGroup) {
-  const pattern = group.days.find((entry) => !entry.isWeekend && entry.clockIn && entry.clockOut)
-  return pattern?.clockIn && pattern.clockOut
-    ? { clockIn: pattern.clockIn, clockOut: pattern.clockOut }
-    : null
-}

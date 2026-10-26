@@ -7,9 +7,10 @@ import { ErrorState } from '@/components/feedback/error-state'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import { ENROLLMENT_STATUS_LABELS } from '../constants'
+import { ENROLLMENT_STATUS_LABELS, ROSTER_PERMISSIONS } from '../constants'
 import { enrollMutationKey } from '../hooks/use-roster-enrollments'
 import { useRosterGroup } from '../hooks/use-roster-groups'
 import { ENROLLMENT_STATUSES, type EnrollmentStatus } from '../types/roster.types'
@@ -32,6 +33,7 @@ export function EnrollmentDialog({ groupId, onClose }: EnrollmentDialogProps) {
   const [view, setView] = useState<'list' | 'enroll'>('list')
   const [tab, setTab] = useState<EnrollmentStatus>('active')
   const saving = useIsMutating({ mutationKey: enrollMutationKey(groupId) }) > 0
+  const canEnroll = useCan(ROSTER_PERMISSIONS.enrolmentsEnroll)
 
   const title = group.data
     ? view === 'enroll'
@@ -86,9 +88,9 @@ export function EnrollmentDialog({ groupId, onClose }: EnrollmentDialogProps) {
           <Skeleton className="h-9 w-48" />
           <Skeleton className="h-64 w-full" />
         </div>
-      ) : view === 'enroll' ? (
+      ) : view === 'enroll' && canEnroll ? (
         <EnrollForm
-          groupId={groupId}
+          group={group.data}
           onBack={() => {
             setView('list')
             setTab('active')
@@ -96,17 +98,19 @@ export function EnrollmentDialog({ groupId, onClose }: EnrollmentDialogProps) {
         />
       ) : (
         <div className="grid gap-5">
-          <Button
-            onClick={() => {
-              setView('enroll')
-            }}
-            className={cn(
-              'w-fit bg-pager-active text-white hover:bg-pager-active/90',
-              rosterType.button,
-            )}
-          >
-            <UserPlus /> Enroll New Employee
-          </Button>
+          {canEnroll && (
+            <Button
+              onClick={() => {
+                setView('enroll')
+              }}
+              className={cn(
+                'w-fit bg-pager-active text-white hover:bg-pager-active/90',
+                rosterType.button,
+              )}
+            >
+              <UserPlus /> Enroll New Employee
+            </Button>
+          )}
           <Tabs
             value={tab}
             onValueChange={(next) => {

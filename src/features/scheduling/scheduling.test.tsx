@@ -2,15 +2,17 @@ import { screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 
+import { DEMO_USER } from '@/mocks/auth/handlers'
+import { useAuthStore } from '@/stores/auth-store'
 import { renderApp } from '@/test/test-utils'
 
 /** Opens a Radix select by its label and picks an option. */
-async function choose(user: UserEvent, label: string | RegExp, option: string) {
+async function choose(user: UserEvent, label: string | RegExp, option: string | RegExp) {
   await user.click(await screen.findByRole('combobox', { name: label }))
   await user.click(await screen.findByRole('option', { name: option }))
 }
 
-/** The first scheduled shift of a person on the board. */
+/** The first scheduled Morning Work shift of a person on the board. */
 async function firstShift(name: string) {
   const [shift] = await screen.findAllByRole('button', {
     name: new RegExp(`^${name}, .*: Morning Work`),
@@ -48,7 +50,8 @@ describe('Scheduling board', () => {
     await user.click(await firstShift('Omar Siddiqui'))
     await user.click(await screen.findByRole('button', { name: /^View Omar Siddiqui/ }))
     const view = await screen.findByRole('dialog', { name: 'View Scheduling' })
-    expect(within(view).getByText('Morning Work')).toBeVisible()
+    expect(await within(view).findByText('Morning Work')).toBeVisible()
+    expect(within(view).getByText(/Lunch Break/)).toBeVisible()
     await user.click(within(view).getByRole('button', { name: 'Cancel' }))
 
     const shift = await firstShift('Omar Siddiqui')
@@ -90,46 +93,92 @@ describe('Scheduling board', () => {
     await user.click(await screen.findByRole('button', { name: /^Swap Shelley Kannes/ }))
     const dialog = await screen.findByRole('dialog', { name: 'Swap Shift' })
     await choose(user, 'Swap with', 'Bilal Ahmed (Id-005)')
+    expect(within(dialog).getByText(/trade places|moves to them/)).toBeVisible()
     await user.click(within(dialog).getByRole('button', { name: 'Swap' }))
     expect(await screen.findByText(/Shifts swapped|Shift moved/)).toBeInTheDocument()
+  })
+
+  it('leaves out the actions the user has no permission for', async () => {
+    renderApp('/scheduling?scope=all&view=week')
+    useAuthStore.getState().setSession({
+      token: useAuthStore.getState().token ?? '',
+      user: {
+        ...DEMO_USER,
+        permissions: [{ code: 'scheduling.schedules.view', scope: 'company' }],
+      },
+    })
+
+    await firstShift('Omar Siddiqui')
+    expect(screen.queryByRole('button', { name: 'Apply Default Shift' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Export' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Enable/Disable Multiselect' }),
+    ).not.toBeInTheDocument()
   })
 })
 
 describe('Scheduling dialogs', () => {
-  it('creates a schedule in two steps', async () => {
+  it('creates a schedule from a time slot in two steps, replacing planned shifts', async () => {
     const { user } = renderApp('/scheduling?scope=all&view=week')
 
     await user.click(await screen.findByRole('button', { name: 'Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Create Scheduling' })
     await user.click(within(dialog).getByRole('button', { name: 'Next' }))
-    expect(await within(dialog).findByText('Select a time roster')).toBeVisible()
+    expect(await within(dialog).findByText('Select a time slot')).toBeVisible()
 
-    await choose(user, 'Time Roster', 'Morning Work')
+    await choose(user, 'Time Slot', /^Morning Work/)
     await user.click(within(dialog).getByRole('button', { name: 'Next' }))
 
     const review = await screen.findByRole('dialog', { name: 'Create Scheduling, review' })
-    expect(within(review).getByRole('textbox', { name: 'Name' })).toHaveValue('Morning Work')
     expect(within(review).getByText(/days? for each employee/)).toBeVisible()
 
     await user.click(within(review).getByRole('button', { name: 'Save' }))
     expect(await within(review).findByText('Select at least one employee')).toBeVisible()
 
-    await user.click(within(review).getByRole('checkbox', { name: 'Select Kashif Raza' }))
+    await user.click(await within(review).findByRole('checkbox', { name: 'Select Kashif Raza' }))
     await user.click(within(review).getByRole('button', { name: 'Save' }))
-    expect(await screen.findByText(/^Schedule saved/)).toBeInTheDocument()
+    // Kashif already works these days: the API refuses (409) until "replace" is ticked.
+    expect(await within(review).findByRole('alert')).toHaveTextContent(/already have a shift/)
+
+    await user.click(
+      within(review).getByRole('checkbox', { name: 'Replace shifts already planned' }),
+    )
+    await user.click(within(review).getByRole('button', { name: 'Save' }))
+    expect(
+      await screen.findByText(/^Schedule saved: \d+ shifts? added, \d+ replaced/),
+    ).toBeVisible()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('applies a default shift to chosen employees', async () => {
+  it('creates a schedule from a time roster for its enrolled members', async () => {
+    const { user } = renderApp('/scheduling?scope=all&view=week')
+
+    await user.click(await screen.findByRole('button', { name: 'Create' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Create Scheduling' })
+    await user.click(within(dialog).getByRole('radio', { name: 'Time Roster' }))
+    await choose(user, 'Time Roster', 'Part Time')
+    await user.click(within(dialog).getByRole('button', { name: 'Next' }))
+
+    const review = await screen.findByRole('dialog', { name: 'Create Scheduling, review' })
+    expect(within(review).getByText(/everyone enrolled in the roster/)).toBeVisible()
+    await user.click(within(review).getByRole('button', { name: 'Save' }))
+    // Nobody is enrolled in Part Time, so nothing is planned.
+    expect(await screen.findByText(/^Schedule saved: 0 shifts added/)).toBeVisible()
+  })
+
+  it('applies the default shift to chosen employees', async () => {
     const { user } = renderApp('/scheduling?scope=all&view=week')
 
     await user.click(await screen.findByRole('button', { name: 'Apply Default Shift' }))
     const dialog = await screen.findByRole('dialog', { name: 'Apply Default Shift' })
-    await choose(user, 'Roster Group', 'Part Time')
+    await user.click(
+      within(dialog).getByRole('checkbox', { name: 'Replace shifts already planned' }),
+    )
     await user.click(within(dialog).getByRole('button', { name: 'Next' }))
 
     const pick = await screen.findByRole('dialog', { name: 'Select Employees' })
-    await user.click(within(pick).getByRole('checkbox', { name: 'Select Laiba Shah' }))
+    await user.click(await within(pick).findByRole('checkbox', { name: 'Select Laiba Shah' }))
     expect(within(pick).getByRole('button', { name: 'Remove Laiba Shah' })).toBeVisible()
     await user.click(within(pick).getByRole('button', { name: 'Save' }))
     expect(await screen.findByText(/^Default shift applied/)).toBeInTheDocument()
@@ -146,9 +195,7 @@ describe('Scheduling dialogs', () => {
       within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Yes' }),
     )
     expect(
-      await screen.findByText(
-        /^\d+ scheduled days? deleted$|^There was nothing to delete in that range$/,
-      ),
+      await screen.findByText(/^\d+ shifts? deleted$|^There was nothing to delete in that range$/),
     ).toBeInTheDocument()
   })
 })

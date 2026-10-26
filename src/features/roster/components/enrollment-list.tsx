@@ -1,28 +1,33 @@
 import { useState } from 'react'
 import { format, parseISO } from 'date-fns'
-import { Search, UserMinus } from 'lucide-react'
+import { Search, Trash2, UserMinus } from 'lucide-react'
 
 import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import { ErrorState } from '@/components/feedback/error-state'
 import {
   DataTable,
   type DataTableColumn,
-  type DataTableSort,
   Pagination,
+  type RowAction,
   RowActionsMenu,
 } from '@/components/layout'
 import { Input } from '@/components/ui/input'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import { ENROLLMENT_DATE_FORMAT, ENROLLMENT_STATUS_LABELS, ROSTER_PAGE_SIZE } from '../constants'
-import { useDiscontinueEnrollment, useRosterEnrollments } from '../hooks/use-roster-enrollments'
 import {
-  ENROLLMENT_SORT_KEYS,
-  type EnrollmentSortKey,
-  type EnrollmentStatus,
-  type RosterEnrollmentRow,
-} from '../types/roster.types'
+  ENROLLMENT_DATE_FORMAT,
+  ENROLLMENT_STATUS_LABELS,
+  ROSTER_PAGE_SIZE,
+  ROSTER_PERMISSIONS,
+} from '../constants'
+import {
+  useDeleteEnrollment,
+  useDiscontinueEnrollment,
+  useRosterEnrollments,
+} from '../hooks/use-roster-enrollments'
+import type { EnrollmentStatus, RosterEnrollmentRow } from '../types/roster.types'
 import { EntriesSelect, PageSummary } from './table-controls'
 import { rosterType } from './type-styles'
 
@@ -32,35 +37,28 @@ const dateClass = 'font-medium text-title tabular-nums'
 const showDate = (value: string | null) =>
   value ? format(parseISO(value), ENROLLMENT_DATE_FORMAT) : '—'
 
-const isSortKey = (key: string): key is EnrollmentSortKey =>
-  ENROLLMENT_SORT_KEYS.some((sortKey) => sortKey === key)
-
 interface EnrollmentListProps {
   groupId: string
   status: EnrollmentStatus
 }
 
 /**
- * One tab of the enrollment modal: "Show n entries", search, a sortable
- * paged table and, on the Active tab, Discontinue per row.
+ * One tab of the enrollment modal: "Show n entries", search, a paged table (the API
+ * orders it; it has no sort parameter) and per row Discontinue (Active tab) and Delete.
  */
 export function EnrollmentList({ groupId, status }: EnrollmentListProps) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(ROSTER_PAGE_SIZE)
-  const [sort, setSort] = useState<DataTableSort | undefined>(undefined)
   const [text, setText] = useState('')
   const search = useDebouncedValue(text.trim(), 300)
   const [pendingDiscontinue, setPendingDiscontinue] = useState<RosterEnrollmentRow | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<RosterEnrollmentRow | null>(null)
   const discontinue = useDiscontinueEnrollment()
+  const remove = useDeleteEnrollment()
+  const canDiscontinue = useCan(ROSTER_PERMISSIONS.enrolmentsEdit)
+  const canDelete = useCan(ROSTER_PERMISSIONS.enrolmentsDelete)
 
-  const sortKey = sort && isSortKey(sort.key) ? sort.key : undefined
-  const query = useRosterEnrollments(groupId, {
-    status,
-    page,
-    pageSize,
-    search,
-    ...(sortKey && sort ? { sort: sortKey, order: sort.direction } : {}),
-  })
+  const query = useRosterEnrollments(groupId, { status, page, pageSize, search })
   const meta = query.data?.meta
   // Discontinuing the last row of the last page leaves the page past the end.
   if (meta && !query.isPlaceholderData && page > meta.totalPages) setPage(meta.totalPages)
@@ -77,42 +75,36 @@ export function EnrollmentList({ groupId, status }: EnrollmentListProps) {
     {
       id: 'name',
       header: 'Name',
-      sortKey: 'employeeName',
       mobile: 'heading',
-      cell: (row) => row.employeeName,
+      cell: (row) => (
+        <span>
+          {row.employeeName}{' '}
+          <span className="text-xs text-muted-foreground">({row.employeeCode})</span>
+        </span>
+      ),
       className: 'min-w-36 whitespace-normal',
     },
     {
       id: 'department',
       header: 'Department',
-      sortKey: 'department',
-      cell: (row) => row.department,
+      cell: (row) => row.departmentName ?? '—',
       className: 'min-w-32 whitespace-normal',
     },
     {
       id: 'designation',
       header: 'Designation',
-      sortKey: 'designation',
-      cell: (row) => row.designation,
+      cell: (row) => row.designationName ?? '—',
       className: 'min-w-32 whitespace-normal',
     },
     {
       id: 'start',
       header: 'Start Date',
-      sortKey: 'startDate',
       cell: (row) => <span className={dateClass}>{showDate(row.startDate)}</span>,
     },
     {
       id: 'end',
       header: 'End Date',
-      sortKey: 'endDate',
       cell: (row) => <span className={dateClass}>{showDate(row.endDate)}</span>,
-    },
-    {
-      id: 'location',
-      header: 'Location',
-      cell: (row) => row.locationName ?? '—',
-      className: 'whitespace-normal',
     },
     {
       id: 'branch',
@@ -150,7 +142,7 @@ export function EnrollmentList({ groupId, status }: EnrollmentListProps) {
           <Input
             type="search"
             aria-label={`Search ${status} enrollments`}
-            placeholder="Search name, department…"
+            placeholder="Search name or code"
             value={text}
             onChange={(event) => {
               setText(event.target.value)
@@ -178,11 +170,6 @@ export function EnrollmentList({ groupId, status }: EnrollmentListProps) {
           isLoading={query.isPending}
           isFetching={query.isFetching}
           loadingRowCount={5}
-          sort={sort}
-          onSortChange={(next) => {
-            setSort(next)
-            setPage(1)
-          }}
           className="text-sm sm:text-sm [&_td:not([colspan])]:text-title"
           emptyState={
             search
@@ -192,22 +179,33 @@ export function EnrollmentList({ groupId, status }: EnrollmentListProps) {
                 : 'Nobody has left this roster.'
           }
           rowActions={
-            status === 'active'
-              ? (row) => (
-                  <RowActionsMenu
-                    label={`Actions for ${row.employeeName}`}
-                    actions={[
-                      {
-                        label: 'Discontinue',
-                        icon: UserMinus,
-                        variant: 'destructive',
-                        onSelect: () => {
-                          setPendingDiscontinue(row)
-                        },
+            canDiscontinue || canDelete
+              ? (row) => {
+                  const actions: RowAction[] = []
+                  if (canDiscontinue && row.status === 'active') {
+                    actions.push({
+                      label: 'Discontinue',
+                      icon: UserMinus,
+                      variant: 'destructive',
+                      onSelect: () => {
+                        setPendingDiscontinue(row)
                       },
-                    ]}
-                  />
-                )
+                    })
+                  }
+                  if (canDelete) {
+                    actions.push({
+                      label: 'Delete',
+                      icon: Trash2,
+                      variant: 'destructive',
+                      onSelect: () => {
+                        setPendingDelete(row)
+                      },
+                    })
+                  }
+                  return actions.length > 0 ? (
+                    <RowActionsMenu label={`Actions for ${row.employeeName}`} actions={actions} />
+                  ) : null
+                }
               : undefined
           }
         />
@@ -241,6 +239,25 @@ export function EnrollmentList({ groupId, status }: EnrollmentListProps) {
         onConfirm={() => {
           if (pendingDiscontinue) discontinue.mutate(pendingDiscontinue)
           setPendingDiscontinue(null)
+        }}
+      />
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null)
+        }}
+        title="Delete this enrollment?"
+        description={
+          <>
+            The enrollment of {pendingDelete?.employeeName} is removed from this roster. Use
+            Discontinue instead to keep it in the history.
+          </>
+        }
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={() => {
+          if (pendingDelete) remove.mutate(pendingDelete)
+          setPendingDelete(null)
         }}
       />
     </div>

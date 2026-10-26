@@ -10,7 +10,8 @@ import { Button } from '@/components/ui/button'
 import { parseDateValue, toDateValue } from '@/lib/date'
 import { cn } from '@/lib/utils'
 
-import { useDeleteScheduleRange } from '../../hooks/use-scheduling'
+import { SCHEDULING_PERMISSIONS } from '../../constants'
+import { useBulkDelete } from '../../hooks/use-scheduling'
 import {
   deleteScheduleSchema,
   type DeleteScheduleValues,
@@ -31,14 +32,14 @@ const stepOneSchema = z
   })
 
 /**
- * Delete Scheduling: a date range, "Delete Rest Days" and "Delete for All
- * Employees"; without the last, Next opens Select Employees. A final
- * confirmation guards the delete.
+ * Delete Scheduling (`POST /scheduling/schedules/bulk-delete` with a range): a date range,
+ * "Delete Rest Days" and "Delete for All Employees"; without the last, Next opens Select
+ * Employees. A final confirmation guards the delete.
  */
 export function DeleteScheduleDialog({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<1 | 2>(1)
   const [confirming, setConfirming] = useState(false)
-  const remove = useDeleteScheduleRange()
+  const remove = useBulkDelete()
   const [today] = useState(() => toDateValue(new Date()))
   const form = useForm<DeleteScheduleValues>({
     resolver: zodResolver(deleteScheduleSchema),
@@ -60,12 +61,22 @@ export function DeleteScheduleDialog({ onClose }: { onClose: () => void }) {
   })
 
   const run = () => {
-    remove.mutate(form.getValues(), {
-      onSuccess: onClose,
-      onSettled: () => {
-        setConfirming(false)
+    const values = form.getValues()
+    remove.mutate(
+      {
+        startDate: values.startDate,
+        endDate: values.endDate,
+        deleteRestDays: values.deleteRestDays,
+        allEmployees: values.allEmployees,
+        employeeIds: values.allEmployees ? [] : values.employeeIds,
       },
-    })
+      {
+        onSuccess: onClose,
+        onSettled: () => {
+          setConfirming(false)
+        },
+      },
+    )
   }
 
   const deleteButton = (
@@ -169,6 +180,7 @@ export function DeleteScheduleDialog({ onClose }: { onClose: () => void }) {
           </FieldLayoutContext>
         ) : (
           <EmployeeSelector
+            permission={SCHEDULING_PERMISSIONS.delete}
             value={field.value}
             onChange={field.onChange}
             error={fieldState.error?.message}

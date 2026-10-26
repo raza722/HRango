@@ -4,10 +4,11 @@ export {
   rosterGroupQueryOptions,
   rosterGroupsQueryOptions,
   rosterKeys,
+  timeSlotOptionsQueryOptions,
 } from './api/roster.api'
 export { RosterGroupDetails } from './components/roster-group-details'
 export { RosterPage } from './components/roster-page'
-export { ROSTER_DAY_LABELS, ROSTER_PAGE_SIZE } from './constants'
+export { ROSTER_DAY_LABELS, ROSTER_PAGE_SIZE, ROSTER_PERMISSIONS } from './constants'
 export { useEnrollEmployees, useRosterEnrollments } from './hooks/use-roster-enrollments'
 export {
   useDeleteRosterGroup,
@@ -15,6 +16,7 @@ export {
   useRosterGroups,
   useSaveRosterGroup,
   useSetRosterGroupStatus,
+  useTimeSlotOptions,
 } from './hooks/use-roster-groups'
 export { ROSTER_DIALOGS, ROSTER_SEARCH_DEFAULTS, rosterSearchSchema } from './routing'
 export { enrollmentFormSchema, type EnrollmentFormValues } from './schemas/enrollment-form.schema'
@@ -29,4 +31,5 @@ export {
   toRosterFormValues,
   toRosterInput,
 } from './utils/roster-mappers'
-export { formatMinutes, isOvernight, shiftMinutes } from './utils/shift-time'
+export { formatMinutes, isOvernight, shiftMinutes, toHhMm } from './utils/shift-time'
+export { timeSlotSelectOptions } from './utils/time-slot-options'

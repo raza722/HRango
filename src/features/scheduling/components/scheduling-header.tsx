@@ -1,14 +1,5 @@
 import type { ReactNode } from 'react'
-import {
-  Download,
-  Filter,
-  Network,
-  RefreshCw,
-  Search,
-  SquareCheck,
-  Upload,
-  User,
-} from 'lucide-react'
+import { Download, Filter, Network, RefreshCw, Search, SquareCheck, User } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -41,7 +32,9 @@ interface SchedulingHeaderProps {
   onCreate: () => void
   onDelete: () => void
   onExport: () => void
-  onImport: () => void
+  isExporting: boolean
+  /** What the signed-in user may do (`scheduling.schedules.*`); all true in mock mode. */
+  can: { create: boolean; edit: boolean; delete: boolean; export: boolean }
   /** The filters panel, shown under the toolbar when open. */
   filters: ReactNode
 }
@@ -49,7 +42,8 @@ interface SchedulingHeaderProps {
 /**
  * The Scheduling header card as drawn: title, My / All / Subordinates, search,
  * the "Active Status" box, the All-tab actions (Apply Default Shift, Create,
- * Delete, Export, Import), the legend, multiselect, filter and refresh.
+ * Delete, Export), the legend, multiselect, filter and refresh. Buttons the user's
+ * permissions do not allow are left out. (Import is not in the API's first build.)
  */
 export function SchedulingHeader({
   scope,
@@ -71,10 +65,12 @@ export function SchedulingHeader({
   onCreate,
   onDelete,
   onExport,
-  onImport,
+  isExporting,
+  can,
   filters,
 }: SchedulingHeaderProps) {
   const manage = scope !== 'my'
+  const canMultiselect = can.edit || can.delete
 
   return (
     <header className="@container grid gap-4 rounded-md bg-card px-4 py-5 font-inter shadow-xs sm:px-6">
@@ -145,30 +141,36 @@ export function SchedulingHeader({
         </div>
       </div>
 
-      {manage && (
+      {manage && (can.create || can.delete || can.export) && (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
-            <Button onClick={onApplyDefault} className={schedulingType.button}>
-              Apply Default Shift
-            </Button>
-            <Button variant="success" onClick={onCreate} className={schedulingType.button}>
-              Create
-            </Button>
-            <Button variant="destructive" onClick={onDelete} className={schedulingType.button}>
-              Delete
-            </Button>
+            {can.create && (
+              <>
+                <Button onClick={onApplyDefault} className={schedulingType.button}>
+                  Apply Default Shift
+                </Button>
+                <Button variant="success" onClick={onCreate} className={schedulingType.button}>
+                  Create
+                </Button>
+              </>
+            )}
+            {can.delete && (
+              <Button variant="destructive" onClick={onDelete} className={schedulingType.button}>
+                Delete
+              </Button>
+            )}
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={onExport}
-              className={cn('bg-blue-600 text-white hover:bg-blue-600/90', schedulingType.button)}
-            >
-              <Download /> Export
-            </Button>
-            <Button variant="success" onClick={onImport} className={schedulingType.button}>
-              <Upload /> Import
-            </Button>
-          </div>
+          {can.export && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={onExport}
+                disabled={isExporting}
+                className={cn('bg-blue-600 text-white hover:bg-blue-600/90', schedulingType.button)}
+              >
+                <Download /> Export
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -185,16 +187,18 @@ export function SchedulingHeader({
           ))}
         </ul>
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            aria-pressed={multiselect}
-            onClick={onToggleMultiselect}
-            className={cn(
-              schedulingType.button,
-              multiselect && 'ring-2 ring-primary/40 ring-offset-2 ring-offset-card',
-            )}
-          >
-            Enable/Disable Multiselect
-          </Button>
+          {canMultiselect && (
+            <Button
+              aria-pressed={multiselect}
+              onClick={onToggleMultiselect}
+              className={cn(
+                schedulingType.button,
+                multiselect && 'ring-2 ring-primary/40 ring-offset-2 ring-offset-card',
+              )}
+            >
+              Enable/Disable Multiselect
+            </Button>
+          )}
           <Button
             size="icon"
             aria-label={filtersOpen ? 'Hide filters' : 'Show filters'}
@@ -221,29 +225,33 @@ export function SchedulingHeader({
         </div>
       </div>
 
-      {multiselect && (
+      {multiselect && canMultiselect && (
         <div className="flex flex-wrap items-center justify-end gap-2">
           <p aria-live="polite" className="mr-auto text-sm text-muted-foreground @md:mr-2">
             {selectedCount === 0
               ? 'Click shifts on the board to select them.'
               : `${selectedCount} selected`}
           </p>
-          <Button
-            variant="success"
-            disabled={selectedCount === 0}
-            onClick={onMultiEdit}
-            className={cn('min-w-24', schedulingType.button)}
-          >
-            Multi Edit
-          </Button>
-          <Button
-            variant="destructive"
-            disabled={selectedCount === 0}
-            onClick={onMultiDelete}
-            className={cn('min-w-24', schedulingType.button)}
-          >
-            Multi Delete
-          </Button>
+          {can.edit && (
+            <Button
+              variant="success"
+              disabled={selectedCount === 0}
+              onClick={onMultiEdit}
+              className={cn('min-w-24', schedulingType.button)}
+            >
+              Multi Edit
+            </Button>
+          )}
+          {can.delete && (
+            <Button
+              variant="destructive"
+              disabled={selectedCount === 0}
+              onClick={onMultiDelete}
+              className={cn('min-w-24', schedulingType.button)}
+            >
+              Multi Delete
+            </Button>
+          )}
         </div>
       )}
 

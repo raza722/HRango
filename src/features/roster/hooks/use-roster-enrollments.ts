@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import {
@@ -13,19 +13,34 @@ import type {
   RosterEnrollmentRow,
 } from '../types/roster.types'
 
-/** One page of a group's enrollments (Active or Discontinued tab). */
+/** One page of a group's enrolments (Active or Discontinued tab). */
 export function useRosterEnrollments(groupId: string, params: EnrollmentListParams) {
   return useQuery(enrollmentsQueryOptions(groupId, params))
 }
 
-/** People who could be enrolled, with the roster each is on now. */
-export function useEnrollmentCandidates(groupId: string, search: string) {
-  return useQuery(candidatesQueryOptions(groupId, search))
+/**
+ * People the signed-in user may enrol, searched on the server by name or code (the caller
+ * debounces `search`), a page at a time: `rows` holds every page read, `loadMore` the next.
+ */
+export function useEnrollmentCandidates(search: string) {
+  const query = useInfiniteQuery(candidatesQueryOptions(search))
+  return {
+    rows: query.data?.pages.flatMap((page) => page.data) ?? [],
+    total: query.data?.pages[0]?.meta.total ?? 0,
+    hasMore: query.hasNextPage,
+    loadMore: () => {
+      void query.fetchNextPage()
+    },
+    isPending: query.isPending,
+    isFetching: query.isFetching,
+    isFetchingMore: query.isFetchingNextPage,
+    isError: query.isError,
+  }
 }
 
 /**
- * Enrollment changes alter every group's "Employee Enrolled" count and the
- * candidates' current roster, so they refresh all roster queries.
+ * Enrolment changes alter every group's "Employee Enrolled" count, so they refresh all
+ * roster queries.
  */
 function useInvalidateRoster() {
   const queryClient = useQueryClient()
@@ -41,7 +56,7 @@ export function useEnrollEmployees(groupId: string) {
   return useMutation({
     mutationKey: enrollMutationKey(groupId),
     mutationFn: (input: EnrollmentInput) => rosterApi.enroll(groupId, input),
-    // The form shows "already on a roster" next to the employee list.
+    // The form shows "already on a roster" (409 ENROLMENT_OVERLAP) next to the employees.
     meta: { suppressErrorToast: true },
     onSuccess: async (created) => {
       toast.success(
@@ -57,9 +72,20 @@ export function useEnrollEmployees(groupId: string) {
 export function useDiscontinueEnrollment() {
   const invalidate = useInvalidateRoster()
   return useMutation({
-    mutationFn: (enrollment: RosterEnrollmentRow) => rosterApi.discontinue(enrollment.id),
+    mutationFn: (enrollment: RosterEnrollmentRow) => rosterApi.discontinue(enrollment),
     onSuccess: async (enrollment) => {
       toast.success(`${enrollment.employeeName} moved to Discontinued`)
+      await invalidate()
+    },
+  })
+}
+
+export function useDeleteEnrollment() {
+  const invalidate = useInvalidateRoster()
+  return useMutation({
+    mutationFn: (enrollment: RosterEnrollmentRow) => rosterApi.removeEnrollment(enrollment),
+    onSuccess: async (_data, enrollment) => {
+      toast.success(`${enrollment.employeeName} removed from this roster`)
       await invalidate()
     },
   })

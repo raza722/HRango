@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import { type FieldPath, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
 import { ApiError } from '@/lib/api-error'
@@ -8,7 +8,7 @@ import {
   rosterGroupFormSchema,
   type RosterGroupFormValues,
 } from '../schemas/roster-group-form.schema'
-import type { RosterGroup } from '../types/roster.types'
+import type { RosterGroupDetail } from '../types/roster.types'
 import {
   createDefaultRosterValues,
   toRosterFormValues,
@@ -18,14 +18,22 @@ import { useSaveRosterGroup } from './use-roster-groups'
 
 interface UseRosterGroupFormOptions {
   /** The group being edited; `undefined` when adding. */
-  group: RosterGroup | undefined
-  onSaved: (group: RosterGroup) => void
+  group: RosterGroupDetail | undefined
+  onSaved: (group: RosterGroupDetail) => void
 }
 
+/** Server field names that map onto a form field of the same name. */
+const SERVER_FIELDS = [
+  'title',
+  'fromDate',
+  'toDate',
+  'description',
+] as const satisfies readonly FieldPath<RosterGroupFormValues>[]
+
 /**
- * "Add Roster Group" / edit form: Zod validation, loading the group, keeping
- * every working day on the default times while "Apply For All" is ticked,
- * and saving (a duplicate title comes back from the API onto the field).
+ * "Add Roster Group" / edit form: Zod validation, loading the group, keeping every working
+ * day on the default time slot while "Apply For All" is ticked, and saving (a duplicate
+ * title or a bad period comes back from the API onto the field).
  */
 export function useRosterGroupForm({ group, onSaved }: UseRosterGroupFormOptions) {
   const saveMutation = useSaveRosterGroup()
@@ -40,35 +48,38 @@ export function useRosterGroupForm({ group, onSaved }: UseRosterGroupFormOptions
   })
   const { control, getValues, setValue, setError } = form
 
-  const [applyToAll, clockIn, clockOut, days] = useWatch({
+  const [applyToAll, defaultTimeSlotId, days] = useWatch({
     control,
-    name: ['applyToAll', 'clockIn', 'clockOut', 'days'],
+    name: ['applyToAll', 'defaultTimeSlotId', 'days'],
   })
-  // Re-run when a day is switched between working day and weekend.
-  const weekendPattern = days.map((day) => (day.isWeekend ? 'W' : 'D')).join('')
+  // Re-run when a day is switched between working day and day off.
+  const dayOffPattern = days.map((day) => (day.isDayOff ? 'O' : 'W')).join('')
 
   useEffect(() => {
     if (!applyToAll) return
     getValues('days').forEach((day, index) => {
-      if (day.isWeekend) return
-      if (day.clockIn !== clockIn) setValue(`days.${index}.clockIn`, clockIn, { shouldDirty: true })
-      if (day.clockOut !== clockOut) {
-        setValue(`days.${index}.clockOut`, clockOut, { shouldDirty: true })
-      }
+      if (day.isDayOff || day.timeSlotId === defaultTimeSlotId) return
+      setValue(`days.${index}.timeSlotId`, defaultTimeSlotId, { shouldDirty: true })
     })
-  }, [applyToAll, clockIn, clockOut, weekendPattern, getValues, setValue])
+  }, [applyToAll, defaultTimeSlotId, dayOffPattern, getValues, setValue])
 
   const submit = form.handleSubmit(async (formValues) => {
-    let saved: RosterGroup
+    let saved: RosterGroupDetail
     try {
-      saved = await saveMutation.mutateAsync({ id: group?.id, input: toRosterInput(formValues) })
+      saved = await saveMutation.mutateAsync({
+        id: group?.id,
+        input: toRosterInput(formValues, group?.rowVersion),
+      })
     } catch (error) {
-      if (error instanceof ApiError && error.fieldErrors.title) {
-        setError(
-          'title',
-          { type: 'server', message: error.fieldErrors.title },
-          { shouldFocus: true },
-        )
+      if (error instanceof ApiError) {
+        const field = SERVER_FIELDS.find((name) => error.fieldErrors[name])
+        if (field) {
+          setError(
+            field,
+            { type: 'server', message: error.fieldErrors[field] },
+            { shouldFocus: true },
+          )
+        }
       }
       return
     }
@@ -76,5 +87,5 @@ export function useRosterGroupForm({ group, onSaved }: UseRosterGroupFormOptions
     onSaved(saved)
   })
 
-  return { form, submit, isSaving: saveMutation.isPending, applyToAll, clockIn, clockOut }
+  return { form, submit, isSaving: saveMutation.isPending, applyToAll }
 }

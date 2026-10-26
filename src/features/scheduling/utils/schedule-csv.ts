@@ -1,6 +1,15 @@
-import type { BoardRow, ImportRow } from '../types/scheduling.types'
+import type { BoardRow } from '../types/scheduling.types'
 import { isDay } from './schedule-dates'
-import { formatHours, plannedMinutes } from './shift-hours'
+import { clockOf, formatHours } from './shift-hours'
+
+/** One row of an import file (Import is not in the API's first build; kept for later). */
+export interface ImportRow {
+  employeeCode: string
+  date: string
+  clockIn: string | null
+  clockOut: string | null
+  restDay: boolean
+}
 
 const HEADER = [
   'Employee Code',
@@ -9,7 +18,7 @@ const HEADER = [
   'Type',
   'Clock In',
   'Clock Out',
-  'Time Roster',
+  'Time Slot',
   'Planned',
 ]
 
@@ -17,51 +26,37 @@ function cell(value: string): string {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
 }
 
-/** The board as CSV: one line per scheduled day. */
-export function scheduleToCsv(
-  rows: readonly BoardRow[],
-  titleOf: (id: string | null) => string | null,
-): string {
+/**
+ * A board page as CSV, one line per shift or rest day. The Export button uses the API's
+ * own CSV (`GET /scheduling/schedules/export`); this is for pages already loaded.
+ */
+export function scheduleToCsv(rows: readonly BoardRow[]): string {
   const lines = [HEADER.join(',')]
   for (const row of rows) {
-    for (const entry of row.entries) {
+    const shiftLines = row.shifts.map((shift) => ({
+      date: shift.workDate,
+      values: [
+        'Shift',
+        clockOf(shift.startAt) ?? '',
+        clockOf(shift.endAt) ?? '',
+        shift.timeSlotName,
+        formatHours(shift.plannedMinutes),
+      ],
+    }))
+    const restLines = row.restDays.map((rest) => ({
+      date: rest.restDate,
+      values: ['Rest Day', '', '', '', formatHours(0)],
+    }))
+    for (const line of [...shiftLines, ...restLines].sort((a, b) => a.date.localeCompare(b.date))) {
       lines.push(
-        [
-          row.employee.code,
-          row.employee.name,
-          entry.date,
-          entry.kind === 'shift' ? 'Shift' : 'Rest Day',
-          entry.clockIn ?? '',
-          entry.clockOut ?? '',
-          titleOf(entry.rosterGroupId) ?? entry.slot.name,
-          formatHours(plannedMinutes(entry)),
-        ]
-          .map(cell)
-          .join(','),
+        [row.employee.code, row.employee.name, line.date, ...line.values].map(cell).join(','),
       )
     }
   }
   return lines.join('\n')
 }
 
-/** Saves the CSV through the browser's download. */
-export function downloadScheduleCsv(
-  rows: readonly BoardRow[],
-  fileName: string,
-  titleOf: (id: string | null) => string | null,
-): void {
-  const blob = new Blob([scheduleToCsv(rows, titleOf)], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
-}
-
-/** A downloadable example for Import. */
+/** A downloadable example for a future Import. */
 export const IMPORT_TEMPLATE = [
   'Employee Code,Date,Clock In,Clock Out,Rest Day',
   'Id-001,2026-11-02,09:00,17:00,no',

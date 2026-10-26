@@ -1,24 +1,39 @@
-import { useForm } from 'react-hook-form'
+import { useState } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { format } from 'date-fns'
 import { Loader2 } from 'lucide-react'
 
 import { dialogButtonClass } from '@/components/feedback/app-dialog'
-import { CheckboxField, FieldLayoutContext } from '@/components/form'
+import { ErrorState } from '@/components/feedback/error-state'
+import {
+  CheckboxField,
+  DatePickerField,
+  FieldLayoutContext,
+  TimePickerField,
+} from '@/components/form'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
-import { useUpdateEntry } from '../../hooks/use-scheduling'
-import type { EntryPatch, ScheduleEntry } from '../../types/scheduling.types'
+import { useSchedule, useTimeSlotOptions, useUpdateSchedule } from '../../hooks/use-scheduling'
+import type { ScheduleDetail, ScheduleInput } from '../../types/scheduling.types'
 import { toDate } from '../../utils/schedule-dates'
+import { clockOf, hhmm } from '../../utils/shift-hours'
 import { GeoFenceSelect } from '../fields/geo-fence-select'
-import { RosterSelectField } from '../fields/roster-select-field'
+import { TimeSlotSelectField } from '../fields/time-slot-select-field'
 import { schedulingType } from '../type-styles'
 import { SchedulingDialog } from './scheduling-dialog'
 
 interface EditValues {
-  rosterGroupId: string
-  geoFenceIds: string[]
-  restDay: boolean
+  workDate: string
+  timeSlotId: string
+  /** Other times than the slot's on this day. */
+  customTimes: boolean
+  startTime: string
+  endTime: string
+  geoFenceId: string
+  isWfh: boolean
 }
 
 /** A read-only date box, as the first row of Edit / View Scheduling. */
@@ -38,39 +53,72 @@ export function DateRow({ date }: { date: string }) {
   )
 }
 
-/** Edit Scheduling (one day): Time Roster, Apply Geo Fence and Rest Days. */
-export function EditEntryDialog({ entry, onClose }: { entry: ScheduleEntry; onClose: () => void }) {
-  const update = useUpdateEntry()
-  const form = useForm<EditValues>({
-    defaultValues: {
-      rosterGroupId: entry.rosterGroupId ?? '',
-      geoFenceIds: entry.geoFenceIds,
-      restDay: entry.kind === 'rest',
-    },
-  })
-  const { dirtyFields } = form.formState
+const SERVER_FIELDS = ['workDate', 'timeSlotId', 'startTime', 'endTime', 'geoFenceId'] as const
+
+function EditForm({ shift, onClose }: { shift: ScheduleDetail; onClose: () => void }) {
+  const update = useUpdateSchedule()
+  const slots = useTimeSlotOptions()
+  const slot = (slots.data ?? []).find((item) => item.id === shift.timeSlotId)
+  const start = clockOf(shift.startAt) ?? ''
+  const end = clockOf(shift.endAt) ?? ''
+  const [initial] = useState((): EditValues => ({
+    workDate: shift.workDate,
+    timeSlotId: shift.timeSlotId,
+    // Unknown slot times (options not loaded): keep the shift's own times to be safe.
+    customTimes: slot === undefined || hhmm(slot.startTime) !== start || hhmm(slot.endTime) !== end,
+    startTime: start,
+    endTime: end,
+    geoFenceId: shift.geoFenceId ?? '',
+    isWfh: shift.isWfh,
+  }))
+  const form = useForm<EditValues>({ defaultValues: initial })
+  const customTimes = useWatch({ control: form.control, name: 'customTimes' })
 
   const submit = form.handleSubmit(async (values) => {
-    const patch: EntryPatch = {}
-    if (dirtyFields.rosterGroupId && values.rosterGroupId)
-      patch.rosterGroupId = values.rosterGroupId
-    if (dirtyFields.geoFenceIds) patch.geoFenceIds = values.geoFenceIds
-    if (dirtyFields.restDay) patch.restDay = values.restDay
-    if (Object.keys(patch).length === 0) {
-      onClose()
+    if (values.customTimes && (!values.startTime || !values.endTime)) {
+      form.setError('endTime', { message: 'Enter both times, or untick "Other times"' })
       return
     }
+    const slotChanged = values.timeSlotId !== shift.timeSlotId
+    const input: ScheduleInput = {
+      workDate: values.workDate,
+      timeSlotId: values.timeSlotId,
+      startTime: values.customTimes ? values.startTime : null,
+      endTime: values.customTimes ? values.endTime : null,
+      geoFenceId: values.geoFenceId || null,
+      isWfh: values.isWfh,
+      // A new slot brings its own breaks; otherwise the shift keeps the ones it has.
+      ...(slotChanged
+        ? {}
+        : {
+            breaks: shift.breaks.map((item) => ({
+              breakTypeId: item.breakTypeId,
+              startTime: clockOf(item.startAt) ?? '00:00',
+              endTime: clockOf(item.endAt) ?? '00:00',
+              isInclusive: item.isInclusive,
+            })),
+          }),
+      rowVersion: shift.rowVersion,
+    }
     try {
-      await update.mutateAsync({ id: entry.id, patch })
-    } catch {
+      await update.mutateAsync({ id: shift.id, input })
+    } catch (error) {
+      if (error instanceof ApiError) {
+        const field = SERVER_FIELDS.find((name) => error.fieldErrors[name])
+        form.setError(field ?? 'root', {
+          message: (field && error.fieldErrors[field]) ?? error.message,
+        })
+      }
       return
     }
     onClose()
   })
+  const rootError = form.formState.errors.root?.message
 
   return (
     <SchedulingDialog
       title="Edit Scheduling"
+      description={`${shift.employeeName} (${shift.employeeCode})`}
       onRequestClose={onClose}
       className="max-w-3xl"
       footer={
@@ -95,13 +143,64 @@ export function EditEntryDialog({ entry, onClose }: { entry: ScheduleEntry; onCl
       <form id="edit-entry-form" noValidate onSubmit={submit} aria-label="Edit Scheduling">
         <FieldLayoutContext value="horizontal">
           <div className="grid gap-5">
-            <DateRow date={entry.date} />
-            <RosterSelectField control={form.control} name="rosterGroupId" />
-            <GeoFenceSelect control={form.control} name="geoFenceIds" />
-            <CheckboxField control={form.control} name="restDay" label="Rest Days" />
+            <DatePickerField control={form.control} name="workDate" label="Date" required />
+            <TimeSlotSelectField control={form.control} name="timeSlotId" required />
+            <CheckboxField
+              control={form.control}
+              name="customTimes"
+              label="Other times than the slot's"
+            />
+            {customTimes && (
+              <div className="grid gap-5 @3xl:grid-cols-2 @3xl:gap-x-10">
+                <TimePickerField control={form.control} name="startTime" label="Start Time" />
+                <TimePickerField control={form.control} name="endTime" label="End Time" />
+              </div>
+            )}
+            <GeoFenceSelect control={form.control} name="geoFenceId" />
+            <CheckboxField control={form.control} name="isWfh" label="Work From Home" />
+            {shift.breaks.length > 0 && (
+              <p className="text-sm text-muted-foreground">
+                Breaks:{' '}
+                {shift.breaks
+                  .map(
+                    (item) =>
+                      `${item.breakTypeName} ${clockOf(item.startAt) ?? ''}–${clockOf(item.endAt) ?? ''}`,
+                  )
+                  .join(', ')}
+                . They stay unless the time slot changes.
+              </p>
+            )}
+            {rootError && (
+              <p role="alert" className="text-sm text-destructive">
+                {rootError}
+              </p>
+            )}
           </div>
         </FieldLayoutContext>
       </form>
     </SchedulingDialog>
   )
+}
+
+/** Edit Scheduling (one shift): date, time slot, other times, geo fence, work from home. */
+export function EditEntryDialog({ shiftId, onClose }: { shiftId: string; onClose: () => void }) {
+  const query = useSchedule(shiftId)
+  if (!query.data) {
+    return (
+      <SchedulingDialog title="Edit Scheduling" onRequestClose={onClose} className="max-w-3xl">
+        {query.error ? (
+          <ErrorState
+            message={query.error.message}
+            onRetry={() => {
+              void query.refetch()
+            }}
+            className="shadow-none"
+          />
+        ) : (
+          <Skeleton className="h-64 w-full" />
+        )}
+      </SchedulingDialog>
+    )
+  }
+  return <EditForm key={query.data.rowVersion} shift={query.data} onClose={onClose} />
 }

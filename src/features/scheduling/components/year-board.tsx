@@ -4,14 +4,14 @@ import { EmployeeAvatar } from '@/components/layout'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
-import type { BoardRow } from '../types/scheduling.types'
+import type { YearRow } from '../types/scheduling.types'
 import { toDate } from '../utils/schedule-dates'
-import { formatHours, plannedMinutes } from '../utils/shift-hours'
+import { formatHours } from '../utils/shift-hours'
 import { PeriodNav } from './schedule-board'
 import { schedulingType } from './type-styles'
 
 interface YearBoardProps {
-  rows: readonly BoardRow[]
+  rows: readonly YearRow[]
   year: number
   currentMonth: number | null
   rangeLabel: string
@@ -24,7 +24,10 @@ interface YearBoardProps {
 
 const MONTHS = Array.from({ length: 12 }, (_, index) => index)
 
-/** Year view: planned hours and shifts per month; a month opens its day view. */
+/**
+ * Year view (`GET /scheduling/schedules/year`): planned hours, shifts and rest days per
+ * month; a month opens its day view.
+ */
 export function YearBoard({
   rows,
   year,
@@ -88,12 +91,13 @@ export function YearBoard({
                 </tr>
               ))
             : rows.map((row) => {
+                const byMonth = new Map(row.months.map((item) => [item.month, item]))
                 const totals = MONTHS.map((month) => {
-                  const prefix = `${year}-${String(month + 1).padStart(2, '0')}`
-                  const entries = row.entries.filter((entry) => entry.date.startsWith(prefix))
+                  const item = byMonth.get(month + 1)
                   return {
-                    minutes: entries.reduce((sum, entry) => sum + plannedMinutes(entry), 0),
-                    shifts: entries.filter((entry) => entry.kind === 'shift').length,
+                    minutes: item?.plannedMinutes ?? 0,
+                    shifts: item?.shiftCount ?? 0,
+                    restDays: item?.restDays ?? 0,
                   }
                 })
                 return (
@@ -109,7 +113,7 @@ export function YearBoard({
                             {row.employee.name}
                           </span>
                           <span className="block text-xs text-[#475467] tabular-nums dark:text-muted-foreground">
-                            {formatHours(row.plannedMinutes)} planned
+                            {formatHours(row.employee.plannedMinutes)} planned
                           </span>
                         </span>
                       </span>
@@ -128,6 +132,11 @@ export function YearBoard({
                         <span className="block text-xs text-muted-foreground">
                           {total.shifts} shift{total.shifts === 1 ? '' : 's'}
                         </span>
+                        {total.restDays > 0 && (
+                          <span className="block text-xs text-muted-foreground">
+                            {total.restDays} rest day{total.restDays === 1 ? '' : 's'}
+                          </span>
+                        )}
                       </td>
                     ))}
                   </tr>
