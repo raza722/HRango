@@ -1,35 +1,39 @@
-import { useFormContext } from 'react-hook-form'
+import { useFormContext, useWatch } from 'react-hook-form'
 import { Loader2, Plus } from 'lucide-react'
 
-import { SelectField, TextField } from '@/components/form'
+import { SelectField, SwitchField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 
-import { CLOCK_EVENT_OPTIONS, POLICY_NAME_OPTIONS, TIME_SPAN_OPTIONS } from '../constants'
+import { POLICY_NAME_OPTIONS, TIME_SPAN_OPTIONS, WEEKDAY_SELECT_OPTIONS } from '../constants'
 import type { PolicyFormValues } from '../schemas/policy-form.schema'
-import { TIME_SPANS, type TimeSpan } from '../types/warning-policy.types'
+import { type AppliesTo, POLICY_NAMES } from '../types/warning-policy.types'
 
 interface PolicyFormCardProps {
-  /** Starts a new, empty policy. */
-  onAddPolicy: () => void
-  onTimeSpanChange: (timeSpan: TimeSpan) => void
+  /** Starts a new, empty policy; omitted when the user may not create one. */
+  onAddPolicy?: (() => void) | undefined
+  onAppliesToChange: (appliesTo: AppliesTo) => void
   /** Title of the policy being edited, if any. */
   editingTitle?: string | undefined
   isLoadingPolicy?: boolean
 }
 
-function isTimeSpan(value: string): value is TimeSpan {
-  return TIME_SPANS.some((span) => span === value)
+function isAppliesTo(value: string): value is AppliesTo {
+  return POLICY_NAMES.some((name) => name === value)
 }
 
-/** First card: Policy Name, Title of Warning Policy, Time Span, Clock In. */
+/**
+ * First card: Policy Name (what it watches), Title, Time Span (the period), Total Grace Minutes,
+ * the week's start and end day for weekly policies, and Active.
+ */
 export function PolicyFormCard({
   onAddPolicy,
-  onTimeSpanChange,
+  onAppliesToChange,
   editingTitle,
   isLoadingPolicy = false,
 }: PolicyFormCardProps) {
   const { control } = useFormContext<PolicyFormValues>()
+  const period = useWatch({ control, name: 'period' })
 
   return (
     <Card aria-label="Policy details">
@@ -46,9 +50,11 @@ export function PolicyFormCard({
               </>
             ) : null}
           </p>
-          <Button variant="outline" onClick={onAddPolicy} className="ml-auto">
-            <Plus /> Add Policy
-          </Button>
+          {onAddPolicy && (
+            <Button variant="outline" onClick={onAddPolicy} className="ml-auto">
+              <Plus /> Add Policy
+            </Button>
+          )}
         </div>
 
         <fieldset
@@ -58,9 +64,12 @@ export function PolicyFormCard({
           <legend className="sr-only">Policy</legend>
           <SelectField
             control={control}
-            name="policyName"
+            name="appliesTo"
             label="Policy Name"
             options={POLICY_NAME_OPTIONS}
+            onValueChange={(value) => {
+              if (isAppliesTo(value)) onAppliesToChange(value)
+            }}
           />
           <TextField
             control={control}
@@ -68,22 +77,47 @@ export function PolicyFormCard({
             label="Title of Warning Policy"
             placeholder="e.g. Late arrival warning"
             autoComplete="off"
-            maxLength={60}
+            maxLength={200}
           />
           <SelectField
             control={control}
-            name="timeSpan"
+            name="period"
             label="Time Span"
             options={TIME_SPAN_OPTIONS}
-            onValueChange={(value) => {
-              if (isTimeSpan(value)) onTimeSpanChange(value)
-            }}
           />
-          <SelectField
+          <TextField
             control={control}
-            name="clockEvent"
-            label="Clock In"
-            options={CLOCK_EVENT_OPTIONS}
+            name="graceMinutes"
+            label="Total Grace Minutes"
+            description="Minutes allowed in each period before days start to count."
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="None"
+          />
+          {period === 'week' && (
+            <>
+              <SelectField
+                control={control}
+                name="weekStartDay"
+                label="Week Start Day"
+                options={WEEKDAY_SELECT_OPTIONS}
+                placeholder="Select day"
+              />
+              <SelectField
+                control={control}
+                name="weekEndDay"
+                label="Week End Day"
+                options={WEEKDAY_SELECT_OPTIONS}
+                placeholder="Select day"
+                clearable="Any day"
+              />
+            </>
+          )}
+          <SwitchField
+            control={control}
+            name="isActive"
+            label="Status"
+            stateLabel={(checked) => (checked ? 'Active' : 'Inactive')}
           />
         </fieldset>
       </CardContent>

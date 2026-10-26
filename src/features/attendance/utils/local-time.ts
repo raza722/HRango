@@ -45,9 +45,9 @@ export function formatPunchTime(value: LocalDateTime): string {
   return format(parseLocal(value), 'MMMM d, yyyy hh:mm a')
 }
 
-/** `10:00` → "Expected 10 AM", `09:30` → "Expected 9:30 AM". */
+/** `10:00` (or `2026-10-20T10:00`) → "Expected 10 AM", `09:30` → "Expected 9:30 AM". */
 export function formatExpected(time: string): string {
-  const date = parse(time, 'HH:mm', new Date())
+  const date = parse(time.includes('T') ? time.slice(11, 16) : time, 'HH:mm', new Date())
   return `Expected ${format(date, date.getMinutes() === 0 ? 'h a' : 'h:mm a')}`
 }
 

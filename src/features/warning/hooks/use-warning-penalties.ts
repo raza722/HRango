@@ -2,64 +2,92 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { withoutRecord } from '@/lib/paginated-cache'
-import type { PageParams, Paginated } from '@/types/api'
+import { useCan } from '@/lib/permissions'
+import type { Paginated } from '@/types/api'
 
 import { warningHistoryKeys } from '../api/warning-history.api'
 import {
+  leaveTypeOptionsQueryOptions,
+  type PenaltyListParams,
   warningPenaltiesQueryOptions,
   warningPenaltyApi,
   warningPenaltyKeys,
   warningPenaltyQueryOptions,
 } from '../api/warning-penalty.api'
+import { warningPolicyKeys } from '../api/warning-policy.queries'
 import type { WarningPenalty, WarningPenaltyInput } from '../types/warning-penalty.types'
+import type { WarningPolicy } from '../types/warning-policy.types'
+import { penaltyRuleToInput } from '../utils/penalty-mappers'
 
-/**
- * One page of penalty configurations; the previous page stays visible while
- * the next one loads.
- */
-export function useWarningPenalties(params: PageParams) {
+/** One page of penalty rules (each with its policy); the previous page stays while the next loads. */
+export function useWarningPenalties(params: PenaltyListParams) {
   return useQuery(warningPenaltiesQueryOptions(params))
 }
 
-/** A single penalty; pass `undefined` to stay idle (not editing). */
-export function useWarningPenalty(id: string | undefined) {
-  return useQuery({ ...warningPenaltyQueryOptions(id ?? ''), enabled: id !== undefined })
-}
-
-/** Creates a penalty and refreshes the penalty lists and the History log. */
-export function useCreateWarningPenalty() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (input: WarningPenaltyInput) => warningPenaltyApi.create(input),
-    meta: { successMessage: 'Penalty saved' },
-    onSuccess: async (penalty) => {
-      queryClient.setQueryData(warningPenaltyKeys.detail(penalty.id), penalty)
-      void queryClient.invalidateQueries({ queryKey: warningHistoryKeys.all })
-      await queryClient.invalidateQueries({ queryKey: warningPenaltyKeys.lists() })
-    },
+/** The policy whose penalties are edited; pass `undefined` to stay idle. */
+export function useWarningPenalty(policyId: string | undefined) {
+  return useQuery({
+    ...warningPenaltyQueryOptions(policyId ?? ''),
+    enabled: policyId !== undefined && policyId !== '',
   })
 }
 
-/** Updates a penalty and refreshes the penalty lists and the History log. */
+/** Active leave types for "Deduction: Leave / Both" (only fetched with leave-type access). */
+export function useLeaveTypeOptions(enabled = true) {
+  const allowed = useCan('leaves.settings.types.view')
+  return useQuery({ ...leaveTypeOptionsQueryOptions(), enabled: enabled && allowed })
+}
+
+/** After a save: the policy's detail, the penalty lists and the History log are stale. */
+function useOnPenaltiesSaved() {
+  const queryClient = useQueryClient()
+  return async (policy: WarningPolicy) => {
+    queryClient.setQueryData(warningPolicyKeys.detail(policy.id), policy)
+    void queryClient.invalidateQueries({ queryKey: warningHistoryKeys.all })
+    void queryClient.invalidateQueries({ queryKey: warningPolicyKeys.lists() })
+    await queryClient.invalidateQueries({ queryKey: warningPenaltyKeys.lists() })
+  }
+}
+
+interface SaveVariables {
+  policyId: string
+  /** Every penalty rule of the policy, and its rowVersion. */
+  input: WarningPenaltyInput
+}
+
+/** Saves a policy's penalty rules (replacing the ones it had). */
 export function useUpdateWarningPenalty() {
-  const queryClient = useQueryClient()
+  const onSaved = useOnPenaltiesSaved()
   return useMutation({
-    mutationFn: ({ id, input }: { id: string; input: WarningPenaltyInput }) =>
-      warningPenaltyApi.update(id, input),
-    meta: { successMessage: 'Penalty updated' },
-    onSuccess: async (penalty) => {
-      queryClient.setQueryData(warningPenaltyKeys.detail(penalty.id), penalty)
-      void queryClient.invalidateQueries({ queryKey: warningHistoryKeys.all })
-      await queryClient.invalidateQueries({ queryKey: warningPenaltyKeys.lists() })
-    },
+    mutationFn: ({ policyId, input }: SaveVariables) => warningPenaltyApi.save(policyId, input),
+    meta: { successMessage: 'Penalties saved' },
+    onSuccess: onSaved,
   })
 }
 
-/** Deletes a penalty optimistically (removed at once, restored if the API refuses). */
+/** Same as {@link useUpdateWarningPenalty}: penalties are always saved per policy. */
+export const useCreateWarningPenalty = useUpdateWarningPenalty
+
+/**
+ * Removes one penalty rule from the list: reads its policy (rules and rowVersion) and saves the
+ * policy's penalties without it. The row disappears at once and comes back if the API refuses.
+ */
 export function useDeleteWarningPenalty() {
   const queryClient = useQueryClient()
+  const onSaved = useOnPenaltiesSaved()
   return useMutation({
-    mutationFn: (penalty: WarningPenalty) => warningPenaltyApi.remove(penalty.id),
+    mutationFn: async (penalty: WarningPenalty) => {
+      const policy = await queryClient.query({
+        ...warningPenaltyQueryOptions(penalty.warningPolicyId),
+        staleTime: 0,
+      })
+      return warningPenaltyApi.save(policy.id, {
+        penalties: policy.penalties
+          .filter((rule) => rule.id !== penalty.id)
+          .map(penaltyRuleToInput),
+        rowVersion: policy.rowVersion,
+      })
+    },
     meta: { errorMessage: 'Could not delete the penalty. It has been restored.' },
     onMutate: async (penalty) => {
       await queryClient.cancelQueries({ queryKey: warningPenaltyKeys.lists() })
@@ -77,10 +105,9 @@ export function useDeleteWarningPenalty() {
         queryClient.setQueryData(queryKey, page)
       })
     },
-    onSuccess: (_data, penalty) => {
-      queryClient.removeQueries({ queryKey: warningPenaltyKeys.detail(penalty.id) })
-      void queryClient.invalidateQueries({ queryKey: warningHistoryKeys.all })
-      toast.success(`“${penalty.title}” deleted`)
+    onSuccess: async (policy) => {
+      toast.success(`Penalty removed from “${policy.title}”`)
+      await onSaved(policy)
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: warningPenaltyKeys.lists() }),
   })

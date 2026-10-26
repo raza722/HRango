@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { type ReactNode, useId, useState } from 'react'
 import { format, parse } from 'date-fns'
 import { toast } from 'sonner'
 
@@ -15,22 +15,32 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
+import { RELIGIONS } from '../../constants'
 import {
+  useCities,
+  useCountries,
   useDeleteSetting,
+  useEmployeeLookup,
+  useOrgLookup,
   useSaveSetting,
   useSettingsList,
-  useSettingsLookups,
+  useSettingsRecord,
+  useStates,
 } from '../../hooks/use-attendance-settings'
 import {
   type Holiday,
   HOLIDAY_RULE_TYPES,
+  HOLIDAY_TYPES,
   type HolidayRule,
+  type HolidayRuleInput,
   type HolidayRuleType,
-  type SettingsLookups,
+  type HolidayType,
 } from '../../types/settings.types'
 import {
   compactTableClass,
@@ -40,15 +50,19 @@ import {
   settingsDialogButtonClass,
 } from '../../utils/settings-styles'
 import { DateBox } from '../shared/date-box'
-import { MultiSelect } from './multi-select'
+import { EmployeeMultiSelect } from './employee-select'
 import { SettingsListCard } from './settings-list'
+
+const PERMISSION = 'scheduling.settings.holidays'
 
 const RULE_TYPE_LABELS: Record<HolidayRuleType, string> = {
   religion: 'Religion',
-  'geo-location': 'Geo Location',
-  organization: 'Organization Structure',
+  geo_location: 'Geo Location',
+  org_structure: 'Organization Structure',
   employee: 'Employee',
 }
+
+const HOLIDAY_TYPE_LABELS: Record<HolidayType, string> = { public: 'Public', local: 'Local' }
 
 const longDate = (date: string) => format(parse(date, 'yyyy-MM-dd', new Date()), 'MMMM d, yyyy')
 
@@ -60,7 +74,7 @@ function Field({
 }: {
   label: string
   required?: boolean
-  children: React.ReactNode
+  children: ReactNode
   id: string
 }) {
   return (
@@ -107,86 +121,134 @@ function Choice({
   )
 }
 
-/** Who a rule takes in, in words ("Parsi", "Dubai, United Arab Emirates"…). */
-function appliesTo(rule: HolidayRule, lookups: SettingsLookups | undefined): string {
-  if (!lookups) return ''
-  switch (rule.type) {
+/** Who a rule takes in, in words ("Parsi", "Lahore, Punjab, Pakistan"…). */
+function appliesTo(rule: HolidayRule): string {
+  switch (rule.ruleType) {
     case 'religion':
       return rule.religion ?? ''
-    case 'geo-location':
-      return [
-        lookups.cities.find((item) => item.id === rule.cityId)?.name,
-        lookups.regions.find((item) => item.code === rule.regionCode)?.name,
-        lookups.countries.find((item) => item.code === rule.countryCode)?.name,
-      ]
-        .filter(Boolean)
-        .join(', ')
-    case 'organization':
-      return [
-        lookups.locations.find((item) => item.id === rule.locationId)?.name,
-        lookups.branches.find((item) => item.id === rule.branchId)?.name,
-      ]
-        .filter(Boolean)
-        .join(' · ')
+    case 'geo_location':
+      return [rule.cityName, rule.stateName, rule.countryName].filter(Boolean).join(', ')
+    case 'org_structure':
+      return [rule.locationName, rule.branchName].filter(Boolean).join(' · ')
     case 'employee':
-      return lookups.employees
-        .filter((item) => rule.employeeIds.includes(item.id))
-        .map((item) => item.name)
-        .join(', ')
+      return rule.employeeName ?? ''
   }
 }
 
-const emptyRule = (): HolidayRule => ({
-  id: `hr_${Date.now().toString(36)}`,
-  name: '',
-  type: 'religion',
-  religion: null,
-  countryCode: null,
-  regionCode: null,
-  cityId: null,
+let ruleCounter = 0
+const localRuleId = () => {
+  ruleCounter += 1
+  return `new_${ruleCounter}`
+}
+
+const blankRule = (ruleType: HolidayRuleType): HolidayRule => ({
+  id: localRuleId(),
+  ruleType,
+  employeeId: null,
+  employeeName: null,
   locationId: null,
+  locationName: null,
   branchId: null,
-  employeeIds: [],
+  branchName: null,
+  countryId: null,
+  countryName: null,
+  stateId: null,
+  stateName: null,
+  cityId: null,
+  cityName: null,
+  religion: null,
 })
 
-/** "Holiday Rule Create": Name, Type, and the type's fields. */
+const toRuleInput = (rule: HolidayRule): HolidayRuleInput => ({
+  ruleType: rule.ruleType,
+  employeeId: rule.employeeId,
+  locationId: rule.locationId,
+  branchId: rule.branchId,
+  countryId: rule.countryId,
+  stateId: rule.stateId,
+  cityId: rule.cityId,
+  religion: rule.religion,
+})
+
+/**
+ * "Holiday Rule Create": the type and its fields. One rule names one employee, so choosing
+ * several employees adds a rule for each.
+ */
 function HolidayRuleDialog({
   rule,
   onSave,
   onClose,
 }: {
   rule: HolidayRule | null
-  onSave: (rule: HolidayRule) => void
+  onSave: (rules: HolidayRule[]) => void
   onClose: () => void
 }) {
-  const lookups = useSettingsLookups()
-  const ids = { name: useId(), type: useId(), a: useId(), b: useId(), c: useId() }
-  const [draft, setDraft] = useState<HolidayRule>(() => rule ?? emptyRule())
+  const ids = { type: useId(), a: useId(), b: useId(), c: useId() }
+  const [draft, setDraft] = useState<HolidayRule>(() => rule ?? blankRule('religion'))
+  const [employeeIds, setEmployeeIds] = useState<string[]>(
+    rule?.employeeId ? [rule.employeeId] : [],
+  )
   const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<HolidayRule>) => {
     setDraft((current) => ({ ...current, ...patch }))
     setError(null)
   }
-  const data = lookups.data
+  const isGeo = draft.ruleType === 'geo_location'
+  const isOrg = draft.ruleType === 'org_structure'
+  const countries = useCountries(isGeo)
+  const states = useStates(isGeo ? draft.countryId : null)
+  const cities = useCities(isGeo ? draft.stateId : null)
+  const locations = useOrgLookup('locations', isOrg)
+  const branches = useOrgLookup('branches', isOrg)
+  // Names the picked people from any page the employee picker has read.
+  const employees = useEmployeeLookup(`${PERMISSION}.view`, '', draft.ruleType === 'employee')
+  const branchOptions = (branches.data ?? []).filter(
+    (item) => !item.parentId || !draft.locationId || item.parentId === draft.locationId,
+  )
 
   const submit = () => {
-    const missing = !draft.name.trim()
-      ? 'Enter a name'
-      : draft.type === 'religion' && !draft.religion
+    const missing =
+      draft.ruleType === 'religion' && !draft.religion
         ? 'Choose a religion'
-        : draft.type === 'geo-location' &&
-            (!draft.countryCode || !draft.regionCode || !draft.cityId)
+        : isGeo && (!draft.countryId || !draft.stateId || !draft.cityId)
           ? 'Choose the country, state and city'
-          : draft.type === 'organization' && (!draft.locationId || !draft.branchId)
+          : isOrg && (!draft.locationId || !draft.branchId)
             ? 'Choose the location and branch'
-            : draft.type === 'employee' && draft.employeeIds.length === 0
+            : draft.ruleType === 'employee' && employeeIds.length === 0
               ? 'Choose the employees'
               : null
     if (missing) {
       setError(missing)
       return
     }
-    onSave({ ...draft, name: draft.name.trim() })
+    if (draft.ruleType === 'employee') {
+      onSave(
+        employeeIds.map((employeeId, index) => {
+          const found = employees.find(employeeId)
+          return {
+            ...blankRule('employee'),
+            ...(index === 0 && rule ? { id: rule.id } : {}),
+            employeeId,
+            employeeName: found
+              ? found.name
+              : employeeId === rule?.employeeId
+                ? rule.employeeName
+                : null,
+          }
+        }),
+      )
+    } else {
+      onSave([
+        {
+          ...draft,
+          countryName: countries.data?.find((item) => item.id === draft.countryId)?.name ?? null,
+          stateName: states.data?.find((item) => item.id === draft.stateId)?.name ?? null,
+          cityName: cities.data?.find((item) => item.id === draft.cityId)?.name ?? null,
+          locationName: locations.data?.find((item) => item.id === draft.locationId)?.name ?? null,
+          branchName: branches.data?.find((item) => item.id === draft.branchId)?.name ?? null,
+        },
+      ])
+    }
     onClose()
   }
 
@@ -217,21 +279,10 @@ function HolidayRuleDialog({
       }
     >
       <div className="grid gap-4">
-        <Field label="Name" required id={ids.name}>
-          <Input
-            id={ids.name}
-            value={draft.name}
-            placeholder="Enter name"
-            maxLength={80}
-            onChange={(event) => {
-              set({ name: event.target.value })
-            }}
-          />
-        </Field>
         <Field label="Type" required id={ids.type}>
           <Choice
             id={ids.type}
-            value={draft.type}
+            value={draft.ruleType}
             placeholder="Select"
             options={HOLIDAY_RULE_TYPES.map((type) => ({
               value: type,
@@ -239,50 +290,48 @@ function HolidayRuleDialog({
             }))}
             onChange={(value) => {
               const type = HOLIDAY_RULE_TYPES.find((item) => item === value) ?? 'religion'
-              set({ ...emptyRule(), id: draft.id, name: draft.name, type })
+              set({ ...blankRule(type), id: draft.id })
             }}
           />
         </Field>
         <h3 className="text-lg font-medium text-[#202020] dark:text-heading">Fields</h3>
-        {draft.type === 'religion' && (
+        {draft.ruleType === 'religion' && (
           <Field label="Religion" required id={ids.a}>
             <Choice
               id={ids.a}
               value={draft.religion}
               placeholder="Select Religion"
-              options={(data?.religions ?? []).map((value) => ({ value, label: value }))}
+              options={RELIGIONS.map((value) => ({ value, label: value }))}
               onChange={(religion) => {
                 set({ religion })
               }}
             />
           </Field>
         )}
-        {draft.type === 'geo-location' && (
+        {isGeo && (
           <>
             <Field label="Country" required id={ids.a}>
               <Choice
                 id={ids.a}
-                value={draft.countryCode}
+                value={draft.countryId}
                 placeholder="Select Country"
-                options={(data?.countries ?? []).map((item) => ({
-                  value: item.code,
+                options={(countries.data ?? []).map((item) => ({
+                  value: item.id,
                   label: item.name,
                 }))}
-                onChange={(countryCode) => {
-                  set({ countryCode, regionCode: null, cityId: null })
+                onChange={(countryId) => {
+                  set({ countryId, stateId: null, cityId: null })
                 }}
               />
             </Field>
             <Field label="State" required id={ids.b}>
               <Choice
                 id={ids.b}
-                value={draft.regionCode}
+                value={draft.stateId}
                 placeholder="Select State"
-                options={(data?.regions ?? [])
-                  .filter((item) => item.countryCode === draft.countryCode)
-                  .map((item) => ({ value: item.code, label: item.name }))}
-                onChange={(regionCode) => {
-                  set({ regionCode, cityId: null })
+                options={(states.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
+                onChange={(stateId) => {
+                  set({ stateId, cityId: null })
                 }}
               />
             </Field>
@@ -291,9 +340,7 @@ function HolidayRuleDialog({
                 id={ids.c}
                 value={draft.cityId}
                 placeholder="Select City"
-                options={(data?.cities ?? [])
-                  .filter((item) => item.regionCode === draft.regionCode)
-                  .map((item) => ({ value: item.id, label: item.name }))}
+                options={(cities.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
                 onChange={(cityId) => {
                   set({ cityId })
                 }}
@@ -301,19 +348,19 @@ function HolidayRuleDialog({
             </Field>
           </>
         )}
-        {draft.type === 'organization' && (
+        {isOrg && (
           <>
             <Field label="Location" required id={ids.a}>
               <Choice
                 id={ids.a}
                 value={draft.locationId}
                 placeholder="Select Location"
-                options={(data?.locations ?? []).map((item) => ({
+                options={(locations.data ?? []).map((item) => ({
                   value: item.id,
                   label: item.name,
                 }))}
                 onChange={(locationId) => {
-                  set({ locationId })
+                  set({ locationId, branchId: null })
                 }}
               />
             </Field>
@@ -322,10 +369,7 @@ function HolidayRuleDialog({
                 id={ids.b}
                 value={draft.branchId}
                 placeholder="Select Branch"
-                options={(data?.branches ?? []).map((item) => ({
-                  value: item.id,
-                  label: item.name,
-                }))}
+                options={branchOptions.map((item) => ({ value: item.id, label: item.name }))}
                 onChange={(branchId) => {
                   set({ branchId })
                 }}
@@ -333,17 +377,19 @@ function HolidayRuleDialog({
             </Field>
           </>
         )}
-        {draft.type === 'employee' && (
-          <MultiSelect
-            label="Employees"
-            options={(data?.employees ?? []).map((item) => ({
-              value: item.id,
-              label: `${item.name} (${item.code})`,
-            }))}
-            value={draft.employeeIds}
-            onChange={(employeeIds) => {
-              set({ employeeIds })
+        {draft.ruleType === 'employee' && (
+          <EmployeeMultiSelect
+            permission={`${PERMISSION}.view`}
+            value={employeeIds}
+            onChange={(next) => {
+              setEmployeeIds(next)
+              setError(null)
             }}
+            known={
+              rule?.employeeId
+                ? [{ id: rule.employeeId, label: rule.employeeName ?? rule.employeeId }]
+                : []
+            }
           />
         )}
         {error && (
@@ -356,11 +402,12 @@ function HolidayRuleDialog({
   )
 }
 
-/** "Create Holiday": exempt or not, name, dates, description and the rules. */
-function HolidayDialog({ record, onClose }: { record: Holiday | null; onClose: () => void }) {
+/** "Create Holiday": type, exempt or not, name, dates, description and the rules. */
+function HolidayForm({ record, onClose }: { record: Holiday | null; onClose: () => void }) {
   const save = useSaveSetting('holidays')
-  const lookups = useSettingsLookups()
-  const ids = { name: useId(), description: useId() }
+  const canSave = useCan(`${PERMISSION}.${record ? 'edit' : 'create'}`)
+  const ids = { name: useId(), description: useId(), type: useId() }
+  const [holidayType, setHolidayType] = useState<HolidayType>(record?.holidayType ?? 'public')
   const [exempt, setExempt] = useState(record?.attendanceExempt ?? true)
   const [name, setName] = useState(record?.name ?? '')
   const [startDate, setStartDate] = useState(record?.startDate ?? '')
@@ -387,15 +434,21 @@ function HolidayDialog({ record, onClose }: { record: Holiday | null; onClose: (
         id: record?.id,
         input: {
           name: name.trim(),
+          holidayType,
           startDate,
           endDate,
-          description: description.trim(),
+          description: description.trim() || null,
           attendanceExempt: exempt,
-          rules,
+          rules: rules.map(toRuleInput),
+          rowVersion: record?.rowVersion ?? null,
         },
       })
     } catch (failure) {
-      setError(failure instanceof ApiError ? failure.message : 'Could not save.')
+      setError(
+        failure instanceof ApiError
+          ? (Object.values(failure.fieldErrors)[0] ?? failure.message)
+          : 'Could not save.',
+      )
       return
     }
     onClose()
@@ -423,14 +476,16 @@ function HolidayDialog({ record, onClose }: { record: Holiday | null; onClose: (
             >
               Cancel
             </Button>
-            <Button
-              size="lg"
-              disabled={save.isPending}
-              onClick={() => void submit()}
-              className={cn(settingsDialogButtonClass, navyButtonClass)}
-            >
-              {record ? 'Save Changes' : 'Create'}
-            </Button>
+            {canSave && (
+              <Button
+                size="lg"
+                disabled={save.isPending}
+                onClick={() => void submit()}
+                className={cn(settingsDialogButtonClass, navyButtonClass)}
+              >
+                {record ? 'Save Changes' : 'Create'}
+              </Button>
+            )}
           </>
         }
       >
@@ -444,16 +499,30 @@ function HolidayDialog({ record, onClose }: { record: Holiday | null; onClose: (
             />
             Attendance Exempt
           </label>
-          <div className="grid gap-4 @2xl:grid-cols-3">
+          <div className="grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-4">
             <Field label="Name" required id={ids.name}>
               <Input
                 id={ids.name}
                 value={name}
-                maxLength={80}
+                maxLength={200}
                 placeholder="Enter name"
                 onChange={(event) => {
                   setName(event.target.value)
                   setError(null)
+                }}
+              />
+            </Field>
+            <Field label="Type" required id={ids.type}>
+              <Choice
+                id={ids.type}
+                value={holidayType}
+                placeholder="Select"
+                options={HOLIDAY_TYPES.map((type) => ({
+                  value: type,
+                  label: HOLIDAY_TYPE_LABELS[type],
+                }))}
+                onChange={(value) => {
+                  setHolidayType(value === 'local' ? 'local' : 'public')
                 }}
               />
             </Field>
@@ -480,7 +549,7 @@ function HolidayDialog({ record, onClose }: { record: Holiday | null; onClose: (
             <Textarea
               id={ids.description}
               rows={3}
-              maxLength={500}
+              maxLength={2000}
               placeholder="Write here"
               value={description}
               onChange={(event) => {
@@ -515,7 +584,6 @@ function HolidayDialog({ record, onClose }: { record: Holiday | null; onClose: (
                 <table className={cn('w-full', compactTableClass)}>
                   <thead>
                     <tr className="text-left">
-                      <th scope="col">Name</th>
                       <th scope="col">Type</th>
                       <th scope="col">Applies to</th>
                       <th scope="col" className="w-16 text-center">
@@ -526,13 +594,12 @@ function HolidayDialog({ record, onClose }: { record: Holiday | null; onClose: (
                   <tbody>
                     {rules.map((rule) => (
                       <tr key={rule.id} className="border-b">
-                        <td>{rule.name}</td>
-                        <td>{RULE_TYPE_LABELS[rule.type]}</td>
-                        <td>{appliesTo(rule, lookups.data)}</td>
+                        <td>{RULE_TYPE_LABELS[rule.ruleType]}</td>
+                        <td>{appliesTo(rule)}</td>
                         <td className="text-center">
                           <RowActionsMenu
                             itemClassName={rowMenuItemClass.poppins}
-                            label={`Actions for rule ${rule.name}`}
+                            label={`Actions for rule ${RULE_TYPE_LABELS[rule.ruleType]} ${appliesTo(rule)}`}
                             actions={[
                               {
                                 label: 'Edit',
@@ -568,11 +635,14 @@ function HolidayDialog({ record, onClose }: { record: Holiday | null; onClose: (
             setRuleDialog(null)
           }}
           onSave={(next) => {
-            setRules((current) =>
-              current.some((item) => item.id === next.id)
-                ? current.map((item) => (item.id === next.id ? next : item))
-                : [...current, next],
-            )
+            setRules((current) => {
+              const replaced = current.flatMap((item) =>
+                item.id === ruleDialog.rule?.id ? next : [item],
+              )
+              return ruleDialog.rule && current.some((item) => item.id === ruleDialog.rule?.id)
+                ? replaced
+                : [...current, ...next]
+            })
           }}
         />
       )}
@@ -580,8 +650,34 @@ function HolidayDialog({ record, onClose }: { record: Holiday | null; onClose: (
   )
 }
 
+/** Loads the whole holiday (the list leaves its rules out), then shows the form. */
+function HolidayDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const record = useSettingsRecord('holidays', id)
+  if (id === null) return <HolidayForm record={null} onClose={onClose} />
+  if (!record.data) {
+    return (
+      <AppDialog
+        title="Holiday"
+        onRequestClose={onClose}
+        className="max-w-4xl"
+        titleClassName={poppinsDialogTitleClass}
+      >
+        {record.isError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {record.error.message}
+          </p>
+        ) : (
+          <Skeleton className="h-64 w-full" />
+        )}
+      </AppDialog>
+    )
+  }
+  return <HolidayForm record={record.data} onClose={onClose} />
+}
+
 const columns: DataTableColumn<Holiday>[] = [
   { id: 'name', header: 'Name', cell: (row) => row.name, mobile: 'heading' },
+  { id: 'type', header: 'Type', cell: (row) => HOLIDAY_TYPE_LABELS[row.holidayType] },
   { id: 'start', header: 'Start Date', cell: (row) => longDate(row.startDate) },
   { id: 'end', header: 'End Date', cell: (row) => longDate(row.endDate) },
   {
@@ -589,12 +685,15 @@ const columns: DataTableColumn<Holiday>[] = [
     header: 'Description',
     cell: (row) => (
       <span className="line-clamp-1 max-w-72 whitespace-normal">
-        {row.description || '—'}
-        {row.rules.length > 0 && (
+        {row.description ?? '—'}
+        {(row.ruleCount ?? 0) > 0 && (
           <span className="text-muted-foreground">
             {' '}
-            · {row.rules.length} rule{row.rules.length === 1 ? '' : 's'}
+            · {row.ruleCount} rule{row.ruleCount === 1 ? '' : 's'}
           </span>
+        )}
+        {!row.attendanceExempt && (
+          <span className="text-muted-foreground"> · still a working day</span>
         )}
       </span>
     ),
@@ -607,16 +706,19 @@ export function HolidaysTab() {
   const [year, setYear] = useState(thisYear)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
-  const [dialog, setDialog] = useState<{ record: Holiday | null } | null>(null)
+  const [dialog, setDialog] = useState<{ id: string | null } | null>(null)
   const [deleting, setDeleting] = useState<Holiday | null>(null)
   const yearId = useId()
   const list = useSettingsList('holidays', {
     page,
     pageSize: 10,
     year,
-    ...(search ? { search } : {}),
+    ...(search ? { q: search } : {}),
   })
   const remove = useDeleteSetting('holidays')
+  const canCreate = useCan(`${PERMISSION}.create`)
+  const canEdit = useCan(`${PERMISSION}.edit`)
+  const canDelete = useCan(`${PERMISSION}.delete`)
 
   return (
     <>
@@ -662,9 +764,13 @@ export function HolidaysTab() {
           </div>
         }
         onPageChange={setPage}
-        onCreate={() => {
-          setDialog({ record: null })
-        }}
+        {...(canCreate
+          ? {
+              onCreate: () => {
+                setDialog({ id: null })
+              },
+            }
+          : {})}
         emptyText={`No holidays in ${year}.`}
         rowActions={(row) => (
           <RowActionsMenu
@@ -672,25 +778,29 @@ export function HolidaysTab() {
             label={`Actions for ${row.name}`}
             actions={[
               {
-                label: 'View / Edit',
+                label: canEdit ? 'View / Edit' : 'View',
                 onSelect: () => {
-                  setDialog({ record: row })
+                  setDialog({ id: row.id })
                 },
               },
-              {
-                label: 'Delete',
-                variant: 'destructive',
-                onSelect: () => {
-                  setDeleting(row)
-                },
-              },
+              ...(canDelete
+                ? [
+                    {
+                      label: 'Delete',
+                      variant: 'destructive' as const,
+                      onSelect: () => {
+                        setDeleting(row)
+                      },
+                    },
+                  ]
+                : []),
             ]}
           />
         )}
       />
       {dialog && (
         <HolidayDialog
-          record={dialog.record}
+          id={dialog.id}
           onClose={() => {
             setDialog(null)
           }}
@@ -708,11 +818,16 @@ export function HolidaysTab() {
         variant="destructive"
         onConfirm={() => {
           if (deleting) {
-            remove.mutate(deleting.id, {
-              onError: () => {
-                toast.error('Could not delete the holiday.')
+            remove.mutate(
+              { id: deleting.id, rowVersion: deleting.rowVersion },
+              {
+                onError: (error) => {
+                  toast.error(
+                    error instanceof ApiError ? error.message : 'Could not delete the holiday.',
+                  )
+                },
               },
-            })
+            )
           }
         }}
       />

@@ -2,31 +2,22 @@ import { OFF_STATUSES } from '../constants'
 import type { TimeSheetAction, TimeSheetDay, TimeSheetScope } from '../types/attendance.types'
 
 /**
- * Row actions a day offers, in the order of the design's icon key. "My" only
- * views its own days; "All" can also edit a worked day, add a missing punch,
- * relax a late arrival or early leave, record an absence and approve overtime.
+ * Row actions a day offers. "My" only views its own days; Subordinates and All can also edit a
+ * scheduled day that has started and payroll has not frozen (when `canEdit`). Missing Punch,
+ * Relaxation, Absent and Overtime are requests in the API (requests module), not time-sheet
+ * edits, so the time sheet no longer offers them.
  */
 export function rowActions(
   day: TimeSheetDay,
   scope: TimeSheetScope,
   today: string,
+  canEdit = true,
 ): TimeSheetAction[] {
   if (scope === 'my') return ['view']
-  const scheduled = day.status !== null && !OFF_STATUSES.has(day.status)
-  const started = day.date <= today
+  const scheduled = !OFF_STATUSES.has(day.dayStatus)
+  const started = day.workDate <= today
   const actions: TimeSheetAction[] = []
-  if (scheduled && started) actions.push('edit')
-  if (day.clockInStatus === 'missing-punch' || day.clockOutStatus === 'missing-punch') {
-    actions.push('missing-punch')
-  }
-  if (
-    !day.relaxed &&
-    (day.clockInStatus === 'late-arrival' || day.clockOutStatus === 'early-left')
-  ) {
-    actions.push('relaxation')
-  }
+  if (canEdit && scheduled && started && !day.isFrozen) actions.push('edit')
   actions.push('view')
-  if (day.status === 'absent' && started) actions.push('absent')
-  if (day.overtimeMinutes > 0 && day.approvedOvertimeMinutes === null) actions.push('overtime')
   return actions
 }

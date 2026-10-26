@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
 
+import { can } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { SETTINGS_TABS, type SettingsTab } from '../../routing'
 import { AttendanceSubLayout } from '../layout/attendance-sub-layout'
@@ -24,14 +26,32 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   holidays: 'Holidays',
 }
 
+/** The view permission of each tab; Scheduling has none in the API (it has no endpoint yet). */
+const TAB_PERMISSIONS: Record<SettingsTab, string | null> = {
+  basic: 'attendance.settings.basic.view',
+  scheduling: null,
+  'rest-days': 'scheduling.settings.rest_days.view',
+  'break-types': 'scheduling.settings.break_types.view',
+  'ip-restrictions': 'attendance.settings.ip_restrictions.view',
+  'geo-fencing': 'attendance.settings.geo_fencing.view',
+  holidays: 'scheduling.settings.holidays.view',
+}
+
 /**
  * Attendance → Settings: Basic, Scheduling, Rest Days, Break Types, IP
  * Restrictions, Geo Fencing and Holidays, with the tab in the URL.
  */
 export function AttendanceSettingsPage() {
-  const { tab } = routeApi.useSearch()
+  const { tab: requested } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
   const tabsRef = useRef<HTMLDivElement>(null)
+  const user = useAuthStore((state) => state.user)
+  const tabs = SETTINGS_TABS.filter((item) => {
+    const code = TAB_PERMISSIONS[item]
+    return code === null || can(user, code)
+  })
+  // A tab the user may not see falls back to the first one they may.
+  const tab = tabs.includes(requested) ? requested : (tabs[0] ?? requested)
 
   // On a phone the tabs scroll sideways: keep the chosen one in view.
   useEffect(() => {
@@ -64,7 +84,7 @@ export function AttendanceSettingsPage() {
           aria-label="Settings"
           className="relative flex scrollbar-thin gap-6 overflow-x-auto border-b px-4 sm:px-6"
         >
-          {SETTINGS_TABS.map((item) => {
+          {tabs.map((item) => {
             const selected = item === tab
             return (
               <button

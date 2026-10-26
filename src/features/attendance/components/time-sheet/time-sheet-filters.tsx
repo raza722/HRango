@@ -6,13 +6,13 @@ import { Button } from '@/components/ui/button'
 import { parseDateValue } from '@/lib/date'
 
 import { EMPLOYEE_STATUS_OPTIONS } from '../../constants'
-import { useAttendanceLookups } from '../../hooks/use-attendance'
 import type { EmployeeStatusFilter, TimeSheetScope } from '../../types/attendance.types'
 import { DateBox } from '../shared/date-box'
+import { EmployeeFilter } from '../shared/employee-filter'
 import { FilterSelect } from '../shared/filter-select'
 
-/** Longest From → To range the time sheet shows at once. */
-const MAX_DAYS = 93
+/** Longest From → To range the time sheet shows at once (the API allows a year). */
+const MAX_DAYS = 366
 
 export interface TimeSheetFilterValues {
   status: EmployeeStatusFilter
@@ -31,24 +31,24 @@ function rangeError(from: string, to: string): string | null {
 }
 
 /**
- * My: "My Time Sheet" with From, To and Search. All: Employee Status,
- * Employee Name, From, To and Search. Nothing applies until Search.
+ * My: "My Time Sheet" with From, To and Search. Subordinates / All: Employee
+ * Status, Employee Name (all, or one person the user reaches), From, To and
+ * Search. Nothing applies until Search.
  */
 export function TimeSheetFilters({
   scope,
   initial,
   onApply,
+  knownEmployee,
 }: {
   scope: TimeSheetScope
   initial: TimeSheetFilterValues
   onApply: (values: TimeSheetFilterValues) => void
+  /** The applied person's name (from the sheet), until the picker has read them. */
+  knownEmployee?: { value: string; label: string; hint?: string } | undefined
 }) {
-  const lookups = useAttendanceLookups()
   const [values, setValues] = useState(initial)
   const error = rangeError(values.from, values.to)
-  const employees = (lookups.data?.employees ?? []).filter(
-    (employee) => values.status === 'all' || employee.status === values.status,
-  )
   const set = (patch: Partial<TimeSheetFilterValues>) => {
     setValues((current) => ({ ...current, ...patch }))
   }
@@ -64,7 +64,7 @@ export function TimeSheetFilters({
     >
       {scope === 'my' && <h2 className="mb-3 text-sm font-medium text-heading">My Time Sheet</h2>}
       <div className="grid grid-cols-1 items-start gap-x-5 gap-y-3 @md:grid-cols-2 @4xl:grid-cols-[repeat(4,minmax(0,1fr))_auto]">
-        {scope === 'all' && (
+        {scope !== 'my' && (
           <>
             <FilterSelect
               label="Employee Status"
@@ -80,14 +80,16 @@ export function TimeSheetFilters({
                 })
               }}
             />
-            <FilterSelect
+            <EmployeeFilter
               label="Employee Name"
-              showLabel
               tone="inter"
-              options={employees.map((employee) => ({
-                value: employee.id,
-                label: `${employee.code} | ${employee.name}`,
-              }))}
+              // Searched on the server; former staff only when the status asks for them.
+              filters={{
+                permission: 'attendance.time_sheet.view',
+                includeInactive: values.status !== 'active',
+              }}
+              include={(row) => values.status === 'all' || row.status === values.status}
+              known={knownEmployee ? [knownEmployee] : undefined}
               value={values.employeeId}
               onChange={(employeeId) => {
                 set({ employeeId })

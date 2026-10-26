@@ -1,69 +1,75 @@
 import { describe, expect, it } from 'vitest'
 
-import { createEmptyPeriod, toPolicyInput } from '../utils/policy-mappers'
+import { createDefaultFormValues, createNextRule, toPolicyInput } from '../utils/policy-mappers'
 import { policyFormSchema, type PolicyFormValues } from './policy-form.schema'
 
-function validYearly(): PolicyFormValues {
+function validMonthly(): PolicyFormValues {
   return {
-    policyName: 'grace-minutes',
-    title: 'Annual grace',
-    timeSpan: 'yearly',
-    clockEvent: 'clock-in',
-    periods: [
-      {
-        ...createEmptyPeriod('yearly', new Date(2026, 3, 10)),
-        totalGraceMinutes: '600',
-        clockIn: '09:00',
-        clockOut: '18:00',
-        minutes: '15',
-      },
-    ],
+    ...createDefaultFormValues(),
+    title: 'Late arrival',
+    graceMinutes: '60',
+    rules: [{ clockEvent: 'clock_in', minutes: '10', occurrenceCount: '3' }],
   }
 }
 
-/** Issue paths as dotted strings, e.g. "periods.0.clockOut". */
+/** Issue paths as dotted strings, e.g. "rules.0.clockEvent". */
 function issuePaths(values: PolicyFormValues): string[] {
   const result = policyFormSchema.safeParse(values)
   return result.success ? [] : result.error.issues.map((issue) => issue.path.join('.'))
 }
 
 describe('policyFormSchema', () => {
-  it('accepts a complete yearly policy', () => {
-    expect(issuePaths(validYearly())).toEqual([])
+  it('accepts a complete monthly policy', () => {
+    expect(issuePaths(validMonthly())).toEqual([])
   })
 
-  it('requires clock out to be later than clock in', () => {
-    const values = validYearly()
-    values.periods[0] = { ...values.periods[0]!, clockIn: '18:00', clockOut: '09:00' }
-    expect(issuePaths(values)).toContain('periods.0.clockOut')
+  it('refuses a clock event the policy cannot measure', () => {
+    const values = validMonthly()
+    values.rules[0] = { ...values.rules[0]!, clockEvent: 'clock_out' }
+    expect(issuePaths(values)).toContain('rules.0.clockEvent')
   })
 
-  it('caps per-occurrence minutes at the total grace minutes', () => {
-    const values = validYearly()
-    values.periods[0] = { ...values.periods[0]!, totalGraceMinutes: '10', minutes: '30' }
-    expect(issuePaths(values)).toContain('periods.0.minutes')
-  })
-
-  it('needs at least one weekday for weekly policies', () => {
+  it('allows one rule per clock event', () => {
     const values: PolicyFormValues = {
-      ...validYearly(),
-      timeSpan: 'weekly',
-      periods: [{ ...validYearly().periods[0]!, ...createEmptyPeriod('weekly'), weekdays: [] }],
+      ...validMonthly(),
+      appliesTo: 'overtime',
+      rules: [
+        { clockEvent: 'clock_out', minutes: '30', occurrenceCount: '1' },
+        { clockEvent: 'clock_out', minutes: '60', occurrenceCount: '1' },
+      ],
     }
-    expect(issuePaths(values)).toContain('periods.0.weekdays')
+    expect(issuePaths(values)).toContain('rules.1.clockEvent')
   })
 
-  it('limits a monthly period to 31 days', () => {
-    const values: PolicyFormValues = {
-      ...validYearly(),
-      timeSpan: 'monthly',
-      periods: [{ ...validYearly().periods[0]!, startDay: '2026-01-01', endDay: '2026-03-01' }],
-    }
-    expect(issuePaths(values)).toContain('periods.0.endDay')
+  it('needs a start day for weekly policies', () => {
+    expect(issuePaths({ ...validMonthly(), period: 'week' })).toContain('weekStartDay')
+    expect(issuePaths({ ...validMonthly(), period: 'week', weekStartDay: 'mon' })).toEqual([])
   })
 
-  it('maps form strings to API numbers', () => {
-    const input = toPolicyInput(validYearly())
-    expect(input.periods[0]).toMatchObject({ totalGraceMinutes: 600, minutes: 15, weekdays: [] })
+  it('checks the ranges of minutes and occurrences', () => {
+    const values = validMonthly()
+    values.rules[0] = { clockEvent: 'clock_in', minutes: '2000', occurrenceCount: '0' }
+    expect(issuePaths(values)).toEqual(
+      expect.arrayContaining(['rules.0.minutes', 'rules.0.occurrenceCount']),
+    )
+  })
+
+  it('maps form strings to the API body and drops week days of other periods', () => {
+    const input = toPolicyInput({ ...validMonthly(), weekStartDay: 'mon' }, 'rv1')
+    expect(input).toMatchObject({
+      appliesTo: 'late_arrival',
+      period: 'month',
+      graceMinutes: 60,
+      weekStartDay: null,
+      rules: [{ clockEvent: 'clock_in', minutes: 10, occurrenceCount: 3 }],
+      rowVersion: 'rv1',
+    })
+    expect(toPolicyInput({ ...validMonthly(), graceMinutes: '' }).graceMinutes).toBeNull()
+  })
+
+  it('offers the free clock event as the next rule', () => {
+    const rules = [{ clockEvent: 'clock_in' as const, minutes: '0', occurrenceCount: '1' }]
+    expect(createNextRule('overtime', rules)?.clockEvent).toBe('clock_out')
+    expect(createNextRule('late_arrival', rules)).toBeNull()
   })
 })

@@ -5,6 +5,7 @@ import { withoutRecord } from '@/lib/paginated-cache'
 import type { Paginated } from '@/types/api'
 
 import { warningHistoryKeys } from '../api/warning-history.api'
+import { warningPenaltyKeys } from '../api/warning-penalty.api'
 import { warningPolicyApi } from '../api/warning-policy.api'
 import { warningPolicyKeys } from '../api/warning-policy.queries'
 import type { WarningPolicy, WarningPolicyInput } from '../types/warning-policy.types'
@@ -29,6 +30,7 @@ export function useCreateWarningPolicy() {
 
 interface UpdateVariables {
   id: string
+  /** Carries the `rowVersion` last read. */
   input: WarningPolicyInput
 }
 
@@ -41,6 +43,8 @@ export function useUpdateWarningPolicy() {
     onSuccess: async (policy) => {
       queryClient.setQueryData(warningPolicyKeys.detail(policy.id), policy)
       void queryClient.invalidateQueries({ queryKey: warningHistoryKeys.all })
+      // The penalty list shows the policy's title.
+      void queryClient.invalidateQueries({ queryKey: warningPenaltyKeys.lists() })
       await queryClient.invalidateQueries({ queryKey: warningPolicyKeys.lists() })
     },
   })
@@ -48,12 +52,13 @@ export function useUpdateWarningPolicy() {
 
 /**
  * Deletes a policy optimistically: the row disappears at once, comes back if
- * the server refuses, and the lists are refetched either way.
+ * the server refuses (409 once warnings were raised under it), and the lists are
+ * refetched either way.
  */
 export function useDeleteWarningPolicy() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (policy: WarningPolicy) => warningPolicyApi.remove(policy.id),
+    mutationFn: (policy: WarningPolicy) => warningPolicyApi.remove(policy.id, policy.rowVersion),
     meta: { errorMessage: 'Could not delete the policy. It has been restored.' },
     onMutate: async (policy) => {
       // Stop in-flight refetches from overwriting the optimistic state.
@@ -75,6 +80,8 @@ export function useDeleteWarningPolicy() {
     onSuccess: (_data, policy) => {
       queryClient.removeQueries({ queryKey: warningPolicyKeys.detail(policy.id) })
       void queryClient.invalidateQueries({ queryKey: warningHistoryKeys.all })
+      // Its penalty rules went with it.
+      void queryClient.invalidateQueries({ queryKey: warningPenaltyKeys.lists() })
       toast.success(`“${policy.title}” deleted`)
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: warningPolicyKeys.lists() }),

@@ -45,10 +45,10 @@ interface SettingsListCardProps<T> {
   onCreate?: () => void
   /** Buttons before Create (the red Delete of Rest Days). */
   actions?: ReactNode
-  /** Filter panel content; a search box is always there. */
+  /** Filter panel content, after the search box (when the list can be searched). */
   filters?: ReactNode
-  searchLabel: string
-  onSearch: (text: string) => void
+  searchLabel?: string
+  onSearch?: (text: string) => void
   onPageChange: (page: number) => void
   emptyText: string
 }
@@ -75,23 +75,28 @@ export function SettingsListCard<T>({
   emptyText,
 }: SettingsListCardProps<T>) {
   const [open, setOpen] = useState(false)
-  const search = useDebouncedSearch(onSearch)
+  const search = useDebouncedSearch((text) => {
+    onSearch?.(text)
+  })
+  const hasFilters = Boolean(onSearch) || Boolean(filters)
 
   return (
     <section aria-label={title} className="grid gap-4 px-4 py-5 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className={pageTitleClass}>{title}</h2>
         <div className="flex flex-wrap items-center gap-2.5">
-          <Button
-            variant="outline"
-            aria-expanded={open}
-            onClick={() => {
-              setOpen((value) => !value)
-            }}
-            className={outlineButtonClass}
-          >
-            <FilterSlidersIcon className="size-5" /> Filter
-          </Button>
+          {hasFilters && (
+            <Button
+              variant="outline"
+              aria-expanded={open}
+              onClick={() => {
+                setOpen((value) => !value)
+              }}
+              className={outlineButtonClass}
+            >
+              <FilterSlidersIcon className="size-5" /> Filter
+            </Button>
+          )}
           {actions}
           {onCreate && (
             <Button onClick={onCreate} className={cn(toolbarButtonClass, 'px-5', navyButtonClass)}>
@@ -101,24 +106,26 @@ export function SettingsListCard<T>({
         </div>
       </div>
 
-      {open && (
+      {open && hasFilters && (
         <div className="flex flex-wrap items-end gap-3 rounded-md bg-muted/50 p-3">
-          <div className="relative w-full sm:w-64">
-            <Search
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-label"
-            />
-            <Input
-              type="search"
-              aria-label={searchLabel}
-              placeholder="Search"
-              value={search.text}
-              onChange={(event) => {
-                search.set(event.target.value)
-              }}
-              className="h-9 bg-card pl-9 sm:pl-9"
-            />
-          </div>
+          {onSearch && (
+            <div className="relative w-full sm:w-64">
+              <Search
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-label"
+              />
+              <Input
+                type="search"
+                aria-label={searchLabel}
+                placeholder="Search"
+                value={search.text}
+                onChange={(event) => {
+                  search.set(event.target.value)
+                }}
+                className="h-9 bg-card pl-9 sm:pl-9"
+              />
+            </div>
+          )}
           {filters}
         </div>
       )}

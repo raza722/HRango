@@ -112,8 +112,8 @@ export function OverviewTable({
             : rows.map((row, index) => {
                 const zebra = index % 2 === 0 ? 'bg-[#F5F5F5] dark:bg-muted/40' : 'bg-card'
                 return (
-                  <tr key={row.employee.id} className={cn('text-title', zebra)}>
-                    <td className={cn(cell, stickyId, zebra)}>{row.employee.code}</td>
+                  <tr key={row.employeeId} className={cn('text-title', zebra)}>
+                    <td className={cn(cell, stickyId, zebra)}>{row.employeeCode}</td>
                     <th
                       scope="row"
                       className={cn(
@@ -123,16 +123,16 @@ export function OverviewTable({
                         'text-left text-sm font-medium text-[#101828] dark:text-heading',
                       )}
                     >
-                      <span className="line-clamp-2">{row.employee.name}</span>
+                      <span className="line-clamp-2">{row.employeeName}</span>
                     </th>
-                    <td className={cn(cell, 'max-w-40 min-w-32')}>{row.employee.department}</td>
-                    <td className={cn(cell, 'max-w-40 min-w-32')}>{row.employee.designation}</td>
+                    <td className={cn(cell, 'max-w-40 min-w-32')}>{row.departmentName ?? '—'}</td>
+                    <td className={cn(cell, 'max-w-40 min-w-32')}>{row.designationName ?? '—'}</td>
                     <td className={cn(cell, 'tabular-nums')}>{row.totals.totalDays}</td>
                     <td className={cn(cell, 'tabular-nums')}>{row.totals.absent}</td>
                     <td className={cn(cell, 'tabular-nums')}>{row.totals.holiday}</td>
                     <td className={cn(cell, 'tabular-nums')}>{row.totals.present}</td>
                     {days.map((day) => {
-                      const status = row.days[day] ?? null
+                      const status: DayStatus | null = row.days[day] ?? null
                       const dimmed = highlight !== null && status !== highlight
                       return (
                         <td
@@ -146,9 +146,9 @@ export function OverviewTable({
                           {status ? (
                             <button
                               type="button"
-                              aria-label={`${row.employee.name}, ${format(parse(day, 'yyyy-MM-dd', new Date()), 'd MMMM')}: ${DAY_STATUS_META[status].label}`}
+                              aria-label={`${row.employeeName}, ${format(parse(day, 'yyyy-MM-dd', new Date()), 'd MMMM')}: ${DAY_STATUS_META[status].label}`}
                               onClick={() => {
-                                onOpenDay(row.employee.id, day)
+                                onOpenDay(row.employeeId, day)
                               }}
                               className={cn(
                                 'flex min-h-14 w-full flex-col items-center justify-center gap-1 rounded-sm px-0.5 py-1 text-[0.6875rem] leading-tight font-normal transition-opacity outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-ring/60 dark:hover:bg-white/5',
@@ -162,7 +162,7 @@ export function OverviewTable({
                               </span>
                             </button>
                           ) : (
-                            <span aria-label="Not scheduled" className="text-label">
+                            <span aria-label="Not processed" className="text-label">
                               —
                             </span>
                           )}

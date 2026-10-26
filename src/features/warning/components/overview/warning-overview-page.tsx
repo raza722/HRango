@@ -4,6 +4,7 @@ import { History, Plus, Settings } from 'lucide-react'
 
 import { PageContainer, PageHeader, splitPageClassName } from '@/components/layout'
 import { Button } from '@/components/ui/button'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { HistoryDialog } from '../history/history-dialog'
@@ -24,6 +25,9 @@ export function WarningOverviewPage() {
   const navigate = routeApi.useNavigate()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [columnsOpen, setColumnsOpen] = useState(false)
+  const canSeeHistory = useCan('warning.settings.history.view')
+  const canCreatePolicy = useCan('warning.settings.policies.create')
+  const canEditPenalties = useCan('warning.settings.penalties.edit')
 
   return (
     <PageContainer>
@@ -35,18 +39,20 @@ export function WarningOverviewPage() {
           actionsLayout="inline"
           actions={
             <>
-              <Button
-                variant="secondary"
-                size="icon-lg"
-                aria-label="History"
-                title="History"
-                aria-haspopup="dialog"
-                onClick={() => {
-                  setHistoryOpen(true)
-                }}
-              >
-                <History className="size-5" strokeWidth={1.75} />
-              </Button>
+              {canSeeHistory && (
+                <Button
+                  variant="secondary"
+                  size="icon-lg"
+                  aria-label="History"
+                  title="History"
+                  aria-haspopup="dialog"
+                  onClick={() => {
+                    setHistoryOpen(true)
+                  }}
+                >
+                  <History className="size-5" strokeWidth={1.75} />
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 size="icon-lg"
@@ -73,11 +79,13 @@ export function WarningOverviewPage() {
             void navigate({ to: '/warning/policy', search: { edit: policy.id } })
           }}
           actions={
-            <Button variant="outline" asChild>
-              <Link to="/warning/policy">
-                <Plus /> Add Form
-              </Link>
-            </Button>
+            canCreatePolicy ? (
+              <Button variant="outline" asChild>
+                <Link to="/warning/policy">
+                  <Plus /> Add Form
+                </Link>
+              </Button>
+            ) : undefined
           }
         />
 
@@ -88,19 +96,21 @@ export function WarningOverviewPage() {
             void navigate({ search: (prev) => ({ ...prev, penaltyPage: next }) })
           }}
           onEdit={(penalty) => {
-            void navigate({ to: '/warning/penalty', search: { edit: penalty.id } })
+            void navigate({ to: '/warning/penalty', search: { edit: penalty.warningPolicyId } })
           }}
           actions={
-            <Button variant="outline" asChild>
-              <Link to="/warning/penalty">
-                <Plus /> Add Form
-              </Link>
-            </Button>
+            canEditPenalties ? (
+              <Button variant="outline" asChild>
+                <Link to="/warning/penalty">
+                  <Plus /> Add Form
+                </Link>
+              </Button>
+            ) : undefined
           }
         />
       </div>
 
-      <HistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} />
+      {canSeeHistory && <HistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} />}
       <ColumnPreferencesSheet open={columnsOpen} onOpenChange={setColumnsOpen} />
     </PageContainer>
   )

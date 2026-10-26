@@ -1,66 +1,42 @@
 import { useState } from 'react'
 import { FormProvider } from 'react-hook-form'
-import { useQueryClient } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import { ArrowLeft, Check, Loader2, Plus } from 'lucide-react'
+import { ArrowLeft, Check, Loader2 } from 'lucide-react'
 
 import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import { PageContainer, PageHeader, splitPageClassName } from '@/components/layout'
 import { Button } from '@/components/ui/button'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
-import type { Paginated } from '@/types/api'
 
-import { warningPenaltyKeys } from '../../api/warning-penalty.api'
 import { usePenaltyForm } from '../../hooks/use-penalty-form'
 import { PENALTY_FORM_ID } from '../../penalty-constants'
-import { usePolicyTablePrefs } from '../../store/policy-table-prefs.store'
-import type { WarningPenalty } from '../../types/warning-penalty.types'
 import { warningType } from '../type-styles'
 import { PenaltyDetailsCard, PenaltyRulesCard } from './penalty-form-cards'
 import { PenaltyTable } from './penalty-table'
 
 const routeApi = getRouteApi('/_app/warning/penalty/')
 
-type PendingConfirm = 'leave' | 'new' | null
+type PendingConfirm = { kind: 'leave' } | { kind: 'policy'; policyId: string } | null
 
 /**
- * Warning → Penalty screen ("Warning Policy" in the design): the policy the
- * penalty belongs to, its penalty rules, and the Penalty list. `?page=` and
- * `?edit=` live in the URL like on the Policy screen.
+ * Warning → Penalty screen ("Warning Policy" in the design): pick a warning policy, set its
+ * penalty rules, save them together. `?edit=` is the policy's id, `?page=` the list's page.
  */
 export function PenaltyPage() {
   const { page, edit } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
-  const queryClient = useQueryClient()
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm>(null)
+  const canSave = useCan('warning.settings.penalties.edit')
 
-  const leaveEditMode = () =>
-    navigate({ search: (prev) => ({ ...prev, edit: undefined }), replace: true })
-
-  const penaltyForm = usePenaltyForm({
-    editingId: edit,
-    onSaved: async (mode) => {
-      if (mode === 'updated') {
-        await leaveEditMode()
-        return
-      }
-      const { pageSize } = usePolicyTablePrefs.getState()
-      const lastPage = queryClient.getQueryData<Paginated<WarningPenalty>>(
-        warningPenaltyKeys.list({ page, pageSize }),
-      )?.meta.totalPages
-      if (lastPage !== undefined && lastPage !== page) {
-        await navigate({ search: (prev) => ({ ...prev, page: lastPage }) })
-      }
-    },
-  })
+  const penaltyForm = usePenaltyForm({ editingId: edit })
   const { form, rules } = penaltyForm
   const { isDirty } = form.formState
 
-  const startNew = () => {
+  const openPolicy = (policyId: string | undefined) => {
     penaltyForm.resetToNew()
-    if (edit) void leaveEditMode()
+    void navigate({ search: (prev) => ({ ...prev, edit: policyId }) })
     window.scrollTo({ top: 0, behavior: 'smooth' })
-    form.setFocus('title')
   }
 
   const leave = () => {
@@ -80,20 +56,22 @@ export function PenaltyPage() {
               <Button
                 variant="outline"
                 onClick={() => {
-                  if (isDirty) setPendingConfirm('leave')
+                  if (isDirty) setPendingConfirm({ kind: 'leave' })
                   else leave()
                 }}
               >
                 <ArrowLeft /> Cancel
               </Button>
-              <Button
-                type="submit"
-                form={PENALTY_FORM_ID}
-                disabled={penaltyForm.isSaving || penaltyForm.isLoadingPenalty}
-              >
-                {penaltyForm.isSaving ? <Loader2 className="animate-spin" /> : <Check />}
-                {penaltyForm.isSaving ? 'Saving…' : 'Save'}
-              </Button>
+              {canSave && (
+                <Button
+                  type="submit"
+                  form={PENALTY_FORM_ID}
+                  disabled={penaltyForm.isSaving || penaltyForm.isLoadingPenalty || !edit}
+                >
+                  {penaltyForm.isSaving ? <Loader2 className="animate-spin" /> : <Check />}
+                  {penaltyForm.isSaving ? 'Saving…' : 'Save'}
+                </Button>
+              )}
             </>
           }
         />
@@ -102,23 +80,24 @@ export function PenaltyPage() {
           <form
             id={PENALTY_FORM_ID}
             noValidate
-            aria-label={edit ? 'Edit penalty' : 'New penalty'}
+            aria-label="Penalties of a warning policy"
             onSubmit={penaltyForm.submit}
             className={cn('flex min-w-0 flex-col gap-4 sm:gap-5', warningType.form)}
           >
             <PenaltyDetailsCard
-              onAddPolicy={() => {
-                if (isDirty) setPendingConfirm('new')
-                else startNew()
-              }}
-              editingTitle={edit ? penaltyForm.editingPenalty?.title : undefined}
+              policy={edit ? penaltyForm.editingPolicy : undefined}
               isLoading={penaltyForm.isLoadingPenalty}
+              onPolicyChange={(policyId) => {
+                if (policyId === edit) return
+                if (isDirty && edit) setPendingConfirm({ kind: 'policy', policyId })
+                else openPolicy(policyId)
+              }}
             />
             <PenaltyRulesCard
               rules={rules.fields}
               onAddRule={penaltyForm.addRule}
               onRemoveRule={rules.remove}
-              disabled={penaltyForm.isLoadingPenalty}
+              disabled={!edit || penaltyForm.isLoadingPenalty || !canSave}
             />
           </form>
         </FormProvider>
@@ -131,26 +110,11 @@ export function PenaltyPage() {
               void navigate({ search: (prev) => ({ ...prev, page: next }) })
             }}
             onEdit={(penalty) => {
-              void navigate({ search: (prev) => ({ ...prev, edit: penalty.id }) })
-              window.scrollTo({ top: 0, behavior: 'smooth' })
+              if (penalty.warningPolicyId === edit) return
+              if (isDirty && edit) {
+                setPendingConfirm({ kind: 'policy', policyId: penalty.warningPolicyId })
+              } else openPolicy(penalty.warningPolicyId)
             }}
-            onDelete={(penalty) => {
-              if (penalty.id === edit) {
-                penaltyForm.resetToNew()
-                void leaveEditMode()
-              }
-            }}
-            actions={
-              <Button
-                variant="outline"
-                onClick={() => {
-                  if (isDirty) setPendingConfirm('new')
-                  else startNew()
-                }}
-              >
-                <Plus /> Add Form
-              </Button>
-            }
           />
         </div>
       </div>
@@ -165,7 +129,7 @@ export function PenaltyPage() {
         confirmLabel="Discard"
         variant="destructive"
         onConfirm={() => {
-          if (pendingConfirm === 'new') startNew()
+          if (pendingConfirm?.kind === 'policy') openPolicy(pendingConfirm.policyId)
           else leave()
           setPendingConfirm(null)
         }}

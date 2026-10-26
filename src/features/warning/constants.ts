@@ -4,93 +4,60 @@ import {
   type ClockEvent,
   POLICY_NAMES,
   type PolicyName,
+  TIME_SPANS,
   type TimeSpan,
   type Weekday,
 } from './types/warning-policy.types'
 
 export const POLICY_FORM_ID = 'warning-policy-form'
 
-/** Upper bound on period blocks ("Add Year" etc.) per policy. */
-export const MAX_PERIODS = 12
+/** Upper bound on rules per policy (one per clock event). */
+export const MAX_PERIODS = 2
+export const MAX_RULES = MAX_PERIODS
 
+/** "Policy Name" in the design: what the policy watches (`appliesTo`). */
 export const POLICY_NAME_LABELS: Record<PolicyName, string> = {
-  'grace-minutes': 'Grace Minutes',
-  'late-arrival': 'Late Arrival',
-  'early-departure': 'Early Departure',
+  late_arrival: 'Late Arrival',
+  early_departure: 'Early Departure',
   overtime: 'Over Time',
-  'half-day-leave': 'Half Day Leave',
+  half_day_leave: 'Half Day Leave',
 }
+export const APPLIES_TO_LABELS = POLICY_NAME_LABELS
 
 export const POLICY_NAME_OPTIONS: readonly SelectOption<PolicyName>[] = POLICY_NAMES.map(
   (value) => ({ value, label: POLICY_NAME_LABELS[value] }),
 )
 
-export const TIME_SPAN_OPTIONS: readonly SelectOption<TimeSpan>[] = [
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'yearly', label: 'Yearly' },
-]
+/** Time Span select of the policy form. */
+export const TIME_SPAN_LABELS: Record<TimeSpan, string> = {
+  day: 'Daily',
+  week: 'Weekly',
+  month: 'Monthly',
+  year: 'Yearly',
+}
+
+export const TIME_SPAN_OPTIONS: readonly SelectOption<TimeSpan>[] = TIME_SPANS.map((value) => ({
+  value,
+  label: TIME_SPAN_LABELS[value],
+}))
 
 /** Short labels used in the Warning Policy table, as in the design ("Month", "Week", "Year"). */
 export const TIME_SPAN_TABLE_LABELS: Record<TimeSpan, string> = {
-  weekly: 'Week',
-  monthly: 'Month',
-  yearly: 'Year',
+  day: 'Day',
+  week: 'Week',
+  month: 'Month',
+  year: 'Year',
+}
+
+export const CLOCK_EVENT_LABELS: Record<ClockEvent, string> = {
+  clock_in: 'Clock In',
+  clock_out: 'Clock Out',
 }
 
 export const CLOCK_EVENT_OPTIONS: readonly SelectOption<ClockEvent>[] = [
-  { value: 'clock-in', label: 'Clock In' },
-  { value: 'clock-out', label: 'Clock Out' },
+  { value: 'clock_in', label: 'Clock In' },
+  { value: 'clock_out', label: 'Clock Out' },
 ]
-
-export const CLOCK_EVENT_LABELS: Record<ClockEvent, string> = {
-  'clock-in': 'Clock In',
-  'clock-out': 'Clock Out',
-}
-
-interface TimeSpanCopy {
-  /** Card title, e.g. "Yearly". */
-  title: string
-  /** Button text, e.g. "Add Year". */
-  addLabel: string
-  /** Heading for the 2nd+ block, e.g. "Year 2". */
-  periodNoun: string
-  startLabel: string
-  endLabel: string
-  clockInLabel: string
-  clockOutLabel: string
-}
-
-/** Labels for the time-span card; the design changes them per span. */
-export const TIME_SPAN_COPY: Record<TimeSpan, TimeSpanCopy> = {
-  weekly: {
-    title: 'Weekly',
-    addLabel: 'Add Week',
-    periodNoun: 'Week',
-    startLabel: 'Week Start Day',
-    endLabel: 'Week End Day',
-    clockInLabel: 'Clock Start',
-    clockOutLabel: 'Clock End',
-  },
-  monthly: {
-    title: 'Monthly',
-    addLabel: 'Add Month',
-    periodNoun: 'Month',
-    startLabel: 'Month Start Day',
-    endLabel: 'Month End Day',
-    clockInLabel: 'Clock In',
-    clockOutLabel: 'Clock Out',
-  },
-  yearly: {
-    title: 'Yearly',
-    addLabel: 'Add Year',
-    periodNoun: 'Year',
-    startLabel: 'Year Start Day',
-    endLabel: 'Year End Day',
-    clockInLabel: 'Clock In',
-    clockOutLabel: 'Clock Out',
-  },
-}
 
 export const WEEKDAY_OPTIONS: readonly { value: Weekday; short: string; label: string }[] = [
   { value: 'mon', short: 'Mon', label: 'Monday' },
@@ -106,17 +73,5 @@ export const WEEKDAY_SELECT_OPTIONS: readonly SelectOption<Weekday>[] = WEEKDAY_
   ({ value, label }) => ({ value, label }),
 )
 
-export const MONTH_LABELS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-] as const
+/** "Active" / "Inactive". */
+export const STATUS_LABELS = { true: 'Active', false: 'Inactive' } as const

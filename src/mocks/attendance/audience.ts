@@ -1,4 +1,4 @@
-import type { AudienceCriteria, Holiday, HolidayRule } from '@/features/attendance'
+import type { AudienceTarget, Holiday, HolidayRule, TargetType } from '@/features/attendance'
 
 import { type DirectoryEmployee, findEmployee } from '../employees/seed'
 import { profileOf } from '../scheduling/seed'
@@ -6,70 +6,88 @@ import { branches } from '../settings/handlers'
 import { joiningDate } from './seed'
 import { nationalityOf, religionOf } from './settings-db'
 
-/** Where a person sits in the organisation, for criteria and holiday rules. */
+/** Where a person sits in the organisation, for targets and holiday rules. */
 function placeOf(employee: DirectoryEmployee) {
   const branch = employee.branchId ? branches.find(employee.branchId) : undefined
   return {
     branchId: branch?.id ?? null,
     locationId: branch?.locationId ?? null,
     areaId: branch?.areaId ?? null,
-    countryCode: branch?.countryCode ?? null,
-    regionCode: branch?.regionCode ?? null,
+    countryId: branch?.countryId ?? null,
+    stateId: branch?.stateId ?? null,
     cityId: branch?.cityId ?? null,
   }
 }
 
-const within = (values: readonly string[], value: string | null) =>
-  values.length === 0 || (value !== null && values.includes(value))
-
-/** Does one criteria row take in this person? Empty fields match everyone. */
-export function matchesCriteria(employee: DirectoryEmployee, criteria: AudienceCriteria): boolean {
-  if (criteria.target === 'employees') return criteria.employeeIds.includes(employee.id)
+/** What a person is for one kind of target (ids, or names for religion and nationality). */
+function valueOf(employee: DirectoryEmployee, type: TargetType): string | null {
   const place = placeOf(employee)
-  const profile = profileOf(employee)
-  const joined = joiningDate(employee)
-  return (
-    within(criteria.departments, employee.department) &&
-    within(criteria.locations, place.locationId) &&
-    within(criteria.designations, employee.jobTitle) &&
-    within(criteria.grades, profile.grade) &&
-    within(criteria.religions, religionOf(employee)) &&
-    within(criteria.jobTitles, employee.jobTitle) &&
-    within(criteria.nationalities, nationalityOf(employee)) &&
-    within(criteria.areas, place.areaId) &&
-    within(criteria.branches, place.branchId) &&
-    (criteria.joiningFrom === null || joined >= criteria.joiningFrom) &&
-    (criteria.joiningTo === null || joined <= criteria.joiningTo)
-  )
+  switch (type) {
+    case 'employee':
+      return employee.id
+    case 'country':
+      return place.countryId
+    case 'location':
+      return place.locationId
+    case 'branch':
+      return place.branchId
+    case 'area':
+      return place.areaId
+    case 'department':
+      return employee.department
+    case 'designation':
+    case 'job_title':
+      return employee.jobTitle
+    case 'grade':
+      return profileOf(employee).grade
+    case 'religion':
+      return religionOf(employee)
+    case 'nationality':
+      return nationalityOf(employee)
+  }
 }
 
-/** A rule applies to everyone it names; any rule is enough. */
-export function matchesAudience(
+/**
+ * Does a fence or restriction take in this person? As the API decides: targets of the same
+ * kind are alternatives, different kinds must all match; the joining window narrows it.
+ */
+export function matchesTargets(
   employee: DirectoryEmployee,
-  allEmployees: boolean,
-  criteria: readonly AudienceCriteria[],
+  appliesToAll: boolean,
+  targets: readonly AudienceTarget[],
+  joining: { from: string | null; to: string | null } = { from: null, to: null },
 ): boolean {
-  return allEmployees || criteria.some((row) => matchesCriteria(employee, row))
+  if (appliesToAll) return true
+  const joined = joiningDate(employee)
+  if (joining.from && joined < joining.from) return false
+  if (joining.to && joined > joining.to) return false
+  const kinds = new Set(targets.map((target) => target.targetType))
+  return [...kinds].every((kind) => {
+    const value = valueOf(employee, kind)
+    return targets.some(
+      (target) => target.targetType === kind && (target.targetId ?? target.targetValue) === value,
+    )
+  })
 }
 
 function matchesRule(employee: DirectoryEmployee, rule: HolidayRule): boolean {
   const place = placeOf(employee)
-  switch (rule.type) {
+  switch (rule.ruleType) {
     case 'religion':
       return rule.religion === null || religionOf(employee) === rule.religion
-    case 'geo-location':
+    case 'geo_location':
       return (
-        (rule.countryCode === null || rule.countryCode === place.countryCode) &&
-        (rule.regionCode === null || rule.regionCode === place.regionCode) &&
+        (rule.countryId === null || rule.countryId === place.countryId) &&
+        (rule.stateId === null || rule.stateId === place.stateId) &&
         (rule.cityId === null || rule.cityId === place.cityId)
       )
-    case 'organization':
+    case 'org_structure':
       return (
         (rule.locationId === null || rule.locationId === place.locationId) &&
         (rule.branchId === null || rule.branchId === place.branchId)
       )
     case 'employee':
-      return rule.employeeIds.includes(employee.id)
+      return rule.employeeId === employee.id
   }
 }
 

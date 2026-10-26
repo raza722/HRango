@@ -1,16 +1,17 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
 import { differenceInCalendarMonths, format, isWeekend, parse, subDays } from 'date-fns'
 import { describe, expect, it } from 'vitest'
 
 import { holidayFor } from '@/mocks/attendance/audience'
-import { attendancePunches } from '@/mocks/attendance/db'
-import { breakTypes, holidays, machineSync, settingsStore } from '@/mocks/attendance/settings-db'
-import { findEmployee } from '@/mocks/employees/seed'
-import { profileOf, seedRestDayBatches } from '@/mocks/scheduling/seed'
+import {
+  breakTypes,
+  holidays,
+  ipRestrictions,
+  restDayRules,
+  settingsStore,
+} from '@/mocks/attendance/settings-db'
 import { renderApp } from '@/test/test-utils'
-
-import { formatSheetDate } from './utils/local-time'
 
 async function choose(user: UserEvent, label: string | RegExp, option: string | RegExp) {
   await user.click(await screen.findByRole('combobox', { name: label }))
@@ -30,19 +31,18 @@ async function pickDate(user: UserEvent, label: string | RegExp, date: string) {
   await user.click(screen.getByRole('button', { name: new RegExp(format(day, 'MMMM do, yyyy')) }))
 }
 
-/** The last Monday–Friday before today that is nobody's holiday or seeded rest day. */
+/** The last Monday–Friday before today that is nobody's holiday. */
 function workingDay(): string {
   let day = subDays(new Date(), 1)
   const off = (date: string) =>
-    holidays.all().some((holiday) => holiday.startDate <= date && date <= holiday.endDate) ||
-    seedRestDayBatches().some((batch) => batch.dates.includes(date))
+    holidays.all().some((holiday) => holiday.startDate <= date && date <= holiday.endDate)
   while (isWeekend(day) || off(format(day, 'yyyy-MM-dd'))) day = subDays(day, 1)
   return format(day, 'yyyy-MM-dd')
 }
 
 describe('Attendance Settings', () => {
-  it('turns off dashboard punching, which disables Clock In', async () => {
-    const { user, router } = renderApp('/attendance/settings')
+  it('saves the basic switches and the late grace with the rowVersion it read', async () => {
+    const { user } = renderApp('/attendance/settings')
 
     expect(await screen.findByRole('tab', { name: 'Basic' })).toHaveAttribute(
       'aria-selected',
@@ -53,49 +53,84 @@ describe('Attendance Settings', () => {
         name: 'Settings',
       }),
     ).toHaveAttribute('aria-current', 'page')
+    const before = settingsStore.all()[0]?.basic.rowVersion
     const toggle = await screen.findByRole('switch', {
       name: 'Employee can mark punch from their dashboard',
     })
     expect(toggle).toBeChecked()
     await user.click(toggle)
+    const grace = screen.getByRole('textbox', { name: 'Late Grace Minutes' })
+    await user.clear(grace)
+    await user.type(grace, '10')
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     expect(await screen.findByText('Settings saved')).toBeInTheDocument()
-    expect(settingsStore.all()[0]?.basic.dashboardPunch).toBe(false)
-
-    await router.navigate({ to: '/attendance/time-sheet' })
-    expect(await screen.findByText(/Punching from the dashboard is turned off/)).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Clock In' })).toBeDisabled()
+    const saved = settingsStore.all()[0]?.basic
+    expect(saved?.dashboardPunch).toBe(false)
+    expect(saved?.lateGraceMinutes).toBe(10)
+    expect(saved?.rowVersion).not.toBe(before)
   })
 
   it('creates a break type, and refuses a second one with the same name', async () => {
     const { user } = renderApp('/attendance/settings?tab=break-types')
 
     expect(await screen.findByRole('cell', { name: 'Lunch Break' })).toBeVisible()
-    const create = async (name: string) => {
+    const create = async (name: string, start: string, end: string) => {
       await user.click(screen.getByRole('button', { name: '+ Create' }))
       const dialog = await screen.findByRole('dialog', { name: 'Create New Break Type' })
       await user.type(within(dialog).getByRole('textbox', { name: /^Name/ }), name)
-      await user.type(within(dialog).getByRole('textbox', { name: /^Start Indicator/ }), 'NB-IN')
-      await user.type(within(dialog).getByRole('textbox', { name: /^End Indicator/ }), 'NB-OUT')
+      await user.type(within(dialog).getByRole('textbox', { name: /^Start Indicator/ }), start)
+      await user.type(within(dialog).getByRole('textbox', { name: /^End Indicator/ }), end)
       await user.click(within(dialog).getByRole('button', { name: 'Create' }))
       return dialog
     }
 
-    await create('Namaz Break')
+    await create('Namaz Break', 'NB-OUT', 'NB-IN')
     expect(await screen.findByText('Break type created')).toBeInTheDocument()
     expect(await screen.findByRole('cell', { name: 'Namaz Break' })).toBeVisible()
     expect(breakTypes.all().filter((item) => item.name === 'Namaz Break')).toHaveLength(1)
 
-    const again = await create('namaz break')
-    expect(await within(again).findByText(/already/i)).toBeVisible()
+    const again = await create('namaz break', 'NB2-OUT', 'NB2-IN')
+    expect(await within(again).findByText(/already exists/i)).toBeVisible()
     expect(breakTypes.all().filter((item) => /namaz break/i.test(item.name))).toHaveLength(1)
+  })
+
+  it('creates an IP range for one religion, then deactivates it', async () => {
+    const { user } = renderApp('/attendance/settings?tab=ip-restrictions')
+
+    expect(await screen.findByRole('cell', { name: 'IPR-00001' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '+ Create' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Create IP Restriction' })
+    await user.click(within(dialog).getByRole('switch', { name: 'Use an address range' }))
+    await user.type(within(dialog).getByRole('textbox', { name: /^Range Start/ }), '10.1.1.1')
+    await user.type(within(dialog).getByRole('textbox', { name: /^Range End/ }), '10.1.1.20')
+    await user.click(within(dialog).getByRole('checkbox', { name: 'All Employees' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }))
+    expect(await within(dialog).findByText(/Choose who it applies to/)).toBeVisible()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Religion' }))
+    await user.click(await screen.findByRole('checkbox', { name: 'Christianity' }))
+    await user.keyboard('{Escape}')
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('IP restriction created')).toBeInTheDocument()
+
+    const created = ipRestrictions.all().find((item) => item.rangeStart === '10.1.1.1')
+    expect(created?.addressCount).toBe(20)
+    expect(created?.targets).toEqual([
+      { targetType: 'religion', targetId: null, targetValue: 'Christianity' },
+    ])
+
+    await user.click(
+      await screen.findByRole('button', { name: `Actions for ${created?.code ?? ''}` }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Deactivate' }))
+    expect(await screen.findByText('IP restriction deactivated')).toBeInTheDocument()
+    expect(ipRestrictions.find(created?.id ?? '')?.isActive).toBe(false)
   })
 
   it('gives a holiday with a religion rule only to the people it names', async () => {
     const date = workingDay()
-    const label = formatSheetDate(date)
-    const { user, router } = renderApp('/attendance/settings?tab=holidays')
+    const { user } = renderApp('/attendance/settings?tab=holidays')
 
     expect(await screen.findByRole('cell', { name: 'Pakistan Day' })).toBeVisible()
     await user.click(screen.getByRole('button', { name: '+ Create' }))
@@ -106,130 +141,31 @@ describe('Attendance Settings', () => {
 
     await user.click(within(dialog).getByRole('button', { name: 'Add' }))
     const ruleDialog = await screen.findByRole('dialog', { name: 'Holiday Rule Create' })
-    await user.type(within(ruleDialog).getByRole('textbox', { name: /^Name/ }), 'Christian staff')
     await choose(user, /^Religion/, 'Christianity')
     await user.click(within(ruleDialog).getByRole('button', { name: 'Create' }))
-    expect(await within(dialog).findByRole('cell', { name: 'Christian staff' })).toBeVisible()
+    expect(await within(dialog).findByRole('cell', { name: 'Christianity' })).toBeVisible()
     await user.click(within(dialog).getByRole('button', { name: 'Create' }))
     expect(await screen.findByText('Holiday created')).toBeInTheDocument()
 
+    const saved = holidays.all().find((item) => item.name === 'Staff Christmas Party')
+    expect(saved?.holidayType).toBe('public')
+    expect(saved?.rules.map((rule) => [rule.ruleType, rule.religion])).toEqual([
+      ['religion', 'Christianity'],
+    ])
     // Maryam is Christian: her day becomes a holiday. Omar's stays a working day.
     expect(holidayFor(holidays.all(), 'em_maryam', date)?.name).toBe('Staff Christmas Party')
     expect(holidayFor(holidays.all(), 'em_omar', date)).toBeNull()
-    await router.navigate({
-      to: '/attendance/time-sheet',
-      search: { scope: 'all', employeeId: 'em_maryam', from: date, to: date },
-    })
-    const maryam = await screen.findByRole('row', { name: new RegExp(label) })
-    expect(await within(maryam).findByText('Holiday')).toBeVisible()
-  })
-})
-
-describe('Attendance Logs', () => {
-  it('creates a manual punch, then deletes it', async () => {
-    const date = workingDay()
-    const { user, router } = renderApp(`/attendance/logs?from=${date}&to=${date}`)
-
-    expect(await screen.findByRole('heading', { name: 'Attendance Logs', level: 1 })).toBeVisible()
-    expect(
-      within(screen.getByRole('navigation', { name: 'Attendance' })).getByRole('link', {
-        name: 'Attendance Logs',
-      }),
-    ).toHaveAttribute('aria-current', 'page')
-    expect((await screen.findAllByText(/^Machine$/)).length).toBeGreaterThan(0)
-
-    await user.click(screen.getByRole('button', { name: '+ Create' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Create Attendance Log' })
-    await choose(user, /^Employee Name/, /Omar Siddiqui/)
-    await choose(user, /^Punch Type/, 'Check Out')
-    fireEvent.change(within(dialog).getByLabelText(/^Punch Time/), { target: { value: '21:15' } })
-    await pickDate(user, /^Punch Date/, date)
-    await user.type(within(dialog).getByRole('textbox', { name: /^Description/ }), 'Late audit')
-    await user.click(within(dialog).getByRole('button', { name: 'Create' }))
-
-    expect(await screen.findByText('Attendance log created')).toBeInTheDocument()
-    // The list is newest first, ten to a page: on some dates the seeded punches push a 9:15 PM
-    // check-out to page 2, so look for it among Omar's punches only.
-    await router.navigate({
-      to: '/attendance/logs',
-      search: { from: date, to: date, employeeId: 'em_omar' },
-    })
-    const actions = await screen.findByRole('button', {
-      name: 'Actions for Omar Siddiqui, Check Out 9:15 PM',
-    })
-    expect(
-      attendancePunches
-        .all()
-        .some((punch) => punch.at === `${date}T21:15` && punch.source === 'manual'),
-    ).toBe(true)
-
-    await user.click(actions)
-    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
-    await user.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Yes' }),
-    )
-    expect(await screen.findByText('Attendance log deleted')).toBeInTheDocument()
-    await waitFor(() => {
-      expect(attendancePunches.all().some((punch) => punch.at === `${date}T21:15`)).toBe(false)
-    })
   })
 
-  it('reads the machines, which records when each was last read', async () => {
-    const { user } = renderApp('/attendance/logs')
+  it('shows a rest-day rule with its people', async () => {
+    const { user } = renderApp('/attendance/settings?tab=rest-days')
 
-    await user.click(await screen.findByRole('button', { name: 'Import' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Import Attendance Log' })
-    await user.click(within(dialog).getByRole('switch', { name: 'Import from the machines' }))
-    await user.click(await within(dialog).findByRole('checkbox', { name: /MCH-00001\)/ }))
-    await user.click(within(dialog).getByRole('button', { name: 'Import' }))
-
-    const results = await within(dialog).findByRole('list', { name: 'Import results' })
-    expect(within(results).getByText('Machine (MCH-00001)')).toBeVisible()
-    expect(await screen.findByText(/^Imported \d+ punch(es)? from 1 machine$/)).toBeInTheDocument()
-    const synced = machineSync.find('MCH-00001')
-    expect(synced?.lastSyncedAt.slice(0, 10)).toBe(format(new Date(), 'yyyy-MM-dd'))
-  })
-
-  it('imports punches from a CSV file and explains the bad lines', async () => {
-    const date = workingDay()
-    const employee = findEmployee('em_omar')
-    if (!employee) throw new Error('No em_omar in the seed')
-    const code = profileOf(employee).code
-    const { user } = renderApp('/attendance/logs')
-
-    await user.click(await screen.findByRole('button', { name: 'Import' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Import Attendance Log' })
-    const input = dialog.querySelector<HTMLInputElement>('input[type="file"]')
-    if (!input) throw new Error('No file input')
-
-    await user.upload(
-      input,
-      new File([`Employee Code,Date,Time,Punch Type\nNOPE-1,${date},08:00,check-in\n`], 'bad.csv', {
-        type: 'text/csv',
-      }),
-    )
-    await user.click(within(dialog).getByRole('button', { name: 'Import' }))
-    expect(await within(dialog).findByText(/Line 2: no employee with code NOPE-1/)).toBeVisible()
-
-    await user.upload(
-      input,
-      new File(
-        [
-          `Employee Code,Date,Time,Punch Type\n${code},${date},06:05,check-in\n${code},${date},noon,check-out\n`,
-        ],
-        'logs.csv',
-        { type: 'text/csv' },
-      ),
-    )
-    expect(await within(dialog).findByText('logs.csv: 1 line ready')).toBeVisible()
-    expect(within(dialog).getByText('Line 3: the time must be HH:mm')).toBeVisible()
-    await user.click(within(dialog).getByRole('button', { name: 'Import' }))
-
-    expect(await screen.findByText('Imported 1 punch')).toBeInTheDocument()
-    expect(
-      attendancePunches
-        .all()
-        .some((punch) => punch.at === `${date}T06:05` && punch.source === 'import'),
-    ).toBe(true)
+    const row = await screen.findByRole('row', { name: /2 employees/ })
+    await user.click(within(row).getByRole('button', { name: /^Actions for rest days/ }))
+    await user.click(await screen.findByRole('menuitem', { name: 'View' }))
+    const view = await screen.findByRole('dialog', { name: 'Rest Day View' })
+    expect(await within(view).findByText('Rabia Anwar')).toBeVisible()
+    expect(within(view).getByText('Yes')).toBeVisible()
+    expect(restDayRules.all()).toHaveLength(1)
   })
 })

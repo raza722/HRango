@@ -1,59 +1,56 @@
 import { z } from 'zod'
 
-import {
-  BADGE_COLORS,
-  DEDUCTIONS,
-  PENALTY_TYPES,
-  SCALE_TYPES,
-} from '../types/warning-penalty.types'
-import { POLICY_NAMES, TIME_SPANS } from '../types/warning-policy.types'
-import { checkPeriodRange, checkTimeOrder, timeField, titleField, weekdaySchema } from './shared'
+import { DEDUCTIONS, PENALTY_PERIODS, PENALTY_TYPES } from '../types/warning-penalty.types'
+import { wholeNumberField } from './shared'
 
-const POINTS_PATTERN = /^\d{1,3}$/
-
-/** One "+ Add Penalty" block. `count` and `points` stay strings while editing. */
+/** One "+ Add Penalty" block (`PenaltyRuleIn`). Numbers stay strings while editing. */
 export const penaltyRuleSchema = z
   .object({
-    count: z.string().regex(/^(?:[1-9]|10)$/, 'Pick how many warnings trigger it'),
-    timeSpan: z.enum(TIME_SPANS, { error: 'Select a time span' }),
-    startDay: z.string(),
-    endDay: z.string(),
-    day: z.number().int().min(1).max(31),
-    weekdays: z.array(weekdaySchema),
-    from: timeField('From'),
-    to: timeField('To'),
-    points: z
-      .string()
-      .trim()
-      .min(1, 'Points are required')
-      .regex(POINTS_PATTERN, 'Use a whole number'),
+    afterCount: wholeNumberField('Count', 1, 100),
+    period: z.enum(PENALTY_PERIODS, { error: 'Select a time span' }),
     penaltyType: z.enum(PENALTY_TYPES, { error: 'Select a penalty type' }),
+    percentage: z.string().trim(),
     deduction: z.enum(DEDUCTIONS, { error: 'Select a deduction' }),
-    badgeColor: z.enum(BADGE_COLORS, { error: 'Select a badge colour' }),
+    leaveTypeId: z.string(),
   })
   .superRefine((rule, ctx) => {
-    checkTimeOrder(ctx, rule.from, rule.to, ['to'], 'Must be later than From')
-    checkPeriodRange(ctx, rule.timeSpan, rule, [])
-  })
-
-/** The penalty form: policy details plus one or more penalty rules. */
-export const penaltyFormSchema = z
-  .object({
-    policyName: z.enum(POLICY_NAMES, { error: 'Select a policy' }),
-    title: titleField,
-    scaleType: z.enum(SCALE_TYPES, { error: 'Select a type of scale' }),
-    rules: z.array(penaltyRuleSchema).min(1, 'Add at least one penalty').max(10),
-  })
-  .superRefine((values, ctx) => {
-    if (values.scaleType !== 'percentage') return
-    values.rules.forEach((rule, index) => {
-      if (POINTS_PATTERN.test(rule.points) && Number(rule.points) > 100) {
+    if (rule.penaltyType === 'percentage') {
+      const value = Number(rule.percentage)
+      if (rule.percentage === '' || !Number.isFinite(value) || value <= 0 || value > 100) {
         ctx.addIssue({
           code: 'custom',
-          path: ['rules', index, 'points'],
-          message: 'A percentage cannot be more than 100',
+          path: ['percentage'],
+          message: 'Give a percentage of a day above 0 and up to 100',
         })
       }
+    }
+    if (rule.deduction !== 'payroll' && rule.leaveTypeId === '') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['leaveTypeId'],
+        message: 'Choose the leave type the deduction is taken from',
+      })
+    }
+  })
+
+/** The penalty form: the policy, then its penalty rules (saved together, replacing the old ones). */
+export const penaltyFormSchema = z
+  .object({
+    policyId: z.string().min(1, 'Select a policy'),
+    rules: z.array(penaltyRuleSchema).max(50),
+  })
+  .superRefine((values, ctx) => {
+    const seen = new Set<string>()
+    values.rules.forEach((rule, index) => {
+      const key = `${rule.period}:${Number(rule.afterCount)}`
+      if (seen.has(key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['rules', index, 'afterCount'],
+          message: 'Another penalty has the same count and time span',
+        })
+      }
+      seen.add(key)
     })
   })
 

@@ -2,44 +2,59 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { schedulingKeys } from '@/features/scheduling'
+import { useEmployeeLookupSearch } from '@/hooks/use-employee-lookup'
 
 import { attendanceKeys } from '../api/attendance.api'
 import {
-  attendanceLogsQueryOptions,
-  configQueryOptions,
-  logsApi,
+  basicSettingsQueryOptions,
+  type ListFilters,
+  lookupsApi,
   resourceListQueryOptions,
-  restDaysQueryOptions,
+  resourceQueryOptions,
   settingsApi,
   settingsKeys,
-  settingsLookupsQueryOptions,
   type SettingsResourceName,
   type SettingsResources,
 } from '../api/settings.api'
 import type {
-  AttendanceLogInput,
-  AttendanceLogParams,
-  AttendanceSettings,
-  FileImportRow,
+  BasicSettings,
+  EmployeeOption,
+  GeoFenceSetting,
+  IpRestriction,
   ListParams,
+  OrgLookupKind,
+  RestDayRangeDelete,
+  SchedulingSettings,
 } from '../types/settings.types'
+import { fenceInput, restrictionInput } from '../utils/criteria'
 
-export function useAttendanceSettings() {
-  return useQuery(configQueryOptions())
+export function useBasicSettings() {
+  return useQuery(basicSettingsQueryOptions())
 }
 
-export function useSettingsLookups() {
-  return useQuery(settingsLookupsQueryOptions())
+/** Scheduling switches: the API has no endpoint yet, so this fails outside the mock API. */
+export function useSchedulingSettings() {
+  return useQuery({
+    queryKey: settingsKeys.scheduling(),
+    queryFn: ({ signal }) => settingsApi.scheduling(signal),
+    retry: false,
+  })
 }
 
 export function useSettingsList<N extends SettingsResourceName>(
   name: N,
-  params: ListParams & { year?: string },
+  params: ListParams & ListFilters,
+  enabled = true,
 ) {
-  return useQuery(resourceListQueryOptions(name, params))
+  return useQuery({ ...resourceListQueryOptions(name, params), enabled })
 }
 
-/** Every break type, with the name of an id ("lunch" → "Lunch Break"). */
+/** One record with everything the list leaves out (targets, rules, employees). */
+export function useSettingsRecord<N extends SettingsResourceName>(name: N, id: string | null) {
+  return useQuery({ ...resourceQueryOptions(name, id ?? ''), enabled: id !== null })
+}
+
+/** Every break type, with the name of an id ("12" → "Lunch Break"). */
 export function useBreakTypes() {
   const { data } = useQuery(resourceListQueryOptions('breakTypes', { page: 1, pageSize: 100 }))
   const list = data?.data ?? []
@@ -47,30 +62,55 @@ export function useBreakTypes() {
   return { list, nameOf }
 }
 
-export function useRestDays(params: ListParams) {
-  return useQuery(restDaysQueryOptions(params))
+// --- pickers --------------------------------------------------------------------------------
+
+/**
+ * Employees the screen's permission reaches (`GET /employees/lookup`), searched on the server
+ * (`search` is debounced here) and paged: `rows` so far, `hasMore` / `loadMore` for the next
+ * page, `find(id)` for anyone any page under this permission has read.
+ */
+export function useEmployeeLookup(permission: string, search = '', enabled = true) {
+  return useEmployeeLookupSearch<EmployeeOption>({ permission }, { search, enabled })
 }
 
-export function useRestDayBatch(id: string) {
+export function useOrgLookup(kind: OrgLookupKind, enabled = true) {
   return useQuery({
-    queryKey: settingsKeys.restDayBatch(id),
-    queryFn: ({ signal }) => settingsApi.restDayBatch(id, signal),
+    queryKey: settingsKeys.org(kind),
+    queryFn: ({ signal }) => lookupsApi.org(kind, signal),
+    staleTime: 5 * 60_000,
+    enabled,
   })
 }
 
-export function useAttendanceLogs(params: AttendanceLogParams) {
-  return useQuery(attendanceLogsQueryOptions(params))
+export function useCountries(enabled = true) {
+  return useQuery({
+    queryKey: settingsKeys.countries(),
+    queryFn: ({ signal }) => lookupsApi.countries(signal),
+    staleTime: 30 * 60_000,
+    enabled,
+  })
 }
 
-export function useMachines() {
+export function useStates(countryId: string | null) {
   return useQuery({
-    queryKey: settingsKeys.machines(),
-    queryFn: ({ signal }) => logsApi.machines(signal),
+    queryKey: settingsKeys.states(countryId ?? ''),
+    queryFn: ({ signal }) => lookupsApi.states(countryId ?? '', signal),
+    staleTime: 30 * 60_000,
+    enabled: countryId !== null,
+  })
+}
+
+export function useCities(stateId: string | null) {
+  return useQuery({
+    queryKey: settingsKeys.cities(stateId ?? ''),
+    queryFn: ({ signal }) => lookupsApi.cities(stateId ?? '', signal),
+    staleTime: 30 * 60_000,
+    enabled: stateId !== null,
   })
 }
 
 /**
- * A Settings or Logs change: attendance, schedules and geo fences depend on
+ * A Settings change: attendance, schedules and geo fences depend on
  * these, so all of them refetch; the toast says what happened.
  */
 function useSettingsMutation<TVariables, TResult>(
@@ -86,15 +126,20 @@ function useSettingsMutation<TVariables, TResult>(
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: attendanceKeys.all }),
         queryClient.invalidateQueries({ queryKey: schedulingKeys.all }),
-        queryClient.invalidateQueries({ queryKey: schedulingKeys.geoFences() }),
       ])
     },
   })
 }
 
-export const useSaveSettings = () =>
+export const useSaveBasicSettings = () =>
   useSettingsMutation(
-    (input: AttendanceSettings) => settingsApi.saveConfig(input),
+    (input: BasicSettings) => settingsApi.saveBasic(input),
+    () => 'Settings saved',
+  )
+
+export const useSaveSchedulingSettings = () =>
+  useSettingsMutation(
+    (input: SchedulingSettings) => settingsApi.saveScheduling(input),
     () => 'Settings saved',
   )
 
@@ -103,9 +148,10 @@ const NOUNS: Record<SettingsResourceName, string> = {
   ipRestrictions: 'IP restriction',
   geoFences: 'Geo fence',
   holidays: 'Holiday',
+  restDays: 'Rest day rule',
 }
 
-/** Create (no id) or update (id) a record of a Settings list. */
+/** Create (no id) or update (id; the input carries the rowVersion) a record of a Settings list. */
 export function useSaveSetting<N extends SettingsResourceName>(name: N) {
   return useSettingsMutation(
     ({ id, input }: { id?: string | undefined; input: SettingsResources[N]['input'] }) =>
@@ -116,55 +162,35 @@ export function useSaveSetting<N extends SettingsResourceName>(name: N) {
 
 export const useDeleteSetting = (name: SettingsResourceName) =>
   useSettingsMutation(
-    (id: string) => settingsApi.resource(name).remove(id),
+    ({ id, rowVersion }: { id: string; rowVersion: string | null }) =>
+      settingsApi.resource(name).remove(id, rowVersion),
     () => `${NOUNS[name]} deleted`,
   )
 
-export const useSetSettingActive = <N extends 'ipRestrictions' | 'geoFences'>(name: N) =>
+/**
+ * The list's Activate / Deactivate. The API has no status call: read the whole record (the
+ * list leaves its targets out) and save it back with `isActive` flipped.
+ */
+export const useSetSettingActive = (name: 'ipRestrictions' | 'geoFences') =>
   useSettingsMutation(
-    ({ id, active }: { id: string; active: boolean }) =>
-      settingsApi.resource(name).setActive(id, active),
+    async ({ id, active }: { id: string; active: boolean }) => {
+      if (name === 'ipRestrictions') {
+        const api = settingsApi.resource('ipRestrictions')
+        const record: IpRestriction = await api.get(id)
+        return api.update(id, { ...restrictionInput(record), isActive: active })
+      }
+      const api = settingsApi.resource('geoFences')
+      const record: GeoFenceSetting = await api.get(id)
+      return api.update(id, { ...fenceInput(record), isActive: active })
+    },
     ({ active }) => `${NOUNS[name]} ${active ? 'activated' : 'deactivated'}`,
-  )
-
-export const useDeleteRestDayBatch = () =>
-  useSettingsMutation(
-    (id: string) => settingsApi.deleteRestDayBatch(id),
-    () => 'Rest days deleted',
   )
 
 export const useDeleteRestDayRange = () =>
   useSettingsMutation(
-    ({ from, to }: { from: string; to: string }) => settingsApi.deleteRestDayRange(from, to),
+    (input: RestDayRangeDelete) => settingsApi.deleteRestDayRange(input),
     (_variables, result) =>
-      result.deleted === 0
+      result.deletedRestDays === 0
         ? 'There were no rest days in that range'
-        : `${result.deleted} rest day${result.deleted === 1 ? '' : 's'} deleted`,
-  )
-
-export const useSaveLog = () =>
-  useSettingsMutation(
-    ({ id, input }: { id?: string | undefined; input: AttendanceLogInput }) =>
-      id ? logsApi.update(id, input) : logsApi.create(input),
-    ({ id }) => (id ? 'Attendance log updated' : 'Attendance log created'),
-  )
-
-export const useDeleteLog = () =>
-  useSettingsMutation(
-    (id: string) => logsApi.remove(id),
-    () => 'Attendance log deleted',
-  )
-
-export const useImportMachines = () =>
-  useSettingsMutation(
-    (machineIds: string[]) => logsApi.importMachines(machineIds),
-    (_variables, result) =>
-      `Imported ${result.imported} punch${result.imported === 1 ? '' : 'es'} from ${result.machines.length} machine${result.machines.length === 1 ? '' : 's'}`,
-  )
-
-export const useImportFile = () =>
-  useSettingsMutation(
-    (rows: FileImportRow[]) => logsApi.importFile(rows),
-    (_variables, result) =>
-      `Imported ${result.created} punch${result.created === 1 ? '' : 'es'}${result.skipped ? `, ${result.skipped} skipped` : ''}`,
+        : `${result.deletedRestDays} rest day${result.deletedRestDays === 1 ? '' : 's'} deleted`,
   )

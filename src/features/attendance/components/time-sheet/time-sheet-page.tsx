@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
-import { format } from 'date-fns'
-import { Search } from 'lucide-react'
+import { endOfMonth, format } from 'date-fns'
+import { Download, RefreshCw, Search } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { ErrorState } from '@/components/feedback/error-state'
 import { PageContainer, Pagination } from '@/components/layout'
 import { ScopeTabs } from '@/components/layout'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -14,21 +16,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 
-import { TIME_SHEET_PAGE_SIZES } from '../../constants'
-import { useAttendanceLookups, useDaysOverview, useTimeSheet } from '../../hooks/use-attendance'
+import { attendanceApi } from '../../api/attendance.api'
+import { DAY_FLAG_LABELS, TIME_SHEET_PAGE_SIZES } from '../../constants'
+import { useDaysOverview, useProcessTimeSheet, useTimeSheet } from '../../hooks/use-attendance'
 import type { TimeSheetSearch } from '../../routing'
 import {
   type DayKey,
   TIME_SHEET_SCOPES,
   type TimeSheetAction,
   type TimeSheetDay,
+  type TimeSheetParams,
 } from '../../types/attendance.types'
 import { rowActions } from '../../utils/row-actions'
-import { AbsenceDialog } from '../dialogs/absence-dialog'
-import { MissingPunchDialog } from '../dialogs/missing-punch-dialog'
-import { OvertimeDialog } from '../dialogs/overtime-dialog'
-import { RelaxationDialog } from '../dialogs/relaxation-dialog'
 import { TimeSheetEditDialog } from '../dialogs/time-sheet-edit-dialog'
 import { TimeSheetViewDialog } from '../dialogs/time-sheet-view-dialog'
 import { ClockCard } from './clock-card'
@@ -40,43 +42,55 @@ const routeApi = getRouteApi('/_app/attendance/time-sheet')
 
 type DialogState = { action: TimeSheetAction; day: TimeSheetDay } | null
 
-const keyOf = (day: TimeSheetDay): DayKey => ({ employeeId: day.employeeId, date: day.date })
+const keyOf = (day: TimeSheetDay): DayKey => ({ employeeId: day.employeeId, date: day.workDate })
+
+const TITLES = {
+  my: 'My Time Sheet',
+  subordinates: 'Subordinates Time Sheet',
+  all: 'All Time Sheet',
+}
 
 /**
- * My Time Sheet / All Time Sheet: the clock, this month's counts, then one
- * person's days between From and To. "All" picks the person in Employee Name
- * and adds the row actions (Edit, Missing Punch, Relaxation, Absent,
- * Overtime) beside View.
+ * My / Subordinates / All Time Sheet: the clock, this month's counts, then the
+ * days between From and To. My shows the signed-in person; Subordinates and All
+ * everyone the user reaches (or the person picked in Employee Name), with Edit
+ * beside View. Export and Process follow the user's permissions.
  */
 export function TimeSheetPage() {
   const search = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
   const [today] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [dialog, setDialog] = useState<DialogState>(null)
-  const lookups = useAttendanceLookups()
+  const canClock = useCan('attendance.time_sheet.clock')
+  const canEdit = useCan('attendance.time_sheet.edit')
+  const canExport = useCan('attendance.time_sheet.export')
+  const canProcess = useCan('attendance.time_sheet.process')
+  const process = useProcessTimeSheet()
 
   const from = search.from ?? `${today.slice(0, 7)}-01`
   const to = search.to ?? today
-  const isAll = search.scope === 'all'
-  // All: the chosen person, or the first one in the list until someone is chosen.
-  const fallbackId = (lookups.data?.employees ?? []).find(
-    (employee) => search.status === 'all' || employee.status === search.status,
-  )?.id
-  const employeeId = isAll ? (search.employeeId ?? fallbackId) : undefined
-  const ready = !isAll || employeeId !== undefined
+  const isMy = search.scope === 'my'
+  const employeeId = isMy ? undefined : search.employeeId
 
-  const sheet = useTimeSheet(
-    {
-      ...(employeeId ? { employeeId } : {}),
-      from,
-      to,
-      page: search.page,
-      pageSize: search.pageSize,
-      ...(search.q ? { search: search.q } : {}),
-    },
-    ready,
-  )
-  const overview = useDaysOverview(employeeId, ready)
+  const params: TimeSheetParams = {
+    scope: search.scope,
+    ...(employeeId ? { employeeId } : {}),
+    from,
+    to,
+    page: search.page,
+    pageSize: search.pageSize,
+    ...(search.q ? { search: search.q } : {}),
+    ...(!isMy && search.status !== 'all' ? { status: search.status } : {}),
+    ...(search.dayStatus ? { dayStatus: search.dayStatus } : {}),
+    ...(search.flag ? { flag: search.flag } : {}),
+  }
+  const sheet = useTimeSheet(params)
+  const overview = useDaysOverview({
+    scope: search.scope,
+    from: `${today.slice(0, 7)}-01`,
+    to: format(endOfMonth(new Date()), 'yyyy-MM-dd'),
+    ...(employeeId ? { employeeId } : {}),
+  })
 
   const update = (patch: Partial<TimeSheetSearch>, replace = false) =>
     navigate({ search: (prev) => ({ ...prev, ...patch }), replace })
@@ -99,18 +113,29 @@ export function TimeSheetPage() {
 
   const meta = sheet.data?.meta
   const rows = sheet.data?.data ?? []
-  const person = sheet.data?.employee
+  const personName = employeeId ? rows[0]?.employeeName : undefined
   const filterKey = [search.scope, search.status, employeeId, from, to].join('|')
   const close = () => {
     setDialog(null)
   }
 
+  const exportSheet = async () => {
+    try {
+      await attendanceApi.exportTimeSheet(params)
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Could not export the time sheet.')
+    }
+  }
+
   return (
     <PageContainer>
-      <h1 className="sr-only">{isAll ? 'All Time Sheet' : 'My Time Sheet'}</h1>
+      <h1 className="sr-only">{TITLES[search.scope]}</h1>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-stretch">
-        <ClockCard />
-        <DaysOverviewCard overview={overview.data} personName={isAll ? person?.name : undefined} />
+        {canClock && <ClockCard />}
+        <DaysOverviewCard
+          overview={overview.data}
+          personName={isMy ? undefined : (personName ?? 'Everyone in this view')}
+        />
       </div>
 
       <div className="rounded-xl bg-card px-4 py-3.5 shadow-xs sm:px-5">
@@ -119,7 +144,7 @@ export function TimeSheetPage() {
           scopes={TIME_SHEET_SCOPES}
           value={search.scope}
           onChange={(scope) => {
-            void update({ scope, page: 1, q: undefined })
+            void update({ scope, page: 1, q: undefined, employeeId: undefined })
           }}
         />
       </div>
@@ -128,10 +153,15 @@ export function TimeSheetPage() {
         key={filterKey}
         scope={search.scope}
         initial={{ status: search.status, employeeId, from, to }}
+        knownEmployee={
+          employeeId && rows[0]
+            ? { value: employeeId, label: rows[0].employeeName, hint: rows[0].employeeCode }
+            : undefined
+        }
         onApply={(values) => {
           void update({
             status: values.status,
-            employeeId: isAll ? values.employeeId : undefined,
+            employeeId: isMy ? undefined : values.employeeId,
             from: values.from === `${today.slice(0, 7)}-01` ? undefined : values.from,
             to: values.to === today ? undefined : values.to,
             page: 1,
@@ -140,7 +170,7 @@ export function TimeSheetPage() {
       />
 
       <section
-        aria-label={person ? `Time sheet of ${person.name}` : 'Time sheet'}
+        aria-label={personName ? `Time sheet of ${personName}` : 'Time sheet'}
         className="grid gap-4 overflow-hidden rounded-xl bg-card py-4 font-inter shadow-xs"
       >
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5">
@@ -165,33 +195,72 @@ export function TimeSheetPage() {
             </Select>
             entries
           </label>
-          <div className="relative w-full sm:w-56">
-            <Search
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-label"
-            />
-            <Input
-              type="search"
-              aria-label="Search days"
-              placeholder="Search"
-              value={text}
-              onChange={(event) => {
-                const value = event.target.value
-                setText(value)
-                window.clearTimeout(searchTimer.current)
-                searchTimer.current = window.setTimeout(() => {
-                  void update({ q: value.trim() || undefined, page: 1 }, true)
-                }, 300)
+          {search.flag && (
+            <button
+              type="button"
+              onClick={() => {
+                void update({ flag: undefined, page: 1 })
               }}
-              className="h-8 pl-9 placeholder:text-grey sm:pl-9 sm:text-base"
-            />
+              className="rounded-full bg-muted px-3 py-1 text-xs text-title hover:bg-muted/70"
+            >
+              Only {DAY_FLAG_LABELS[search.flag]} days ✕
+            </button>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {canProcess && !isMy && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={process.isPending}
+                onClick={() => {
+                  process.mutate({
+                    fromDate: from,
+                    toDate: to,
+                    ...(employeeId ? { employeeIds: [employeeId] } : {}),
+                  })
+                }}
+                title="Work the time sheet out again from the punches, schedules and requests"
+              >
+                <RefreshCw /> Process
+              </Button>
+            )}
+            {canExport && (
+              <Button variant="outline" size="sm" onClick={() => void exportSheet()}>
+                <Download /> Export
+              </Button>
+            )}
+            <div className="relative w-full sm:w-56">
+              <Search
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-label"
+              />
+              <Input
+                type="search"
+                aria-label="Search days"
+                placeholder="Search"
+                value={text}
+                onChange={(event) => {
+                  const value = event.target.value
+                  setText(value)
+                  window.clearTimeout(searchTimer.current)
+                  searchTimer.current = window.setTimeout(() => {
+                    void update({ q: value.trim() || undefined, page: 1 }, true)
+                  }, 300)
+                }}
+                className="h-8 pl-9 placeholder:text-grey sm:pl-9 sm:text-base"
+              />
+            </div>
           </div>
         </div>
 
         {sheet.isError ? (
           <ErrorState
             title="Could not load the time sheet"
-            message="Check your connection and try again."
+            message={
+              sheet.error instanceof ApiError && sheet.error.isClientError
+                ? sheet.error.message
+                : 'Check your connection and try again.'
+            }
             onRetry={() => void sheet.refetch()}
           />
         ) : (
@@ -199,8 +268,9 @@ export function TimeSheetPage() {
             rows={rows}
             scope={search.scope}
             today={today}
-            isLoading={!ready || sheet.isPending}
+            isLoading={sheet.isPending}
             isFetching={sheet.isFetching}
+            canEdit={canEdit}
             onAction={(action, day) => {
               setDialog({ action, day })
             }}
@@ -233,7 +303,7 @@ export function TimeSheetPage() {
           dayKey={keyOf(dialog.day)}
           onClose={close}
           onEdit={
-            isAll && rowActions(dialog.day, 'all', today).includes('edit')
+            rowActions(dialog.day, search.scope, today, canEdit).includes('edit')
               ? () => {
                   setDialog({ action: 'edit', day: dialog.day })
                 }
@@ -241,12 +311,6 @@ export function TimeSheetPage() {
           }
         />
       )}
-      {dialog?.action === 'missing-punch' && (
-        <MissingPunchDialog day={dialog.day} onClose={close} />
-      )}
-      {dialog?.action === 'relaxation' && <RelaxationDialog day={dialog.day} onClose={close} />}
-      {dialog?.action === 'absent' && <AbsenceDialog day={dialog.day} onClose={close} />}
-      {dialog?.action === 'overtime' && <OvertimeDialog day={dialog.day} onClose={close} />}
     </PageContainer>
   )
 }

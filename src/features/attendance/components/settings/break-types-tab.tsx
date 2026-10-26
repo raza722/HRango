@@ -10,6 +10,7 @@ import { FieldLayoutContext, TextField } from '@/components/form'
 import { type DataTableColumn, RowActionsMenu, rowMenuItemClass } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import {
@@ -28,11 +29,16 @@ import { SettingsListCard } from './settings-list'
 
 const PAGE_SIZE = 10
 
-const schema = z.object({
-  name: z.string().trim().min(1, 'Enter a name').max(80, 'Keep it under 80 characters'),
-  startIdentifier: z.string().trim().min(1, 'Enter the start identifier').max(80),
-  endIdentifier: z.string().trim().min(1, 'Enter the end identifier').max(80),
-})
+const schema = z
+  .object({
+    name: z.string().trim().min(1, 'Enter a name').max(200, 'Keep it under 200 characters'),
+    startIdentifier: z.string().trim().min(1, 'Enter the start identifier').max(50),
+    endIdentifier: z.string().trim().min(1, 'Enter the end identifier').max(50),
+  })
+  .refine((values) => values.startIdentifier !== values.endIdentifier, {
+    path: ['endIdentifier'],
+    message: 'The end identifier must differ from the start identifier',
+  })
 type Values = z.infer<typeof schema>
 
 /** "Create New Break Type" and "Break Type" (view / edit): Name, Start and End Identifier. */
@@ -44,6 +50,9 @@ function BreakTypeDialog({
   onClose: () => void
 }) {
   const save = useSaveSetting('breakTypes')
+  const canSave = useCan(
+    record ? 'scheduling.settings.break_types.edit' : 'scheduling.settings.break_types.create',
+  )
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: record
@@ -56,10 +65,16 @@ function BreakTypeDialog({
   })
   const submit = form.handleSubmit(async (values) => {
     try {
-      await save.mutateAsync({ id: record?.id, input: values })
+      await save.mutateAsync({
+        id: record?.id,
+        input: { ...values, rowVersion: record?.rowVersion ?? null },
+      })
     } catch (error) {
       if (error instanceof ApiError) {
-        if (error.fieldErrors.name) form.setError('name', { message: error.fieldErrors.name })
+        const field = (['name', 'startIdentifier', 'endIdentifier'] as const).find(
+          (name) => error.fieldErrors[name],
+        )
+        if (field) form.setError(field, { message: error.fieldErrors[field] ?? error.message })
         else form.setError('root', { message: error.message })
       }
       return
@@ -87,15 +102,17 @@ function BreakTypeDialog({
           >
             Cancel
           </Button>
-          <Button
-            type="submit"
-            form="break-type-form"
-            size="lg"
-            disabled={save.isPending}
-            className={cn(settingsDialogButtonClass, navyButtonClass, 'flex-1')}
-          >
-            {record ? 'Save Changes' : 'Create'}
-          </Button>
+          {canSave && (
+            <Button
+              type="submit"
+              form="break-type-form"
+              size="lg"
+              disabled={save.isPending}
+              className={cn(settingsDialogButtonClass, navyButtonClass, 'flex-1')}
+            >
+              {record ? 'Save Changes' : 'Create'}
+            </Button>
+          )}
         </>
       }
     >
@@ -148,9 +165,12 @@ export function BreakTypesTab() {
   const list = useSettingsList('breakTypes', {
     page,
     pageSize: PAGE_SIZE,
-    ...(search ? { search } : {}),
+    ...(search ? { q: search } : {}),
   })
   const remove = useDeleteSetting('breakTypes')
+  const canCreate = useCan('scheduling.settings.break_types.create')
+  const canEdit = useCan('scheduling.settings.break_types.edit')
+  const canDelete = useCan('scheduling.settings.break_types.delete')
 
   return (
     <>
@@ -168,9 +188,13 @@ export function BreakTypesTab() {
           setPage(1)
         }}
         onPageChange={setPage}
-        onCreate={() => {
-          setDialog({ record: null })
-        }}
+        {...(canCreate
+          ? {
+              onCreate: () => {
+                setDialog({ record: null })
+              },
+            }
+          : {})}
         emptyText="No break types match."
         rowActions={(row) => (
           <RowActionsMenu
@@ -178,18 +202,22 @@ export function BreakTypesTab() {
             label={`Actions for ${row.name}`}
             actions={[
               {
-                label: 'View / Edit',
+                label: canEdit ? 'View / Edit' : 'View',
                 onSelect: () => {
                   setDialog({ record: row })
                 },
               },
-              {
-                label: 'Delete',
-                variant: 'destructive',
-                onSelect: () => {
-                  setDeleting(row)
-                },
-              },
+              ...(canDelete
+                ? [
+                    {
+                      label: 'Delete',
+                      variant: 'destructive' as const,
+                      onSelect: () => {
+                        setDeleting(row)
+                      },
+                    },
+                  ]
+                : []),
             ]}
           />
         )}
@@ -214,11 +242,14 @@ export function BreakTypesTab() {
         variant="destructive"
         onConfirm={() => {
           if (!deleting) return
-          remove.mutate(deleting.id, {
-            onError: (error) => {
-              toast.error(error instanceof ApiError ? error.message : 'Could not delete.')
+          remove.mutate(
+            { id: deleting.id, rowVersion: deleting.rowVersion },
+            {
+              onError: (error) => {
+                toast.error(error instanceof ApiError ? error.message : 'Could not delete.')
+              },
             },
-          })
+          )
         }}
       />
     </>

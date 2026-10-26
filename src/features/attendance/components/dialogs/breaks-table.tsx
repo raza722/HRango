@@ -5,7 +5,6 @@ import {
   DatePickerField,
   FieldLayoutContext,
   SelectField,
-  TextField,
   TimePickerField,
 } from '@/components/form'
 import { Button } from '@/components/ui/button'
@@ -19,8 +18,8 @@ const hidden = 'gap-0 [&>label]:sr-only'
 
 /**
  * Breaks of Time Sheet Edit: Break Type, Break Out date and time, Break In
- * date and time, Description and a red remove button per row, or "No Record
- * Found". Rows become cards on phones.
+ * date and time and a red remove button per row, or "No Record Found". Rows
+ * become cards on phones. (The API keeps no description per break.)
  */
 export function BreaksTable({
   control,
@@ -47,7 +46,6 @@ export function BreaksTable({
       outTime: out.time,
       inDate: back.date,
       inTime: back.time,
-      description: '',
     })
   }
 
@@ -70,7 +68,7 @@ export function BreaksTable({
           </p>
         ) : isWide ? (
           <div className="scrollbar-thin overflow-x-auto">
-            <table className="w-full min-w-[54rem] text-sm">
+            <table className="w-full min-w-[46rem] text-sm">
               <thead>
                 <tr className="text-left text-base text-heading [&>th]:px-1.5 [&>th]:pb-2 [&>th]:font-normal">
                   <th scope="col" className="w-36">
@@ -84,7 +82,6 @@ export function BreaksTable({
                   <th scope="col" className="w-32">
                     Break In Time
                   </th>
-                  <th scope="col">Description</th>
                   <th scope="col" className="w-14 text-center">
                     Actions
                   </th>
@@ -137,15 +134,6 @@ export function BreaksTable({
                         className="gap-0"
                       />
                     </td>
-                    <td>
-                      <TextField
-                        control={control}
-                        name={`breaks.${index}.description`}
-                        label={`Break ${index + 1} description`}
-                        maxLength={200}
-                        className={hidden}
-                      />
-                    </td>
                     <td className="pt-1.5 text-center">
                       <RemoveButton index={index} onRemove={remove} />
                     </td>
@@ -191,12 +179,6 @@ export function BreaksTable({
                     label="Break In Time"
                   />
                 </div>
-                <TextField
-                  control={control}
-                  name={`breaks.${index}.description`}
-                  label="Description"
-                  maxLength={200}
-                />
               </li>
             ))}
           </ul>

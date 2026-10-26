@@ -1,165 +1,157 @@
 import { http, HttpResponse } from 'msw'
 import { z } from 'zod'
 
-import {
-  BADGE_COLORS,
-  DEDUCTIONS,
-  PENALTY_TYPES,
-  POLICY_NAMES,
-  SCALE_TYPES,
-  TIME_SPANS,
-  type WarningPenalty,
-  type WarningPenaltyInput,
-  WEEKDAYS,
-} from '@/features/warning'
-import type { ApiItem, Paginated } from '@/types/api'
+import { DEDUCTIONS, PENALTY_TYPES, type WarningPenalty } from '@/features/warning'
+import type { Paginated } from '@/types/api'
 
-import { createMockCollection } from '../collection'
-import {
-  apiPath,
-  createId,
-  errorResponse,
-  latency,
-  paginate,
-  readPageParams,
-  requireAuth,
-} from '../utils'
+import { leaveTypes } from '../leaves/db'
+import { apiPath, errorResponse, latency, paginate, readPageParams, requireAuth } from '../utils'
 import { recordHistory } from '../warning-history/handlers'
-import { seedWarningPenalties } from './seed'
+import { changedByOthers, notFound } from '../warning-policies/handlers'
+import {
+  newRowVersion,
+  nextId,
+  type PenaltyRecord,
+  presentPolicy,
+  serverNow,
+  warningPenalties,
+  warningPolicies,
+} from '../warning-policies/store'
 
-export const warningPenalties = createMockCollection<WarningPenalty>({
-  storageKey: 'hrms-mock-warning-penalties',
-  seed: seedWarningPenalties,
-})
+export { warningPenalties } from '../warning-policies/store'
 
-const penaltyInputSchema = z.object({
-  policyName: z.enum(POLICY_NAMES),
-  title: z.string().trim().min(2).max(60),
-  scaleType: z.enum(SCALE_TYPES),
-  rules: z
+/** `PenaltiesIn`. */
+const penaltiesInputSchema = z.object({
+  penalties: z
     .array(
       z.object({
-        count: z.number().int().min(1).max(10),
-        timeSpan: z.enum(TIME_SPANS),
-        startDay: z.string().min(1),
-        endDay: z.string().min(1),
-        day: z.number().int().min(1).max(31),
-        weekdays: z.array(z.enum(WEEKDAYS)),
-        from: z.string().regex(/^\d{2}:\d{2}$/),
-        to: z.string().regex(/^\d{2}:\d{2}$/),
-        points: z.number().int().min(0).max(999),
+        afterCount: z.number().int().min(1).max(100),
+        period: z.enum(['week', 'month', 'year']),
         penaltyType: z.enum(PENALTY_TYPES),
+        percentage: z.number().gt(0).max(100).nullable().optional(),
         deduction: z.enum(DEDUCTIONS),
-        badgeColor: z.enum(BADGE_COLORS),
+        leaveTypeId: z.union([z.string(), z.number()]).nullable().optional(),
       }),
     )
-    .min(1),
-}) satisfies z.ZodType<WarningPenaltyInput>
+    .max(50),
+  rowVersion: z.string().nullable().optional(),
+})
 
-const BASE = apiPath('/warning-penalties')
+const SHARE = { half_day: 50, full_day: 100 } as const
 
-/** Same policy name + title (case-insensitive) counts as a duplicate. */
-function isDuplicate(input: WarningPenaltyInput, exceptId?: string): boolean {
-  const title = input.title.trim().toLowerCase()
+/** Penalty rows in the list's order: by policy, then period and count. */
+function listRows(policyId: string | null): WarningPenalty[] {
+  const policies = new Map(warningPolicies.all().map((policy) => [policy.id, policy]))
   return warningPenalties
     .all()
-    .some(
-      (penalty) =>
-        penalty.id !== exceptId &&
-        penalty.policyName === input.policyName &&
-        penalty.title.toLowerCase() === title,
+    .filter((penalty) => !policyId || penalty.warningPolicyId === policyId)
+    .flatMap((penalty) => {
+      const policy = policies.get(penalty.warningPolicyId)
+      return policy ? [{ ...penalty, policyTitle: policy.title, appliesTo: policy.appliesTo }] : []
+    })
+    .sort(
+      (a, b) =>
+        Number(a.warningPolicyId) - Number(b.warningPolicyId) ||
+        a.period.localeCompare(b.period) ||
+        a.afterCount - b.afterCount,
     )
-}
-
-function duplicateResponse() {
-  return errorResponse(409, 'A penalty with this policy name and title already exists.', {
-    code: 'PENALTY_DUPLICATE',
-    fieldErrors: { title: 'Choose a different title for this policy' },
-  })
-}
-
-async function readInput(request: Request) {
-  const body: unknown = await request.json().catch(() => null)
-  return penaltyInputSchema.safeParse(body)
 }
 
 export const warningPenaltyHandlers = [
-  http.get(BASE, async ({ request }) => {
+  // GET /warning/penalties?policyId= — every penalty rule with its policy.
+  http.get(apiPath('/warning/penalties'), async ({ request }) => {
     await latency()
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
 
-    const { page, pageSize } = readPageParams(new URL(request.url))
-    const sorted = warningPenalties.all().sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    return HttpResponse.json<Paginated<WarningPenalty>>(paginate(sorted, page, pageSize))
+    const url = new URL(request.url)
+    const { page, pageSize } = readPageParams(url)
+    return HttpResponse.json<Paginated<WarningPenalty>>(
+      paginate(listRows(url.searchParams.get('policyId')), page, pageSize),
+    )
   }),
 
-  http.get<{ id: string }>(`${BASE}/:id`, async ({ request, params }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
+  // PUT /warning/policies/:id/penalties — replaces the policy's penalty rules.
+  http.put<{ id: string }>(
+    apiPath('/warning/policies/:id/penalties'),
+    async ({ request, params }) => {
+      await latency()
+      const unauthorized = requireAuth(request)
+      if (unauthorized) return unauthorized
 
-    const penalty = warningPenalties.find(params.id)
-    if (!penalty) return errorResponse(404, 'Penalty not found.', { code: 'NOT_FOUND' })
-    return HttpResponse.json<ApiItem<WarningPenalty>>({ data: penalty })
-  }),
+      const body: unknown = await request.json().catch(() => null)
+      const parsed = penaltiesInputSchema.safeParse(body)
+      if (!parsed.success) {
+        return errorResponse(422, 'Some fields need your attention.', { code: 'VALIDATION_FAILED' })
+      }
+      const errors: Record<string, string> = {}
+      parsed.data.penalties.forEach((penalty, index) => {
+        if (penalty.penaltyType === 'percentage' && penalty.percentage == null) {
+          errors[`penalties.${index}.percentage`] = 'Give the percentage of a day.'
+        }
+        if (penalty.deduction !== 'payroll' && penalty.leaveTypeId == null) {
+          errors[`penalties.${index}.leaveTypeId`] =
+            'Choose the leave type the deduction is taken from.'
+        }
+      })
+      const keys = parsed.data.penalties.map((penalty) => `${penalty.period}:${penalty.afterCount}`)
+      if (new Set(keys).size !== keys.length) {
+        errors.penalties = 'Two penalties have the same count and period.'
+      }
+      if (Object.keys(errors).length > 0) {
+        return errorResponse(422, 'Some fields need your attention.', {
+          code: 'VALIDATION_FAILED',
+          fieldErrors: errors,
+        })
+      }
 
-  http.post(BASE, async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
+      const policy = warningPolicies.find(params.id)
+      if (!policy) return notFound()
+      if (!parsed.data.rowVersion || parsed.data.rowVersion !== policy.rowVersion) {
+        return changedByOthers()
+      }
 
-    const parsed = await readInput(request)
-    if (!parsed.success) {
-      return errorResponse(422, 'Some fields are not valid.', { code: 'VALIDATION_FAILED' })
-    }
-    if (isDuplicate(parsed.data)) return duplicateResponse()
-
-    const now = new Date().toISOString()
-    const penalty = warningPenalties.insert({
-      ...parsed.data,
-      id: createId('pn'),
-      createdAt: now,
-      updatedAt: now,
-    })
-    recordHistory('penalty', 'created', penalty)
-    return HttpResponse.json<ApiItem<WarningPenalty>>({ data: penalty }, { status: 201 })
-  }),
-
-  http.put<{ id: string }>(`${BASE}/:id`, async ({ request, params }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-
-    const existing = warningPenalties.find(params.id)
-    if (!existing) return errorResponse(404, 'Penalty not found.', { code: 'NOT_FOUND' })
-
-    const parsed = await readInput(request)
-    if (!parsed.success) {
-      return errorResponse(422, 'Some fields are not valid.', { code: 'VALIDATION_FAILED' })
-    }
-    if (isDuplicate(parsed.data, existing.id)) return duplicateResponse()
-
-    const updated: WarningPenalty = {
-      ...existing,
-      ...parsed.data,
-      updatedAt: new Date().toISOString(),
-    }
-    warningPenalties.update(existing.id, updated)
-    recordHistory('penalty', 'updated', updated)
-    return HttpResponse.json<ApiItem<WarningPenalty>>({ data: updated })
-  }),
-
-  http.delete<{ id: string }>(`${BASE}/:id`, async ({ request, params }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-
-    const existing = warningPenalties.find(params.id)
-    if (!existing || !warningPenalties.remove(params.id)) {
-      return errorResponse(404, 'Penalty not found.', { code: 'NOT_FOUND' })
-    }
-    recordHistory('penalty', 'deleted', existing)
-    return new HttpResponse(null, { status: 204 })
-  }),
+      const before = presentPolicy(policy).penalties
+      warningPenalties
+        .all()
+        .filter((penalty) => penalty.warningPolicyId === policy.id)
+        .forEach((penalty) => warningPenalties.remove(penalty.id))
+      const now = serverNow()
+      parsed.data.penalties.forEach((penalty) => {
+        const leaveTypeId =
+          penalty.deduction === 'payroll' || penalty.leaveTypeId == null
+            ? null
+            : String(penalty.leaveTypeId)
+        const record: PenaltyRecord = {
+          id: nextId(warningPenalties.all()),
+          warningPolicyId: policy.id,
+          afterCount: penalty.afterCount,
+          period: penalty.period,
+          penaltyType: penalty.penaltyType,
+          percentage:
+            penalty.penaltyType === 'percentage'
+              ? (penalty.percentage ?? 0)
+              : SHARE[penalty.penaltyType],
+          deduction: penalty.deduction,
+          leaveTypeId,
+          leaveTypeTitle: leaveTypeId ? (leaveTypes.find(leaveTypeId)?.title ?? null) : null,
+          createdAt: now,
+        }
+        warningPenalties.insert(record)
+      })
+      const updated = { ...policy, updatedAt: now, rowVersion: newRowVersion() }
+      warningPolicies.update(policy.id, updated)
+      const after = presentPolicy(updated)
+      if (JSON.stringify(before) !== JSON.stringify(after.penalties)) {
+        recordHistory(
+          'update',
+          updated,
+          'penalties',
+          before.length ? JSON.stringify(before) : null,
+          JSON.stringify(after.penalties),
+        )
+      }
+      return HttpResponse.json({ data: after })
+    },
+  ),
 ]

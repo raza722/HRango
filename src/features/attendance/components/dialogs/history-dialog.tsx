@@ -6,7 +6,41 @@ import { EmployeeAvatar, Pagination } from '@/components/layout'
 import { Skeleton } from '@/components/ui/skeleton'
 
 import { useDayHistory } from '../../hooks/use-attendance'
-import type { DayKey } from '../../types/attendance.types'
+import type { DayKey, HistoryEntry } from '../../types/attendance.types'
+import { formatClockTime } from '../../utils/local-time'
+
+/** Field names of the audit log → the words of the Edit dialog. */
+const FIELD_LABELS: Record<string, string> = {
+  expected_in: 'Expected Check In',
+  expected_out: 'Expected Check Out',
+  first_in: 'Check In Time',
+  last_out: 'Check Out Time',
+  marked_status: 'Mark',
+  breaks: 'Breaks',
+  comments: 'Comments',
+}
+
+const MARK_LABELS: Record<string, string> = {
+  absent: 'Absent',
+  half_day: 'Half Day',
+  short_day: 'Short Day',
+}
+
+/** A logged value as people read it: times as "09:05 AM", marks in words, empty as "—". */
+function shown(value: string | null): string {
+  if (!value) return '—'
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) && value.length <= 19) {
+    return formatClockTime(value.slice(0, 16))
+  }
+  return MARK_LABELS[value] ?? value
+}
+
+function actionOf(entry: HistoryEntry): string {
+  const field = entry.fieldName ? (FIELD_LABELS[entry.fieldName] ?? entry.fieldName) : null
+  const verb = entry.actionName ? entry.actionName.replace(/_/g, ' ') : 'Updated'
+  const sentence = field ? `${verb} ${field}` : verb
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1)
+}
 
 /** "History": who changed the day, what and when, newest first. */
 export function HistoryDialog({ dayKey, onClose }: { dayKey: DayKey; onClose: () => void }) {
@@ -49,25 +83,27 @@ export function HistoryDialog({ dayKey, onClose }: { dayKey: DayKey; onClose: ()
                 <tr key={entry.id} className="border-t align-top [&>td]:px-4 [&>td]:py-2.5">
                   <td>
                     <span className="flex items-center gap-2.5">
-                      <EmployeeAvatar name={entry.editedBy.name} className="size-8" />
+                      <EmployeeAvatar name={entry.performedByName ?? '?'} className="size-8" />
                       <span className="min-w-0">
                         <span className="block truncate font-medium text-person">
-                          {entry.editedBy.name}
-                        </span>
-                        <span className="block text-[0.5625rem] text-grey">
-                          {entry.editedBy.code}
+                          {entry.performedByName ?? 'System'}
                         </span>
                       </span>
                     </span>
                   </td>
                   <td>
-                    <span className="block">{entry.action}</span>
-                    {entry.detail && (
-                      <span className="block text-muted-foreground">{entry.detail}</span>
-                    )}
+                    <span className="block">{actionOf(entry)}</span>
+                    {(entry.oldValue !== null || entry.newValue !== null) &&
+                      entry.fieldName !== 'comments' && (
+                        <span className="block text-muted-foreground">
+                          {shown(entry.oldValue)} → {shown(entry.newValue)}
+                        </span>
+                      )}
                   </td>
                   <td className="whitespace-nowrap">
-                    {format(parseISO(entry.at), 'h:mmaaa, d MMM, yyyy')}
+                    {entry.performedAt
+                      ? format(parseISO(entry.performedAt), 'h:mmaaa, d MMM, yyyy')
+                      : '—'}
                   </td>
                 </tr>
               ))

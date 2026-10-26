@@ -8,14 +8,15 @@ import {
   RowActionsMenu,
 } from '@/components/layout'
 import { PAGE_SIZE_OPTIONS } from '@/lib/constants'
+import { useCan } from '@/lib/permissions'
 
 import { POLICY_NAME_LABELS } from '../../constants'
 import { useDeleteWarningPenalty, useWarningPenalties } from '../../hooks/use-warning-penalties'
 import {
-  BADGE_COLOR_LABELS,
-  BADGE_COLOR_VALUES,
-  PENALTY_TYPE_LABELS,
-  SCALE_TYPE_LABELS,
+  DEDUCTION_LABELS,
+  ordinal,
+  PENALTY_PERIOD_LABELS,
+  penaltyLabel,
 } from '../../penalty-constants'
 import { isPageSize, usePolicyTablePrefs } from '../../store/policy-table-prefs.store'
 import { useWarningViewPrefs, visibleColumns } from '../../store/warning-view-prefs.store'
@@ -25,6 +26,7 @@ import { warningType } from '../type-styles'
 interface PenaltyTableProps {
   page: number
   onPageChange: (page: number) => void
+  /** Opens the penalty's policy in the penalty form. */
   onEdit: (penalty: WarningPenalty) => void
   /** Fires as soon as a delete is confirmed. */
   onDelete?: (penalty: WarningPenalty) => void
@@ -32,29 +34,10 @@ interface PenaltyTableProps {
   collapsible?: boolean
 }
 
-/** Penalty Type cell: the first rule's type with its badge colour, plus "+N" for more rules. */
-function PenaltyTypeCell({ penalty }: { penalty: WarningPenalty }) {
-  const [first, ...rest] = penalty.rules
-  if (!first) return <span className="text-muted-foreground">—</span>
-  return (
-    <span className="inline-flex items-center gap-2 md:justify-center">
-      <span
-        aria-hidden="true"
-        className="size-2.5 shrink-0 rounded-full"
-        style={{ backgroundColor: BADGE_COLOR_VALUES[first.badgeColor] }}
-      />
-      <span>{PENALTY_TYPE_LABELS[first.penaltyType]}</span>
-      <span className="sr-only">, {BADGE_COLOR_LABELS[first.badgeColor]} badge</span>
-      {rest.length > 0 && (
-        <span className="rounded-sm bg-secondary px-1.5 text-xs text-secondary-foreground">
-          +{rest.length}
-        </span>
-      )}
-    </span>
-  )
-}
-
-/** "Penalty" list with Edit / Delete row actions, following Column Preferences. */
+/**
+ * "Penalty" list: every penalty rule with its policy (`GET /warning/penalties`). Edit opens the
+ * policy's penalties; Delete saves the policy's penalties without this one.
+ */
 export function PenaltyTable({
   page,
   onPageChange,
@@ -71,6 +54,7 @@ export function PenaltyTable({
   const query = useWarningPenalties({ page, pageSize })
   const deleteMutation = useDeleteWarningPenalty()
   const [pendingDelete, setPendingDelete] = useState<WarningPenalty | null>(null)
+  const canEdit = useCan('warning.settings.penalties.edit')
 
   const meta = query.data?.meta
   const offset = ((meta?.page ?? page) - 1) * (meta?.pageSize ?? pageSize)
@@ -86,25 +70,45 @@ export function PenaltyTable({
       id: 'policyName',
       header: 'Policy Name',
       align: 'center',
-      // Phones: the policy name heads the card, the title follows as a line.
+      // Phones: the policy heads the card.
       mobile: 'heading',
-      cell: (penalty) => POLICY_NAME_LABELS[penalty.policyName],
+      cell: (penalty) => (
+        <span
+          className="block break-words md:mx-auto md:max-w-[14rem] md:truncate"
+          title={penalty.policyTitle}
+        >
+          {penalty.policyTitle}
+          <span className="sr-only md:not-sr-only md:block md:text-xs md:text-muted-foreground">
+            {' '}
+            ({POLICY_NAME_LABELS[penalty.appliesTo]})
+          </span>
+        </span>
+      ),
     },
     {
-      id: 'scaleType',
-      header: 'Type of Scale',
+      id: 'rule',
+      header: 'Warning Count',
       align: 'center',
-      cell: (penalty) => SCALE_TYPE_LABELS[penalty.scaleType],
+      cell: (penalty) =>
+        `${ordinal(penalty.afterCount)} / ${PENALTY_PERIOD_LABELS[penalty.period]}`,
     },
     {
       id: 'penaltyType',
       header: 'Penalty Type',
       align: 'center',
-      cell: (penalty) => <PenaltyTypeCell penalty={penalty} />,
+      cell: (penalty) => penaltyLabel(penalty),
+    },
+    {
+      id: 'deduction',
+      header: 'Deduction',
+      align: 'center',
+      cell: (penalty) =>
+        `${DEDUCTION_LABELS[penalty.deduction]}${penalty.leaveTypeTitle ? ` (${penalty.leaveTypeTitle})` : ''}`,
     },
   ]
 
   const rowActions = (penalty: WarningPenalty) => {
+    if (!canEdit) return null
     const items: RowAction[] = [
       {
         label: 'Edit',
@@ -123,7 +127,7 @@ export function PenaltyTable({
     return (
       <RowActionsMenu
         actions={items}
-        label={`Actions for ${penalty.title}`}
+        label={`Actions for ${penalty.policyTitle} penalty ${penalty.afterCount}`}
         itemClassName={warningType.rowMenuItem}
       />
     )
@@ -152,8 +156,8 @@ export function PenaltyTable({
           onPageChange(1)
         }}
         getRowId={(penalty) => penalty.id}
-        rowActions={rowActions}
-        emptyState="No penalties yet. Use “Add Form” to create one."
+        rowActions={canEdit ? rowActions : undefined}
+        emptyState="No penalties yet. Use “Add Form” to set a policy's penalties."
       />
 
       <ConfirmDialog
@@ -164,7 +168,7 @@ export function PenaltyTable({
         title="Delete this penalty?"
         description={
           pendingDelete
-            ? `“${pendingDelete.title}” (${POLICY_NAME_LABELS[pendingDelete.policyName]}) and its ${pendingDelete.rules.length} rule${pendingDelete.rules.length === 1 ? '' : 's'} will be removed. This cannot be undone.`
+            ? `The ${ordinal(pendingDelete.afterCount)} warning in a ${PENALTY_PERIOD_LABELS[pendingDelete.period].toLowerCase()} of “${pendingDelete.policyTitle}” will no longer cost ${penaltyLabel(pendingDelete).toLowerCase()}. Warnings already raised keep their penalty.`
             : ''
         }
         confirmLabel="Delete"

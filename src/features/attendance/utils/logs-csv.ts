@@ -1,11 +1,10 @@
-import { PUNCH_SOURCE_LABELS, PUNCH_TYPE_LABELS } from '../constants'
 import { PUNCH_TYPES, type PunchType } from '../types/attendance.types'
-import type { AttendanceLogRow, FileImportRow } from '../types/settings.types'
+import type { FileImportRow } from '../types/logs.types'
 
 const HEADER = ['Employee Code', 'Date', 'Time', 'Punch Type']
 
 /** A file to start from: the columns Import expects, with two sample lines. */
-export const LOGS_TEMPLATE = `${HEADER.join(',')}\nId-003,2026-10-19,09:02,check-in\nId-003,2026-10-19,17:05,check-out\n`
+export const LOGS_TEMPLATE = `${HEADER.join(',')}\nLHR-0003,2026-10-19,09:02,check_in\nLHR-0003,2026-10-19,17:05,check_out\n`
 
 function splitLine(line: string): string[] {
   const cells: string[] = []
@@ -27,9 +26,12 @@ function splitLine(line: string): string[] {
   return cells
 }
 
-/** "Check In" / "check-in" → `check-in`. */
+/** "Check In" / "check-in" / "check_in" → `check_in`. */
 function punchType(value: string): PunchType | undefined {
-  const key = value.trim().toLowerCase().replace(/\s+/g, '-')
+  const key = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
   return PUNCH_TYPES.find((type) => type === key)
 }
 
@@ -56,39 +58,17 @@ export function parseLogsCsv(text: string): { rows: FileImportRow[]; errors: str
     else if (!clock) errors.push(`Line ${number}: the time must be HH:mm`)
     else if (!kind)
       errors.push(
-        `Line ${number}: the punch type must be check-in, check-out, break-out or break-in`,
+        `Line ${number}: the punch type must be check_in, check_out, break_out or break_in`,
       )
-    else rows.push({ employeeCode: code, date, time: clock, type: kind })
+    else
+      rows.push({
+        line: number,
+        employeeCode: code,
+        punchedAt: `${date}T${clock}`,
+        punchType: kind,
+      })
   })
   return { rows, errors }
-}
-
-const quote = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value)
-
-export function logsToCsv(rows: readonly AttendanceLogRow[]): string {
-  const header = [
-    'Employee',
-    'Employee Code',
-    'Punch Type',
-    'Punch Time',
-    'Source',
-    'Machine',
-    'Description',
-  ]
-  const lines = rows.map((row) =>
-    [
-      row.employee.name,
-      row.employee.code,
-      PUNCH_TYPE_LABELS[row.type],
-      row.at.replace('T', ' '),
-      PUNCH_SOURCE_LABELS[row.source],
-      row.machineId ? `Machine (${row.machineId})` : '',
-      row.description,
-    ]
-      .map(quote)
-      .join(','),
-  )
-  return [header.join(','), ...lines].join('\n') + '\n'
 }
 
 export function downloadText(text: string, fileName: string) {

@@ -15,8 +15,9 @@ function Fact({ label, value }: { label: string; value: string | null }) {
 }
 
 /**
- * The person at the top of Time Sheet Edit / View: photo, name, location,
- * department, joining date, employee code, company and designation.
+ * The person at the top of Time Sheet Edit / View: photo, name and the facts
+ * known (employee code and department from the day; location, company,
+ * joining date and designation when given).
  */
 export function PersonCard({ profile }: { profile: AttendanceProfile | undefined }) {
   if (!profile) {
@@ -44,12 +45,14 @@ export function PersonCard({ profile }: { profile: AttendanceProfile | undefined
           {profile.name}
         </h3>
         <dl className="grid gap-x-8 gap-y-3 @3xl:grid-cols-2">
-          <Fact label="Location" value={profile.location} />
+          {profile.location && <Fact label="Location" value={profile.location} />}
           <Fact label="Employee Code" value={profile.code} />
           <Fact label="Department" value={profile.department} />
-          <Fact label="Company" value={profile.company} />
-          <Fact label="Joining Date" value={formatLongDate(profile.joiningDate)} />
-          <Fact label="Designation" value={profile.designation} />
+          {profile.company && <Fact label="Company" value={profile.company} />}
+          {profile.joiningDate && (
+            <Fact label="Joining Date" value={formatLongDate(profile.joiningDate)} />
+          )}
+          {profile.designation && <Fact label="Designation" value={profile.designation} />}
         </dl>
       </div>
     </div>

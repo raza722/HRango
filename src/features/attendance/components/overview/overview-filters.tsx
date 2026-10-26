@@ -1,49 +1,50 @@
 import { useState } from 'react'
-import { Search } from 'lucide-react'
+import { Download, Search } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { useCan } from '@/lib/permissions'
 
 import { EMPLOYEE_STATUS_OPTIONS as STATUS_OPTIONS, MONTH_NAMES as MONTHS } from '../../constants'
-import { useAttendanceLookups } from '../../hooks/use-attendance'
+import { useOrgLookup } from '../../hooks/use-attendance-settings'
 import type { OverviewSearch } from '../../routing'
 import type { EmployeeStatusFilter } from '../../types/attendance.types'
 import { FilterSelect } from '../shared/filter-select'
 
 export interface OverviewFilterValues {
   status: EmployeeStatusFilter
-  employeeId: string | undefined
-  department: string | undefined
+  departmentId: string | undefined
   month: string
 }
 
 /**
- * Employee Status, Employee Name, Department, Month and Year, applied
- * together with Search as in the design.
+ * Employee Status, Department, Month and Year, applied together with Search
+ * as in the design, and Export (the API's CSV of the month). The API has no
+ * employee filter on the overview: the search box above finds a person.
  */
 export function OverviewFilters({
   search,
   month,
   onApply,
+  onExport,
 }: {
   search: OverviewSearch
   /** The month shown now, `yyyy-MM`. */
   month: string
   onApply: (values: OverviewFilterValues) => void
+  onExport: () => Promise<void>
 }) {
-  const lookups = useAttendanceLookups()
+  const departments = useOrgLookup('departments')
+  const canExport = useCan('attendance.overview.export')
+  const [exporting, setExporting] = useState(false)
   const [values, setValues] = useState<OverviewFilterValues>({
     status: search.status,
-    employeeId: search.employeeId,
-    department: search.department,
+    departmentId: search.departmentId,
     month,
   })
   const [year = '', monthNumber = ''] = values.month.split('-')
   const thisYear = new Date().getFullYear()
   const years = Array.from({ length: 5 }, (_, index) => String(thisYear - 3 + index))
 
-  const employees = (lookups.data?.employees ?? []).filter(
-    (employee) => values.status === 'all' || employee.status === values.status,
-  )
   const set = (patch: Partial<OverviewFilterValues>) => {
     setValues((current) => ({ ...current, ...patch }))
   }
@@ -65,30 +66,17 @@ export function OverviewFilters({
           value={values.status}
           onChange={(status) => {
             const next = STATUS_OPTIONS.find((option) => option.value === status)?.value ?? 'all'
-            set({ status: next, employeeId: undefined })
-          }}
-        />
-        <FilterSelect
-          label="Employee Name"
-          tone="inter"
-          allLabel="All employees"
-          options={employees.map((employee) => ({
-            value: employee.id,
-            label: `${employee.code} | ${employee.name}`,
-          }))}
-          value={values.employeeId}
-          onChange={(employeeId) => {
-            set({ employeeId })
+            set({ status: next })
           }}
         />
         <FilterSelect
           label="Department"
           tone="inter"
           allLabel="All departments"
-          options={(lookups.data?.departments ?? []).map((name) => ({ value: name, label: name }))}
-          value={values.department}
-          onChange={(department) => {
-            set({ department })
+          options={(departments.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
+          value={values.departmentId}
+          onChange={(departmentId) => {
+            set({ departmentId })
           }}
         />
         <FilterSelect
@@ -112,13 +100,29 @@ export function OverviewFilters({
             if (picked) set({ month: `${picked}-${monthNumber}` })
           }}
         />
-        <div className="flex items-end">
+        <div className="flex flex-wrap items-end gap-2">
           <Button
             type="submit"
             className="h-10 w-full bg-[#2F6FED] px-10 text-base font-medium text-white hover:bg-[#2F6FED]/90 @md:w-auto"
           >
             <Search /> Search
           </Button>
+          {canExport && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={exporting}
+              onClick={() => {
+                setExporting(true)
+                void onExport().finally(() => {
+                  setExporting(false)
+                })
+              }}
+              className="h-10 w-full @md:w-auto"
+            >
+              <Download /> Export
+            </Button>
+          )}
         </div>
       </div>
     </form>

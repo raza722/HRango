@@ -7,7 +7,9 @@ import {
   type RowAction,
   RowActionsMenu,
 } from '@/components/layout'
+import { Badge } from '@/components/ui/badge'
 import { PAGE_SIZE_OPTIONS } from '@/lib/constants'
+import { useCan } from '@/lib/permissions'
 
 import { POLICY_NAME_LABELS, TIME_SPAN_TABLE_LABELS } from '../constants'
 import { useWarningPolicies } from '../hooks/use-warning-policies'
@@ -53,6 +55,8 @@ export function PolicyTable({
   const query = useWarningPolicies({ page, pageSize })
   const deleteMutation = useDeleteWarningPolicy()
   const [pendingDelete, setPendingDelete] = useState<WarningPolicy | null>(null)
+  const canEdit = useCan('warning.settings.policies.edit')
+  const canDelete = useCan('warning.settings.policies.delete')
 
   const meta = query.data?.meta
   const offset = ((meta?.page ?? page) - 1) * (meta?.pageSize ?? pageSize)
@@ -68,13 +72,13 @@ export function PolicyTable({
       id: 'policyName',
       header: 'Policy Name',
       align: 'center',
-      cell: (policy) => POLICY_NAME_LABELS[policy.policyName],
+      cell: (policy) => POLICY_NAME_LABELS[policy.appliesTo],
     },
     {
       id: 'timeSpan',
       header: 'Time Span',
       align: 'center',
-      cell: (policy) => TIME_SPAN_TABLE_LABELS[policy.timeSpan],
+      cell: (policy) => TIME_SPAN_TABLE_LABELS[policy.period],
     },
     {
       id: 'title',
@@ -91,6 +95,16 @@ export function PolicyTable({
         </span>
       ),
     },
+    {
+      id: 'status',
+      header: 'Status',
+      align: 'center',
+      cell: (policy) => (
+        <Badge variant={policy.isActive ? 'secondary' : 'outline'}>
+          {policy.isActive ? 'Active' : 'Inactive'}
+        </Badge>
+      ),
+    },
   ]
 
   const rowActions = (policy: WarningPolicy) => {
@@ -105,20 +119,29 @@ export function PolicyTable({
             },
           ]
         : []),
-      {
-        label: 'Edit',
-        onSelect: () => {
-          onEdit(policy)
-        },
-      },
-      {
-        label: 'Delete',
-        variant: 'destructive',
-        onSelect: () => {
-          setPendingDelete(policy)
-        },
-      },
+      ...(canEdit
+        ? [
+            {
+              label: 'Edit',
+              onSelect: () => {
+                onEdit(policy)
+              },
+            },
+          ]
+        : []),
+      ...(canDelete
+        ? [
+            {
+              label: 'Delete',
+              variant: 'destructive' as const,
+              onSelect: () => {
+                setPendingDelete(policy)
+              },
+            },
+          ]
+        : []),
     ]
+    if (items.length === 0) return null
     return (
       <RowActionsMenu
         actions={items}
@@ -163,7 +186,9 @@ export function PolicyTable({
         title="Delete this policy?"
         description={
           pendingDelete
-            ? `“${pendingDelete.title}” (${POLICY_NAME_LABELS[pendingDelete.policyName]}) will be removed. This cannot be undone.`
+            ? pendingDelete.warningCount > 0
+              ? `Warnings have been raised under “${pendingDelete.title}”, so it cannot be deleted. Make it inactive instead.`
+              : `“${pendingDelete.title}” (${POLICY_NAME_LABELS[pendingDelete.appliesTo]}) and its penalties will be removed. This cannot be undone.`
             : ''
         }
         confirmLabel="Delete"

@@ -3,15 +3,24 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Skeleton } from '@/components/ui/skeleton'
 
 import { PUNCH_SOURCE_LABELS, PUNCH_TYPE_LABELS } from '../../constants'
-import { useDayLogs } from '../../hooks/use-attendance'
-import type { DayKey } from '../../types/attendance.types'
+import type { PunchLog } from '../../types/attendance.types'
+import { punchDescription } from '../../utils/day'
 import { formatPunchTime } from '../../utils/local-time'
 import { interDialogClass } from '../../utils/settings-styles'
 
-/** "Attendance Log": every punch of the day, where it came from and whether HR typed it. */
-export function AttendanceLogDialog({ dayKey, onClose }: { dayKey: DayKey; onClose: () => void }) {
-  const logs = useDayLogs(dayKey)
-  const rows = logs.data ?? []
+/**
+ * "Attendance Log": every punch of the day (from the day detail), where it came
+ * from and whether HR typed it. Ignored punches are struck through.
+ */
+export function AttendanceLogDialog({
+  punches,
+  onClose,
+}: {
+  /** Undefined while the day loads. */
+  punches: readonly PunchLog[] | undefined
+  onClose: () => void
+}) {
+  const rows = punches ?? []
   return (
     <AppDialog title="Attendance Log" onRequestClose={onClose} className={interDialogClass}>
       <div className="scrollbar-brand overflow-x-auto">
@@ -26,7 +35,7 @@ export function AttendanceLogDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
             </tr>
           </thead>
           <tbody>
-            {logs.isPending ? (
+            {punches === undefined ? (
               <tr>
                 <td colSpan={5} className="p-4">
                   <Skeleton className="h-10 w-full" />
@@ -44,15 +53,20 @@ export function AttendanceLogDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
                   key={log.id}
                   className="bg-[#F4F4F4] text-[#303030] dark:bg-muted/40 dark:text-field-foreground [&>td]:border-r [&>td]:border-b [&>td]:border-[#E2E2E2] [&>td]:px-4 [&>td]:py-4 [&>td]:text-center dark:[&>td]:border-border [&>td:last-child]:border-r-0"
                 >
-                  <td>{PUNCH_TYPE_LABELS[log.type]}</td>
-                  <td className="whitespace-nowrap">{formatPunchTime(log.at)}</td>
-                  <td className="max-w-56 text-left">{log.description}</td>
+                  <td className={log.isIgnored ? 'line-through' : undefined}>
+                    {PUNCH_TYPE_LABELS[log.punchType]}
+                    {log.isIgnored && <span className="sr-only"> (ignored)</span>}
+                  </td>
+                  <td className="whitespace-nowrap">{formatPunchTime(log.punchedAt)}</td>
+                  <td className="max-w-56 text-left">{punchDescription(log)}</td>
                   <td className="whitespace-nowrap">{PUNCH_SOURCE_LABELS[log.source]}</td>
                   <td>
                     <Checkbox
-                      checked={log.manuallyUpdated}
+                      checked={log.isManuallyUpdated}
                       disabled
-                      aria-label={log.manuallyUpdated ? 'Manually updated' : 'Not manually updated'}
+                      aria-label={
+                        log.isManuallyUpdated ? 'Manually updated' : 'Not manually updated'
+                      }
                       className="mx-auto disabled:opacity-100"
                     />
                   </td>
