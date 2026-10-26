@@ -5,6 +5,7 @@ import type { z } from 'zod'
 
 import { useUnsavedChangesGuard } from '@/hooks/use-unsaved-changes-guard'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 
 import type { OrgResource } from '../api/org-resource'
 import type { FormMapper } from '../utils/form-mappers'
@@ -13,6 +14,7 @@ import { useOrgRecord, useSaveOrgRecord } from './use-org-records'
 interface AnyRecord {
   id: string
   name: string
+  rowVersion: string
 }
 
 interface UseOrgRecordFormOptions<
@@ -49,6 +51,7 @@ export function useOrgRecordForm<
   onSaved,
 }: UseOrgRecordFormOptions<TRecord, TInput, TRow, TValues>) {
   const recordQuery = useOrgRecord(resource, id)
+  const mayWrite = useCan(`${resource.permission}.${id === undefined ? 'create' : 'edit'}`)
   const saveMutation = useSaveOrgRecord(resource)
   const [defaultValues] = useState(mapper.empty)
 
@@ -70,7 +73,11 @@ export function useOrgRecordForm<
   const submit = form.handleSubmit(async (formValues) => {
     let record: TRecord
     try {
-      record = await saveMutation.mutateAsync({ id, input: mapper.toInput(formValues) })
+      record = await saveMutation.mutateAsync({
+        id,
+        input: mapper.toInput(formValues),
+        rowVersion: recordQuery.data?.rowVersion,
+      })
     } catch (error) {
       if (error instanceof ApiError) {
         Object.entries(error.fieldErrors).forEach(([field, message]) => {
@@ -101,6 +108,8 @@ export function useOrgRecordForm<
       void recordQuery.refetch()
     },
     isSaving: saveMutation.isPending,
+    /** Without the create / edit permission the form only shows the record. */
+    readOnly: !mayWrite,
     guard,
   }
 }

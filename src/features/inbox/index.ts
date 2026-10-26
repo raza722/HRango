@@ -1,4 +1,21 @@
-export { inboxApi, inboxKeys, inboxSummaryQueryOptions } from './api/inbox.api'
+export {
+  inboxApi,
+  inboxKeys,
+  inboxSummaryQueryOptions,
+  notificationsQueryOptions,
+} from './api/inbox.api'
 export { InboxMenu } from './components/inbox-menu'
-export { useInboxSummary, useMarkAllRead } from './hooks/use-inbox'
-export type { InboxItem, InboxKind, InboxSummary } from './types/inbox.types'
+export {
+  useCanSeeInbox,
+  useClearNotification,
+  useInboxSummary,
+  useMarkAllRead,
+  useMarkRead,
+} from './hooks/use-inbox'
+export type {
+  InboxChanged,
+  InboxItem,
+  InboxKind,
+  InboxSummary,
+  NotificationListParams,
+} from './types/inbox.types'

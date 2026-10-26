@@ -7,6 +7,7 @@ import type { DataTableColumn } from '@/components/layout'
 
 import { areaResource } from '../../api/org-resource'
 import { useLocationOptions } from '../../hooks/use-lookups'
+import { useOrgPermissions } from '../../hooks/use-org-permissions'
 import { useOrgRecordForm } from '../../hooks/use-org-record-form'
 import { areaFormSchema } from '../../schemas/org-forms.schema'
 import { DESCRIPTION_MAX_LENGTH, NAME_MAX_LENGTH } from '../../schemas/shared'
@@ -23,29 +24,38 @@ const LIST_PATH = '/settings/control-panel/areas'
 export function AreaListPage() {
   const search = listRoute.useSearch()
   const navigate = listRoute.useNavigate()
-  const locations = useLocationOptions('', { all: true })
+  const locations = useLocationOptions()
+  const { canEdit } = useOrgPermissions(areaResource)
 
   const columns: DataTableColumn<AreaRow>[] = [
     {
       id: 'name',
       header: 'Name',
       mobile: 'heading',
-      cell: (row) => (
-        <Link
-          to="/settings/control-panel/areas/$areaId"
-          params={{ areaId: row.id }}
-          className="text-foreground underline-offset-4 hover:underline"
-        >
-          {row.name}
-        </Link>
-      ),
+      cell: (row) =>
+        canEdit ? (
+          <Link
+            to="/settings/control-panel/areas/$areaId"
+            params={{ areaId: row.id }}
+            className="text-foreground underline-offset-4 hover:underline"
+          >
+            {row.name}
+          </Link>
+        ) : (
+          row.name
+        ),
     },
     { id: 'location', header: 'Location', cell: (row) => row.locationName },
+    {
+      id: 'branches',
+      header: 'Branches',
+      cell: (row) => <span className="tabular-nums">{row.branchCount}</span>,
+    },
     {
       id: 'description',
       header: 'Description',
       cell: (row) => (
-        <span className="line-clamp-2 text-muted-foreground">{row.description || '—'}</span>
+        <span className="line-clamp-2 text-muted-foreground">{row.description ?? '—'}</span>
       ),
       className: 'hidden max-w-md @3xl:table-cell',
     },
@@ -96,7 +106,7 @@ export function AreaFormPage({ areaId }: { areaId?: string }) {
     onSaved: goToList,
   })
   const { control } = areaForm.form
-  const locations = useLocationOptions('', { all: true })
+  const locations = useLocationOptions()
 
   return (
     <FormProvider {...areaForm.form}>
@@ -111,6 +121,7 @@ export function AreaFormPage({ areaId }: { areaId?: string }) {
         isLoading={areaForm.isLoadingRecord}
         loadError={areaForm.loadError}
         onRetry={areaForm.retryLoad}
+        readOnly={areaForm.readOnly}
       >
         <TextField
           control={control}

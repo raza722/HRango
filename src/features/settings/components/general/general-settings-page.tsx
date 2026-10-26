@@ -9,6 +9,7 @@ import { SelectField, type SelectOption, TextareaField, TextField } from '@/comp
 import { useUnsavedChangesGuard } from '@/hooks/use-unsaved-changes-guard'
 import { ApiError } from '@/lib/api-error'
 import { formatDateTime } from '@/lib/date'
+import { useCan } from '@/lib/permissions'
 
 import {
   generalSettingsApi,
@@ -16,18 +17,23 @@ import {
   generalSettingsQueryOptions,
 } from '../../api/lookups.api'
 import { MONTH_NAMES } from '../../constants'
+import { useCountryOptions } from '../../hooks/use-lookups'
 import {
   generalSettingsFormSchema,
   type GeneralSettingsFormValues,
 } from '../../schemas/general-settings.schema'
+import { toOptionalId, toOptionalText } from '../../schemas/shared'
 import {
   DATE_FORMATS,
+  type DateFormat,
   type GeneralSettings,
   type GeneralSettingsInput,
   WEEK_START_DAYS,
+  type WeekStartDay,
 } from '../../types/settings.types'
 import { capitalize } from '../../utils/text'
 import { SettingsFormCard } from '../shared/settings-form-card'
+import { CompanyLogoCard } from './company-logo-card'
 
 const TIMEZONE_OPTIONS: SelectOption[] = [
   { value: 'Asia/Karachi', label: '(UTC+05:00) Pakistan, Karachi' },
@@ -72,6 +78,7 @@ const EMPTY_VALUES: GeneralSettingsFormValues = {
   phone: '',
   website: '',
   address: '',
+  countryId: '',
   timezone: '',
   currency: '',
   dateFormat: 'dd/MM/yyyy',
@@ -79,36 +86,65 @@ const EMPTY_VALUES: GeneralSettingsFormValues = {
   fiscalYearStartMonth: '1',
 }
 
-function toFormValues({
-  updatedAt: _updatedAt,
-  ...settings
-}: GeneralSettings): GeneralSettingsFormValues {
-  return { ...settings, fiscalYearStartMonth: String(settings.fiscalYearStartMonth) }
-}
+const isDateFormat = (value: string | null): value is DateFormat =>
+  DATE_FORMATS.some((pattern) => pattern === value)
+const isWeekStart = (value: string | null): value is WeekStartDay =>
+  WEEK_START_DAYS.some((day) => day === value)
 
-function toInput(values: GeneralSettingsFormValues): GeneralSettingsInput {
+/** The company record → form strings (empty for anything not set yet). */
+function toFormValues(settings: GeneralSettings): GeneralSettingsFormValues {
   return {
-    ...values,
-    organizationName: values.organizationName.trim(),
-    legalName: values.legalName.trim(),
-    phone: values.phone.trim(),
-    website: values.website.trim(),
-    address: values.address.trim(),
-    fiscalYearStartMonth: Number(values.fiscalYearStartMonth),
+    organizationName: settings.organizationName,
+    legalName: settings.legalName ?? '',
+    email: settings.email ?? '',
+    phone: settings.phone ?? '',
+    website: settings.website ?? '',
+    address: settings.address ?? '',
+    countryId: settings.countryId ?? '',
+    timezone: settings.timezone ?? '',
+    currency: settings.currency ?? '',
+    dateFormat: isDateFormat(settings.dateFormat) ? settings.dateFormat : EMPTY_VALUES.dateFormat,
+    weekStartsOn: isWeekStart(settings.weekStartsOn)
+      ? settings.weekStartsOn
+      : EMPTY_VALUES.weekStartsOn,
+    fiscalYearStartMonth: String(settings.fiscalYearStartMonth ?? 1),
   }
 }
+
+function toInput(values: GeneralSettingsFormValues, rowVersion: string): GeneralSettingsInput {
+  return {
+    organizationName: values.organizationName.trim(),
+    legalName: toOptionalText(values.legalName),
+    email: toOptionalText(values.email),
+    phone: toOptionalText(values.phone),
+    website: toOptionalText(values.website),
+    address: toOptionalText(values.address),
+    countryId: toOptionalId(values.countryId),
+    timezone: values.timezone,
+    currency: values.currency,
+    dateFormat: values.dateFormat,
+    weekStartsOn: values.weekStartsOn,
+    fiscalYearStartMonth: Number(values.fiscalYearStartMonth),
+    rowVersion,
+  }
+}
+
+/** The API sends UTC times without a zone (`2026-10-26T05:14:37`); mark them as UTC. */
+const asUtc = (iso: string) => (/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`)
 
 const SERVER_FIELDS = new Set<string>(Object.keys(EMPTY_VALUES))
 const isFormField = (field: string): field is keyof GeneralSettingsFormValues =>
   SERVER_FIELDS.has(field)
 
 /**
- * Settings → Control Panel → General Settings: company profile and regional
- * defaults. Not in the designs; built with the same form card.
+ * Settings → Control Panel → General Settings: the active company's profile and regional
+ * defaults (`GET/PUT /organisation/general`). Not in the designs; built with the same form card.
  */
 export function GeneralSettingsPage() {
   const queryClient = useQueryClient()
   const settingsQuery = useQuery(generalSettingsQueryOptions())
+  const canEdit = useCan('organisation.general.edit')
+  const countries = useCountryOptions()
   const values = useMemo(
     () => (settingsQuery.data ? toFormValues(settingsQuery.data) : undefined),
     [settingsQuery.data],
@@ -135,7 +171,10 @@ export function GeneralSettingsPage() {
 
   const submit = form.handleSubmit(async (formValues) => {
     try {
-      const saved = await saveMutation.mutateAsync(toInput(formValues))
+      // A stale rowVersion (someone saved first) is refused with 409, shown as a toast.
+      const saved = await saveMutation.mutateAsync(
+        toInput(formValues, settingsQuery.data?.rowVersion ?? ''),
+      )
       form.reset(toFormValues(saved))
     } catch (error) {
       if (error instanceof ApiError) {
@@ -148,11 +187,12 @@ export function GeneralSettingsPage() {
 
   return (
     <>
+      <CompanyLogoCard settings={settingsQuery.data} canEdit={canEdit} />
       <SettingsFormCard
         title="General Settings"
         description={
-          settingsQuery.data
-            ? `Last saved ${formatDateTime(settingsQuery.data.updatedAt)}`
+          settingsQuery.data?.updatedAt
+            ? `Last saved ${formatDateTime(asUtc(settingsQuery.data.updatedAt))}`
             : 'Company profile and regional defaults used across the portal.'
         }
         onSubmit={submit}
@@ -165,6 +205,7 @@ export function GeneralSettingsPage() {
         onRetry={() => {
           void settingsQuery.refetch()
         }}
+        readOnly={!canEdit}
       >
         <TextField control={control} name="organizationName" label="Organization Name" required />
         <TextField control={control} name="legalName" label="Legal Name" />
@@ -192,7 +233,15 @@ export function GeneralSettingsPage() {
           autoComplete="url"
           placeholder="https://"
         />
-        <TextareaField control={control} name="address" label="Address" maxLength={300} />
+        <TextareaField control={control} name="address" label="Address" maxLength={500} />
+        <SelectField
+          control={control}
+          name="countryId"
+          label="Country"
+          placeholder="Select Country"
+          options={countries.options}
+          clearable
+        />
         <SelectField
           control={control}
           name="timezone"

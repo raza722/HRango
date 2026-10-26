@@ -3,19 +3,26 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, Briefcase, CalendarCheck2, ShieldAlert, Users, UserX } from 'lucide-react'
 
-import type { NavItem } from '@/app/navigation'
+import { filterNavItems, type NavItem } from '@/app/navigation'
 import { ErrorState } from '@/components/feedback/error-state'
 import { PageContainer, PageHeader } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { POLICY_NAME_LABELS, TIME_SPAN_TABLE_LABELS, useWarningPolicies } from '@/features/warning'
+import {
+  POLICY_NAME_LABELS,
+  TIME_SPAN_TABLE_LABELS,
+  warningPoliciesQueryOptions,
+} from '@/features/warning'
+import { useCan } from '@/lib/permissions'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { type DashboardSummary, dashboardSummaryQueryOptions } from '../api/dashboard.api'
+import { dashboardKindFor, dashboardSummaryQueryOptions } from '../api/dashboard.api'
+
+type StatKey = 'headcount' | 'presentToday' | 'onLeave' | 'openPositions' | 'activeWarningPolicies'
 
 interface StatDefinition {
-  key: keyof DashboardSummary
+  key: StatKey
   label: string
   icon: ComponentType<SVGProps<SVGSVGElement>>
   tone: string
@@ -61,15 +68,47 @@ interface DashboardPageProps {
   shortcuts?: readonly NavItem[]
 }
 
+/** Why a tile shows no figure. */
+const EMPTY_TILE: Partial<Record<StatKey, string>> = {
+  headcount: 'Not on your dashboard',
+  openPositions: 'Not available yet',
+  activeWarningPolicies: 'No access',
+}
+
 /**
- * Landing page after sign-in. KPIs come from the mock API. It uses the full
- * content width: KPI columns and the side-by-side lower cards follow the
- * page container's width, not the window's.
+ * Landing page after sign-in. Headcount, present and on leave come from the dashboard the
+ * user may see (`GET /dashboard/hr`, else `/ceo`, else `/me`); the warning policy count from
+ * the warning list. Figures the API does not provide show "—". It uses the full content
+ * width: KPI columns and the side-by-side lower cards follow the page container's width.
  */
 export function DashboardPage({ shortcuts = [] }: DashboardPageProps) {
   const user = useAuthStore((state) => state.user)
-  const summary = useQuery(dashboardSummaryQueryOptions())
-  const recentPolicies = useWarningPolicies({ page: 1, pageSize: 5 })
+  const kind = dashboardKindFor(user)
+  const summary = useQuery({
+    ...dashboardSummaryQueryOptions(kind ?? 'me'),
+    enabled: kind !== null,
+  })
+  const canSeePolicies = useCan('warning.settings.policies.view')
+  const recentPolicies = useQuery({
+    ...warningPoliciesQueryOptions({ page: 1, pageSize: 5 }),
+    enabled: canSeePolicies,
+  })
+  const modules = filterNavItems(shortcuts, user)
+
+  const figures: Record<StatKey, number | null> = {
+    headcount: summary.data?.headcount ?? null,
+    presentToday: summary.data?.presentToday ?? null,
+    onLeave: summary.data?.onLeave ?? null,
+    openPositions: summary.data?.openPositions ?? null,
+    activeWarningPolicies: recentPolicies.data?.meta.total ?? null,
+  }
+  const loading: Record<StatKey, boolean> = {
+    headcount: kind !== null && summary.isPending,
+    presentToday: kind !== null && summary.isPending,
+    onLeave: kind !== null && summary.isPending,
+    openPositions: false,
+    activeWarningPolicies: canSeePolicies && recentPolicies.isPending,
+  }
 
   return (
     <PageContainer>
@@ -102,12 +141,24 @@ export function DashboardPage({ shortcuts = [] }: DashboardPageProps) {
                 </span>
                 <span className="min-w-0">
                   <span className="block text-sm text-muted-foreground">{label}</span>
-                  {summary.data ? (
-                    <span className="block text-2xl font-medium text-heading tabular-nums">
-                      {summary.data[key].toLocaleString()}
+                  {loading[key] ? (
+                    <Skeleton className="mt-1 h-7 w-16" />
+                  ) : figures[key] === null ? (
+                    // Not provided for this user or not on the API yet: an empty state, not 0.
+                    <span className="block">
+                      <span aria-hidden="true" className="text-2xl font-medium text-heading">
+                        —
+                      </span>
+                      <span className="block text-xs text-muted-foreground">
+                        {kind === null && key !== 'activeWarningPolicies' && key !== 'openPositions'
+                          ? 'No dashboard access'
+                          : (EMPTY_TILE[key] ?? 'No data')}
+                      </span>
                     </span>
                   ) : (
-                    <Skeleton className="mt-1 h-7 w-16" />
+                    <span className="block text-2xl font-medium text-heading tabular-nums">
+                      {figures[key].toLocaleString()}
+                    </span>
                   )}
                 </span>
               </Card>
@@ -118,50 +169,52 @@ export function DashboardPage({ shortcuts = [] }: DashboardPageProps) {
 
       {/* Stacked until the page is 64rem wide, then side by side. */}
       <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-4 sm:gap-5 @5xl/page:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <Card aria-labelledby="recent-policies-title">
-          <CardHeader>
-            <CardTitle id="recent-policies-title" className="text-lg sm:text-xl">
-              Warning policies
-            </CardTitle>
-            <Button variant="outline" asChild>
-              <Link to="/warning/policy">
-                Manage <ArrowRight />
-              </Link>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {recentPolicies.isPending ? (
-              <div className="flex flex-col gap-3">
-                {Array.from({ length: 3 }, (_, index) => (
-                  <Skeleton key={index} className="h-10 w-full" />
-                ))}
-              </div>
-            ) : (
-              <ul className="divide-y divide-border">
-                {(recentPolicies.data?.data ?? []).map((policy) => (
-                  <li
-                    key={policy.id}
-                    className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3"
-                  >
-                    <Link
-                      to="/warning/policy/$policyId"
-                      params={{ policyId: policy.id }}
-                      className="min-w-0 font-medium break-words text-heading hover:underline"
+        {canSeePolicies && (
+          <Card aria-labelledby="recent-policies-title">
+            <CardHeader>
+              <CardTitle id="recent-policies-title" className="text-lg sm:text-xl">
+                Warning policies
+              </CardTitle>
+              <Button variant="outline" asChild>
+                <Link to="/warning/policy">
+                  Manage <ArrowRight />
+                </Link>
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {recentPolicies.isPending ? (
+                <div className="flex flex-col gap-3">
+                  {Array.from({ length: 3 }, (_, index) => (
+                    <Skeleton key={index} className="h-10 w-full" />
+                  ))}
+                </div>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {(recentPolicies.data?.data ?? []).map((policy) => (
+                    <li
+                      key={policy.id}
+                      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-3"
                     >
-                      {policy.title}
-                    </Link>
-                    <span className="text-sm text-muted-foreground">
-                      {POLICY_NAME_LABELS[policy.policyName]} ·{' '}
-                      {TIME_SPAN_TABLE_LABELS[policy.timeSpan]}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+                      <Link
+                        to="/warning/policy/$policyId"
+                        params={{ policyId: policy.id }}
+                        className="min-w-0 font-medium break-words text-heading hover:underline"
+                      >
+                        {policy.title}
+                      </Link>
+                      <span className="text-sm text-muted-foreground">
+                        {POLICY_NAME_LABELS[policy.policyName]} ·{' '}
+                        {TIME_SPAN_TABLE_LABELS[policy.timeSpan]}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
-        {shortcuts.length > 0 && (
+        {modules.length > 0 && (
           <Card aria-labelledby="modules-title">
             <CardHeader>
               <CardTitle id="modules-title" className="text-lg sm:text-xl">
@@ -170,7 +223,7 @@ export function DashboardPage({ shortcuts = [] }: DashboardPageProps) {
             </CardHeader>
             <CardContent>
               <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,8.5rem),1fr))] gap-3">
-                {shortcuts.map(({ to, label, icon: Icon }) => (
+                {modules.map(({ to, label, icon: Icon }) => (
                   <li key={to}>
                     <Link
                       to={to}

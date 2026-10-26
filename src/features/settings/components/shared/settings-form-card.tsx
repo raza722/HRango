@@ -25,6 +25,8 @@ interface SettingsFormCardProps {
   loadError?: Error | null
   onRetry?: () => void
   submitLabel?: string
+  /** The user may only look (no edit permission): fields are disabled and Save is hidden. */
+  readOnly?: boolean
   children: ReactNode
 }
 
@@ -44,6 +46,7 @@ export function SettingsFormCard({
   loadError = null,
   onRetry,
   submitLabel = 'Save',
+  readOnly = false,
   children,
 }: SettingsFormCardProps) {
   const titleId = useId()
@@ -83,7 +86,7 @@ export function SettingsFormCard({
                 </div>
               ) : (
                 <fieldset
-                  disabled={isSaving}
+                  disabled={isSaving || readOnly}
                   className="grid min-w-0 gap-5 @xl:gap-6 @[72rem]:grid-cols-2 @[72rem]:gap-x-12"
                 >
                   <legend className="sr-only">{title}</legend>
@@ -93,16 +96,18 @@ export function SettingsFormCard({
             </CardContent>
           </FieldLayoutContext>
           <CardFooter className="flex-wrap justify-end gap-3 pt-3 pb-7 sm:gap-5 sm:px-8 sm:pb-8">
-            <Button
-              type="submit"
-              variant="success"
-              size="lg"
-              disabled={isSaving || isLoading}
-              className="min-w-24 flex-1 px-5 text-base font-medium @sm:flex-none"
-            >
-              {isSaving && <Loader2 className="animate-spin" />}
-              {isSaving ? 'Saving…' : submitLabel}
-            </Button>
+            {!readOnly && (
+              <Button
+                type="submit"
+                variant="success"
+                size="lg"
+                disabled={isSaving || isLoading}
+                className="min-w-24 flex-1 px-5 text-base font-medium @sm:flex-none"
+              >
+                {isSaving && <Loader2 className="animate-spin" />}
+                {isSaving ? 'Saving…' : submitLabel}
+              </Button>
+            )}
             <Button
               variant="destructive"
               size="lg"
@@ -110,7 +115,7 @@ export function SettingsFormCard({
               disabled={isSaving}
               className="min-w-24 flex-1 px-5 text-base font-medium @sm:flex-none"
             >
-              Cancel
+              {readOnly ? 'Close' : 'Cancel'}
             </Button>
           </CardFooter>
         </form>

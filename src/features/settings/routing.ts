@@ -24,12 +24,7 @@ export const orgListSearchSchema = z.object({
   q: z.string().trim().max(80).optional().catch(undefined),
 })
 
-/** Branches and Locations can be narrowed to one company. */
-export const companyFilteredSearchSchema = orgListSearchSchema.extend({
-  companyId: z.string().min(1).optional().catch(undefined),
-})
-
-/** Areas can be narrowed to one location. */
+/** Areas and Branches can be narrowed to one location (`?locationId=`). */
 export const locationFilteredSearchSchema = orgListSearchSchema.extend({
   locationId: z.string().min(1).optional().catch(undefined),
 })

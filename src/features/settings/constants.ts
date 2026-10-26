@@ -19,6 +19,8 @@ export interface ControlPanelLink {
   label: string
   to: SettingsPath
   icon: LucideIcon
+  /** View code the screen needs (hidden without it); none means always shown. */
+  permission?: string
 }
 
 export interface ControlPanelSection {
@@ -29,6 +31,8 @@ export interface ControlPanelSection {
   /** A section is either a link or a group of links. */
   to?: SettingsPath
   children?: readonly ControlPanelLink[]
+  /** View code a link section needs (hidden without it); none means always shown. */
+  permission?: string
 }
 
 /** Second-level menu of Settings → Control Panel, as drawn. */
@@ -38,16 +42,37 @@ export const CONTROL_PANEL_SECTIONS: readonly ControlPanelSection[] = [
     icon: Settings2,
     tone: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300',
     to: '/settings/control-panel/general',
+    permission: 'organisation.general.view',
   },
   {
     label: 'Organization',
     icon: Building2,
     tone: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300',
     children: [
-      { label: 'Branch', to: '/settings/control-panel/branches', icon: Network },
-      { label: 'Location', to: '/settings/control-panel/locations', icon: MapPin },
-      { label: 'Area', to: '/settings/control-panel/areas', icon: LandPlot },
-      { label: 'Job Title', to: '/settings/control-panel/job-titles', icon: BriefcaseBusiness },
+      {
+        label: 'Branch',
+        to: '/settings/control-panel/branches',
+        icon: Network,
+        permission: 'organisation.branches.view',
+      },
+      {
+        label: 'Location',
+        to: '/settings/control-panel/locations',
+        icon: MapPin,
+        permission: 'organisation.locations.view',
+      },
+      {
+        label: 'Area',
+        to: '/settings/control-panel/areas',
+        icon: LandPlot,
+        permission: 'organisation.areas.view',
+      },
+      {
+        label: 'Job Title',
+        to: '/settings/control-panel/job-titles',
+        icon: BriefcaseBusiness,
+        permission: 'organisation.job_titles.view',
+      },
     ],
   },
   {
@@ -55,6 +80,7 @@ export const CONTROL_PANEL_SECTIONS: readonly ControlPanelSection[] = [
     icon: Users,
     tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
     to: '/settings/control-panel/users',
+    permission: 'access.users.view',
   },
   {
     label: 'Subscriptions',

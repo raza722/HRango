@@ -4,6 +4,7 @@ import { Loader2, MapPin, Search } from 'lucide-react'
 
 import { Input } from '@/components/ui/input'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { isMockApi } from '@/lib/env'
 import { cn } from '@/lib/utils'
 
 import { placesQueryOptions } from '../../api/lookups.api'
@@ -19,12 +20,14 @@ interface LocationSearchProps {
 /**
  * "Search Location": type a place, pick a suggestion, and the pin moves there.
  * An ARIA combobox: arrow keys move through suggestions, Enter picks, Escape closes.
+ * Only the mock API answers it (the backend has no geocoder yet), so against the real API it
+ * renders nothing and the map and coordinate inputs remain.
  */
-export function LocationSearch({
-  onSelect,
-  disabled = false,
-  inputClassName,
-}: LocationSearchProps) {
+export function LocationSearch(props: LocationSearchProps) {
+  return isMockApi ? <LocationSearchBox {...props} /> : null
+}
+
+function LocationSearchBox({ onSelect, disabled = false, inputClassName }: LocationSearchProps) {
   const listId = useId()
   const [text, setText] = useState('')
   const [open, setOpen] = useState(false)

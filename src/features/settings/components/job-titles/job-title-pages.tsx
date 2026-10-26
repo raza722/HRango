@@ -7,6 +7,7 @@ import type { DataTableColumn } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 
 import { jobTitleResource } from '../../api/org-resource'
+import { useOrgPermissions } from '../../hooks/use-org-permissions'
 import { useOrgRecordForm } from '../../hooks/use-org-record-form'
 import { jobTitleFormSchema } from '../../schemas/org-forms.schema'
 import { DESCRIPTION_MAX_LENGTH, NAME_MAX_LENGTH } from '../../schemas/shared'
@@ -22,39 +23,48 @@ const LIST_PATH = '/settings/control-panel/job-titles'
 export function JobTitleListPage() {
   const search = listRoute.useSearch()
   const navigate = listRoute.useNavigate()
+  const { canEdit } = useOrgPermissions(jobTitleResource)
 
   const columns: DataTableColumn<JobTitleRow>[] = [
     {
       id: 'name',
       header: 'Name',
       mobile: 'heading',
-      cell: (row) => (
-        <Link
-          to="/settings/control-panel/job-titles/$jobTitleId"
-          params={{ jobTitleId: row.id }}
-          className="text-foreground underline-offset-4 hover:underline"
-        >
-          {row.name}
-        </Link>
-      ),
+      cell: (row) =>
+        canEdit ? (
+          <Link
+            to="/settings/control-panel/job-titles/$jobTitleId"
+            params={{ jobTitleId: row.id }}
+            className="text-foreground underline-offset-4 hover:underline"
+          >
+            {row.name}
+          </Link>
+        ) : (
+          row.name
+        ),
     },
     {
       id: 'headCount',
       header: 'Head Count',
       cell: (row) =>
         row.limitHeadCount && row.maxHeadCount !== null ? (
-          <span className="tabular-nums">Up to {row.maxHeadCount.toLocaleString('en-US')}</span>
+          <span className="tabular-nums">
+            {row.headCount.toLocaleString('en-US')} of {row.maxHeadCount.toLocaleString('en-US')}
+          </span>
         ) : (
-          <Badge variant="outline" className="font-normal text-muted-foreground">
-            No limit
-          </Badge>
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="tabular-nums">{row.headCount.toLocaleString('en-US')}</span>
+            <Badge variant="outline" className="font-normal text-muted-foreground">
+              No limit
+            </Badge>
+          </span>
         ),
     },
     {
       id: 'description',
       header: 'Description',
       cell: (row) => (
-        <span className="line-clamp-2 text-muted-foreground">{row.description || '—'}</span>
+        <span className="line-clamp-2 text-muted-foreground">{row.description ?? '—'}</span>
       ),
       className: 'hidden max-w-md @3xl:table-cell',
     },
@@ -79,6 +89,7 @@ export function JobTitleListPage() {
           params: { jobTitleId: row.id },
         })
       }}
+      deleteHint="A job title that employees still hold cannot be deleted."
     />
   )
 }
@@ -115,6 +126,7 @@ export function JobTitleFormPage({ jobTitleId }: { jobTitleId?: string }) {
         isLoading={jobTitleForm.isLoadingRecord}
         loadError={jobTitleForm.loadError}
         onRetry={jobTitleForm.retryLoad}
+        readOnly={jobTitleForm.readOnly}
       >
         <TextField
           control={control}

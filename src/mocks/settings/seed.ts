@@ -2,69 +2,114 @@ import type {
   City,
   Company,
   Country,
-  Employee,
   GeneralSettings,
   GeoPlace,
   JobTitle,
   OrgArea,
   OrgBranch,
   OrgLocation,
-  Region,
+  State,
 } from '@/features/settings'
 
-import { DIRECTORY } from '../employees/seed'
+import { randomHex } from '../utils'
+
+/**
+ * Mock tables of Settings → Control Panel. Records are stored without the names and counts
+ * the API adds to its answers (`handlers.ts` adds them); ids keep the readable mock prefixes.
+ */
+export type MockLocation = Omit<OrgLocation, 'companyName' | 'branchCount'>
+export type MockArea = Omit<OrgArea, 'locationName' | 'branchCount'>
+export type MockBranch = Omit<
+  OrgBranch,
+  | 'companyName'
+  | 'locationName'
+  | 'areaName'
+  | 'managerName'
+  | 'countryCode'
+  | 'countryName'
+  | 'stateCode'
+  | 'stateName'
+  | 'cityName'
+  | 'employeeCount'
+>
+export type MockJobTitle = Omit<JobTitle, 'headCount'>
+export type MockGeneralSettings = Omit<GeneralSettings, 'countryName'>
+
+/** The active company of the mock session (the API answers for one company at a time). */
+export const CURRENT_COMPANY_ID = 'co_topedge'
 
 export const COMPANIES: Company[] = [
-  { id: 'co_topedge', name: 'Top Edge Technologies' },
-  { id: 'co_topedge_me', name: 'Top Edge Solutions FZ-LLC' },
+  { id: 'co_topedge', name: 'Top Edge Technologies', isCurrent: true },
+  { id: 'co_topedge_me', name: 'Top Edge Solutions FZ-LLC', isCurrent: false },
 ]
-
-/** Branch Manager options: everyone in the shared mock directory. */
-export const EMPLOYEES: Employee[] = DIRECTORY.map(({ id, name, jobTitle }) => ({
-  id,
-  name,
-  jobTitle,
-}))
 
 export const COUNTRIES: Country[] = [
-  { code: 'PK', name: 'Pakistan' },
-  { code: 'AE', name: 'United Arab Emirates' },
-  { code: 'GB', name: 'United Kingdom' },
-  { code: 'US', name: 'United States' },
+  { id: 'cn_pk', code: 'PK', name: 'Pakistan' },
+  { id: 'cn_ae', code: 'AE', name: 'United Arab Emirates' },
+  { id: 'cn_gb', code: 'GB', name: 'United Kingdom' },
+  { id: 'cn_us', code: 'US', name: 'United States' },
 ]
 
-export const REGIONS: Region[] = [
-  { code: 'PK-PB', name: 'Punjab', countryCode: 'PK' },
-  { code: 'PK-SD', name: 'Sindh', countryCode: 'PK' },
-  { code: 'PK-IS', name: 'Islamabad Capital Territory', countryCode: 'PK' },
-  { code: 'PK-KP', name: 'Khyber Pakhtunkhwa', countryCode: 'PK' },
-  { code: 'AE-DU', name: 'Dubai', countryCode: 'AE' },
-  { code: 'AE-AZ', name: 'Abu Dhabi', countryCode: 'AE' },
-  { code: 'GB-ENG', name: 'England', countryCode: 'GB' },
-  { code: 'GB-SCT', name: 'Scotland', countryCode: 'GB' },
-  { code: 'US-CA', name: 'California', countryCode: 'US' },
-  { code: 'US-NY', name: 'New York', countryCode: 'US' },
+const state = (code: string, name: string): State => {
+  const countryCode = code.slice(0, 2)
+  return {
+    id: `st_${code.toLowerCase().replace('-', '_')}`,
+    code,
+    name,
+    countryId: `cn_${countryCode.toLowerCase()}`,
+    countryCode,
+  }
+}
+
+export const STATES: State[] = [
+  state('PK-PB', 'Punjab'),
+  state('PK-SD', 'Sindh'),
+  state('PK-IS', 'Islamabad Capital Territory'),
+  state('PK-KP', 'Khyber Pakhtunkhwa'),
+  state('AE-DU', 'Dubai'),
+  state('AE-AZ', 'Abu Dhabi'),
+  state('GB-ENG', 'England'),
+  state('GB-SCT', 'Scotland'),
+  state('US-CA', 'California'),
+  state('US-NY', 'New York'),
 ]
 
-export const CITIES: City[] = [
-  { id: 'ct_lhr', name: 'Lahore', regionCode: 'PK-PB' },
-  { id: 'ct_rwp', name: 'Rawalpindi', regionCode: 'PK-PB' },
-  { id: 'ct_fsd', name: 'Faisalabad', regionCode: 'PK-PB' },
-  { id: 'ct_mux', name: 'Multan', regionCode: 'PK-PB' },
-  { id: 'ct_khi', name: 'Karachi', regionCode: 'PK-SD' },
-  { id: 'ct_hdd', name: 'Hyderabad', regionCode: 'PK-SD' },
-  { id: 'ct_isb', name: 'Islamabad', regionCode: 'PK-IS' },
-  { id: 'ct_pew', name: 'Peshawar', regionCode: 'PK-KP' },
-  { id: 'ct_abt', name: 'Abbottabad', regionCode: 'PK-KP' },
-  { id: 'ct_dxb', name: 'Dubai', regionCode: 'AE-DU' },
-  { id: 'ct_auh', name: 'Abu Dhabi', regionCode: 'AE-AZ' },
-  { id: 'ct_lon', name: 'London', regionCode: 'GB-ENG' },
-  { id: 'ct_man', name: 'Manchester', regionCode: 'GB-ENG' },
-  { id: 'ct_edi', name: 'Edinburgh', regionCode: 'GB-SCT' },
-  { id: 'ct_sfo', name: 'San Francisco', regionCode: 'US-CA' },
-  { id: 'ct_lax', name: 'Los Angeles', regionCode: 'US-CA' },
-  { id: 'ct_nyc', name: 'New York City', regionCode: 'US-NY' },
+/** Kept for the attendance mock (holiday rules pick regions by code). */
+export const REGIONS = STATES
+
+/** A city; `regionCode` repeats `stateCode` for the attendance mock's holiday rules. */
+export type MockCity = City & { regionCode: string }
+
+const city = (id: string, name: string, stateCode: string): MockCity => ({
+  id,
+  name,
+  stateId: `st_${stateCode.toLowerCase().replace('-', '_')}`,
+  stateCode,
+  regionCode: stateCode,
+})
+
+export const CITIES: MockCity[] = [
+  city('ct_lhr', 'Lahore', 'PK-PB'),
+  city('ct_rwp', 'Rawalpindi', 'PK-PB'),
+  city('ct_fsd', 'Faisalabad', 'PK-PB'),
+  city('ct_mux', 'Multan', 'PK-PB'),
+  city('ct_khi', 'Karachi', 'PK-SD'),
+  city('ct_hdd', 'Hyderabad', 'PK-SD'),
+  city('ct_isb', 'Islamabad', 'PK-IS'),
+  city('ct_pew', 'Peshawar', 'PK-KP'),
+  city('ct_abt', 'Abbottabad', 'PK-KP'),
+  city('ct_dxb', 'Dubai', 'AE-DU'),
+  city('ct_auh', 'Abu Dhabi', 'AE-AZ'),
+  city('ct_lon', 'London', 'GB-ENG'),
+  city('ct_man', 'Manchester', 'GB-ENG'),
+  city('ct_edi', 'Edinburgh', 'GB-SCT'),
+  city('ct_sfo', 'San Francisco', 'US-CA'),
+  city('ct_lax', 'Los Angeles', 'US-CA'),
+  city('ct_nyc', 'New York City', 'US-NY'),
 ]
+
+/** A fresh row version, as the API's `rowversion` columns hand out (16 hex digits). */
+export const newRowVersion = () => randomHex(8)
 
 /** Places "Search Location" can find (a stand-in for a real geocoding service). */
 export const PLACES: GeoPlace[] = [
@@ -103,7 +148,7 @@ export const PLACES: GeoPlace[] = [
 
 const stamp = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString()
 
-export function seedLocations(): OrgLocation[] {
+export function seedLocations(): MockLocation[] {
   return [
     {
       id: 'lc_lhr',
@@ -115,6 +160,7 @@ export function seedLocations(): OrgLocation[] {
       longitude: 74.3434,
       createdAt: stamp(120),
       updatedAt: stamp(10),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'lc_isb',
@@ -126,6 +172,7 @@ export function seedLocations(): OrgLocation[] {
       longitude: 73.0605,
       createdAt: stamp(110),
       updatedAt: stamp(30),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'lc_khi',
@@ -137,6 +184,7 @@ export function seedLocations(): OrgLocation[] {
       longitude: 67.0802,
       createdAt: stamp(100),
       updatedAt: stamp(40),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'lc_dxb',
@@ -148,27 +196,30 @@ export function seedLocations(): OrgLocation[] {
       longitude: 55.1572,
       createdAt: stamp(90),
       updatedAt: stamp(20),
+      rowVersion: newRowVersion(),
     },
   ]
 }
 
-export function seedAreas(): OrgArea[] {
+export function seedAreas(): MockArea[] {
   return [
     {
       id: 'ar_gulberg',
       name: 'Gulberg',
       locationId: 'lc_lhr',
-      description: '',
+      description: null,
       createdAt: stamp(80),
       updatedAt: stamp(80),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'ar_johar',
       name: 'Johar Town',
       locationId: 'lc_lhr',
-      description: '',
+      description: null,
       createdAt: stamp(79),
       updatedAt: stamp(79),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'ar_blue',
@@ -177,27 +228,30 @@ export function seedAreas(): OrgArea[] {
       description: 'Commercial district.',
       createdAt: stamp(78),
       updatedAt: stamp(78),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'ar_sharea',
       name: 'Shahrah-e-Faisal',
       locationId: 'lc_khi',
-      description: '',
+      description: null,
       createdAt: stamp(77),
       updatedAt: stamp(77),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'ar_dic',
       name: 'Internet City',
       locationId: 'lc_dxb',
-      description: '',
+      description: null,
       createdAt: stamp(76),
       updatedAt: stamp(76),
+      rowVersion: newRowVersion(),
     },
   ]
 }
 
-export function seedBranches(): OrgBranch[] {
+export function seedBranches(): MockBranch[] {
   return [
     {
       id: 'br_lhr_ho',
@@ -208,13 +262,14 @@ export function seedBranches(): OrgBranch[] {
       areaId: 'ar_gulberg',
       managerId: 'em_ayesha',
       description: 'Corporate headquarters, Gulberg III.',
-      countryCode: 'PK',
-      regionCode: 'PK-PB',
+      countryId: 'cn_pk',
+      stateId: 'st_pk_pb',
       cityId: 'ct_lhr',
       latitude: 31.5136,
       longitude: 74.3434,
       createdAt: stamp(70),
       updatedAt: stamp(5),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'br_lhr_jt',
@@ -224,14 +279,15 @@ export function seedBranches(): OrgBranch[] {
       locationId: 'lc_lhr',
       areaId: 'ar_johar',
       managerId: 'em_bilal',
-      description: '',
-      countryCode: 'PK',
-      regionCode: 'PK-PB',
+      description: null,
+      countryId: 'cn_pk',
+      stateId: 'st_pk_pb',
       cityId: 'ct_lhr',
       latitude: 31.4697,
       longitude: 74.2728,
       createdAt: stamp(60),
       updatedAt: stamp(15),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'br_isb',
@@ -241,14 +297,15 @@ export function seedBranches(): OrgBranch[] {
       locationId: 'lc_isb',
       areaId: 'ar_blue',
       managerId: 'em_omar',
-      description: '',
-      countryCode: 'PK',
-      regionCode: 'PK-IS',
+      description: null,
+      countryId: 'cn_pk',
+      stateId: 'st_pk_is',
       cityId: 'ct_isb',
       latitude: 33.7104,
       longitude: 73.0605,
       createdAt: stamp(50),
       updatedAt: stamp(25),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'br_khi',
@@ -258,14 +315,15 @@ export function seedBranches(): OrgBranch[] {
       locationId: 'lc_khi',
       areaId: 'ar_sharea',
       managerId: 'em_sara',
-      description: '',
-      countryCode: 'PK',
-      regionCode: 'PK-SD',
+      description: null,
+      countryId: 'cn_pk',
+      stateId: 'st_pk_sd',
       cityId: 'ct_khi',
       latitude: 24.8718,
       longitude: 67.0802,
       createdAt: stamp(40),
       updatedAt: stamp(12),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'br_dxb',
@@ -275,14 +333,15 @@ export function seedBranches(): OrgBranch[] {
       locationId: 'lc_dxb',
       areaId: 'ar_dic',
       managerId: 'em_daniel',
-      description: '',
-      countryCode: 'AE',
-      regionCode: 'AE-DU',
+      description: null,
+      countryId: 'cn_ae',
+      stateId: 'st_ae_du',
       cityId: 'ct_dxb',
       latitude: 25.0957,
       longitude: 55.1572,
       createdAt: stamp(30),
       updatedAt: stamp(8),
+      rowVersion: newRowVersion(),
     },
     {
       id: 'br_rwp',
@@ -293,25 +352,26 @@ export function seedBranches(): OrgBranch[] {
       areaId: null,
       managerId: null,
       description: 'Satellite support desk serving the twin cities.',
-      countryCode: 'PK',
-      regionCode: 'PK-PB',
+      countryId: 'cn_pk',
+      stateId: 'st_pk_pb',
       cityId: 'ct_rwp',
       latitude: 33.5973,
       longitude: 73.0479,
       createdAt: stamp(20),
       updatedAt: stamp(3),
+      rowVersion: newRowVersion(),
     },
   ]
 }
 
-export function seedJobTitles(): JobTitle[] {
+export function seedJobTitles(): MockJobTitle[] {
   const job = (
     id: string,
     name: string,
     max: number | null,
-    description = '',
+    description: string | null = null,
     age = 50,
-  ): JobTitle => ({
+  ): MockJobTitle => ({
     id,
     name,
     limitHeadCount: max !== null,
@@ -319,31 +379,37 @@ export function seedJobTitles(): JobTitle[] {
     description,
     createdAt: stamp(age),
     updatedAt: stamp(Math.floor(age / 3)),
+    rowVersion: newRowVersion(),
   })
   return [
     job('jt_hrm', 'HR Manager', 2, 'Owns people operations and policy.', 60),
     job('jt_swe', 'Software Engineer', null, 'Builds and maintains products.', 58),
-    job('jt_sse', 'Senior Software Engineer', 25, '', 56),
-    job('jt_qa', 'QA Engineer', 10, '', 54),
-    job('jt_pm', 'Project Manager', 6, '', 52),
-    job('jt_acc', 'Accountant', 4, '', 50),
-    job('jt_exec', 'Marketing Executive', null, '', 48),
+    job('jt_sse', 'Senior Software Engineer', 25, null, 56),
+    job('jt_qa', 'QA Engineer', 10, null, 54),
+    job('jt_pm', 'Project Manager', 6, null, 52),
+    job('jt_acc', 'Accountant', 4, null, 50),
+    job('jt_exec', 'Marketing Executive', null, null, 48),
   ]
 }
 
-export function seedGeneralSettings(): GeneralSettings {
+export function seedGeneralSettings(): MockGeneralSettings {
   return {
+    id: CURRENT_COMPANY_ID,
     organizationName: 'Top Edge Technologies',
     legalName: 'Top Edge Technologies (Private) Limited',
     email: 'hr@topedge.tech',
     phone: '+92 42 3577 0000',
     website: 'https://topedge.tech',
     address: '45-B, Gulberg III, Lahore, Pakistan',
+    countryId: 'cn_pk',
     timezone: 'Asia/Karachi',
     currency: 'PKR',
     dateFormat: 'dd MMM yyyy',
     weekStartsOn: 'monday',
     fiscalYearStartMonth: 7,
+    isActive: true,
+    createdAt: stamp(400),
     updatedAt: stamp(14),
+    rowVersion: newRowVersion(),
   }
 }

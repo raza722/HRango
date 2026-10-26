@@ -10,6 +10,7 @@ import { PAGE_SIZE_OPTIONS } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 
 import type { OrgListParams, OrgResource } from '../../api/org-resource'
+import { useOrgPermissions } from '../../hooks/use-org-permissions'
 import { useDeleteOrgRecord, useOrgList } from '../../hooks/use-org-records'
 import { capitalize } from '../../utils/text'
 import { settingsType } from './type-styles'
@@ -17,6 +18,7 @@ import { settingsType } from './type-styles'
 interface AnyRecord {
   id: string
   name: string
+  rowVersion: string
 }
 
 /** List state kept in the URL: `?page=2&pageSize=10&q=lah`. */
@@ -33,7 +35,7 @@ interface OrgListPageProps<TRecord extends AnyRecord, TInput, TRow extends AnyRe
   search: OrgListSearch
   /** Writes list state to the URL; any change other than `page` goes back to page 1. */
   onSearchChange: (patch: Partial<OrgListSearch>) => void
-  /** Extra API filters (company, location) chosen in `filters`. */
+  /** Extra API filters (location) chosen in `filters`. */
   filterParams?: Omit<OrgListParams, 'page' | 'pageSize' | 'search'>
   /** Filter selects shown beside the search box. */
   filters?: ReactNode
@@ -65,6 +67,7 @@ export function OrgListPage<TRecord extends AnyRecord, TInput, TRow extends AnyR
   const { page, pageSize, q = '' } = search
   const query = useOrgList(resource, { page, pageSize, search: q, ...filterParams })
   const deleteMutation = useDeleteOrgRecord(resource)
+  const { canCreate, canEdit, canDelete } = useOrgPermissions(resource)
   const [pendingDelete, setPendingDelete] = useState<TRow | null>(null)
 
   // The box updates at once; the URL (and the request) follow when typing pauses.
@@ -112,11 +115,13 @@ export function OrgListPage<TRecord extends AnyRecord, TInput, TRow extends AnyR
         className={cn('rounded-xl', settingsType.listCard)}
         caption={capitalize(resource.plural)}
         actions={
-          <Button asChild variant="outline">
-            <Link {...addLink}>
-              <Plus /> Add {singular}
-            </Link>
-          </Button>
+          canCreate ? (
+            <Button asChild variant="outline">
+              <Link {...addLink}>
+                <Plus /> Add {singular}
+              </Link>
+            </Button>
+          ) : undefined
         }
         toolbar={
           <>
@@ -154,31 +159,45 @@ export function OrgListPage<TRecord extends AnyRecord, TInput, TRow extends AnyR
         emptyState={
           filtered
             ? `No ${resource.plural} match these filters.`
-            : `No ${resource.plural} yet. Use “Add ${singular}” to create one.`
+            : canCreate
+              ? `No ${resource.plural} yet. Use “Add ${singular}” to create one.`
+              : `No ${resource.plural} yet.`
         }
-        rowActions={(row) => (
-          <RowActionsMenu
-            label={`Actions for ${row.name}`}
-            itemClassName={settingsType.rowMenuItem}
-            actions={[
-              {
-                label: 'Edit',
-                icon: Pencil,
-                onSelect: () => {
-                  onEdit(row)
-                },
-              },
-              {
-                label: 'Delete',
-                icon: Trash2,
-                variant: 'destructive',
-                onSelect: () => {
-                  setPendingDelete(row)
-                },
-              },
-            ]}
-          />
-        )}
+        rowActions={
+          canEdit || canDelete
+            ? (row) => (
+                <RowActionsMenu
+                  label={`Actions for ${row.name}`}
+                  itemClassName={settingsType.rowMenuItem}
+                  actions={[
+                    ...(canEdit
+                      ? [
+                          {
+                            label: 'Edit',
+                            icon: Pencil,
+                            onSelect: () => {
+                              onEdit(row)
+                            },
+                          },
+                        ]
+                      : []),
+                    ...(canDelete
+                      ? [
+                          {
+                            label: 'Delete',
+                            icon: Trash2,
+                            variant: 'destructive' as const,
+                            onSelect: () => {
+                              setPendingDelete(row)
+                            },
+                          },
+                        ]
+                      : []),
+                  ]}
+                />
+              )
+            : undefined
+        }
       />
 
       <ConfirmDialog

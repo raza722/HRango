@@ -10,15 +10,18 @@ import { capitalize } from '../utils/text'
 interface AnyRecord {
   id: string
   name: string
+  rowVersion: string
 }
 
 /**
- * Every Control Panel list, of every type. Renaming a location changes the
+ * Every Control Panel list and picker, of every type. Renaming a location changes the
  * "Location" column of branches and areas, so saves refresh all of them.
  */
 function invalidateOrgLists(queryClient: QueryClient) {
   return queryClient.invalidateQueries({
-    predicate: ({ queryKey }) => queryKey[0] === SETTINGS_QUERY_ROOT && queryKey[2] === 'list',
+    predicate: ({ queryKey }) =>
+      queryKey[0] === SETTINGS_QUERY_ROOT &&
+      (queryKey[2] === 'list' || (queryKey[1] === 'lookups' && queryKey[2] === 'org')),
   })
 }
 
@@ -39,14 +42,24 @@ export function useOrgRecord<TRecord extends AnyRecord, TInput, TRow extends Any
   return useQuery({ ...resource.detailQuery(id ?? ''), enabled: id !== undefined })
 }
 
-/** Creates (no `id`) or updates a record, then refreshes the lists. */
+/**
+ * Creates (no `id`) or updates a record, then refreshes the lists. Updating sends the
+ * `rowVersion` last read; the API refuses a stale one (409, someone else saved first).
+ */
 export function useSaveOrgRecord<TRecord extends AnyRecord, TInput, TRow extends AnyRecord>(
   resource: OrgResource<TRecord, TInput, TRow>,
 ) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, input }: { id?: string | undefined; input: TInput }) =>
-      id ? resource.api.update(id, input) : resource.api.create(input),
+    mutationFn: ({
+      id,
+      input,
+      rowVersion,
+    }: {
+      id?: string | undefined
+      input: TInput
+      rowVersion?: string | undefined
+    }) => (id ? resource.api.update(id, input, rowVersion ?? '') : resource.api.create(input)),
     onSuccess: async (record, { id }) => {
       queryClient.setQueryData(resource.detailQuery(record.id).queryKey, record)
       toast.success(
@@ -67,7 +80,7 @@ export function useDeleteOrgRecord<TRecord extends AnyRecord, TInput, TRow exten
   const queryClient = useQueryClient()
   const lists = resource.keys.lists()
   return useMutation({
-    mutationFn: (row: TRow) => resource.api.remove(row.id),
+    mutationFn: (row: TRow) => resource.api.remove(row.id, row.rowVersion),
     onMutate: async (row) => {
       await queryClient.cancelQueries({ queryKey: lists })
       const snapshot = queryClient.getQueriesData<Paginated<TRow>>({ queryKey: lists })

@@ -13,19 +13,19 @@ import {
 /**
  * Form schemas for Settings → Control Panel → Organization. Values are kept as
  * strings (what the inputs hold); `utils/form-mappers.ts` turns them into API input.
+ * Records belong to the active company, so no form picks a company.
  */
 
 export const branchFormSchema = z
   .object({
     name: nameSchema('branch'),
     employeePrefix: employeePrefixSchema,
-    companyId: requiredIdSchema('Select a company'),
     locationId: requiredIdSchema('Select a location'),
     areaId: z.string(),
     managerId: z.string(),
     description: descriptionSchema,
-    countryCode: z.string(),
-    regionCode: z.string(),
+    countryId: z.string(),
+    stateId: z.string(),
     cityId: z.string(),
     latitude: latitudeSchema,
     longitude: longitudeSchema,
@@ -38,7 +38,6 @@ export const locationFormSchema = z
   .object({
     name: nameSchema('location'),
     employeePrefix: employeePrefixSchema,
-    companyId: requiredIdSchema('Select a company'),
     description: descriptionSchema,
     latitude: latitudeSchema,
     longitude: longitudeSchema,

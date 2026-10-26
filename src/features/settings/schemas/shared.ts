@@ -1,8 +1,9 @@
 import { z } from 'zod'
 
-export const NAME_MAX_LENGTH = 80
-export const PREFIX_MAX_LENGTH = 12
-export const DESCRIPTION_MAX_LENGTH = 500
+// Limits follow the API (organisation schemas): name 200, employee prefix 10, description 4000.
+export const NAME_MAX_LENGTH = 200
+export const PREFIX_MAX_LENGTH = 10
+export const DESCRIPTION_MAX_LENGTH = 4000
 
 /** Required display name, e.g. "Enter the branch name". */
 export function nameSchema(entity: string) {
@@ -73,4 +74,10 @@ export function refineCoordinatePair(
 /** Empty select → `null` for optional references. */
 export function toOptionalId(value: string): string | null {
   return value === '' ? null : value
+}
+
+/** Optional text: trimmed, `null` when empty (the API stores NULL, not ''). */
+export function toOptionalText(value: string): string | null {
+  const trimmed = value.trim()
+  return trimmed === '' ? null : trimmed
 }
