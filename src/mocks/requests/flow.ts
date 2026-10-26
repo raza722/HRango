@@ -1,8 +1,8 @@
 import {
-  FLOW_NODE_LABELS,
+  FLOW_AUTHORITIES,
+  FLOW_AUTHORITY_LABELS,
   type FlowAuthority,
   type FlowNode,
-  type FlowRequestType,
   type FlowStepStatus,
   type RequestStatus,
   type SettingsRequestType,
@@ -20,7 +20,7 @@ import {
   mustFind,
   TOP_MANAGER,
 } from './people'
-import { authoritiesOf, flowDefinition } from './settings-db'
+import { authorityHolder, flowFor } from './settings-db'
 
 export interface StoredStep {
   authority: string
@@ -106,35 +106,17 @@ export interface FlowPlan {
   lookerIds: string[]
 }
 
-/** The rows of a flow: the person's chain of authorities, else the type's flow definition. */
-function flowNodes(employeeId: string, type: FlowRequestType): FlowNode[] {
-  const authorities = authoritiesOf(employeeId, type).filter(
-    (item): item is Exclude<FlowAuthority, 'general-flow'> => item !== 'general-flow',
-  )
-  if (authorities.length === 0) return flowDefinition(type).nodes
-  return authorities.map((authority, index) => ({
-    id: index + 1,
-    canEdit: true,
-    onLooker: false,
-    canDisagree: false,
-    isCondition: false,
-    // A "Retail Employee" chain has no stated meaning: it goes to the line manager.
-    node: authority === 'retail-employee' ? 'line-manager' : authority,
-    employeeId: null,
-    next: index + 1 < authorities.length ? index + 2 : null,
-    expression: '',
-    ifTrue: null,
-    ifFalse: null,
-  }))
-}
-
-/** `fact op value`; a fact the request does not have, or an expression it cannot read, passes. */
-export function evaluateCondition(expression: string, facts: FlowFacts): boolean {
-  const match = /^\s*(\w+)\s*(>=|<=|==|!=|=|>|<)\s*(.+?)\s*$/.exec(expression)
-  if (!match) return true
+/**
+ * `<fact> <op> <value>` (the API's conditions read days, amount, minutes,
+ * department_id …; the mock reads any payload fact). As on the API, a fact the
+ * request does not have, or an expression it cannot read, is false.
+ */
+export function evaluateCondition(expression: string | null, facts: FlowFacts): boolean {
+  const match = /^\s*(\w+)\s*(>=|<=|==|!=|<>|=|>|<)\s*(.+?)\s*$/.exec(expression ?? '')
+  if (!match) return false
   const [, name = '', op, raw = ''] = match
   const fact = facts[name]
-  if (fact === undefined || fact === null) return true
+  if (fact === undefined || fact === null) return false
   const value = raw.replace(/^['"]|['"]$/g, '')
   const left = typeof fact === 'number' ? fact : String(fact)
   const right = typeof fact === 'number' ? Number(value) : value
@@ -148,71 +130,104 @@ export function evaluateCondition(expression: string, facts: FlowFacts): boolean
     case '<=':
       return left <= right
     case '!=':
+    case '<>':
       return left !== right
     default:
       return left === right
   }
 }
 
-/** Who a flow row points at, with the label its approval is recorded under. */
-function resolveNode(node: FlowNode, employee: DirectoryEmployee): [string, string] | null {
-  switch (node.node) {
-    case 'line-manager':
+/**
+ * The fallbacks the mock uses for authorities nobody holds under Request
+ * Settings → Authorities (the organisation's heads stand in).
+ */
+function defaultHolder(authority: FlowAuthority, employee: DirectoryEmployee): string | null {
+  switch (authority) {
+    case 'hr_manager':
+      return hrManagerFor(employee)
+    case 'finance_manager':
+      return headOfDepartment('Finance')
+    case 'admin_manager':
+      return headOfDepartment('Operations')
+    case 'area_manager':
+      // Areas have no manager on file: the country manager stands in.
+      return employee.id === TOP_MANAGER ? hrManagerFor(employee) : TOP_MANAGER
+    default:
+      return null
+  }
+}
+
+/** Step labels the request serializer reads back as the API's approver kinds. */
+const AUTHORITY_STEP_LABELS: Partial<Record<FlowAuthority, string>> = {
+  hr_manager: 'HOD HR',
+  finance_manager: 'HOD Finance',
+  admin_manager: 'HOD Admin',
+}
+
+const isAuthority = (kind: string): kind is FlowAuthority =>
+  (FLOW_AUTHORITIES as readonly string[]).includes(kind)
+
+/** Who a flow node points at, with the label its approval is recorded under; null: nobody (skipped). */
+function resolveNode(
+  node: FlowNode,
+  employee: DirectoryEmployee,
+  type: string,
+): [string, string] | null {
+  const kind = node.approverKind
+  if (!kind) return null
+  switch (kind) {
+    case 'line_manager':
       return ['Line Manager', lineManagerOf(employee)]
     case 'hod':
       return ['HOD', departmentHeadOf(employee)]
-    case 'hod-finance':
-      return ['HOD Finance', headOfDepartment('Finance')]
-    case 'hod-admin':
-      return ['HOD Admin', headOfDepartment('Operations')]
-    case 'hod-hr':
-    case 'hod-hr-admin':
-      return ['HOD HR', hrManagerFor(employee)]
-    case 'final-authority':
+    case 'final_authority':
       return ['HR Manager', hrManagerFor(employee)]
-    case 'branch-manager': {
+    case 'branch_manager': {
       const branch = employee.branchId ? branches.find(employee.branchId) : undefined
       return ['Branch Manager', branch?.managerId ?? lineManagerOf(employee)]
     }
-    case 'area-manager':
-      // Areas have no manager on file: the country manager stands in.
-      return ['Area Manager', employee.id === TOP_MANAGER ? hrManagerFor(employee) : TOP_MANAGER]
     case 'employee':
-    case 'consentee':
-      return node.employeeId ? [FLOW_NODE_LABELS[node.node], node.employeeId] : null
+      return node.employeeId ? ['Employee', node.employeeId] : null
+    case 'role':
+      // The mock has no user roles: a role node is skipped.
+      return null
+    default: {
+      if (!isAuthority(kind)) return null
+      const holder = authorityHolder(kind, employee, type) ?? defaultHolder(kind, employee)
+      return holder ? [AUTHORITY_STEP_LABELS[kind] ?? FLOW_AUTHORITY_LABELS[kind], holder] : null
+    }
   }
 }
 
 /**
- * Walks the flow from its first row. On-lookers are told, Can Disagree rows
- * and Consentees are asked for consent, a condition row routes by its
- * expression, and every other row is an approval step. Nobody approves their
- * own request, and the same approver twice in a row decides once (under the
- * later label), so the General Flow stays Line Manager → HR Manager.
+ * Walks the flow a person's request of a type follows (Request Settings →
+ * Request Flows: the most specific active flow, else the General Flow) from
+ * its first node. Empty Next / If True / If False go to the next node by
+ * number. On-lookers are told, Can Disagree nodes are asked for consent, a
+ * condition routes by its expression, and every other node is an approval
+ * step. A node nobody holds, or that would make the person decide their own
+ * request, is skipped; the same approver twice in a row decides once.
  */
-export function planFlow(
-  employeeId: string,
-  type: FlowRequestType = 'punch',
-  facts: FlowFacts = {},
-): FlowPlan {
+export function planFlow(employeeId: string, type = 'punch', facts: FlowFacts = {}): FlowPlan {
   const employee = mustFind(employeeId)
-  const nodes = flowNodes(employeeId, type)
-  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const nodes = flowFor(employee, type)
+  const byStep = new Map(nodes.map((item) => [item.stepNo, item]))
+  const following = (stepNo: number) => nodes.find((item) => item.stepNo > stepNo)?.stepNo ?? null
   const plan: FlowPlan = { steps: [], consentIds: [], lookerIds: [] }
   const seen = new Set<number>()
   let current: FlowNode | undefined = nodes[0]
-  while (current && !seen.has(current.id)) {
-    seen.add(current.id)
+  while (current && !seen.has(current.stepNo)) {
+    seen.add(current.stepNo)
     const next: number | null = current.isCondition
       ? evaluateCondition(current.expression, facts)
-        ? current.ifTrue
-        : current.ifFalse
-      : current.next
-    const resolved = current.isCondition ? null : resolveNode(current, employee)
+        ? (current.ifTrue ?? following(current.stepNo))
+        : (current.ifFalse ?? following(current.stepNo))
+      : (current.next ?? following(current.stepNo))
+    const resolved = current.isCondition ? null : resolveNode(current, employee, type)
     if (resolved && resolved[1] !== employeeId) {
       const [authority, approverId] = resolved
-      if (current.onLooker) plan.lookerIds.push(approverId)
-      else if (current.canDisagree || current.node === 'consentee') plan.consentIds.push(approverId)
+      if (current.isObserver) plan.lookerIds.push(approverId)
+      else if (current.canDisagree) plan.consentIds.push(approverId)
       else {
         const last = plan.steps.at(-1)
         if (last?.approverId === approverId) plan.steps.pop()
@@ -226,7 +241,7 @@ export function planFlow(
         })
       }
     }
-    current = next === null ? undefined : byId.get(next)
+    current = next === null ? undefined : byStep.get(next)
   }
   if (plan.steps.length === 0) {
     plan.steps.push({
@@ -249,11 +264,7 @@ export function planFlow(
  * The approval steps of a request type's flow: by default Line Manager, then
  * HR Manager (one step when they are the same person).
  */
-export function buildFlow(
-  employeeId: string,
-  type: FlowRequestType = 'punch',
-  facts: FlowFacts = {},
-): StoredStep[] {
+export function buildFlow(employeeId: string, type = 'punch', facts: FlowFacts = {}): StoredStep[] {
   return planFlow(employeeId, type, facts).steps
 }
 

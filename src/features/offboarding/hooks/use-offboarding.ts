@@ -4,25 +4,20 @@ import { toast } from 'sonner'
 import {
   type ChecklistFilters,
   type EoeFilters,
-  type ImportResult,
   offboardingApi,
   offboardingKeys,
   offboardingListQueryOptions,
-  offboardingLookupsQueryOptions,
   type PageQuery,
+  type Versioned,
 } from '../api/offboarding.api'
-import type { ChecklistInput, EndOfEmploymentInput, EoeImportRow } from '../types/offboarding.types'
+import type {
+  ChecklistAnswersInput,
+  ChecklistInput,
+  EndOfEmployment,
+  EndOfEmploymentInput,
+} from '../types/offboarding.types'
 
 // --- queries ------------------------------------------------------------------------------------
-
-export const useOffboardingLookups = () => useQuery(offboardingLookupsQueryOptions())
-
-export const useEmployeeCard = (employeeId: string | null) =>
-  useQuery({
-    queryKey: offboardingKeys.detail('card', employeeId ?? ''),
-    queryFn: ({ signal }) => offboardingApi.employeeCard(employeeId ?? '', signal),
-    enabled: employeeId !== null,
-  })
 
 export const useEndOfEmployments = (params: PageQuery<EoeFilters>) =>
   useQuery(
@@ -34,6 +29,13 @@ export const useEndOfEmployment = (id: string | null) =>
     queryKey: offboardingKeys.detail('end-of-employment', id ?? ''),
     queryFn: ({ signal }) => offboardingApi.endOfEmployment(id ?? '', signal),
     enabled: id !== null,
+  })
+
+export const useChecklistFields = () =>
+  useQuery({
+    queryKey: offboardingKeys.checklistFields(),
+    queryFn: ({ signal }) => offboardingApi.checklistFields(signal),
+    staleTime: 30_000,
   })
 
 export const useChecklists = (params: PageQuery<ChecklistFilters>) =>
@@ -71,35 +73,64 @@ export function useOffboardingMutation<TVariables, TResult>(
   })
 }
 
+export interface SaveEndOfEmploymentVariables {
+  id?: string | undefined
+  input: EndOfEmploymentInput
+  /** Checklist tab answers; saved after the record (they need its id and rowVersion). */
+  answers: ChecklistAnswersInput['answers'] | null
+}
+
+/**
+ * Saves the record, then its Checklist tab answers. If the answers fail after the record was
+ * made, the error carries the saved record so the dialog can switch to editing it.
+ */
+export class AnswersNotSavedError extends Error {
+  readonly record: EndOfEmployment
+  readonly failure: unknown
+
+  constructor(record: EndOfEmployment, failure: unknown) {
+    super('The record was saved, but its checklist answers were not.')
+    this.record = record
+    this.failure = failure
+  }
+}
+
 export const useSaveEndOfEmployment = () =>
   useOffboardingMutation(
-    ({ id, input }: { id?: string | undefined; input: EndOfEmploymentInput }) =>
-      id
-        ? offboardingApi.updateEndOfEmployment(id, input)
-        : offboardingApi.createEndOfEmployment(input),
+    async ({ id, input, answers }: SaveEndOfEmploymentVariables) => {
+      const record = id
+        ? await offboardingApi.updateEndOfEmployment(id, input)
+        : await offboardingApi.createEndOfEmployment(input)
+      if (!answers || answers.length === 0) return record
+      try {
+        return await offboardingApi.saveChecklistAnswers(record.id, {
+          answers,
+          rowVersion: record.rowVersion,
+        })
+      } catch (failure) {
+        throw new AnswersNotSavedError(record, failure)
+      }
+    },
     ({ id }) => (id ? 'End of employment updated' : 'End of employment created'),
   )
 
 export const useDeleteEndOfEmployment = () =>
   useOffboardingMutation(
-    (id: string) => offboardingApi.deleteEndOfEmployment(id),
+    (record: Versioned) => offboardingApi.deleteEndOfEmployment(record),
     () => 'End of employment deleted',
+  )
+
+export const useCompleteEndOfEmployment = () =>
+  useOffboardingMutation(
+    (record: Versioned) => offboardingApi.completeEndOfEmployment(record),
+    () => 'End of employment completed',
   )
 
 export const useRehire = () =>
   useOffboardingMutation(
-    ({ id, joiningDate }: { id: string; joiningDate: string }) =>
-      offboardingApi.rehire(id, joiningDate),
-    (_variables, result) => `${result.card.name} rehired`,
-  )
-
-export const useImportEndOfEmployments = () =>
-  useOffboardingMutation(
-    (rows: EoeImportRow[]) => offboardingApi.importEndOfEmployments(rows),
-    (_variables, result: ImportResult) =>
-      result.errors.length > 0
-        ? `${String(result.created)} imported, ${String(result.errors.length)} with errors`
-        : `${String(result.created)} imported`,
+    ({ record, joiningDate }: { record: Versioned; joiningDate: string }) =>
+      offboardingApi.rehire(record, joiningDate),
+    (_variables, result) => `${result.employeeName ?? 'The employee'} rehired`,
   )
 
 export const useSaveChecklist = () =>
@@ -107,4 +138,10 @@ export const useSaveChecklist = () =>
     ({ id, input }: { id?: string | undefined; input: ChecklistInput }) =>
       id ? offboardingApi.updateChecklist(id, input) : offboardingApi.createChecklist(input),
     ({ id }) => (id ? 'Checklist updated' : 'Checklist created'),
+  )
+
+export const useDeleteChecklist = () =>
+  useOffboardingMutation(
+    (record: Versioned) => offboardingApi.deleteChecklist(record),
+    () => 'Checklist deleted',
   )

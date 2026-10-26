@@ -1,39 +1,44 @@
 import { type SyntheticEvent, useId, useState } from 'react'
 import { type Control, useController, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { intervalToDuration, parseISO } from 'date-fns'
 import { z } from 'zod'
 
 import { AppDialog } from '@/components/feedback/app-dialog'
-import { FieldLayoutContext, FormField, TextareaField } from '@/components/form'
+import { FieldLayoutContext, FormField, TextareaField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { type EmployeeLookupItem, personHint, UploadField } from '@/features/assets'
 import {
-  AttachmentField,
   btn,
   DateField,
   DateInput,
   dialogFieldType,
+  EmployeeSearchSelectField,
   footerButton,
+  type SearchOption,
   SearchSelectField,
   SectionTitle,
 } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import type { FileRef } from '@/lib/files'
 import { cn } from '@/lib/utils'
 
 import { EOE_REASON_LABELS } from '../../constants'
 import {
-  useEmployeeCard,
+  AnswersNotSavedError,
+  useChecklistFields,
   useEndOfEmployment,
-  useOffboardingLookups,
   useSaveEndOfEmployment,
 } from '../../hooks/use-offboarding'
 import {
-  type ChecklistField,
-  type ChecklistValue,
-  type EndOfEmploymentDetail,
+  type ActiveChecklistField,
+  type ChecklistAnswerValue,
+  type EmployeeCardInfo,
+  type EndOfEmployment,
   type EndOfEmploymentInput,
   EOE_REASONS,
 } from '../../types/offboarding.types'
@@ -51,16 +56,21 @@ const schema = z
   .object({
     employeeId: person('Choose the employee'),
     reason: person('Choose the reason'),
-    noticePeriod: z.boolean(),
+    serveNotice: z.boolean(),
+    noticePeriodDays: z
+      .string()
+      .trim()
+      .refine((value) => value === '' || /^\d{1,4}$/.test(value), 'Enter a whole number of days'),
     lastWorkingDate: z.string(),
-    finalSettlement: z.boolean(),
-    assetClearance: z.boolean(),
-    attachmentName: z.string().nullable(),
-    description: z.string().trim().max(1000, 'Keep it under 1000 characters'),
+    needsFinalSettlement: z.boolean(),
+    needsAssetClearance: z.boolean(),
+    assetClearByDate: z.string(),
+    description: z.string().trim().max(2000, 'Keep it under 2000 characters'),
+    replacementId: z.string().nullable(),
     delegateeId: z.string().nullable(),
     checklist: z.record(z.string(), z.union([z.string(), z.boolean()])),
   })
-  .refine((value) => !value.noticePeriod || value.lastWorkingDate !== '', {
+  .refine((value) => !value.serveNotice || value.lastWorkingDate !== '', {
     message: 'Choose the last working date',
     path: ['lastWorkingDate'],
   })
@@ -68,76 +78,128 @@ const schema = z
     message: 'Choose someone else as the delegatee',
     path: ['delegateeId'],
   })
+  .refine((value) => !value.replacementId || value.replacementId !== value.employeeId, {
+    message: 'Choose someone else as the replacement',
+    path: ['replacementId'],
+  })
 type Values = z.infer<typeof schema>
 
-const formValue = (value: ChecklistValue | undefined, field: ChecklistField) =>
-  field.type === 'boolean'
-    ? value === true
-    : value === null || value === undefined
-      ? ''
-      : String(value)
+/** A stored answer (text) as the form holds it. */
+const formValue = (answer: string | null | undefined, field: ActiveChecklistField) =>
+  field.fieldType === 'boolean' ? answer === 'true' : (answer ?? '')
 
 const toValues = (
-  detail: EndOfEmploymentDetail | undefined,
-  fields: readonly ChecklistField[],
+  detail: EndOfEmployment | undefined,
+  fields: readonly ActiveChecklistField[],
 ): Values => ({
   employeeId: detail?.employeeId ?? null,
   reason: detail?.reason ?? null,
-  noticePeriod: detail?.noticePeriod ?? false,
-  lastWorkingDate: detail?.noticePeriod ? (detail.lastWorkingDate ?? '') : '',
-  finalSettlement: detail?.finalSettlement ?? false,
-  assetClearance: detail?.assetClearance ?? false,
-  attachmentName: detail?.attachmentName ?? null,
+  serveNotice: detail?.serveNotice ?? false,
+  noticePeriodDays:
+    detail?.noticePeriodDays === null || !detail ? '' : String(detail.noticePeriodDays),
+  lastWorkingDate: detail?.serveNotice ? detail.lastWorkingDate : '',
+  needsFinalSettlement: detail?.needsFinalSettlement ?? false,
+  needsAssetClearance: detail?.needsAssetClearance ?? false,
+  assetClearByDate: detail?.assetClearByDate ?? '',
   description: detail?.description ?? '',
+  replacementId: detail?.replacementId ?? null,
   delegateeId: detail?.delegateeId ?? null,
   checklist: Object.fromEntries(
-    fields.map((field) => [field.id, formValue(detail?.checklist[field.id], field)]),
+    fields.map((field) => [
+      field.id,
+      formValue(
+        detail?.answers.find((answer) => answer.checklistFieldId === field.id)?.answer,
+        field,
+      ),
+    ]),
   ),
 })
 
-/** The answer as the API stores it: numbers as numbers, blanks as null. */
-function toChecklist(
-  values: Values['checklist'],
-  fields: readonly ChecklistField[],
-): Record<string, ChecklistValue> {
-  return Object.fromEntries(
-    fields.map((field): [string, ChecklistValue] => {
-      const value = values[field.id]
-      if (field.type === 'boolean') return [field.id, value === true]
+/** The answers as the API takes them: numbers as numbers, blanks as null. */
+function toAnswers(values: Values['checklist'], fields: readonly ActiveChecklistField[]) {
+  return fields.map((field) => {
+    const value = values[field.id]
+    let answer: ChecklistAnswerValue = null
+    if (field.fieldType === 'boolean') answer = value === true
+    else {
       const text = typeof value === 'string' ? value.trim() : ''
-      if (text === '') return [field.id, null]
-      return [field.id, field.type === 'number' ? Number(text) : text]
-    }),
-  )
+      if (text !== '') answer = field.fieldType === 'number' ? Number(text) : text
+    }
+    return { checklistFieldId: field.id, answer }
+  })
 }
 
-/** The Checklist tab's rules, checked before saving (the server checks them too). */
-function checklistErrors(values: Values['checklist'], fields: readonly ChecklistField[]) {
+/**
+ * The Checklist tab's rules, checked before saving (the server checks them too). Required
+ * answers do not block saving: the record waits for them before it completes.
+ */
+function checklistErrors(values: Values['checklist'], fields: readonly ActiveChecklistField[]) {
   const errors: [string, string][] = []
   for (const field of fields) {
     const value = values[field.id]
     const text = typeof value === 'string' ? value.trim() : ''
-    if (field.type === 'boolean') continue
-    if (text === '') {
-      if (field.required) errors.push([field.id, `Enter ${field.name}`])
-      continue
-    }
-    if (field.type === 'number') {
+    if (field.fieldType === 'boolean' || text === '') continue
+    if (field.fieldType === 'number') {
       const number = Number(text)
       if (!Number.isFinite(number)) errors.push([field.id, 'Enter a number'])
-      else if (field.min !== null && number < field.min)
-        errors.push([field.id, `At least ${String(field.min)}`])
-      else if (field.max !== null && number > field.max)
-        errors.push([field.id, `At most ${String(field.max)}`])
+      else if (field.minValue !== null && number < field.minValue)
+        errors.push([field.id, `At least ${String(field.minValue)}`])
+      else if (field.maxValue !== null && number > field.maxValue)
+        errors.push([field.id, `At most ${String(field.maxValue)}`])
     }
-    if (field.type === 'string') {
-      if (field.min !== null && text.length < field.min)
-        errors.push([field.id, `At least ${String(field.min)} characters`])
-      else if (field.max !== null && text.length > field.max)
-        errors.push([field.id, `At most ${String(field.max)} characters`])
+    if (field.fieldType === 'string') {
+      if (field.minLength !== null && text.length < field.minLength)
+        errors.push([field.id, `At least ${String(field.minLength)} characters`])
+      else if (field.maxLength !== null && text.length > field.maxLength)
+        errors.push([field.id, `At most ${String(field.maxLength)} characters`])
     }
   }
   return errors
+}
+
+const plural = (count: number | undefined, word: string) => `${String(count ?? 0)} ${word}`
+
+/** The card: the record's employee details, or (before saving) what the picker knows. */
+function cardOf(
+  detail: EndOfEmployment | undefined,
+  picked: EmployeeLookupItem | undefined,
+): EmployeeCardInfo | undefined {
+  if (detail) {
+    const age = detail.dateOfBirth
+      ? intervalToDuration({ start: parseISO(detail.dateOfBirth), end: new Date() })
+      : null
+    const worked = detail.joiningDate
+      ? intervalToDuration({
+          start: parseISO(detail.joiningDate),
+          end: parseISO(detail.lastWorkingDate),
+        })
+      : null
+    return {
+      name: detail.employeeName ?? '',
+      designation: detail.designationName ?? '',
+      code: detail.employeeCode ?? '',
+      photoUrl: detail.photoUrl,
+      age: age
+        ? `${plural(age.years, 'years')}, ${plural(age.months, 'Months')}, ${plural(age.days, 'Days')}`
+        : '—',
+      email: detail.employeeEmail ?? '—',
+      phone: detail.employeePhone ?? '—',
+      experience: worked
+        ? `${plural(worked.years, 'Year')} ${plural(worked.months, 'Month')} ${plural(worked.days, 'Days')}`
+        : '—',
+    }
+  }
+  if (!picked) return undefined
+  return {
+    name: picked.name,
+    designation: picked.designationName ?? picked.jobTitleName ?? '',
+    code: picked.code,
+    photoUrl: picked.photoUrl,
+    age: '—',
+    email: '—',
+    phone: '—',
+    experience: '—',
+  }
 }
 
 /** View draws every box grey, not faded white. */
@@ -149,7 +211,7 @@ const viewFieldsClass = cn(
   'dark:[&_[aria-haspopup=dialog]:disabled]:bg-muted dark:[&_[role=combobox]:disabled]:bg-muted dark:[&_input:disabled]:bg-muted dark:[&_textarea:disabled]:bg-muted',
 )
 
-type CheckName = 'noticePeriod' | 'finalSettlement' | 'assetClearance'
+type CheckName = 'serveNotice' | 'needsFinalSettlement' | 'needsAssetClearance'
 
 /** One violet check box bound to the form. */
 function FormCheck({
@@ -195,7 +257,7 @@ function ChecksRow({ control, disabled }: { control: Control<Values>; disabled: 
           <FormCheck
             id={`${baseId}-notice`}
             control={control}
-            name="noticePeriod"
+            name="serveNotice"
             disabled={disabled}
           />
           <span className="flex items-center gap-4">
@@ -205,7 +267,7 @@ function ChecksRow({ control, disabled }: { control: Control<Values>; disabled: 
             <FormCheck
               id={`${baseId}-settlement`}
               control={control}
-              name="finalSettlement"
+              name="needsFinalSettlement"
               disabled={disabled}
             />
           </span>
@@ -216,7 +278,7 @@ function ChecksRow({ control, disabled }: { control: Control<Values>; disabled: 
             <FormCheck
               id={`${baseId}-clearance`}
               control={control}
-              name="assetClearance"
+              name="needsAssetClearance"
               disabled={disabled}
             />
           </span>
@@ -233,16 +295,16 @@ function ChecklistInput({
   disabled,
 }: {
   control: Control<Values>
-  field: ChecklistField
+  field: ActiveChecklistField
   disabled: boolean
 }) {
   const name = `checklist.${field.id}` as const
   const controller = useController({ control, name })
-  if (field.type === 'date') {
+  if (field.fieldType === 'date') {
     return (
       <FormField
         label={field.name}
-        required={field.required}
+        required={field.isRequired}
         error={controller.fieldState.error?.message}
       >
         {(a11y) => (
@@ -258,7 +320,7 @@ function ChecklistInput({
       </FormField>
     )
   }
-  if (field.type === 'boolean') {
+  if (field.fieldType === 'boolean') {
     const id = `${field.id}-check`
     return (
       <div className="grid gap-2 @xl:grid-cols-[10rem_minmax(0,1fr)] @xl:items-center @3xl:grid-cols-[11rem_minmax(0,1fr)]">
@@ -281,18 +343,20 @@ function ChecklistInput({
       </div>
     )
   }
-  const hint =
-    field.type === 'number'
-      ? [
-          field.min !== null ? `from ${String(field.min)}` : null,
-          field.max !== null ? `up to ${String(field.max)}` : null,
-        ]
-      : [field.max !== null ? `up to ${String(field.max)} characters` : null]
-  const description = hint.filter(Boolean).join(' ')
+  const number = field.fieldType === 'number'
+  const min = number ? field.minValue : field.minLength
+  const max = number ? field.maxValue : field.maxLength
+  const hint = number
+    ? [min !== null ? `from ${String(min)}` : null, max !== null ? `up to ${String(max)}` : null]
+    : [
+        min !== null ? `at least ${String(min)} characters` : null,
+        max !== null ? `up to ${String(max)} characters` : null,
+      ]
+  const description = hint.filter(Boolean).join(', ')
   return (
     <FormField
       label={field.name}
-      required={field.required}
+      required={field.isRequired}
       error={controller.fieldState.error?.message}
       description={
         description ? description.charAt(0).toUpperCase() + description.slice(1) : undefined
@@ -301,11 +365,11 @@ function ChecklistInput({
       {(a11y) => (
         <Input
           {...a11y}
-          type={field.type === 'number' ? 'number' : 'text'}
-          inputMode={field.type === 'number' ? 'decimal' : undefined}
-          min={field.type === 'number' ? (field.min ?? undefined) : undefined}
-          max={field.type === 'number' ? (field.max ?? undefined) : undefined}
-          maxLength={field.type === 'string' ? (field.max ?? undefined) : undefined}
+          type={number ? 'number' : 'text'}
+          inputMode={number ? 'decimal' : undefined}
+          min={number ? (min ?? undefined) : undefined}
+          max={number ? (max ?? undefined) : undefined}
+          maxLength={number ? undefined : (max ?? undefined)}
           disabled={disabled}
           value={typeof controller.field.value === 'string' ? controller.field.value : ''}
           onChange={(event) => {
@@ -319,6 +383,17 @@ function ChecklistInput({
 }
 
 type Tab = 'information' | 'checklist'
+
+/** Server field names the Information tab shows under their field. */
+const INFORMATION_FIELDS = [
+  'employeeId',
+  'reason',
+  'lastWorkingDate',
+  'noticePeriodDays',
+  'assetClearByDate',
+  'replacementId',
+  'delegateeId',
+] as const
 
 /**
  * End of Employment Create / Edit / View: the person's card, then the
@@ -334,11 +409,11 @@ export function EndOfEmploymentDialog({
   mode: 'create' | 'edit' | 'view'
   onClose: () => void
   /** After a save: the record as the server now has it. */
-  onSaved?: (record: EndOfEmploymentDetail) => void
+  onSaved?: (record: EndOfEmployment) => void
 }) {
   const record = useEndOfEmployment(id)
-  const lookups = useOffboardingLookups()
-  if ((id && !record.data) || !lookups.data) {
+  const fields = useChecklistFields()
+  if ((id && !record.data) || !fields.data) {
     return (
       <AppDialog title="End of Employment" hideTitle onRequestClose={onClose} className="max-w-4xl">
         <Skeleton className="h-96 w-full" />
@@ -349,7 +424,7 @@ export function EndOfEmploymentDialog({
     <RecordForm
       detail={record.data}
       mode={mode}
-      fields={lookups.data.checklistFields}
+      fields={fields.data}
       onClose={onClose}
       onSaved={onSaved}
     />
@@ -363,36 +438,42 @@ function RecordForm({
   onClose,
   onSaved,
 }: {
-  detail: EndOfEmploymentDetail | undefined
+  detail: EndOfEmployment | undefined
   mode: 'create' | 'edit' | 'view'
-  fields: readonly ChecklistField[]
+  fields: readonly ActiveChecklistField[]
   onClose: () => void
-  onSaved: ((record: EndOfEmploymentDetail) => void) | undefined
+  onSaved: ((record: EndOfEmployment) => void) | undefined
 }) {
   const formId = useId()
   const tabsId = useId()
   const [tab, setTab] = useState<Tab>('information')
-  const lookups = useOffboardingLookups()
+  // The record as last saved: a create whose answers failed carries on as an edit.
+  const [saved, setSaved] = useState<EndOfEmployment | undefined>(detail)
+  const [attachment, setAttachment] = useState<FileRef | null>(detail?.file ?? null)
   const save = useSaveEndOfEmployment()
   const readOnly = mode === 'view'
+  // People are searched on the server; the one last picked fills the card before saving.
+  const [picked, setPicked] = useState<EmployeeLookupItem | undefined>()
+  const people = { permission: 'offboarding.end_of_employment.create' }
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: toValues(detail, fields),
   })
-  const [employeeId, noticePeriod, attachment] = useWatch({
+  const [employeeId, serveNotice, needsAssetClearance] = useWatch({
     control: form.control,
-    name: ['employeeId', 'noticePeriod', 'attachmentName'],
+    name: ['employeeId', 'serveNotice', 'needsAssetClearance'],
   })
-  const card = useEmployeeCard(detail ? null : employeeId)
-  const employees = lookups.data?.employees ?? []
-  const people = employees.map((item) => ({
-    value: item.id,
-    label: item.name,
-    hint: `${item.code} · ${item.designation}`,
-  }))
-  const active = people.filter(
-    (option) => employees.find((item) => item.id === option.value)?.status === 'active',
-  )
+  // Whoever the record already names keeps their name (they may have left since).
+  const known: SearchOption[] = []
+  const keep = (value: string | null | undefined, label: string | null | undefined) => {
+    if (value && label && !known.some((option) => option.value === value)) {
+      known.push({ value, label })
+    }
+  }
+  keep(detail?.employeeId, detail?.employeeName)
+  keep(detail?.delegateeId, detail?.delegateeName)
+  keep(detail?.replacementId, detail?.replacementName)
+  const notLeaving = (row: { id: string }) => row.id !== employeeId
   const reasons = EOE_REASONS.map((reason) => ({ value: reason, label: EOE_REASON_LABELS[reason] }))
   const title =
     mode === 'create'
@@ -413,34 +494,54 @@ function RecordForm({
     const input: EndOfEmploymentInput = {
       employeeId: values.employeeId ?? '',
       reason: EOE_REASONS.find((item) => item === values.reason) ?? 'other',
-      noticePeriod: values.noticePeriod,
-      lastWorkingDate: values.noticePeriod ? values.lastWorkingDate : null,
-      finalSettlement: values.finalSettlement,
-      assetClearance: values.assetClearance,
-      attachmentName: values.attachmentName,
-      description: values.description.trim(),
+      serveNotice: values.serveNotice,
+      noticePeriodDays:
+        values.serveNotice && values.noticePeriodDays !== ''
+          ? Number(values.noticePeriodDays)
+          : null,
+      lastWorkingDate: values.serveNotice ? values.lastWorkingDate : null,
+      needsFinalSettlement: values.needsFinalSettlement,
+      needsAssetClearance: values.needsAssetClearance,
+      assetClearByDate: values.needsAssetClearance ? values.assetClearByDate || null : null,
+      replacementId: values.replacementId,
       delegateeId: values.delegateeId,
-      checklist: toChecklist(values.checklist, fields),
+      description: values.description.trim() || null,
+      fileId: attachment?.id ?? null,
+      rowVersion: saved?.rowVersion,
     }
+    const answered = Boolean(form.formState.dirtyFields.checklist)
     try {
-      const saved = await save.mutateAsync({ id: detail?.id, input })
+      const record = await save.mutateAsync({
+        id: saved?.id,
+        input,
+        answers: answered ? toAnswers(values.checklist, fields) : null,
+      })
       onClose()
-      onSaved?.(saved)
+      onSaved?.(record)
     } catch (error) {
+      if (error instanceof AnswersNotSavedError) {
+        setSaved(error.record)
+        const failure = error.failure
+        const [key, message] =
+          failure instanceof ApiError ? (Object.entries(failure.fieldErrors)[0] ?? []) : []
+        if (key?.startsWith('answers.') && message) {
+          form.setError(`checklist.${key.slice('answers.'.length)}`, { message })
+          setTab('checklist')
+        }
+        form.setError('root', {
+          message: `The record was saved, but not its checklist answers${
+            failure instanceof ApiError ? `: ${failure.message}` : '.'
+          }`,
+        })
+        return
+      }
       if (!(error instanceof ApiError)) {
         form.setError('root', { message: 'Could not save the end of employment record.' })
         return
       }
-      const [key, message] = Object.entries(error.fieldErrors)[0] ?? []
-      if (key && message && key.startsWith('checklist.')) {
-        form.setError(key as `checklist.${string}`, { message })
-        setTab('checklist')
-      } else if (
-        key &&
-        message &&
-        ['employeeId', 'reason', 'lastWorkingDate', 'delegateeId'].includes(key)
-      ) {
-        form.setError(key as 'employeeId', { message })
+      const field = INFORMATION_FIELDS.find((name) => error.fieldErrors[name])
+      if (field) {
+        form.setError(field, { message: error.fieldErrors[field] })
         setTab('information')
       } else {
         form.setError('root', { message: error.message })
@@ -448,8 +549,9 @@ function RecordForm({
     }
   })
 
-  const shownCard = detail?.card ?? card.data
+  const shownCard = cardOf(detail, picked?.id === employeeId ? picked : undefined)
   const rootError = form.formState.errors.root?.message
+  const waiting = detail?.status === 'pending' ? detail.waitingFor : []
 
   return (
     <AppDialog
@@ -482,7 +584,7 @@ function RecordForm({
     >
       <FieldLayoutContext value="horizontal">
         <div className="grid gap-7">
-          <EmployeeInfoCard card={shownCard} pending={Boolean(employeeId) && card.isPending} />
+          <EmployeeInfoCard card={shownCard} />
 
           <div className="grid gap-4">
             <SectionTitle className="pt-0">
@@ -511,9 +613,9 @@ function RecordForm({
                 </button>
               ))}
             </div>
-            {readOnly && detail && detail.waitingFor.length > 0 && (
+            {waiting.length > 0 && (
               <p className="font-inter text-sm text-muted-foreground">
-                Waiting for: {detail.waitingFor.join(', ')}
+                Waiting for: {waiting.map((item) => item.label).join(', ')}
               </p>
             )}
           </div>
@@ -531,13 +633,20 @@ function RecordForm({
               hidden={tab !== 'information'}
               className="grid gap-5"
             >
-              <SearchSelectField
+              <EmployeeSearchSelectField
                 control={form.control}
                 name="employeeId"
                 label="Employee"
                 placeholder="Select Employee"
-                options={mode === 'create' ? active : people}
-                disabled={readOnly || mode === 'edit'}
+                filters={people}
+                enabled={!readOnly}
+                known={known}
+                hint={personHint}
+                onValueChange={(_, row) => {
+                  setPicked(row)
+                }}
+                required={mode === 'create'}
+                disabled={readOnly || mode === 'edit' || saved !== undefined}
               />
               <SearchSelectField
                 control={form.control}
@@ -549,21 +658,39 @@ function RecordForm({
                 disabled={readOnly}
               />
               <ChecksRow control={form.control} disabled={readOnly} />
-              {noticePeriod && (
+              {serveNotice && (
+                <>
+                  <TextField
+                    control={form.control}
+                    name="noticePeriodDays"
+                    label="Notice Period Days"
+                    inputMode="numeric"
+                    disabled={readOnly}
+                  />
+                  <DateField
+                    control={form.control}
+                    name="lastWorkingDate"
+                    label="Last Working Date"
+                    required={!readOnly}
+                    disabled={readOnly}
+                    display={DATE}
+                  />
+                </>
+              )}
+              {needsAssetClearance && (
                 <DateField
                   control={form.control}
-                  name="lastWorkingDate"
-                  label="Last Working Date"
+                  name="assetClearByDate"
+                  label="Asset Clear"
                   disabled={readOnly}
                   display={DATE}
                 />
               )}
-              <AttachmentField
+              <UploadField
                 value={attachment}
+                onChange={setAttachment}
+                module="offboarding"
                 disabled={readOnly}
-                onChange={(name) => {
-                  form.setValue('attachmentName', name, { shouldDirty: true })
-                }}
               />
               <TextareaField
                 control={form.control}
@@ -573,12 +700,28 @@ function RecordForm({
                 textareaClassName="min-h-40"
               />
               {!readOnly && <SectionTitle>Replacements</SectionTitle>}
-              <SearchSelectField
+              <EmployeeSearchSelectField
+                control={form.control}
+                name="replacementId"
+                label="Replacement"
+                placeholder="Select Replacement"
+                filters={people}
+                enabled={!readOnly}
+                known={known}
+                include={notLeaving}
+                hint={personHint}
+                disabled={readOnly}
+              />
+              <EmployeeSearchSelectField
                 control={form.control}
                 name="delegateeId"
                 label="Delegatee"
                 placeholder="Select Delegatee"
-                options={active.filter((option) => option.value !== employeeId)}
+                filters={people}
+                enabled={!readOnly}
+                known={known}
+                include={notLeaving}
+                hint={personHint}
                 disabled={readOnly}
               />
             </div>

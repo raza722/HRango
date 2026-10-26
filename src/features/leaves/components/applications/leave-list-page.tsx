@@ -8,15 +8,48 @@ import {
   RowActionsMenu,
   rowMenuItemClass,
 } from '@/components/layout'
-import { activeCount, type FilterField, FiltersDialog, useFilters } from '@/features/payroll'
-import { REQUEST_STATUSES } from '@/features/requests'
+import {
+  activeCount,
+  type FilterField,
+  FiltersDialog,
+  type FilterValues,
+  useFilters,
+} from '@/features/payroll'
+import { useCan } from '@/lib/permissions'
+import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { CATEGORY_LABELS, LEAVE_STATUS_META, LEAVES_PAGE_SIZE } from '../../constants'
-import { useLeaveApplications, useLeavesLookups } from '../../hooks/use-leaves'
+import {
+  CATEGORY_LABELS,
+  LEAVE_CODES,
+  LEAVE_STATUS_META,
+  LEAVE_TAB_LABELS,
+  LEAVES_PAGE_SIZE,
+  SHORT_LEAVE_LABELS,
+} from '../../constants'
+import {
+  useAllLeaveTypes,
+  useDepartmentLookup,
+  useLeaveApplicationCounts,
+  useLeaveApplications,
+} from '../../hooks/use-leaves'
 import type { LeaveListSearch } from '../../routing'
-import type { LeaveApplication, LeavesLookups } from '../../types/leaves.types'
-import { leaveDates, leaveDays, serial, shortStamp } from '../../utils/format'
-import { leaveTableClass, leaveTitleClass } from '../../utils/styles'
+import {
+  type DepartmentLookup,
+  LEAVE_STATUSES,
+  type LeaveApplication,
+  type LeaveApplicationFilters,
+  type LeaveTab,
+  type LeaveType,
+  SHORT_LEAVE_TYPES,
+} from '../../types/leaves.types'
+import { categoryOf, leaveDates, leaveDays, serial, shortStamp } from '../../utils/format'
+import {
+  leaveOutlineButtonClass,
+  leaveTableClass,
+  leaveTitleClass,
+  leaveToolbarClass,
+} from '../../utils/styles'
 import { ApplyLeaveDialog } from './apply-leave-dialog'
 import { LeaveCancelDialog, LeaveDecisionDialog, LeaveViewDialog } from './leave-dialogs'
 import {
@@ -34,68 +67,89 @@ type Dialog =
   | { type: 'view' | 'decide' | 'cancel'; application: LeaveApplication }
   | null
 
-const statusOf = (value: string | undefined) => REQUEST_STATUSES.find((status) => status === value)
+/** Which page: My Leaves (the `my` tab) or Leave Applications (`subordinates` / `all`). */
+export type LeaveListScope = 'my' | 'applications'
 
-/** The Filters dialog: Leave Type, Category, Status, From, To; Leave Applications add the person. */
-function filterFields(scope: 'my' | 'all', lookups: LeavesLookups | undefined): FilterField[] {
+const statusOf = (value: string | undefined) => LEAVE_STATUSES.find((status) => status === value)
+
+/** The filter keys the backend takes; anything else in a saved preset is ignored. */
+const FILTER_KEYS = [
+  'leaveTypeId',
+  'employeeId',
+  'departmentId',
+  'fromDate',
+  'toDate',
+  'q',
+] as const
+
+function apiFilters(values: FilterValues): FilterValues & LeaveApplicationFilters {
+  return Object.fromEntries(
+    FILTER_KEYS.map((key) => [key, values[key]]).filter(([, value]) => value),
+  ) as FilterValues
+}
+
+/** The Filters dialog: Search, Leave Type, Status, From, To; Leave Applications add the person and department. */
+function filterFields(
+  scope: LeaveListScope,
+  types: readonly LeaveType[],
+  departments: readonly DepartmentLookup[],
+): FilterField[] {
   const fields: FilterField[] = [
+    { kind: 'text', key: 'q', label: 'Search', placeholder: 'Code, name or reason' },
     {
       kind: 'select',
       key: 'leaveTypeId',
       label: 'Leave Type',
       placeholder: 'Select Leave Type',
-      options: (lookups?.leaveTypes ?? []).map((type) => ({ value: type.id, label: type.title })),
-    },
-    {
-      kind: 'select',
-      key: 'category',
-      label: 'Category',
-      placeholder: 'Select Category',
-      options: [
-        { value: 'single', label: CATEGORY_LABELS.single },
-        { value: 'multiple', label: CATEGORY_LABELS.multiple },
-      ],
+      options: types.map((type) => ({ value: type.id, label: type.title, hint: type.shortCode })),
     },
     {
       kind: 'select',
       key: 'status',
       label: 'Status',
       placeholder: 'Select Status',
-      options: REQUEST_STATUSES.map((status) => ({
+      options: LEAVE_STATUSES.map((status) => ({
         value: status,
         label: LEAVE_STATUS_META[status].menuLabel,
       })),
     },
-    { kind: 'date', key: 'from', label: 'From' },
-    { kind: 'date', key: 'to', label: 'To' },
+    { kind: 'date', key: 'fromDate', label: 'From' },
+    { kind: 'date', key: 'toDate', label: 'To' },
   ]
-  if (scope === 'all') {
-    fields.unshift(
+  if (scope === 'applications') {
+    fields.splice(
+      1,
+      0,
       {
-        kind: 'select',
+        // `GET /employees/lookup` searched on the server and paged (former staff too).
+        kind: 'employee',
         key: 'employeeId',
         label: 'Employee Name',
         placeholder: 'Select Employee Name',
-        options: (lookups?.employees ?? []).map((person) => ({
-          value: person.id,
-          label: person.name,
-          hint: person.code,
-        })),
+        filters: { permission: LEAVE_CODES.applicationsView, includeInactive: true },
       },
       {
         kind: 'select',
-        key: 'department',
+        key: 'departmentId',
         label: 'Department',
         placeholder: 'Select Department',
-        options: (lookups?.departments ?? []).map((name) => ({ value: name, label: name })),
+        options: departments.map((department) => ({
+          value: department.id,
+          label: department.name,
+        })),
       },
     )
   }
   return fields
 }
 
-/** The columns as drawn: Sr#., (Employees), Category, Type, Rosters, Days, Leave Date, Applied On, Reason, Status. */
-function columnsFor(scope: 'my' | 'all', page: number): readonly Column[] {
+const shortLabel = (value: string | null) =>
+  SHORT_LEAVE_TYPES.find((item) => item === value)
+    ? SHORT_LEAVE_LABELS[value as (typeof SHORT_LEAVE_TYPES)[number]]
+    : (value ?? '')
+
+/** The columns as drawn: Sr#., (Employees), Category, Type, Days, Leave Date, Applied On, Reason, Status. */
+function columnsFor(scope: LeaveListScope, page: number): readonly Column[] {
   const nowrap = (content: string) => <span className="whitespace-nowrap">{content}</span>
   return [
     {
@@ -104,47 +158,53 @@ function columnsFor(scope: 'my' | 'all', page: number): readonly Column[] {
       mobile: 'hidden',
       cell: (_row, index) => serial(page, LEAVES_PAGE_SIZE, index),
     },
-    ...(scope === 'all'
+    ...(scope === 'applications'
       ? [
           {
             id: 'employee',
             header: 'Employees',
             className: 'min-w-36',
-            cell: (row) => <LeavePersonCell person={row.employee} />,
+            cell: (row) => (
+              <LeavePersonCell person={{ name: row.employeeName, code: row.employeeCode }} />
+            ),
           } satisfies Column,
         ]
       : []),
-    { id: 'category', header: 'Category', cell: (row) => CATEGORY_LABELS[row.category] },
+    { id: 'category', header: 'Category', cell: (row) => CATEGORY_LABELS[categoryOf(row)] },
     {
       id: 'type',
       header: 'Type',
       mobile: 'heading',
       cell: (row) =>
-        row.short ? (
+        row.isShort ? (
           <span className="grid">
             <span className="whitespace-nowrap">{row.leaveTypeTitle}</span>
             <span className="text-[0.625rem] whitespace-nowrap">
-              Short Leave · {row.shortTypeLabel}
+              Short Leave · {shortLabel(row.shortLeaveType)}
             </span>
           </span>
         ) : (
           nowrap(row.leaveTypeTitle)
         ),
     },
-    { id: 'roster', header: 'Rosters', cell: (row) => nowrap(row.rosterTitle) },
-    { id: 'days', header: 'Days', cell: (row) => leaveDays(row.count) },
-    { id: 'dates', header: 'Leave Date', cell: (row) => nowrap(leaveDates(row.from, row.to)) },
-    { id: 'applied', header: 'Applied On', cell: (row) => nowrap(shortStamp(row.appliedAt)) },
+    { id: 'days', header: 'Days', cell: (row) => leaveDays(row.days) },
+    {
+      id: 'dates',
+      header: 'Leave Date',
+      cell: (row) => nowrap(leaveDates(row.fromDate, row.toDate)),
+    },
+    {
+      id: 'applied',
+      header: 'Applied On',
+      cell: (row) => nowrap(shortStamp(row.submittedAt ?? row.createdAt)),
+    },
     {
       id: 'reason',
       header: 'Reason',
       className: 'min-w-32 max-w-56 whitespace-normal',
       cell: (row) => (
-        <span className="line-clamp-2" title={row.reason}>
+        <span className="line-clamp-2" title={row.reason ?? undefined}>
           {row.reason}
-          {row.attachmentMissing && (
-            <span className="block text-[0.625rem] text-[#EBA51E]">No attachment given</span>
-          )}
         </span>
       ),
     },
@@ -157,35 +217,76 @@ function columnsFor(scope: 'my' | 'all', page: number): readonly Column[] {
   ]
 }
 
+/** Leave Applications' All | Subordinates switch (the backend's tabs). */
+function TabSwitch({ value, onChange }: { value: LeaveTab; onChange: (tab: LeaveTab) => void }) {
+  return (
+    <div role="group" aria-label="Whose applications" className="flex gap-1">
+      {(['all', 'subordinates'] as const).map((tab) => (
+        <button
+          key={tab}
+          type="button"
+          aria-pressed={value === tab}
+          onClick={() => {
+            onChange(tab)
+          }}
+          className={cn(
+            leaveToolbarClass,
+            'px-4 text-sm',
+            value === tab
+              ? 'bg-sidebar text-white dark:bg-primary'
+              : cn(leaveOutlineButtonClass, 'border-transparent'),
+          )}
+        >
+          {LEAVE_TAB_LABELS[tab]}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 /**
  * My Leaves (frame 4428:89943) and Leave Applications (4428:90071): the
  * title, "All Requests ⌄" with the count of each status, Filter, "+ Apply
- * Leave" (My Leaves), the list and its pager. The row menu offers View and
- * Cancel on your own applications, View and Approve/Reject on everyone's.
+ * Leave", the list and its pager. The row menu offers View and Cancel on your
+ * own applications, View and Approve/Reject on everyone's; the buttons follow
+ * the signed-in person's permission codes.
  */
 export function LeaveListPage({
   scope,
   search,
   onSearch,
 }: {
-  scope: 'my' | 'all'
+  scope: LeaveListScope
   search: LeaveListSearch
   onSearch: (patch: Partial<LeaveListSearch>) => void
 }) {
   const [dialog, setDialog] = useState<Dialog>(null)
   const [filters, setFilters] = useFilters(`leaves-${scope}`)
-  const lookups = useLeavesLookups()
+  const user = useAuthStore((state) => state.user)
+  const canApply = useCan(LEAVE_CODES.apply)
+  const canCancel = useCan(LEAVE_CODES.cancel)
+  const canApprove = useCan(LEAVE_CODES.approve)
+  const canReject = useCan(LEAVE_CODES.reject)
+  const canDecide = canApprove || canReject
+  const tab: LeaveTab = scope === 'my' ? 'my' : (search.tab ?? 'all')
+  const filtering = dialog?.type === 'filters'
+  const types = useAllLeaveTypes(filtering)
+  const departments = useDepartmentLookup(filtering && scope !== 'my')
+  const query = apiFilters(filters)
   const list = useLeaveApplications({
-    scope,
+    tab,
     status: search.status,
     page: search.page,
     pageSize: LEAVES_PAGE_SIZE,
-    filters,
+    filters: query,
   })
+  const counts = useLeaveApplicationCounts({ tab, filters: query })
   const page = list.data
   const rows = page?.data ?? []
   const meta = page?.meta
   const title = scope === 'my' ? 'My Leaves' : 'Leave Applications'
+  // A user with no employee record (an administrator) has no leave of their own to apply for.
+  const showApply = canApply && (scope !== 'my' || user?.employeeId !== null)
   const close = () => {
     setDialog(null)
   }
@@ -195,21 +296,29 @@ export function LeaveListPage({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <h1 className={leaveTitleClass}>{title}</h1>
         <div className="flex flex-wrap gap-2.5">
+          {scope === 'applications' && (
+            <TabSwitch
+              value={tab}
+              onChange={(next) => {
+                onSearch({ tab: next === 'all' ? undefined : 'subordinates', page: 1 })
+              }}
+            />
+          )}
           <LeaveStatusDropdown
             value={search.status}
-            counts={page?.counts}
+            counts={counts.data}
             onChange={(status) => {
               onSearch({ status, page: 1 })
             }}
           />
           <LeaveFilterButton
-            filled={scope === 'all'}
-            count={activeCount(filters)}
+            filled={scope === 'applications'}
+            count={activeCount(query)}
             onClick={() => {
               setDialog({ type: 'filters' })
             }}
           />
-          {scope === 'my' && (
+          {showApply && (
             <ApplyLeaveButton
               onClick={() => {
                 setDialog({ type: 'apply' })
@@ -239,7 +348,7 @@ export function LeaveListPage({
           rowActionsHeader="Actions"
           emptyState={
             <p className="py-10 text-center text-sm text-grey">
-              {search.status || activeCount(filters) > 0
+              {search.status || activeCount(query) > 0
                 ? 'No leave applications match.'
                 : scope === 'my'
                   ? 'You have not applied for leave yet.'
@@ -257,7 +366,9 @@ export function LeaveListPage({
                     setDialog({ type: 'view', application: row })
                   },
                 },
-                ...(scope === 'all' && row.actions.includes('decide')
+                ...(scope === 'applications' &&
+                canDecide &&
+                (row.status === 'pending' || row.status === 'cancelling')
                   ? [
                       {
                         label:
@@ -270,7 +381,9 @@ export function LeaveListPage({
                       },
                     ]
                   : []),
-                ...(scope === 'my' && row.actions.includes('cancel')
+                ...(scope === 'my' &&
+                canCancel &&
+                (row.status === 'pending' || row.status === 'approved')
                   ? [
                       {
                         label: 'Cancel',
@@ -298,7 +411,9 @@ export function LeaveListPage({
         />
       )}
 
-      {dialog?.type === 'apply' && <ApplyLeaveDialog onClose={close} />}
+      {dialog?.type === 'apply' && (
+        <ApplyLeaveDialog forOthers={scope === 'applications'} onClose={close} />
+      )}
       {dialog?.type === 'view' && <LeaveViewDialog id={dialog.application.id} onClose={close} />}
       {dialog?.type === 'decide' && (
         <LeaveDecisionDialog application={dialog.application} onClose={close} />
@@ -308,12 +423,12 @@ export function LeaveListPage({
       )}
       {dialog?.type === 'filters' && (
         <FiltersDialog
-          fields={filterFields(scope, lookups.data)}
-          value={{ ...filters, status: search.status }}
+          fields={filterFields(scope, types.data?.data ?? [], departments.data ?? [])}
+          value={{ ...query, status: search.status }}
           preset={`leaves-${scope}`}
           onApply={(next) => {
             const { status: picked, ...rest } = next
-            setFilters(rest)
+            setFilters(apiFilters(rest))
             onSearch({ status: statusOf(picked), page: 1 })
           }}
           onClose={close}

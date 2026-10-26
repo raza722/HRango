@@ -3,15 +3,15 @@ import { getRouteApi } from '@tanstack/react-router'
 
 import { ErrorState } from '@/components/feedback/error-state'
 import { DataTable, type DataTableColumn } from '@/components/layout'
-import { downloadText } from '@/features/payroll'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { useCan } from '@/lib/permissions'
 
 import { manpowerApi } from '../../api/manpower.api'
-import { DEFAULT_PAGE_SIZE, OPEN_POSITION_STATUS_META } from '../../constants'
+import { DEFAULT_PAGE_SIZE, MP_CODES, OPEN_POSITION_STATUS_META } from '../../constants'
 import { useOpenPositions, useSetOpenPositionClosed } from '../../hooks/use-manpower'
 import type { OpenPosition } from '../../types/manpower.types'
 import { toastError } from '../../utils/errors'
-import { formatCount, formatDay } from '../../utils/format'
+import { formatCount, formatDay, stampOf } from '../../utils/format'
 import { Chip, StampCell } from '../shared/cells'
 import { MpListFooter, SearchBox, ShowEntries } from '../shared/controls'
 import { DeleteIcon, DownloadIcon, EditIcon, RefreshIcon } from '../shared/mp-icons'
@@ -24,20 +24,36 @@ const routeApi = getRouteApi('/_app/manpower-planning/open-positions')
 
 const downloadFailed = toastError('The job description could not be downloaded.')
 
-/** "Download": the position's job description as a text file. */
-function JdButton({ position }: { position: OpenPosition }) {
+/** Opens a signed link (a fresh one: the list's links expire) as a download. */
+function openLink(url: string, name: string) {
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = name
+  anchor.target = '_blank'
+  anchor.rel = 'noreferrer'
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+}
+
+/** "Download": the position's job description, through a fresh signed link. */
+function JdButton({ position, allowed }: { position: OpenPosition; allowed: boolean }) {
   const [busy, setBusy] = useState(false)
+  if (!position.jdFile) {
+    return <span className="text-xs text-[#707070]">No JD yet</span>
+  }
   return (
     <button
       type="button"
-      disabled={busy}
+      disabled={busy || !allowed}
       aria-label={`Download the JD of ${position.title}`}
+      title={position.jdFile.name ?? undefined}
       onClick={() => {
         setBusy(true)
         manpowerApi
           .jobDescription(position.id)
           .then((jd) => {
-            downloadText(jd.text, jd.fileName, 'text/plain;charset=utf-8')
+            openLink(jd.url, jd.name)
           })
           .catch(downloadFailed)
           .finally(() => {
@@ -53,7 +69,7 @@ function JdButton({ position }: { position: OpenPosition }) {
 }
 
 /**
- * Open Positions ("Positions"): what each approved budget opened — the position, how
+ * Open Positions ("Positions"): what each approved budget released — the position, how
  * many, until when, who approved it, its JD and status; ⋮ Edit, Close or Reopen.
  */
 export function OpenPositionsPage() {
@@ -65,7 +81,11 @@ export function OpenPositionsPage() {
   const debounced = useDebouncedValue(search.trim())
   const [editing, setEditing] = useState<OpenPosition | null>(null)
   const setClosed = useSetOpenPositionClosed()
-  const list = useOpenPositions({ page, pageSize, search: debounced })
+  const canEdit = useCan(MP_CODES.openEdit)
+  const canClose = useCan(MP_CODES.openClose)
+  const canReopen = useCan(MP_CODES.openReopen)
+  const canDownload = useCan(MP_CODES.openDownload)
+  const list = useOpenPositions({ page, pageSize, q: debounced })
   const goTo = (next: number) => {
     void navigate({ search: (prev) => ({ ...prev, page: next }) })
   }
@@ -73,16 +93,45 @@ export function OpenPositionsPage() {
 
   const columns: DataTableColumn<OpenPosition>[] = [
     { id: 'sr', header: 'Sr#', cell: (_row, index) => offset + index + 1 },
-    { id: 'title', header: 'Positions', mobile: 'heading', cell: (row) => row.title },
+    {
+      id: 'title',
+      header: 'Positions',
+      mobile: 'heading',
+      cell: (row) => (
+        <span className="flex flex-col">
+          {row.title}
+          {(row.departmentName ?? row.branchName) && (
+            <span className="text-xs text-[#707070] dark:text-muted-foreground">
+              {[row.departmentName, row.branchName].filter(Boolean).join(', ')}
+            </span>
+          )}
+        </span>
+      ),
+    },
     {
       id: 'total',
       header: 'Total Positions',
       align: 'center',
       cell: (row) => formatCount(row.totalPositions),
     },
-    { id: 'end', header: 'End Date', cell: (row) => formatDay(row.endDate) },
-    { id: 'approved', header: 'Approved', cell: (row) => <StampCell stamp={row.approved} /> },
-    { id: 'jd', header: 'JD’s', align: 'center', cell: (row) => <JdButton position={row} /> },
+    {
+      id: 'end',
+      header: 'End Date',
+      cell: (row) => (row.endDate ? formatDay(row.endDate) : '—'),
+    },
+    {
+      id: 'approved',
+      header: 'Approved',
+      cell: (row) => (
+        <StampCell stamp={stampOf(row.approvedAt ?? row.createdAt, row.approvedByName)} />
+      ),
+    },
+    {
+      id: 'jd',
+      header: 'JD’s',
+      align: 'center',
+      cell: (row) => <JdButton position={row} allowed={canDownload} />,
+    },
     {
       id: 'status',
       header: 'Status',
@@ -91,10 +140,52 @@ export function OpenPositionsPage() {
     },
   ]
 
+  const menuFor = (row: OpenPosition) => [
+    ...(canEdit
+      ? [
+          {
+            label: 'Edit',
+            icon: EditIcon,
+            onSelect: () => {
+              setEditing(row)
+            },
+          },
+        ]
+      : []),
+    ...(row.status === 'active' && canClose
+      ? [
+          {
+            label: 'Close Position',
+            icon: DeleteIcon,
+            onSelect: () => {
+              setClosed.mutate(
+                { position: row, closed: true },
+                { onError: toastError('The position could not be closed.') },
+              )
+            },
+          },
+        ]
+      : []),
+    ...(row.status === 'closed' && canReopen
+      ? [
+          {
+            label: 'Reopen Position',
+            icon: RefreshIcon,
+            onSelect: () => {
+              setClosed.mutate(
+                { position: row, closed: false },
+                { onError: toastError('The position could not be reopened.') },
+              )
+            },
+          },
+        ]
+      : []),
+  ]
+
   return (
     <MpPage
       title="Open Positions"
-      info="Each approved budget opens its new positions here, with how many there are and until when. Download the job description, change the count or date, or close a position once it is filled."
+      info="Each approved budget opens its new positions here, with how many there are and until when. Download the job description, change the count, date or JD, or close a position once it is filled."
       filtersOpen={filtersOpen}
       onToggleFilters={() => {
         setFiltersOpen((open) => !open)
@@ -141,41 +232,16 @@ export function OpenPositionsPage() {
                 : 'No open positions. They appear when a budget is approved.'
             }
             rowActionsHeader="Action"
-            rowActions={(row) => (
-              <RowMenu
-                label={`Actions for ${row.title}`}
-                items={[
-                  {
-                    label: 'Edit',
-                    icon: EditIcon,
-                    onSelect: () => {
-                      setEditing(row)
-                    },
-                  },
-                  row.status === 'active'
-                    ? {
-                        label: 'Close Position',
-                        icon: DeleteIcon,
-                        onSelect: () => {
-                          setClosed.mutate(
-                            { id: row.id, closed: true },
-                            { onError: toastError('The position could not be closed.') },
-                          )
-                        },
-                      }
-                    : {
-                        label: 'Reopen Position',
-                        icon: RefreshIcon,
-                        onSelect: () => {
-                          setClosed.mutate(
-                            { id: row.id, closed: false },
-                            { onError: toastError('The position could not be reopened.') },
-                          )
-                        },
-                      },
-                ]}
-              />
-            )}
+            rowActions={
+              canEdit || canClose || canReopen
+                ? (row) => {
+                    const items = menuFor(row)
+                    return items.length > 0 ? (
+                      <RowMenu label={`Actions for ${row.title}`} items={items} />
+                    ) : null
+                  }
+                : undefined
+            }
           />
         )}
         <MpListFooter meta={list.data?.meta} disabled={list.isFetching} onPageChange={goTo} />

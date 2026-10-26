@@ -33,6 +33,16 @@ interface SearchSelectProps {
   'aria-describedby'?: string | undefined
   'aria-invalid'?: boolean
   'aria-label'?: string
+  /**
+   * Search on the server: called with the typed text (the caller debounces and passes the
+   * matches as `options`), and the list is not filtered here.
+   */
+  onSearch?: ((text: string) => void) | undefined
+  /** The server is answering (a search or the next page). */
+  loading?: boolean | undefined
+  /** More matches than shown: offers "Load more", which calls `onLoadMore`. */
+  hasMore?: boolean | undefined
+  onLoadMore?: (() => void) | undefined
 }
 
 /**
@@ -48,6 +58,10 @@ export function SearchSelect({
   disabled = false,
   clearable = false,
   className,
+  onSearch,
+  loading = false,
+  hasMore = false,
+  onLoadMore,
   ...aria
 }: SearchSelectProps) {
   const listId = useId()
@@ -56,12 +70,12 @@ export function SearchSelect({
   const selected = options.find((option) => option.value === value)
   const shown = useMemo(() => {
     const text = query.trim().toLowerCase()
-    return text
+    return text && !onSearch
       ? options.filter((option) =>
           `${option.label} ${option.hint ?? ''}`.toLowerCase().includes(text),
         )
       : options
-  }, [options, query])
+  }, [options, query, onSearch])
 
   const pick = (next: string | null) => {
     onChange(next)
@@ -74,7 +88,10 @@ export function SearchSelect({
       open={open}
       onOpenChange={(next) => {
         setOpen(next)
-        if (!next) setQuery('')
+        if (!next && query) {
+          setQuery('')
+          onSearch?.('')
+        }
       }}
     >
       <PopoverTrigger asChild>
@@ -108,6 +125,7 @@ export function SearchSelect({
             value={query}
             onChange={(event) => {
               setQuery(event.target.value)
+              onSearch?.(event.target.value)
             }}
             className="h-8 w-full rounded-sm border border-input bg-card pr-8 pl-2.5 text-sm text-field-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25"
           />
@@ -136,7 +154,7 @@ export function SearchSelect({
           )}
           {shown.length === 0 ? (
             <p className="px-2.5 py-3 text-center text-sm text-muted-foreground">
-              Nothing matches.
+              {loading ? 'Searching…' : 'Nothing matches.'}
             </p>
           ) : (
             shown.map((option) => {
@@ -174,6 +192,16 @@ export function SearchSelect({
               )
             })
           )}
+          {hasMore && onLoadMore && (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={onLoadMore}
+              className="rounded-sm px-2.5 py-1.5 text-center text-sm font-medium text-primary outline-none hover:bg-muted focus-visible:bg-muted disabled:opacity-60"
+            >
+              {loading ? 'Loading…' : 'Load more'}
+            </button>
+          )}
         </div>
       </PopoverContent>
     </Popover>
@@ -193,6 +221,13 @@ interface SearchSelectFieldProps<
   disabled?: boolean
   className?: string
   onValueChange?: (value: string | null) => void
+  /** Offer the placeholder as a choice that clears the value (sets `null`). */
+  clearable?: boolean
+  /** Server search (see `SearchSelect`). */
+  onSearch?: ((text: string) => void) | undefined
+  loading?: boolean | undefined
+  hasMore?: boolean | undefined
+  onLoadMore?: (() => void) | undefined
 }
 
 /** `SearchSelect` as a form field (label, error, required mark). */
@@ -209,6 +244,8 @@ export function SearchSelectField<
   disabled,
   className,
   onValueChange,
+  clearable = false,
+  ...server
 }: SearchSelectFieldProps<T, N>) {
   const { field, fieldState } = useController({ control, name })
   return (
@@ -229,6 +266,8 @@ export function SearchSelectField<
           options={options}
           placeholder={placeholder}
           disabled={disabled}
+          clearable={clearable}
+          {...server}
         />
       )}
     </FormField>

@@ -154,3 +154,42 @@ export const slotLabel = (slot: {
   clockIn: string
   clockOut: string
 }) => `${slot.code}-${slot.name} (${clock(slot.clockIn)} to ${clock(slot.clockOut)})`
+
+/** The API's month (`yyyy-MM-01`) from a month picker's `yyyy-MM`; a full date passes through. */
+export const monthStart = (month: string) => (month.length === 7 ? `${month}-01` : month)
+
+/** A month picker's `yyyy-MM` from the API's `yyyy-MM-dd`. */
+export const monthOf = (date: string | null | undefined) => (date ? date.slice(0, 7) : '')
+
+/** Money from the API (a JSON number, or null when not calculated yet). */
+export const money = (value: number | null | undefined) => value ?? 0
+
+/**
+ * The person card from what a record carries (the API sends names, not a profile).
+ * Missing facts show as a dash.
+ */
+export function profileOf(person: {
+  employeeId: string
+  employeeCode: string
+  employeeName: string
+  departmentName?: string | null
+  designationName?: string | null
+  jobTitleName?: string | null
+  locationName?: string | null
+  branchName?: string | null
+  joiningDate?: string | null
+  photoUrl?: string | null
+}) {
+  return {
+    id: person.employeeId,
+    name: person.employeeName,
+    code: person.employeeCode,
+    department: person.departmentName ?? '',
+    designation: person.jobTitleName ?? person.designationName ?? '',
+    photoUrl: person.photoUrl ?? null,
+    location: person.locationName ?? null,
+    branch: person.branchName ?? null,
+    company: null,
+    joiningDate: person.joiningDate ?? '',
+  }
+}

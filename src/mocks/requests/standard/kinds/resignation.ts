@@ -5,6 +5,7 @@ import type { EoeReason } from '@/features/offboarding'
 
 import { endOfEmployments } from '../../../offboarding/db'
 import { createId } from '../../../utils'
+import type { RequestBodyIn } from '../../backend'
 import { invalid, now, today } from '../../http'
 import { mustFind } from '../../people'
 import {
@@ -15,40 +16,47 @@ import {
 } from '../engine'
 
 /*
- * Resignation: the person (or HR, from All Resignations) gives notice with a
- * Type, the Resignation Date, the Last Working Date (the design puts it on
- * the request), a Reason and an optional Attachment. Notice Period is the
- * days between the two dates. Approval opens an End of Employment record in
+ * Resignation (`/requests/resignation`, details = ResignationDetails): the
+ * person (or HR, from All Resignations) gives notice with a Type, the
+ * Resignation Date, an optional Last Working Date (the approver may set it),
+ * the notice period, Serve Notice, a Reason and an optional attachment. The
+ * approver may set the last working date, serve notice and the notice period
+ * (`details` of the approval). Approval opens an End of Employment record in
  * Off-boarding (pending, for HR to finish); an approved cancellation takes it
  * out again while HR has not started on it.
  */
 
-const TYPE_VALUES = ['voluntary', 'retirement', 'contract-end'] as const
+const TYPE_VALUES = ['resignation', 'voluntary', 'retirement', 'contract_end'] as const
 type ResignationType = (typeof TYPE_VALUES)[number]
 
-/** The Type options and the End of Employment reason each one opens. */
-const TYPES: Record<ResignationType, { label: string; reason: EoeReason }> = {
-  voluntary: { label: 'Voluntary', reason: 'resignation' },
-  retirement: { label: 'Retirement', reason: 'retirement' },
-  'contract-end': { label: 'Contract End', reason: 'other' },
+/** The End of Employment reason each type opens. */
+const EOE_REASON: Record<ResignationType, EoeReason> = {
+  resignation: 'resignation',
+  voluntary: 'resignation',
+  retirement: 'retirement',
+  contract_end: 'other',
 }
 
 const ymd = /^\d{4}-\d{2}-\d{2}$/
 const schema = z.object({
-  type: z.enum(TYPE_VALUES),
-  resignationDate: z.string().regex(ymd),
-  lastWorkingDate: z.string().regex(ymd),
-  reason: z.string().trim().min(1).max(500),
-  attachmentName: z.string().trim().max(200).nullable(),
+  resignationType: z.enum(TYPE_VALUES).default('resignation'),
+  resignationDate: z.string().regex(ymd).nullish(),
+  lastWorkingDate: z.string().regex(ymd).nullish(),
+  noticePeriodDays: z.number().int().min(0).nullish(),
+  serveNotice: z.boolean().default(false),
+  reason: z.string(),
+  description: z.string().nullish(),
 })
 type Input = z.infer<typeof schema>
 
 export interface ResignationStored {
-  type: ResignationType
+  resignationType: ResignationType
   resignationDate: string
-  lastWorkingDate: string
+  lastWorkingDate: string | null
+  noticePeriodDays: number | null
+  serveNotice: boolean
   reason: string
-  attachmentName: string | null
+  description: string | null
 }
 
 /** What approval changed: the End of Employment record it opened, if any. */
@@ -59,15 +67,10 @@ interface Effect {
 const day = (date: string) => parse(date, 'yyyy-MM-dd', new Date())
 const iso = (date: Date) => format(date, 'yyyy-MM-dd')
 const stored = (record: StoredStandardRequest) => record.payload as unknown as ResignationStored
-const noticeDays = (payload: ResignationStored) =>
-  differenceInCalendarDays(day(payload.lastWorkingDate), day(payload.resignationDate))
+const daysBetween = (from: string, to: string | null) =>
+  to ? differenceInCalendarDays(day(to), day(from)) : null
 
 const ACTIVE = ['pending', 'completed', 'cancelling'] as const
-const STATUS_WORDS: Record<(typeof ACTIVE)[number], string> = {
-  pending: 'waiting for approval',
-  completed: 'approved',
-  cancelling: 'waiting for its cancellation',
-}
 
 function toPayload(
   input: Input,
@@ -77,26 +80,12 @@ function toPayload(
     records: readonly StoredStandardRequest[]
   },
 ): Response | Record<string, unknown> {
-  const earliest = iso(addDays(day(today()), -30))
-  const latest = iso(addDays(day(today()), 90))
-  if (input.resignationDate < earliest) {
-    return invalid('The resignation date can be at most 30 days back.', {
-      resignationDate: 'Choose a day in the last 30 days or later',
-    })
-  }
-  if (input.resignationDate > latest) {
-    return invalid('The resignation date can be at most 90 days ahead.', {
-      resignationDate: 'Choose a day in the next 90 days',
-    })
-  }
-  if (input.lastWorkingDate < input.resignationDate) {
-    return invalid('The last working date comes before the resignation date.', {
-      lastWorkingDate: 'Choose the resignation date or a later day',
-    })
-  }
-  if (differenceInCalendarDays(day(input.lastWorkingDate), day(input.resignationDate)) > 180) {
-    return invalid('The notice period can be 180 days at most.', {
-      lastWorkingDate: 'Choose a day within 180 days of the resignation date',
+  if (!input.reason.trim()) return invalid('Reason is required.', { reason: 'Reason is required.' })
+  const resignationDate = input.resignationDate ?? today()
+  const lastWorkingDate = input.lastWorkingDate ?? null
+  if (lastWorkingDate && lastWorkingDate < resignationDate) {
+    return invalid('The last working date cannot be before the resignation date.', {
+      lastWorkingDate: 'The last working date cannot be before the resignation date.',
     })
   }
   // One resignation at a time: a second one waits until the first is rejected or cancelled.
@@ -107,18 +96,50 @@ function toPayload(
       (ACTIVE as readonly string[]).includes(record.status),
   )
   if (open) {
-    const status = open.status as (typeof ACTIVE)[number]
     return invalid(
-      `${mustFind(context.employeeId).name} already has resignation ${open.code} ${STATUS_WORDS[status]}.`,
+      `${mustFind(context.employeeId).name} already has resignation ${open.code} on the way.`,
     )
   }
   return {
-    type: input.type,
-    resignationDate: input.resignationDate,
-    lastWorkingDate: input.lastWorkingDate,
-    reason: input.reason,
-    attachmentName: input.attachmentName === '' ? null : input.attachmentName,
+    resignationType: input.resignationType,
+    resignationDate,
+    lastWorkingDate,
+    noticePeriodDays: input.noticePeriodDays ?? daysBetween(resignationDate, lastWorkingDate),
+    serveNotice: input.serveNotice,
+    reason: input.reason.trim(),
+    description: input.description?.trim() ?? null,
   } satisfies ResignationStored
+}
+
+/** `details` of the approval (ApprovalDetailsIn): what an approver of a resignation enters. */
+const decisionSchema = z.object({
+  lastWorkingDate: z.string().regex(ymd).nullish(),
+  serveNotice: z.boolean().nullish(),
+  noticePeriodDays: z.number().int().min(0).nullish(),
+})
+
+/** As `req.usp_request_decide`: each value is kept when given. */
+function applyResignationDecision(
+  record: StoredStandardRequest,
+  extras: Record<string, unknown>,
+): Response | Record<string, unknown> {
+  const payload = stored(record)
+  const parsed = decisionSchema.safeParse(extras)
+  if (!parsed.success) return invalid('The approval details are not valid.')
+  const { lastWorkingDate, serveNotice, noticePeriodDays } = parsed.data
+  if (lastWorkingDate && lastWorkingDate < payload.resignationDate) {
+    const message = 'The last working date cannot be before the resignation date.'
+    return invalid(message, { lastWorkingDate: message })
+  }
+  const last = lastWorkingDate ?? payload.lastWorkingDate
+  const next: ResignationStored = {
+    ...payload,
+    lastWorkingDate: last,
+    serveNotice: serveNotice ?? payload.serveNotice,
+    noticePeriodDays:
+      noticePeriodDays ?? payload.noticePeriodDays ?? daysBetween(payload.resignationDate, last),
+  }
+  return { ...next }
 }
 
 /**
@@ -135,13 +156,14 @@ function openEndOfEmployment(record: StoredStandardRequest): Effect {
   endOfEmployments.insert({
     id,
     employeeId: record.employeeId,
-    reason: TYPES[payload.type].reason,
-    noticePeriod: noticeDays(payload) > 0,
+    reason: EOE_REASON[payload.resignationType],
+    noticePeriod: payload.serveNotice,
+    noticePeriodDays: payload.noticePeriodDays,
     lastWorkingDate: payload.lastWorkingDate,
     // HR ticks these on the record when it is worked on.
     finalSettlement: false,
     assetClearance: false,
-    attachmentName: payload.attachmentName,
+    attachmentName: null,
     description: `Resignation ${record.code}: ${payload.reason}`,
     delegateeId: null,
     checklist: {},
@@ -151,6 +173,7 @@ function openEndOfEmployment(record: StoredStandardRequest): Effect {
     finalSettlementId: null,
     clearanceId: null,
     rehire: null,
+    resignationRequestId: record.id,
   })
   return { endOfEmploymentId: id }
 }
@@ -168,31 +191,44 @@ function closeEndOfEmployment(record: StoredStandardRequest): void {
 
 const def: StandardKindServer<Input> = {
   kind: 'resignation',
+  typeCode: 'resignation',
+  typeName: 'Resignation',
   settingsType: 'resignation',
-  codePrefix: 'RSG-',
+  codePrefix: 'RQ-RSG-',
   codeDigits: 4,
+  fromBody: (body: RequestBodyIn) => ({
+    ...body.details,
+    reason: body.reason ?? '',
+    description: body.description ?? null,
+  }),
   schema,
   toPayload,
   dateOf: (payload) => String(payload.resignationDate),
-  present: (payload, record) => {
+  header: (payload) => {
     const value = payload as unknown as ResignationStored
-    const days = noticeDays(value)
-    const effect = record.effect as Effect | undefined
     return {
-      ...value,
-      typeLabel: TYPES[value.type].label,
-      noticeDays: days,
-      noticePeriod: `${String(days)} ${days === 1 ? 'day' : 'days'}`,
-      endOfEmploymentId: effect?.endOfEmploymentId ?? null,
+      fromDate: value.resignationDate,
+      toDate: value.lastWorkingDate ?? value.resignationDate,
+      days: null,
+      reason: value.reason,
+      description: value.description,
+      application: null,
     }
   },
-  filters: {
-    type: (record, value) => stored(record).type === value,
+  toDetails: (payload) => {
+    const value = payload as unknown as ResignationStored
+    return {
+      resignationType: value.resignationType,
+      resignationDate: value.resignationDate,
+      lastWorkingDate: value.lastWorkingDate,
+      noticePeriodDays: value.noticePeriodDays,
+      serveNotice: value.serveNotice,
+    }
   },
-  lookups: () => ({
-    types: TYPE_VALUES.map((value) => ({ value, label: TYPES[value].label })),
-  }),
-  cancellationsView: true,
+  decision: {
+    schema: z.record(z.string(), z.unknown()),
+    apply: applyResignationDecision,
+  },
   onCompleted: openEndOfEmployment,
   onCancelled: closeEndOfEmployment,
   seed: () => {
@@ -204,26 +240,28 @@ const def: StandardKindServer<Input> = {
       status: StoredStandardRequest['status'],
       options: {
         daysAgo: number
-        notice?: number
+        notice?: number | null
         type?: ResignationType
         reason: string
-        attachmentName?: string
         approvedSteps?: number
         cancelReason?: string
       },
     ) => {
       const digits = String(number).padStart(4, '0')
       const resignationDate = start(-options.daysAgo)
+      const notice = options.notice === undefined ? 30 : options.notice
       return seedRequest(def, {
         id: `rsg_${digits}`,
-        code: `RSG-${digits}`,
+        code: `RQ-RSG-${digits}`,
         employeeId,
         payload: {
-          type: options.type ?? 'voluntary',
+          resignationType: options.type ?? 'voluntary',
           resignationDate,
-          lastWorkingDate: iso(addDays(day(resignationDate), options.notice ?? 30)),
+          lastWorkingDate: notice === null ? null : iso(addDays(day(resignationDate), notice)),
+          noticePeriodDays: notice,
+          serveNotice: notice !== null,
           reason: options.reason,
-          attachmentName: options.attachmentName ?? null,
+          description: null,
         } satisfies ResignationStored,
         at: at(options.daysAgo),
         status,
@@ -234,8 +272,8 @@ const def: StandardKindServer<Input> = {
     return [
       make(1, 'em_sadia', 'pending', {
         daysAgo: 1,
+        notice: null,
         reason: 'Moving to another city with my family.',
-        attachmentName: 'resignation-letter.pdf',
       }),
       make(2, 'em_rehan', 'pending', { daysAgo: 2, reason: 'Accepted an offer abroad.' }),
       make(3, 'em_maryam', 'pending', {
@@ -257,7 +295,6 @@ const def: StandardKindServer<Input> = {
         daysAgo: 0,
         notice: 60,
         reason: 'Relocating abroad next year.',
-        attachmentName: 'notice.pdf',
       }),
       make(7, 'em_shelley', 'rejected', { daysAgo: 120, reason: 'Health reasons.' }),
       make(8, 'em_shelley', 'cancelled', {
@@ -267,7 +304,7 @@ const def: StandardKindServer<Input> = {
       }),
       make(9, 'em_mahnoor', 'rejected', {
         daysAgo: 6,
-        type: 'contract-end',
+        type: 'contract_end',
         reason: 'My contract ends this quarter.',
       }),
     ]

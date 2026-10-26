@@ -1,18 +1,31 @@
 import { useState } from 'react'
-import { FormProvider } from 'react-hook-form'
+import { FormProvider, useWatch } from 'react-hook-form'
 import { Loader2, Pencil } from 'lucide-react'
 
 import { dialogButtonClass } from '@/components/feedback/app-dialog'
 import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import { ErrorState } from '@/components/feedback/error-state'
-import { CheckboxField, SwitchField, TextField, TimePickerField } from '@/components/form'
+import {
+  CheckboxField,
+  DatePickerField,
+  SelectField,
+  SwitchField,
+  TextField,
+} from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { parseDateValue } from '@/lib/date'
+import { useCan } from '@/lib/permissions'
 
-import { ROSTER_TITLE_MAX_LENGTH } from '../constants'
+import {
+  ROSTER_DESCRIPTION_MAX_LENGTH,
+  ROSTER_PERMISSIONS,
+  ROSTER_TITLE_MAX_LENGTH,
+} from '../constants'
 import { useRosterGroupForm } from '../hooks/use-roster-group-form'
-import { useRosterGroup } from '../hooks/use-roster-groups'
-import type { RosterGroup } from '../types/roster.types'
+import { useRosterGroup, useTimeSlotOptions } from '../hooks/use-roster-groups'
+import type { RosterGroupDetail } from '../types/roster.types'
+import { timeSlotSelectOptions } from '../utils/time-slot-options'
 import { RosterDialogShell } from './roster-dialog-shell'
 import { RosterGroupDetails } from './roster-group-details'
 import { RosterScheduleFields } from './roster-schedule-fields'
@@ -33,14 +46,18 @@ function RosterGroupForm({
   group,
   onClose,
 }: {
-  group: RosterGroup | undefined
+  group: RosterGroupDetail | undefined
   onClose: () => void
 }) {
-  const { form, submit, isSaving, applyToAll, clockIn, clockOut } = useRosterGroupForm({
-    group,
-    onSaved: onClose,
-  })
+  const { form, submit, isSaving, applyToAll } = useRosterGroupForm({ group, onSaved: onClose })
+  const slots = useTimeSlotOptions()
+  const slotList = slots.data ?? []
   const { control } = form
+  const [fromDate, defaultTimeSlotId] = useWatch({
+    control,
+    name: ['fromDate', 'defaultTimeSlotId'],
+  })
+  const defaultSlot = slotList.find((slot) => slot.id === defaultTimeSlotId)
   const { isDirty } = form.formState
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const formId = group ? `roster-form-${group.id}` : 'roster-form-new'
@@ -100,21 +117,53 @@ function RosterGroupForm({
                 stateLabel={(checked) => (checked ? 'Active' : 'Inactive')}
                 className="@2xl:col-span-2"
               />
-              <TimePickerField control={control} name="clockIn" label="Clock In" />
-              <TimePickerField control={control} name="clockOut" label="Clock Out" />
+              <DatePickerField control={control} name="fromDate" label="From Date" required />
+              <DatePickerField
+                control={control}
+                name="toDate"
+                label="To Date"
+                placeholder="Open-ended"
+                minDate={parseDateValue(fromDate)}
+              />
+              <TextField
+                control={control}
+                name="description"
+                label="Description"
+                placeholder="Optional"
+                maxLength={ROSTER_DESCRIPTION_MAX_LENGTH}
+                className="@2xl:col-span-2"
+              />
+              <SelectField
+                control={control}
+                name="defaultTimeSlotId"
+                label="Time Slot"
+                placeholder={slots.isPending ? 'Loading time slots…' : 'Select Time Slot'}
+                options={timeSlotSelectOptions(slotList)}
+                clearable="No default"
+                description={
+                  !slots.isPending && slotList.length === 0
+                    ? 'No time slots yet. They are set up in Scheduling settings.'
+                    : undefined
+                }
+                className="@2xl:col-span-2"
+              />
               <div className="grid content-start gap-3">
                 <span className="text-sm leading-none text-label">Defined Minutes</span>
-                <ShiftMinutes label="Defined minutes" clockIn={clockIn} clockOut={clockOut} />
+                <ShiftMinutes
+                  label="Defined minutes"
+                  clockIn={defaultSlot?.startTime ?? null}
+                  clockOut={defaultSlot?.endTime ?? null}
+                />
               </div>
               <CheckboxField
                 control={control}
                 name="applyToAll"
                 label="Apply For All"
-                description={applyToAll ? 'Every working day uses these times.' : undefined}
+                description={applyToAll ? 'Every working day uses this time slot.' : undefined}
                 className="@2xl:self-end @2xl:pb-2.5"
               />
             </div>
-            <RosterScheduleFields />
+            <RosterScheduleFields slots={slotList} />
           </fieldset>
         </form>
       </FormProvider>
@@ -167,6 +216,7 @@ function LoadingDialog({
  */
 export function RosterGroupDialog({ mode, groupId, onClose, onEdit }: RosterGroupDialogProps) {
   const query = useRosterGroup(mode === 'add' ? undefined : groupId)
+  const canEdit = useCan(ROSTER_PERMISSIONS.groupsEdit)
   const retry = () => {
     void query.refetch()
   }
@@ -190,16 +240,18 @@ export function RosterGroupDialog({ mode, groupId, onClose, onEdit }: RosterGrou
       onRequestClose={onClose}
       footer={
         <>
-          <Button
-            variant="outline"
-            size="lg"
-            onClick={() => {
-              onEdit(group.id)
-            }}
-            className={dialogButtonClass}
-          >
-            <Pencil /> Edit
-          </Button>
+          {canEdit && (
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => {
+                onEdit(group.id)
+              }}
+              className={dialogButtonClass}
+            >
+              <Pencil /> Edit
+            </Button>
+          )}
           <Button variant="destructive" size="lg" onClick={onClose} className={dialogButtonClass}>
             Close
           </Button>

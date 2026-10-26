@@ -1,10 +1,13 @@
 import { Moon } from 'lucide-react'
 
+import { formatTimeValue } from '@/lib/date'
 import { cn } from '@/lib/utils'
 
-import { formatMinutes, isOvernight, shiftMinutes } from '../utils/shift-time'
+import type { TimeSlotOption } from '../types/roster.types'
+import { formatMinutes, isOvernight, shiftMinutes, toHhMm } from '../utils/shift-time'
 
 interface ShiftMinutesProps {
+  /** `HH:mm` or `HH:mm:ss`. */
   clockIn: string | null
   clockOut: string | null
   isWeekend?: boolean
@@ -48,5 +51,28 @@ export function ShiftMinutes({
         </span>
       )}
     </output>
+  )
+}
+
+/** "9:00 AM – 5:00 PM" of a slot, "Day off", or a dash when none is picked. */
+export function SlotTimes({
+  slot,
+  isDayOff,
+  className,
+}: {
+  slot: Pick<TimeSlotOption, 'startTime' | 'endTime'> | undefined
+  isDayOff: boolean
+  className?: string
+}) {
+  const start = toHhMm(slot?.startTime)
+  const end = toHhMm(slot?.endTime)
+  return (
+    <span className={cn('text-sm text-field-foreground tabular-nums', className)}>
+      {isDayOff
+        ? 'Day off'
+        : start && end
+          ? `${formatTimeValue(start)} – ${formatTimeValue(end)}`
+          : '—'}
+    </span>
   )
 }

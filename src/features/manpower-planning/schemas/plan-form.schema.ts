@@ -1,51 +1,60 @@
 import { z } from 'zod'
 
-import type { BudgetDuration, PlanDetail, PlanInput } from '../types/manpower.types'
-import { toAmount } from '../utils/plan-math'
+import type { BudgetDuration, PlanDetail, PlanInput, PlanLineInput } from '../types/manpower.types'
+import { amountOrUndefined, monthEnd, monthStart, toAmount } from '../utils/plan-math'
 
-const amountText = (message: string, { positive = false } = {}) =>
+/** An optional amount box: blank is allowed (the server fills it in). */
+const optionalAmount = (message: string) =>
   z.string().superRefine((value, context) => {
+    if (value.trim() === '') return
     const number = toAmount(value)
-    if (value.trim() === '' || !Number.isFinite(number)) {
-      context.addIssue({ code: 'custom', message })
-    } else if (number < 0 || (positive && number === 0)) {
-      context.addIssue({ code: 'custom', message: positive ? message : 'Cannot be negative' })
-    }
+    if (!Number.isFinite(number)) context.addIssue({ code: 'custom', message })
+    else if (number < 0) context.addIssue({ code: 'custom', message: 'Cannot be negative' })
   })
 
 const newLine = z.object({
   key: z.string(),
   positionId: z.string().min(1, 'Choose the position'),
+  headcount: z
+    .string()
+    .trim()
+    .refine((value) => /^\d+$/.test(value) && Number(value) >= 1, 'At least 1'),
+  /** `yyyy-MM`: the months the position is budgeted for (sent as their first and last days). */
   fromMonth: z.string().min(1, 'Choose the start month'),
   toMonth: z.string().min(1, 'Choose the end month'),
-  divisionId: z.string(),
-  stationId: z.string(),
-  departmentId: z.string(),
-  subDepartmentId: z.string(),
-  employeeGroupId: z.string(),
-  minSalary: amountText('Enter the min salary', { positive: true }),
-  maxSalary: amountText('Enter the max salary', { positive: true }),
-  totalAllowance: amountText('Enter the allowance'),
+  /** Blank: the position's band in force. */
+  minSalary: optionalAmount('Enter the min salary'),
+  maxSalary: optionalAmount('Enter the max salary'),
+  totalAllowance: optionalAmount('Enter the allowance'),
 })
 
 const existingLine = z.object({
   key: z.string(),
   employeeId: z.string().min(1, 'Choose the employee'),
+  /** Shown only: the person as the picker or the saved plan named them. */
+  employeeName: z.string(),
+  jobTitleName: z.string(),
+  departmentName: z.string(),
+  branchName: z.string(),
   startDate: z.string().min(1, 'Choose the start date'),
   endDate: z.string().min(1, 'Choose the end date'),
-  monthlySalary: amountText('Enter the monthly salary', { positive: true }),
-  totalAllowance: amountText('Enter the allowance'),
+  /** Blank: the person's current salary (Payroll). */
+  monthlySalary: optionalAmount('Enter the monthly salary'),
+  totalAllowance: optionalAmount('Enter the allowance'),
 })
 
+const fileRef = z.object({ id: z.string(), name: z.string(), url: z.string() })
+
 const baseSchema = z.object({
-  title: z.string().trim().min(1, 'Enter the title').max(80, 'Keep it under 80 characters'),
-  durationId: z.string().min(1, 'Choose the plan year'),
+  title: z.string().trim().min(1, 'Enter the title').max(200, 'Keep it under 200 characters'),
+  budgetDurationId: z.string().min(1, 'Choose the plan year'),
   divisionId: z.string(),
-  stationId: z.string(),
+  branchId: z.string(),
   departmentId: z.string(),
   subDepartmentId: z.string(),
   employeeGroupId: z.string(),
-  description: z.string().max(1000, 'Keep it under 1000 characters'),
+  description: z.string().max(4000, 'Keep it under 4000 characters'),
+  files: z.array(fileRef).max(20, 'Attach up to 20 files'),
   newPositions: z.array(newLine),
   existingPositions: z.array(existingLine),
 })
@@ -53,6 +62,7 @@ const baseSchema = z.object({
 export type PlanFormValues = z.infer<typeof baseSchema>
 export type NewLineValues = PlanFormValues['newPositions'][number]
 export type ExistingLineValues = PlanFormValues['existingPositions'][number]
+export type PlanFileValue = PlanFormValues['files'][number]
 
 /**
  * Add Planning's rules. The plan year bounds every line, so the schema is made with
@@ -67,7 +77,7 @@ export function makePlanFormSchema(durations: readonly BudgetDuration[]) {
         message: 'Add at least one new or existing position',
       })
     }
-    const duration = durations.find((item) => item.id === values.durationId)
+    const duration = durations.find((item) => item.id === values.budgetDurationId)
     const first = duration?.startDate.slice(0, 7)
     const last = duration?.endDate.slice(0, 7)
     values.newPositions.forEach((line, index) => {
@@ -141,88 +151,114 @@ export function makePlanFormSchema(durations: readonly BudgetDuration[]) {
 
 export const EMPTY_PLAN: PlanFormValues = {
   title: '',
-  durationId: '',
+  budgetDurationId: '',
   divisionId: '',
-  stationId: '',
+  branchId: '',
   departmentId: '',
   subDepartmentId: '',
   employeeGroupId: '',
   description: '',
+  files: [],
   newPositions: [],
   existingPositions: [],
 }
 
 const orNull = (value: string) => (value === '' ? null : value)
-const orEmpty = (value: string | null) => value ?? ''
+const amountText = (value: number | null) => (value === null ? '' : String(value))
 
-/** Form values → the API body (boxes to numbers, '' to null). */
-export function toPlanInput(values: PlanFormValues): PlanInput {
-  return {
-    title: values.title.trim(),
-    durationId: values.durationId,
-    divisionId: orNull(values.divisionId),
-    stationId: orNull(values.stationId),
-    departmentId: orNull(values.departmentId),
-    subDepartmentId: orNull(values.subDepartmentId),
-    employeeGroupId: orNull(values.employeeGroupId),
-    description: values.description.trim(),
-    newPositions: values.newPositions.map((line) => ({
-      id: line.key,
+/** Form values → the API body: new positions first, then existing employees. */
+export function toPlanInput(values: PlanFormValues, rowVersion?: string): PlanInput {
+  const lines: PlanLineInput[] = [
+    ...values.newPositions.map((line): PlanLineInput => ({
+      kind: 'new_position',
       positionId: line.positionId,
-      fromMonth: line.fromMonth,
-      toMonth: line.toMonth,
-      divisionId: orNull(line.divisionId),
-      stationId: orNull(line.stationId),
-      departmentId: orNull(line.departmentId),
-      subDepartmentId: orNull(line.subDepartmentId),
-      employeeGroupId: orNull(line.employeeGroupId),
-      minSalary: toAmount(line.minSalary),
-      maxSalary: toAmount(line.maxSalary),
-      totalAllowance: toAmount(line.totalAllowance),
+      headcount: Number(line.headcount),
+      startDate: monthStart(line.fromMonth),
+      endDate: monthEnd(line.toMonth),
+      minSalary: amountOrUndefined(line.minSalary),
+      maxSalary: amountOrUndefined(line.maxSalary),
+      totalAllowance: amountOrUndefined(line.totalAllowance),
     })),
-    existingPositions: values.existingPositions.map((line) => ({
-      id: line.key,
+    ...values.existingPositions.map((line): PlanLineInput => ({
+      kind: 'existing_employee',
       employeeId: line.employeeId,
       startDate: line.startDate,
       endDate: line.endDate,
-      monthlySalary: toAmount(line.monthlySalary),
-      totalAllowance: toAmount(line.totalAllowance),
+      monthlySalary: amountOrUndefined(line.monthlySalary),
+      totalAllowance: amountOrUndefined(line.totalAllowance),
     })),
+  ]
+  return {
+    title: values.title.trim(),
+    budgetDurationId: values.budgetDurationId,
+    divisionId: orNull(values.divisionId),
+    branchId: orNull(values.branchId),
+    departmentId: orNull(values.departmentId),
+    subDepartmentId: orNull(values.subDepartmentId),
+    employeeGroupId: orNull(values.employeeGroupId),
+    description: values.description.trim() || null,
+    lines,
+    fileIds: values.files.map((file) => file.id),
+    ...(rowVersion ? { rowVersion } : {}),
   }
 }
 
 /** A stored plan → form values. */
 export function toPlanFormValues(plan: PlanDetail): PlanFormValues {
+  const ordered = [...plan.lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
   return {
     title: plan.title,
-    durationId: plan.durationId,
-    divisionId: orEmpty(plan.divisionId),
-    stationId: orEmpty(plan.stationId),
-    departmentId: orEmpty(plan.departmentId),
-    subDepartmentId: orEmpty(plan.subDepartmentId),
-    employeeGroupId: orEmpty(plan.employeeGroupId),
-    description: plan.description,
-    newPositions: plan.newPositions.map((line) => ({
-      key: line.id,
-      positionId: line.positionId,
-      fromMonth: line.fromMonth,
-      toMonth: line.toMonth,
-      divisionId: orEmpty(line.divisionId),
-      stationId: orEmpty(line.stationId),
-      departmentId: orEmpty(line.departmentId),
-      subDepartmentId: orEmpty(line.subDepartmentId),
-      employeeGroupId: orEmpty(line.employeeGroupId),
-      minSalary: String(line.minSalary),
-      maxSalary: String(line.maxSalary),
-      totalAllowance: String(line.totalAllowance),
-    })),
-    existingPositions: plan.existingPositions.map((line) => ({
-      key: line.id,
-      employeeId: line.employeeId,
-      startDate: line.startDate,
-      endDate: line.endDate,
-      monthlySalary: String(line.monthlySalary),
-      totalAllowance: String(line.totalAllowance),
-    })),
+    budgetDurationId: plan.budgetDurationId,
+    divisionId: plan.divisionId ?? '',
+    branchId: plan.branchId ?? '',
+    departmentId: plan.departmentId ?? '',
+    subDepartmentId: plan.subDepartmentId ?? '',
+    employeeGroupId: plan.employeeGroupId ?? '',
+    description: plan.description ?? '',
+    files: plan.files.map((file) => ({ id: file.id, name: file.name, url: file.url })),
+    newPositions: ordered
+      .filter((line) => line.kind === 'new_position')
+      .map((line) => ({
+        key: line.id,
+        positionId: line.positionId ?? '',
+        headcount: String(line.headcount),
+        fromMonth: line.startDate.slice(0, 7),
+        toMonth: line.endDate.slice(0, 7),
+        minSalary: amountText(line.minSalary),
+        maxSalary: amountText(line.maxSalary),
+        totalAllowance: String(line.totalAllowance),
+      })),
+    existingPositions: ordered
+      .filter((line) => line.kind === 'existing_employee')
+      .map((line) => ({
+        key: line.id,
+        employeeId: line.employeeId ?? '',
+        employeeName: line.employeeName ?? '',
+        jobTitleName: line.jobTitleName ?? '',
+        departmentName: line.departmentName ?? '',
+        branchName: line.branchName ?? '',
+        startDate: line.startDate,
+        endDate: line.endDate,
+        monthlySalary: amountText(line.monthlySalary),
+        totalAllowance: String(line.totalAllowance),
+      })),
   }
+}
+
+const LINE_FIELDS: Record<string, { new: string; existing: string }> = {
+  startDate: { new: 'fromMonth', existing: 'startDate' },
+  endDate: { new: 'toMonth', existing: 'endDate' },
+}
+
+/**
+ * Where a server field error lands on the form: `lines[2].startDate` is the third line sent,
+ * new positions first; header fields keep their names.
+ */
+export function planErrorPath(path: string, newCount: number): string {
+  const match = /^lines\[(\d+)\]\.(\w+)$/.exec(path)
+  if (!match) return path === 'lines' ? 'newPositions' : path
+  const index = Number(match[1])
+  const field = match[2] ?? ''
+  if (index < newCount) return `newPositions.${String(index)}.${LINE_FIELDS[field]?.new ?? field}`
+  return `existingPositions.${String(index - newCount)}.${LINE_FIELDS[field]?.existing ?? field}`
 }

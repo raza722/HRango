@@ -1,72 +1,69 @@
 import { z } from 'zod'
 
-import { CLOCK_EVENTS, POLICY_NAMES, TIME_SPANS } from '../types/warning-policy.types'
-import { checkPeriodRange, checkTimeOrder, timeField, titleField, weekdaySchema } from './shared'
+import {
+  CLOCK_EVENTS,
+  CLOCK_EVENTS_FOR,
+  maxRulesFor,
+  POLICY_NAMES,
+  TIME_SPANS,
+} from '../types/warning-policy.types'
+import { optionalWholeNumberField, titleField, weekdaySchema, wholeNumberField } from './shared'
 
-const MINUTES_PATTERN = /^\d{1,4}$/
-
-/** Whole minutes typed into a text box (kept as a string while editing). */
-const minutesField = (label: string) =>
-  z
-    .string()
-    .trim()
-    .min(1, `${label} is required`)
-    .regex(MINUTES_PATTERN, `${label} must be a whole number`)
-
-/**
- * One period block. Text inputs stay strings in the form (so an empty box is
- * representable); `toPolicyInput` converts them to numbers for the API.
- */
-export const policyPeriodSchema = z
-  .object({
-    startDay: z.string(),
-    endDay: z.string(),
-    month: z.number().int().min(0).max(11),
-    day: z.number().int().min(1).max(31),
-    weekdays: z.array(weekdaySchema),
-    totalGraceMinutes: minutesField('Total grace minutes'),
-    clockIn: timeField('Clock in'),
-    clockOut: timeField('Clock out'),
-    minutes: minutesField('Minutes'),
-  })
-  .superRefine((period, ctx) => {
-    checkTimeOrder(
-      ctx,
-      period.clockIn,
-      period.clockOut,
-      ['clockOut'],
-      'Must be later than clock in',
-    )
-    if (
-      MINUTES_PATTERN.test(period.minutes) &&
-      MINUTES_PATTERN.test(period.totalGraceMinutes) &&
-      Number(period.minutes) > Number(period.totalGraceMinutes)
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['minutes'],
-        message: 'Cannot be more than the total grace minutes',
-      })
-    }
-  })
+/** One rule: per clock event, the minutes a day may be off and every n-th occurrence that warns. */
+export const policyRuleSchema = z.object({
+  clockEvent: z.enum(CLOCK_EVENTS, { error: 'Select a clock event' }),
+  minutes: wholeNumberField('Minutes', 0, 1440),
+  occurrenceCount: wholeNumberField('Occurrences', 1, 100),
+})
 
 /**
- * Policy form. Fields that depend on the time span (dates vs. weekdays) are
- * checked in `superRefine`, so one flat shape serves all three sub-forms.
+ * Policy form (`WarningPolicyIn`). Text boxes stay strings while editing; `toPolicyInput`
+ * converts them. Clock events must suit what the policy watches, one rule per event.
  */
 export const policyFormSchema = z
   .object({
-    policyName: z.enum(POLICY_NAMES, { error: 'Select a policy' }),
+    appliesTo: z.enum(POLICY_NAMES, { error: 'Select a policy' }),
     title: titleField,
-    timeSpan: z.enum(TIME_SPANS, { error: 'Select a time span' }),
-    clockEvent: z.enum(CLOCK_EVENTS, { error: 'Select a clock event' }),
-    periods: z.array(policyPeriodSchema).min(1, 'Add at least one period').max(12),
+    period: z.enum(TIME_SPANS, { error: 'Select a time span' }),
+    graceMinutes: optionalWholeNumberField('Total grace minutes', 0, 100000),
+    weekStartDay: weekdaySchema.or(z.literal('')),
+    weekEndDay: weekdaySchema.or(z.literal('')),
+    isActive: z.boolean(),
+    rules: z.array(policyRuleSchema).min(1, 'Add at least one rule').max(2),
   })
   .superRefine((values, ctx) => {
-    values.periods.forEach((period, index) => {
-      checkPeriodRange(ctx, values.timeSpan, period, ['periods', index])
+    const allowed = CLOCK_EVENTS_FOR[values.appliesTo]
+    const seen = new Set<string>()
+    values.rules.forEach((rule, index) => {
+      if (!allowed.includes(rule.clockEvent)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['rules', index, 'clockEvent'],
+          message: 'This clock event does not apply to what the policy watches',
+        })
+      }
+      if (seen.has(rule.clockEvent)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['rules', index, 'clockEvent'],
+          message: 'One rule per clock event',
+        })
+      }
+      seen.add(rule.clockEvent)
     })
+    if (values.rules.length > maxRulesFor(values.appliesTo)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['rules'],
+        message: `This policy takes ${maxRulesFor(values.appliesTo)} rule`,
+      })
+    }
+    if (values.period === 'week' && values.weekStartDay === '') {
+      ctx.addIssue({ code: 'custom', path: ['weekStartDay'], message: 'Select a start day' })
+    }
   })
 
 export type PolicyFormValues = z.infer<typeof policyFormSchema>
-export type PolicyFormPeriod = PolicyFormValues['periods'][number]
+export type PolicyFormRule = PolicyFormValues['rules'][number]
+/** Legacy (kept for the barrel): Policies have rules, not period blocks. */
+export type PolicyFormPeriod = PolicyFormRule

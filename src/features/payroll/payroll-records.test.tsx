@@ -1,18 +1,10 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
-import { differenceInCalendarMonths, format, isWeekend, subDays } from 'date-fns'
+import { differenceInCalendarMonths, format, subDays } from 'date-fns'
 import { describe, expect, it } from 'vitest'
 
-import {
-  accountEntries,
-  dailyWages,
-  employeeVouchers,
-  openingBalances,
-  payslips,
-  salaryRevisions,
-  vouchers,
-} from '@/mocks/payroll/db'
-import { salaryOn } from '@/mocks/payroll/engine'
+import { accountEntries, openingBalances, salaryRevisions, vouchers } from '@/mocks/payroll/db'
+import { salaryOn } from '@/mocks/payroll/people'
 import { renderApp } from '@/test/test-utils'
 
 async function choose(user: UserEvent, label: string | RegExp, option: string | RegExp) {
@@ -32,117 +24,100 @@ async function pickDate(user: UserEvent, label: string | RegExp, date: Date) {
   await user.click(screen.getByRole('button', { name: new RegExp(format(date, 'MMMM do, yyyy')) }))
 }
 
-function lastWeekday(): Date {
-  let day = subDays(new Date(), 1)
-  while (isWeekend(day)) day = subDays(day, 1)
-  return day
+async function rowAction(user: UserEvent, name: string | RegExp, action: string) {
+  await user.click(await screen.findByRole('button', { name }))
+  await user.click(await screen.findByRole('menuitem', { name: action }))
 }
 
-describe('Payrolls Daily Wages', () => {
-  it('creates a daily wage payroll in two steps', async () => {
-    const { user } = renderApp('/payroll/payrolls/daily-wages')
-
-    expect(
-      await screen.findByRole('heading', { name: 'Payrolls Daily Wages', level: 1 }),
-    ).toBeVisible()
-    expect(await screen.findByText('Event Helpers')).toBeVisible()
-
-    await user.click(screen.getByRole('button', { name: '+ Create' }))
-    const first = await screen.findByRole('dialog', { name: 'Create Daily Wage Payroll' })
-    await user.click(within(first).getByRole('button', { name: 'Next' }))
-    expect(await within(first).findByText('Enter a name')).toBeVisible()
-
-    await user.type(within(first).getByRole('textbox', { name: /^Name/ }), 'Warehouse Shift')
-    await pickDate(user, /^Date/, lastWeekday())
-    await choose(user, /^Time Slot/, /Morning Work/)
-    await user.click(within(first).getByRole('button', { name: 'Next' }))
-
-    const second = await screen.findByRole('dialog', { name: 'Select Employee' })
-    await user.click(await within(second).findByRole('checkbox', { name: 'Select Kashif Raza' }))
-    await user.click(within(second).getByRole('button', { name: 'Save' }))
-
-    expect(await screen.findByText('Warehouse Shift')).toBeVisible()
-    const batch = dailyWages.all().find((item) => item.name === 'Warehouse Shift')
-    expect(batch?.employeeIds).toEqual(['em_kashif'])
-    expect(batch?.timeSlotId).toBe('rg_morning')
-  })
-
-  it('opens the details and pays them out as vouchers', async () => {
-    const { user } = renderApp('/payroll/payrolls/daily-wages')
-
-    const seeded = dailyWages.find('dw_1')
-    if (!seeded) throw new Error('no seeded batch')
-    await user.click(
-      await screen.findByRole('button', { name: `Actions for Daily Wages, ${seeded.date}` }),
-    )
-    await user.click(await screen.findByRole('menuitem', { name: 'View' }))
-    const details = await screen.findByRole('dialog', { name: /Daily Wages Details/ })
-    expect(await within(details).findByText('Kashif Raza')).toBeVisible()
-    expect(within(details).getByText('In words')).toBeVisible()
-
-    const before = vouchers.all().length
-    await user.click(within(details).getByRole('button', { name: 'Voucher' }))
-    expect((await screen.findAllByText(/vouchers? created$/)).length).toBeGreaterThan(0)
-    expect(vouchers.all().length).toBeGreaterThanOrEqual(before)
-  })
-})
-
 describe('Employee Voucher', () => {
-  it('creates a voucher that shows on the Vouchers list', async () => {
+  it('creates a voucher, approves it, verifies it, and lists it on Vouchers', async () => {
     const { user, router } = renderApp('/payroll/vouchers/employee')
 
     expect(await screen.findByRole('heading', { name: 'Employee Voucher', level: 1 })).toBeVisible()
     await user.click(screen.getByRole('button', { name: '+ Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Employee Voucher Create' })
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(dialog).findByText('Choose the employee')).toBeVisible()
+    expect(within(dialog).getByText('Enter the purpose of the voucher')).toBeVisible()
 
     await choose(user, /^Employee Name/, /Omar Siddiqui/)
-    expect(within(dialog).getByRole('textbox', { name: /^Designation/ })).toHaveValue(
-      'Branch Manager',
-    )
-    await user.type(within(dialog).getByRole('textbox', { name: /^Voucher No/ }), 'TEST-0001')
-    await user.type(within(dialog).getByRole('textbox', { name: /^Currency/ }), '25000')
-    await choose(user, /^Requested By/, /Omar Siddiqui/)
-    await choose(user, /^Approved By/, /Bilal Ahmed/)
-    await pickDate(user, /^Approval Date/, new Date())
-    await user.type(within(dialog).getByRole('textbox', { name: /^Verified By/ }), 'Finance')
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-
     await waitFor(() => {
-      expect(employeeVouchers.all().some((item) => item.voucherNo === 'TEST-0001')).toBe(true)
+      expect(within(dialog).getByRole('textbox', { name: /^Designation/ })).toHaveValue(
+        'Branch Manager',
+      )
     })
+    await user.type(within(dialog).getByRole('textbox', { name: /^Amount/ }), '25000')
+    await user.type(
+      within(dialog).getByRole('textbox', { name: /^Purpose Of Voucher/ }),
+      'Hotel stay',
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Voucher created')).toBeInTheDocument()
+
+    const created = vouchers.all().find((item) => item.purpose === 'Hotel stay')
+    expect(created?.voucherNo).toBe('VCH-00004')
+    expect(created?.status).toBe('pending')
+
+    await rowAction(user, 'Actions for Omar Siddiqui, voucher VCH-00004', 'Approve')
+    const approve = await screen.findByRole('dialog', { name: 'Approve Voucher' })
+    await user.type(within(approve).getByRole('textbox', { name: 'Remarks' }), 'Within policy')
+    await user.click(within(approve).getByRole('button', { name: 'Approve' }))
+    expect(await screen.findByText('Voucher approved')).toBeInTheDocument()
+
+    await rowAction(user, 'Actions for Omar Siddiqui, voucher VCH-00004', 'Verify')
+    const verify = await screen.findByRole('dialog', { name: 'Verify Voucher' })
+    await user.click(within(verify).getByRole('button', { name: 'Verify' }))
+    expect(await screen.findByText('Voucher verified for payment')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(vouchers.find(created?.id ?? '')?.status).toBe('processed')
+    })
+    expect(vouchers.find(created?.id ?? '')?.remarks).toBe('Within policy')
+
     await router.navigate({ to: '/payroll/vouchers' })
     expect(await screen.findByRole('heading', { name: 'Vouchers', level: 1 })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'Rs 25,000' })).toBeVisible()
+    expect(screen.getByRole('cell', { name: 'Daily Wages' })).toBeVisible()
+  }, 40_000)
+
+  it('refuses to verify a voucher nobody approved', async () => {
+    const { user } = renderApp('/payroll/vouchers/employee')
+    await user.click(
+      await screen.findByRole('button', { name: 'Actions for Saad Hadier, voucher VCH-00001' }),
+    )
+    expect(await screen.findByRole('menuitem', { name: 'Approve' })).toBeVisible()
+    expect(screen.queryByRole('menuitem', { name: 'Verify' })).not.toBeInTheDocument()
   })
 })
 
 describe('Balances', () => {
-  it('adds an opening balance and adjusts it', async () => {
+  it('adds an opening balance and views a person’s entries', async () => {
     const { user } = renderApp('/payroll/balances/opening-balance')
 
-    expect(await screen.findByRole('cell', { name: 'RI-00001' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Opening Balance', level: 1 })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Create' }))
     const create = await screen.findByRole('dialog', { name: 'Opening Balance Adjustment' })
     await choose(user, /^Employees/, /Hina Raza/)
     await user.click(within(create).getByRole('button', { name: /^Month/ }))
     await user.click(await screen.findByRole('button', { name: format(new Date(), 'MMMM, yyyy') }))
-    await choose(user, /^Pay item/, 'Arrear')
+    await choose(user, /^Pay item/, 'Travel Allowance')
     await user.type(within(create).getByRole('textbox', { name: /^Amount/ }), '7000')
     await user.click(within(create).getByRole('button', { name: 'Save' }))
     expect(await screen.findByRole('cell', { name: 'RS 7,000' })).toBeVisible()
-
-    await user.click(screen.getByRole('button', { name: /^Actions for RI-00002, Hina Raza/ }))
-    await user.click(await screen.findByRole('menuitem', { name: 'Adjust' }))
-    const adjust = await screen.findByRole('dialog', { name: 'Opening Balance Adjustment' })
-    expect(within(adjust).getByRole('combobox', { name: /^Employees/ })).toBeDisabled()
-    await choose(user, /^Pay item/, 'Gratuity')
-    await user.type(within(adjust).getByRole('textbox', { name: /^Amount/ }), '3000')
-    await user.click(within(adjust).getByRole('button', { name: 'Save' }))
-    const hinaRow = (await screen.findByRole('cell', { name: 'RI-00002' })).closest('tr')
-    if (!hinaRow) throw new Error('no row for RI-00002')
-    expect(await within(hinaRow).findByRole('cell', { name: 'RS 10,000' })).toBeVisible()
     const hina = openingBalances.all().find((item) => item.employeeId === 'em_hina')
-    expect(hina?.items.map((item) => item.amount)).toEqual([7000, 3000])
+    expect(hina).toMatchObject({
+      amount: 7000,
+      payItemId: 'pi_travel',
+      balanceMonth: format(new Date(), 'yyyy-MM-01'),
+      kind: 'opening',
+    })
+
+    await rowAction(user, /^Actions for .*, Rehan Ahmad/, 'View')
+    const view = await screen.findByRole('dialog', { name: 'Opening Balance View' })
+    expect(await within(view).findByRole('region', { name: 'Travel Allowance' })).toBeVisible()
+    expect(within(view).getByRole('region', { name: 'Medical' })).toBeVisible()
+    // The oldest entry's month is closed: it can be looked at, not changed.
+    expect(within(view).getByLabelText(/^Locked \(month closed\)/)).toBeVisible()
+    expect(within(view).getAllByRole('button', { name: /^Edit, / })).toHaveLength(1)
   })
 
   it('creates an employee account debit', async () => {
@@ -153,7 +128,7 @@ describe('Balances', () => {
     ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Employee Account Create' })
-    await choose(user, /^Account/, 'Medical')
+    await choose(user, /^Account/, 'Provident Fund')
     await choose(user, /^Employee/, /Hina Raza/)
     await user.click(within(dialog).getByRole('switch', { name: 'Credit or debit: Credit+' }))
     await user.type(within(dialog).getByRole('textbox', { name: /^Amount/ }), '4500')
@@ -164,22 +139,34 @@ describe('Balances', () => {
         accountEntries
           .all()
           .some(
-            (entry) =>
-              entry.employeeId === 'em_hina' &&
-              entry.direction === 'debit' &&
-              entry.amount === 4500,
+            (entry) => entry.employeeId === 'em_hina' && entry.debit === 4500 && entry.credit === 0,
           ),
       ).toBe(true)
     })
     expect(await screen.findByRole('cell', { name: 'RS 4,500' })).toBeVisible()
   })
+
+  it('shows the running balance on the account statement', async () => {
+    renderApp('/payroll/balances/account-statement')
+
+    expect(
+      await screen.findByRole('heading', { name: 'Employee Account Statement', level: 1 }),
+    ).toBeVisible()
+    await screen.findAllByText('Rehan Ahmad')
+    const rows = screen.getAllByRole('row').filter((row) => within(row).queryByText('Rehan Ahmad'))
+    expect(rows.map((row) => within(row).getAllByRole('cell').at(-2)?.textContent)).toEqual([
+      'RS 8,500',
+      'RS 17,000',
+      'RS 15,000',
+    ])
+  })
 })
 
 describe('Salary Revision', () => {
-  it('works out a percentage revision from the current salary', async () => {
+  it('works out a percentage revision from the previous salary', async () => {
     const { user } = renderApp('/payroll/salary-revision')
 
-    expect(await screen.findByRole('cell', { name: 'SR-00002' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Salary Revision', level: 1 })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Salary Revision Create' })
     await choose(user, /^Employee/, /Hina Raza/)
@@ -188,36 +175,43 @@ describe('Salary Revision', () => {
     await user.click(within(dialog).getByRole('switch', { name: 'Type: Flat' }))
     await user.type(within(dialog).getByRole('textbox', { name: /^Percentage Increase/ }), '10')
 
-    const expected = Math.round(salaryOn('em_hina', format(day, 'yyyy-MM-dd')) * 1.1)
+    const previous = salaryOn('em_hina', format(subDays(day, 1), 'yyyy-MM-dd'))
+    const expected = Math.round(previous * 1.1 * 100) / 100
     await waitFor(() => {
-      expect(within(dialog).getByRole('textbox', { name: /^Salary/ })).toHaveValue(String(expected))
+      expect(within(dialog).getByRole('textbox', { name: /^New Salary/ })).toHaveValue(
+        new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(expected),
+      )
     })
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
-    await waitFor(() => {
-      expect(salaryRevisions.all().find((item) => item.employeeId === 'em_hina')?.salary).toBe(
-        expected,
-      )
-    })
-    expect(await screen.findByRole('cell', { name: 'SR-00003' })).toBeVisible()
+    expect(await screen.findByText('Salary revision created')).toBeInTheDocument()
+    const saved = salaryRevisions.all().find((item) => item.employeeId === 'em_hina')
+    expect(saved).toMatchObject({ type: 'percentage', percentage: 10, salary: expected })
     expect(salaryOn('em_hina', format(day, 'yyyy-MM-dd'))).toBe(expected)
   })
 })
 
-describe('Reports', () => {
-  it('lists provident fund, tax rebate and tax paid per person', async () => {
-    renderApp('/payroll/reports/employee-accounts')
+describe('Final Settlement', () => {
+  it('works out a leaver’s settlement and closes it', async () => {
+    const { user } = renderApp('/payroll/final-settlement')
 
-    expect(
-      await screen.findByRole('heading', { name: 'Employee Account Report', level: 1 }),
-    ).toBeVisible()
-    expect(
-      await screen.findByRole('columnheader', { name: 'Provident Fund Deduction' }),
-    ).toBeVisible()
-    const footer = await screen.findByText(/^Showing 1 to/)
-    const people = new Set(payslips.all().map((slip) => slip.employeeId)).size
-    expect(people).toBeGreaterThan(0)
-    expect(footer).toHaveTextContent(`of ${String(people)} employees`)
-    expect(screen.getAllByRole('row').length).toBeGreaterThan(1)
+    expect(await screen.findByRole('heading', { name: 'Final Settlement', level: 1 })).toBeVisible()
+    const talha = (await screen.findByText('Talha Aziz')).closest('tr')
+    if (!talha) throw new Error('No row for Talha Aziz')
+    expect(within(talha).getByText('Pending')).toBeVisible()
+
+    await rowAction(user, 'Actions for Talha Aziz', 'Recalculate')
+    await user.click(await screen.findByRole('button', { name: 'Yes' }))
+    expect(await screen.findByText('Final settlement recalculated')).toBeInTheDocument()
+    expect(await screen.findByText('Calculated')).toBeVisible()
+
+    await rowAction(user, 'Actions for Talha Aziz', 'Close FS')
+    const close = await screen.findByRole('dialog', { name: 'Close Final Settlement' })
+    await user.click(within(close).getByRole('button', { name: 'Close FS' }))
+    expect(await screen.findByText('Final settlement closed')).toBeInTheDocument()
+    await waitFor(() => {
+      const row = screen.getByText('Talha Aziz').closest('tr')
+      expect(row && within(row).getByText('Completed')).toBeVisible()
+    })
   })
 })

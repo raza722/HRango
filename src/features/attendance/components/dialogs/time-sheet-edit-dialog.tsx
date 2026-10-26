@@ -9,6 +9,7 @@ import {
   CheckboxField,
   DatePickerField,
   FieldLayoutContext,
+  TextareaField,
   TimePickerField,
 } from '@/components/form'
 import { Button } from '@/components/ui/button'
@@ -23,12 +24,12 @@ import {
   toDayEditValues,
 } from '../../schemas/time-sheet.schema'
 import type { DayKey } from '../../types/attendance.types'
+import { profileOfDay } from '../../utils/day'
 import { formatExpected, formatLongDate } from '../../utils/local-time'
 import { interDialogClass } from '../../utils/settings-styles'
 import { ManualBadge, ReadOnlyField } from '../shared/attendance-dialog'
 import { PersonCard } from '../shared/person-card'
 import { BreaksTable } from './breaks-table'
-import { CommentsSection } from './comments-section'
 
 const EMPTY: DayEditValues = {
   checkInDate: '',
@@ -39,6 +40,7 @@ const EMPTY: DayEditValues = {
   markHalfDay: false,
   markShortDay: false,
   breaks: [],
+  comments: '',
 }
 
 const expected = (time: string | null) =>
@@ -47,7 +49,9 @@ const expected = (time: string | null) =>
 /**
  * Time Sheet Edit (All): the person, Check In / Check Out dates and times
  * beside the expected ones, Mark Absent / Half Day / Short Day, the breaks
- * and the comments. Mark Absent folds the times away, as drawn.
+ * and the comments (one text, saved with the day). Mark Absent folds the
+ * times away, as drawn. Saving sends the rowVersion read; a day payroll has
+ * frozen is refused (409 DAY_FROZEN).
  */
 export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClose: () => void }) {
   const formId = useId()
@@ -56,7 +60,7 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
   const form = useForm<DayEditValues>({
     resolver: zodResolver(dayEditSchema),
     defaultValues: EMPTY,
-    // Loads the day once it arrives; a refetch (after a comment) keeps typed changes.
+    // Loads the day once it arrives; a refetch keeps typed changes.
     values: detail.data ? toDayEditValues(detail.data) : undefined,
     resetOptions: { keepDirtyValues: true },
   })
@@ -67,18 +71,19 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
   const day = data?.day
 
   const submit = form.handleSubmit(async (values) => {
+    if (!day) return
     try {
-      await update.mutateAsync({ key: dayKey, input: toDayEditInput(values) })
+      await update.mutateAsync({ key: dayKey, input: toDayEditInput(values, day) })
     } catch (error) {
       if (error instanceof ApiError) {
-        const fields = Object.entries(error.fieldErrors)
-        for (const [field, message] of fields) {
-          if (field === 'checkOut') form.setError('checkOutTime', { message })
-          else if (/^breaks\.\d+\.inAt$/.test(field)) {
-            form.setError(field.replace('inAt', 'inTime') as `breaks.${number}.inTime`, { message })
-          }
-        }
-        if (fields.length === 0) form.setError('root', { message: error.message })
+        const shown = Object.entries(error.fieldErrors).filter(([field, message]) => {
+          if (field === 'lastOut') form.setError('checkOutTime', { message })
+          else if (field === 'firstIn') form.setError('checkInTime', { message })
+          else if (field === 'comments') form.setError('comments', { message })
+          else return false
+          return true
+        })
+        if (shown.length === 0) form.setError('root', { message: error.message })
       }
       return
     }
@@ -89,12 +94,17 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
 
   return (
     <AppDialog
-      title={`Edit the time sheet of ${data?.profile.name ?? 'employee'}, ${formatLongDate(dayKey.date)}`}
+      title={`Edit the time sheet of ${day?.employeeName ?? 'employee'}, ${formatLongDate(dayKey.date)}`}
       hideTitle
       className={interDialogClass}
       onRequestClose={onClose}
       footer={
         <>
+          {day?.isFrozen && !rootError && (
+            <p className="mr-auto self-center text-sm text-muted-foreground">
+              Payroll has used this day; it can no longer be changed.
+            </p>
+          )}
           {rootError && (
             <p role="alert" className="mr-auto self-center text-sm text-destructive">
               {rootError}
@@ -105,7 +115,7 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
             form={formId}
             variant="success"
             size="lg"
-            disabled={!data || update.isPending}
+            disabled={!day || day.isFrozen || update.isPending}
             className={dialogButtonClass}
           >
             Save
@@ -124,7 +134,7 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
         />
       ) : (
         <div className="grid gap-7">
-          <PersonCard profile={data?.profile} />
+          <PersonCard profile={day ? profileOfDay(day) : undefined} />
 
           <FieldLayoutContext value="vertical">
             <form
@@ -141,13 +151,13 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
                       <ReadOnlyField
                         tone="edit"
                         label="Date"
-                        value={formatLongDate(day.date)}
+                        value={formatLongDate(day.workDate)}
                         icon={<CalendarDays className="size-4 shrink-0" aria-hidden="true" />}
                         className="@3xl:col-span-3 @3xl:max-w-md"
                       />
                       <div className="flex flex-wrap items-end gap-6 @3xl:col-span-3">
                         <CheckboxField control={control} name="markAbsent" label="Mark Absent" />
-                        <ManualBadge updated={day.manuallyUpdated} />
+                        <ManualBadge updated={day.isManuallyUpdated} />
                       </div>
                     </>
                   ) : (
@@ -155,7 +165,7 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
                       <ReadOnlyField
                         tone="edit"
                         label="Day"
-                        value={formatLongDate(day.date)}
+                        value={formatLongDate(day.workDate)}
                         icon={<CalendarDays className="size-4 shrink-0" aria-hidden="true" />}
                       />
                       <DatePickerField control={control} name="checkInDate" label="Check In" />
@@ -182,7 +192,7 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
                         label="Check Out Time"
                       />
                       <div className="flex items-end">
-                        <ManualBadge updated={day.manuallyUpdated} />
+                        <ManualBadge updated={day.isManuallyUpdated} />
                       </div>
                       <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
                         <CheckboxField control={control} name="markAbsent" label="Mark Absent" />
@@ -200,12 +210,18 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
                     An absent day has no check in, check out or breaks; saving clears them.
                   </p>
                 ) : (
-                  <BreaksTable control={control} day={day.date} />
+                  <BreaksTable control={control} day={day.workDate} />
                 ))}
+
+              <TextareaField
+                control={control}
+                name="comments"
+                label="Comments"
+                placeholder="Type your Message here"
+                textareaClassName="min-h-24"
+              />
             </form>
           </FieldLayoutContext>
-
-          {data && <CommentsSection dayKey={dayKey} comments={data.comments} />}
         </div>
       )}
     </AppDialog>

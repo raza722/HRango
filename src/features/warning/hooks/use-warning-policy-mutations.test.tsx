@@ -23,8 +23,10 @@ async function setup() {
   const { result } = renderHook(() => useDeleteWarningPolicy(), {
     wrapper: createQueryWrapper(queryClient),
   })
-  const target = queryClient.getQueryData<Paginated<WarningPolicy>>(warningPolicyKeys.list(params))!
-    .data[0]!
+  // A policy without raised warnings (the API refuses to delete the others).
+  const target = queryClient
+    .getQueryData<Paginated<WarningPolicy>>(warningPolicyKeys.list(params))!
+    .data.find((policy) => policy.warningCount === 0)!
   return { queryClient, result, target, cachedIds }
 }
 
@@ -50,9 +52,32 @@ describe('useDeleteWarningPolicy', () => {
     expect(cachedIds()).not.toContain(target.id)
   })
 
+  it('puts back a policy with raised warnings when the API refuses it', async () => {
+    const queryClient = createTestQueryClient()
+    const page = await queryClient.query(warningPoliciesQueryOptions(params))
+    const { result } = renderHook(() => useDeleteWarningPolicy(), {
+      wrapper: createQueryWrapper(queryClient),
+    })
+    const withWarnings = page.data.find((policy) => policy.warningCount > 0)!
+
+    act(() => {
+      result.current.mutate(withWarnings)
+    })
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true)
+    })
+    expect(result.current.error?.status).toBe(409)
+    expect(
+      queryClient
+        .getQueryData<Paginated<WarningPolicy>>(warningPolicyKeys.list(params))
+        ?.data.map((policy) => policy.id),
+    ).toContain(withWarnings.id)
+  })
+
   it('puts the row back when the API refuses', async () => {
     server.use(
-      http.delete(apiPath('/warning-policies/:id'), async () => {
+      http.delete(apiPath('/warning/policies/:id'), async () => {
         // Long enough for waitFor (50 ms polling) to observe the optimistic state.
         await delay(250)
         return errorResponse(500, 'Database unavailable')

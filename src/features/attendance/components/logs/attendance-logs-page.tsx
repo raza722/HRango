@@ -15,15 +15,17 @@ import {
   rowMenuItemClass,
 } from '@/components/layout'
 import { Button } from '@/components/ui/button'
+import { ApiError } from '@/lib/api-error'
 import { parseDateValue, toDateValue } from '@/lib/date'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { PUNCH_SOURCE_LABELS, PUNCH_TYPE_LABELS } from '../../constants'
-import { useAttendanceLookups } from '../../hooks/use-attendance'
-import { useAttendanceLogs, useDeleteLog } from '../../hooks/use-attendance-settings'
+import { useAttendanceLogs, useDeleteLog, useIgnoreLog } from '../../hooks/use-attendance-logs'
 import type { LogsSearch } from '../../routing'
 import { PUNCH_SOURCES, PUNCH_TYPES } from '../../types/attendance.types'
-import type { AttendanceLogRow } from '../../types/settings.types'
+import type { AttendanceLogRow } from '../../types/logs.types'
+import { punchDescription } from '../../utils/day'
 import { parseLocal } from '../../utils/local-time'
 import {
   compactTableClass,
@@ -36,6 +38,7 @@ import {
 } from '../../utils/settings-styles'
 import { AttendanceSubLayout } from '../layout/attendance-sub-layout'
 import { DateBox } from '../shared/date-box'
+import { EmployeeFilter } from '../shared/employee-filter'
 import { FilterSelect } from '../shared/filter-select'
 import { DownloadLogDialog, ImportLogDialog, LogFormDialog, LogViewDialog } from './log-dialogs'
 
@@ -54,22 +57,33 @@ const columns: DataTableColumn<AttendanceLogRow>[] = [
     mobile: 'heading',
     cell: (row) => (
       <span className="flex items-center gap-2.5">
-        <EmployeeAvatar name={row.employee.name} className="size-7" />
+        <EmployeeAvatar name={row.employeeName} className="size-7" />
         <span className="min-w-0">
-          <span className={personNameClass}>{row.employee.name}</span>
-          <span className={personCodeClass}>{row.employee.code}</span>
+          <span className={personNameClass}>{row.employeeName}</span>
+          <span className={personCodeClass}>{row.employeeCode}</span>
         </span>
       </span>
     ),
   },
-  { id: 'type', header: 'Punch Type', cell: (row) => PUNCH_TYPE_LABELS[row.type] },
+  {
+    id: 'type',
+    header: 'Punch Type',
+    cell: (row) => (
+      <span className="leading-tight">
+        <span className={row.isIgnored ? 'line-through' : undefined}>
+          {PUNCH_TYPE_LABELS[row.punchType]}
+        </span>
+        {row.isIgnored && <span className="block text-xs text-muted-foreground">Ignored</span>}
+      </span>
+    ),
+  },
   {
     id: 'time',
     header: 'Punch Time',
     cell: (row) => (
       <span className="leading-tight">
-        {format(parseLocal(row.at), 'hh:mm a')}
-        <span className="block">{format(parseLocal(row.at), 'MMMM d, yyyy')}</span>
+        {format(parseLocal(row.punchedAt), 'hh:mm a')}
+        <span className="block">{format(parseLocal(row.punchedAt), 'MMMM d, yyyy')}</span>
       </span>
     ),
   },
@@ -78,10 +92,10 @@ const columns: DataTableColumn<AttendanceLogRow>[] = [
     id: 'machine',
     header: 'Machine',
     cell: (row) =>
-      row.machineId ? (
+      row.deviceId ? (
         <span className="leading-tight">
-          Machine
-          <span className="block">({row.machineId})</span>
+          {row.deviceName ?? 'Machine'}
+          {row.deviceCode && <span className="block">({row.deviceCode})</span>}
         </span>
       ) : (
         '—'
@@ -91,23 +105,31 @@ const columns: DataTableColumn<AttendanceLogRow>[] = [
     id: 'description',
     header: 'Description',
     cell: (row) => (
-      <span className="line-clamp-2 max-w-48 whitespace-normal">{row.description || '—'}</span>
+      <span className="line-clamp-2 max-w-48 whitespace-normal">{punchDescription(row)}</span>
     ),
   },
 ]
 
 /**
- * Attendance Logs: every punch (machine, manual, dashboard, punch request,
- * imported file) with Download, Import (Computer or Machine) and + Create.
- * Manual and imported punches can be edited or deleted.
+ * Attendance Logs: every punch (machine, manual, dashboard, mobile, punch
+ * request, imported file) with Download, Import (a file) and + Create. Manual
+ * and imported punches can be edited or deleted; the others can be ignored
+ * (and counted again). Buttons follow the user's permissions.
  */
 export function AttendanceLogsPage() {
   const search = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
   const [today] = useState(() => toDateValue(new Date()))
   const [dialog, setDialog] = useState<Dialog>(null)
-  const lookups = useAttendanceLookups()
   const remove = useDeleteLog()
+  const ignore = useIgnoreLog()
+  const can = {
+    create: useCan('attendance.logs.create'),
+    edit: useCan('attendance.logs.edit'),
+    delete: useCan('attendance.logs.delete'),
+    import: useCan('attendance.logs.import'),
+    export: useCan('attendance.logs.export'),
+  }
   const from = search.from ?? today
   const to = search.to ?? from
   const logs = useAttendanceLogs({
@@ -116,12 +138,26 @@ export function AttendanceLogsPage() {
     page: search.page,
     pageSize: PAGE_SIZE,
     ...(search.employeeId ? { employeeId: search.employeeId } : {}),
-    ...(search.type ? { type: search.type } : {}),
+    ...(search.type ? { punchType: search.type } : {}),
     ...(search.source ? { source: search.source } : {}),
+    ...(search.q ? { q: search.q } : {}),
   })
   const update = (patch: Partial<LogsSearch>) =>
     navigate({ search: (prev) => ({ ...prev, ...patch, page: patch.page ?? 1 }) })
   const meta = logs.data?.meta
+  // The filtered person's name, from their own punches, until the picker has read them.
+  const filteredRow = search.employeeId
+    ? logs.data?.data.find((row) => row.employeeId === search.employeeId)
+    : undefined
+  const employeeKnown = filteredRow
+    ? [
+        {
+          value: filteredRow.employeeId,
+          label: filteredRow.employeeName,
+          hint: filteredRow.employeeCode,
+        },
+      ]
+    : undefined
   const range =
     from === to
       ? format(parse(from, 'yyyy-MM-dd', new Date()), 'd MMMM yyyy')
@@ -138,31 +174,37 @@ export function AttendanceLogsPage() {
             Attendance Logs
           </h1>
           <div className="flex flex-wrap gap-2.5">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setDialog({ type: 'download' })
-              }}
-              className={outlineButtonClass}
-            >
-              <DownloadCircleIcon className="size-5" /> Download
-            </Button>
-            <Button
-              onClick={() => {
-                setDialog({ type: 'import' })
-              }}
-              className={cn(toolbarButtonClass, 'bg-[#4CBB6C] text-white hover:bg-[#4CBB6C]/90')}
-            >
-              <DownloadCircleIcon className="size-5 rotate-180" /> Import
-            </Button>
-            <Button
-              onClick={() => {
-                setDialog({ type: 'create' })
-              }}
-              className={cn(toolbarButtonClass, navyButtonClass)}
-            >
-              + Create
-            </Button>
+            {can.export && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDialog({ type: 'download' })
+                }}
+                className={outlineButtonClass}
+              >
+                <DownloadCircleIcon className="size-5" /> Download
+              </Button>
+            )}
+            {can.import && (
+              <Button
+                onClick={() => {
+                  setDialog({ type: 'import' })
+                }}
+                className={cn(toolbarButtonClass, 'bg-[#4CBB6C] text-white hover:bg-[#4CBB6C]/90')}
+              >
+                <DownloadCircleIcon className="size-5 rotate-180" /> Import
+              </Button>
+            )}
+            {can.create && (
+              <Button
+                onClick={() => {
+                  setDialog({ type: 'create' })
+                }}
+                className={cn(toolbarButtonClass, navyButtonClass)}
+              >
+                + Create
+              </Button>
+            )}
           </div>
         </div>
 
@@ -188,14 +230,11 @@ export function AttendanceLogsPage() {
                 void update({ to: value === from ? undefined : value })
               }}
             />
-            <FilterSelect
+            <EmployeeFilter
               label="Employee"
-              showLabel
-              allLabel="All employees"
-              options={(lookups.data?.employees ?? []).map((employee) => ({
-                value: employee.id,
-                label: `${employee.code} | ${employee.name}`,
-              }))}
+              // Former staff too: their punches stay in the logs.
+              filters={{ permission: 'attendance.logs.view', includeInactive: true }}
+              known={employeeKnown}
               value={search.employeeId}
               onChange={(employeeId) => {
                 void update({ employeeId })
@@ -230,7 +269,11 @@ export function AttendanceLogsPage() {
         {logs.isError ? (
           <ErrorState
             title="Could not load the attendance logs"
-            message="Choose at most 31 days, or check your connection and try again."
+            message={
+              logs.error instanceof ApiError && logs.error.isClientError
+                ? logs.error.message
+                : 'Choose at most 31 days, or check your connection and try again.'
+            }
             onRetry={() => void logs.refetch()}
           />
         ) : (
@@ -249,7 +292,7 @@ export function AttendanceLogsPage() {
             }
             rowActions={(row) => (
               <RowActionsMenu
-                label={`Actions for ${row.employee.name}, ${PUNCH_TYPE_LABELS[row.type]} ${format(parseLocal(row.at), 'h:mm a')}`}
+                label={`Actions for ${row.employeeName}, ${PUNCH_TYPE_LABELS[row.punchType]} ${format(parseLocal(row.punchedAt), 'h:mm a')}`}
                 itemClassName={rowMenuItemClass.poppins}
                 actions={[
                   {
@@ -258,7 +301,7 @@ export function AttendanceLogsPage() {
                       setDialog({ type: 'view', log: row })
                     },
                   },
-                  ...(row.editable
+                  ...(row.editable && can.edit
                     ? [
                         {
                           label: 'Edit',
@@ -266,11 +309,36 @@ export function AttendanceLogsPage() {
                             setDialog({ type: 'edit', log: row })
                           },
                         },
+                      ]
+                    : []),
+                  ...(row.editable && can.delete
+                    ? [
                         {
                           label: 'Delete',
                           variant: 'destructive' as const,
                           onSelect: () => {
                             setDialog({ type: 'delete', log: row })
+                          },
+                        },
+                      ]
+                    : []),
+                  ...(!row.editable && can.edit
+                    ? [
+                        {
+                          label: row.isIgnored ? 'Count again' : 'Ignore',
+                          onSelect: () => {
+                            ignore.mutate(
+                              { punch: row, ignored: !row.isIgnored },
+                              {
+                                onError: (error) => {
+                                  toast.error(
+                                    error instanceof ApiError
+                                      ? error.message
+                                      : 'Could not change the punch.',
+                                  )
+                                },
+                              },
+                            )
                           },
                         },
                       ]
@@ -332,6 +400,8 @@ export function AttendanceLogsPage() {
       )}
       {dialog?.type === 'download' && (
         <DownloadLogDialog
+          initialFrom={from}
+          initialTo={to}
           onClose={() => {
             setDialog(null)
           }}
@@ -349,9 +419,11 @@ export function AttendanceLogsPage() {
         variant="destructive"
         onConfirm={() => {
           if (dialog?.type === 'delete') {
-            remove.mutate(dialog.log.id, {
-              onError: () => {
-                toast.error('Could not delete the punch.')
+            remove.mutate(dialog.log, {
+              onError: (error) => {
+                toast.error(
+                  error instanceof ApiError ? error.message : 'Could not delete the punch.',
+                )
               },
             })
           }

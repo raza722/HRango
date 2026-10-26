@@ -4,12 +4,13 @@ import { toast } from 'sonner'
 
 import { DataTable, type DataTableColumn } from '@/components/layout'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import { PLAN_YEAR_STATUS } from '../../constants'
+import { BEN_CODES, PLAN_YEAR_STATUS } from '../../constants'
 import { useDeletePlanYear, usePlanYears } from '../../hooks/use-benefits'
 import type { PlanYearStep } from '../../hooks/use-plan-year-wizard'
-import type { PlanYearRow } from '../../types/benefits.types'
+import type { PlanYear, PlanYearAction, WindowKind } from '../../types/benefits.types'
 import { employeesCount, formatDuration } from '../../utils/format'
 import { OpenEnrollmentDialog } from '../enrollment/open-enrollment-dialog'
 import { AddIcon } from '../shared/benefit-icons'
@@ -23,13 +24,13 @@ import { PlanYearRowMenu } from './plan-year-row-menu'
 const routeApi = getRouteApi('/_app/benefits/plan-years/')
 
 type Dialog =
-  | { type: 'edit'; row: PlanYearRow; step: PlanYearStep }
-  | { type: 'delete'; row: PlanYearRow }
-  | { type: 'enroll'; row: PlanYearRow; name: string }
+  | { type: 'edit'; row: PlanYear; step: PlanYearStep }
+  | { type: 'delete'; row: PlanYear }
+  | { type: 'enroll'; row: PlanYear; name: string; kind: WindowKind }
   | null
 
 /** "0 pending, 0 approved, 0 incomplete", the missing information line and its link. */
-function ElectionsCell({ row }: { row: PlanYearRow }) {
+function ElectionsCell({ row }: { row: PlanYear }) {
   return (
     <div className="grid gap-[0.6rem] whitespace-normal md:min-w-[16rem]">
       <p>{`${String(row.pending)} pending, ${String(row.approved)} approved, ${String(row.incomplete)} incomplete`}</p>
@@ -55,9 +56,9 @@ function ElectionsCell({ row }: { row: PlanYearRow }) {
   )
 }
 
-const columns: DataTableColumn<PlanYearRow>[] = [
+const columns: DataTableColumn<PlanYear>[] = [
   { id: 'name', header: 'Plan Year Name', mobile: 'heading', cell: (row) => row.name },
-  { id: 'plans', header: 'Plans', cell: (row) => row.planIds.length },
+  { id: 'plans', header: 'Plans', cell: (row) => row.planCount },
   {
     id: 'status',
     header: 'Status',
@@ -86,6 +87,15 @@ export function PlanYearsPage() {
   const navigate = routeApi.useNavigate()
   const list = usePlanYears({ year })
   const remove = useDeletePlanYear()
+  const canCreate = useCan(BEN_CODES.planYearCreate)
+  const canEdit = useCan(BEN_CODES.planYearEdit)
+  const canDelete = useCan(BEN_CODES.planYearDelete)
+  const canOpenWindow = useCan(BEN_CODES.windowCreate)
+  const allowed: PlanYearAction[] = [
+    ...(canEdit ? (['edit', 'new-hire'] as const) : []),
+    ...(canDelete ? (['delete'] as const) : []),
+    ...(canOpenWindow ? (['open-enrollment', 'life-event'] as const) : []),
+  ]
   const [dialog, setDialog] = useState<Dialog>(null)
   const close = () => {
     setDialog(null)
@@ -100,10 +110,12 @@ export function PlanYearsPage() {
         void navigate({ search: { year: next } })
       }}
       actions={
-        <Link to="/benefits/plan-years/new" className={cn(buttonClass, accent.bg, 'px-3')}>
-          <AddIcon className="size-[0.8125rem]" />
-          New Plan Year
-        </Link>
+        canCreate ? (
+          <Link to="/benefits/plan-years/new" className={cn(buttonClass, accent.bg, 'px-3')}>
+            <AddIcon className="size-[0.8125rem]" />
+            New Plan Year
+          </Link>
+        ) : undefined
       }
     >
       {list.isError ? (
@@ -121,9 +133,11 @@ export function PlanYearsPage() {
           emptyState={
             <EmptyList
               action={
-                <Link to="/benefits/plan-years/new" className={cn(mediumText, accent.text)}>
-                  New Plan Year
-                </Link>
+                canCreate ? (
+                  <Link to="/benefits/plan-years/new" className={cn(mediumText, accent.text)}>
+                    New Plan Year
+                  </Link>
+                ) : undefined
               }
             >
               {year ? 'That plan year is no longer here.' : 'There are no plan years yet.'}
@@ -134,6 +148,7 @@ export function PlanYearsPage() {
             <div className="-mt-1 flex justify-start sm:-mr-2">
               <PlanYearRowMenu
                 name={row.name}
+                allowed={allowed}
                 onSelect={(action) => {
                   if (action === 'edit') setDialog({ type: 'edit', row, step: 'details' })
                   else if (action === 'new-hire')
@@ -144,6 +159,7 @@ export function PlanYearsPage() {
                       type: 'enroll',
                       row,
                       name: action === 'life-event' ? 'Qualifying Life Event' : '',
+                      kind: action === 'life-event' ? 'life_event' : 'open_enrollment',
                     })
                 }}
               />
@@ -164,6 +180,7 @@ export function PlanYearsPage() {
         <OpenEnrollmentDialog
           planYearId={dialog.row.id}
           initialName={dialog.name}
+          kind={dialog.kind}
           onClose={close}
         />
       )}
@@ -180,9 +197,10 @@ export function PlanYearsPage() {
         onClose={close}
         onConfirm={() => {
           if (dialog?.type !== 'delete') return
-          remove.mutate(dialog.row.id, {
+          remove.mutate(dialog.row, {
             onSuccess: close,
             onError: (error) => {
+              close()
               toast.error(
                 error instanceof ApiError ? error.message : 'Could not delete the plan year.',
               )

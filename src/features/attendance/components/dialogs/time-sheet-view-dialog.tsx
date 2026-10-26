@@ -1,16 +1,17 @@
 import { useState } from 'react'
-import { format, parseISO } from 'date-fns'
 import { CalendarDays, ChevronDown } from 'lucide-react'
 
 import { AppDialog, dialogButtonClass } from '@/components/feedback/app-dialog'
 import { ErrorState } from '@/components/feedback/error-state'
 import { Button } from '@/components/ui/button'
 
+import { DAY_FLAG_LABELS } from '../../constants'
 import { useAttendanceDay } from '../../hooks/use-attendance'
-import { useBreakTypes } from '../../hooks/use-attendance-settings'
 import type { AttendanceBreak, DayKey } from '../../types/attendance.types'
+import { profileOfDay } from '../../utils/day'
 import {
   formatClockTime,
+  formatDuration,
   formatExpected,
   formatLongDate,
   formatPunchTime,
@@ -26,11 +27,10 @@ const expected = (time: string | null) =>
   time ? formatExpected(time).replace('Expected ', '') : '—'
 
 function BreakItem({ item }: { item: AttendanceBreak }) {
-  const { nameOf } = useBreakTypes()
   return (
     <details open className="group border-b py-3 last:border-b-0">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-sm text-base font-medium text-[#202020] outline-none focus-visible:ring-2 focus-visible:ring-ring/50 sm:text-lg dark:text-heading [&::-webkit-details-marker]:hidden">
-        {nameOf(item.type)}
+        {item.breakTypeName ?? 'Break'}
         <ChevronDown
           aria-hidden="true"
           className="size-5 text-field-foreground transition-transform group-open:rotate-180"
@@ -48,8 +48,10 @@ function BreakItem({ item }: { item: AttendanceBreak }) {
           </dd>
         </div>
         <div className="min-w-0">
-          <dt className="font-medium text-title">Description</dt>
-          <dd className="mt-1 text-field-value">{item.description || '—'}</dd>
+          <dt className="font-medium text-title">Duration</dt>
+          <dd className="mt-1 text-field-value">
+            {item.minutes !== null ? formatDuration(item.minutes) : '—'}
+          </dd>
         </div>
       </dl>
     </details>
@@ -57,8 +59,8 @@ function BreakItem({ item }: { item: AttendanceBreak }) {
 }
 
 /**
- * Time Sheet View: the person, the day's expected and actual times, the
- * breaks and the comments, with History and Logs (and Edit on All).
+ * Time Sheet View: the person, the day's state and flags, expected and actual
+ * times, the breaks and the comments, with History and Logs (and Edit on All).
  */
 export function TimeSheetViewDialog({
   dayKey,
@@ -73,11 +75,13 @@ export function TimeSheetViewDialog({
   const [sub, setSub] = useState<'history' | 'logs' | null>(null)
   const data = detail.data
   const day = data?.day
+  const profile = day ? profileOfDay(day) : undefined
+  const flags = data?.flags ?? []
 
   return (
     <>
       <AppDialog
-        title={`Time sheet of ${data?.profile.name ?? 'employee'}, ${formatLongDate(dayKey.date)}`}
+        title={`Time sheet of ${day?.employeeName ?? 'employee'}, ${formatLongDate(dayKey.date)}`}
         hideTitle
         className={interDialogClass}
         onRequestClose={onClose}
@@ -122,12 +126,12 @@ export function TimeSheetViewDialog({
           />
         ) : (
           <div className="grid gap-6">
-            <PersonCard profile={data?.profile} />
+            <PersonCard profile={profile} />
 
             {day && (
               <>
                 <div className="flex flex-wrap items-center gap-2 text-sm text-field-foreground">
-                  {day.status && <StatusPill status={day.status} className="text-sm" />}
+                  <StatusPill status={day.dayStatus} className="text-sm" />
                   {day.clockInStatus && (
                     <span className="flex items-center gap-1.5">
                       In <PunchChip status={day.clockInStatus} />
@@ -138,13 +142,25 @@ export function TimeSheetViewDialog({
                       Out <PunchChip status={day.clockOutStatus} />
                     </span>
                   )}
-                  {day.slotName && <span className="text-muted-foreground">· {day.slotName}</span>}
+                  {day.timeSlotName && (
+                    <span className="text-muted-foreground">· {day.timeSlotName}</span>
+                  )}
                 </div>
+                {flags.length > 0 && (
+                  <ul aria-label="Flags" className="flex flex-wrap gap-2 text-xs">
+                    {flags.map((item) => (
+                      <li key={item.flag} className="rounded-sm bg-muted px-2 py-1 text-title">
+                        {DAY_FLAG_LABELS[item.flag]}
+                        {item.minutes ? ` · ${formatDuration(item.minutes)}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <div className="grid gap-x-6 gap-y-4 @xl:grid-cols-2 @3xl:grid-cols-3">
                   <ReadOnlyField
                     tone="view"
                     label="Day"
-                    value={formatLongDate(day.date)}
+                    value={formatLongDate(day.workDate)}
                     icon={<CalendarDays className="size-4 shrink-0" aria-hidden="true" />}
                   />
                   <ReadOnlyField
@@ -155,7 +171,7 @@ export function TimeSheetViewDialog({
                   <ReadOnlyField
                     tone="view"
                     label="Check In Time"
-                    value={day.checkIn ? formatClockTime(day.checkIn) : '—'}
+                    value={day.firstIn ? formatClockTime(day.firstIn) : '—'}
                   />
                   <ReadOnlyField
                     tone="view"
@@ -165,10 +181,10 @@ export function TimeSheetViewDialog({
                   <ReadOnlyField
                     tone="view"
                     label="Check Out Time"
-                    value={day.checkOut ? formatClockTime(day.checkOut) : '—'}
+                    value={day.lastOut ? formatClockTime(day.lastOut) : '—'}
                   />
                   <div className="flex items-end">
-                    <ManualBadge updated={day.manuallyUpdated} />
+                    <ManualBadge updated={day.isManuallyUpdated} />
                   </div>
                 </div>
               </>
@@ -193,18 +209,9 @@ export function TimeSheetViewDialog({
               <h3 id="view-comments" className="text-xl font-medium text-heading sm:text-2xl">
                 Comment
               </h3>
-              {data?.comments.length === 0 && (
-                <p className="text-sm text-muted-foreground">No comments.</p>
-              )}
-              {data?.comments.map((comment) => (
-                <p key={comment.id} className="text-sm leading-relaxed text-grey sm:text-base">
-                  {comment.text}
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {comment.author.name} ({comment.author.code}),{' '}
-                    {format(parseISO(comment.createdAt), 'd MMMM yyyy, h:mm a')}
-                  </span>
-                </p>
-              ))}
+              <p className="text-sm leading-relaxed whitespace-pre-line text-grey sm:text-base">
+                {day?.comments ?? 'No comments.'}
+              </p>
             </section>
           </div>
         )}
@@ -220,7 +227,7 @@ export function TimeSheetViewDialog({
       )}
       {sub === 'logs' && (
         <AttendanceLogDialog
-          dayKey={dayKey}
+          punches={data?.punches}
           onClose={() => {
             setSub(null)
           }}

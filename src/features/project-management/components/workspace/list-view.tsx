@@ -3,7 +3,10 @@ import { useRouter } from '@tanstack/react-router'
 
 import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 
+import { columnFromApi } from '../../api/pm.mappers'
 import { COLUMN_LABELS } from '../../constants'
+import { useSaveColumnPermission } from '../../hooks/use-pm'
+import { usePmAccess } from '../../hooks/use-pm-access'
 import type {
   PmPerson,
   Tag,
@@ -44,6 +47,7 @@ export function ListView({
   workspace,
   tree,
   tasks,
+  hiddenColumns,
   visibleTasks,
   searchExpanded,
   narrowed,
@@ -62,6 +66,8 @@ export function ListView({
   tree: WorkspaceTree
   /** Every task of the view. */
   tasks: readonly TaskRow[]
+  /** Columns that are Private Fields for the caller (API keys): not drawn. */
+  hiddenColumns: readonly string[]
   /** The tasks left after the banner search and Filters. */
   visibleTasks: readonly TaskRow[]
   /** Parents the search opens to show a matching subtask. */
@@ -80,7 +86,9 @@ export function ListView({
 }) {
   const router = useRouter()
   const actions = useTaskActions({ workspace, tree, listId, tasks })
-  const { save, saving } = useWorkspacePatch(workspace)
+  const { save } = useWorkspacePatch(workspace)
+  const access = usePmAccess(workspace)
+  const savePermission = useSaveColumnPermission()
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
@@ -105,7 +113,10 @@ export function ListView({
     element?.scrollIntoView({ block: 'center' })
   }, [highlightedId, tasks.length])
 
-  const columns = useMemo(() => visibleColumns(workspace.columns), [workspace.columns])
+  const columns = useMemo(() => {
+    const hidden = new Set(hiddenColumns.map((key) => columnFromApi(key, workspace.labelsFieldId)))
+    return visibleColumns(workspace.columns).filter((column) => !hidden.has(column.key))
+  }, [workspace.columns, workspace.labelsFieldId, hiddenColumns])
   const children = useMemo(() => childrenByParent(visibleTasks), [visibleTasks])
   const groups = useMemo(
     () => groupByStatus(visibleTasks, workspace.setup.statuses),
@@ -177,12 +188,25 @@ export function ListView({
     const order = orderForMove(siblings, movingId, targetId)
     if (order === null) return
     // A task dropped into another status group takes that status; subtasks keep theirs.
-    actions.reorder(moving, order, isTop(target) ? target.statusId : moving.statusId)
+    const statusId = isTop(target) ? target.statusId : moving.statusId
+    const others = siblings.filter((task) => task.id !== movingId)
+    // The API keeps whole sort orders: a free one goes as it is, else the siblings are renumbered.
+    if (Number.isInteger(order) && !others.some((task) => task.order === order)) {
+      actions.reorder(moving, order, statusId)
+      return
+    }
+    const sequence = [...others, { ...moving, order }].toSorted((a, b) => a.order - b.order)
+    sequence.forEach((task, index) => {
+      const next = (index + 1) * 10
+      if (task.id === movingId) actions.reorder(moving, next, statusId)
+      else if (task.order !== next) actions.reorder(task, next, task.statusId)
+    })
   }
 
   const value: ListViewContextValue = {
     workspace,
     tree,
+    access,
     allTasks: tasks,
     columns,
     people,
@@ -318,19 +342,19 @@ export function ListView({
         columnKey={permissionKey}
         workspace={workspace}
         people={people}
-        saving={saving}
+        saving={savePermission.isPending}
         onOpenChange={(open) => {
           if (!open) setPermissionKey(null)
         }}
         onSave={(key, permission) => {
-          const next = workspace.columns.some((column) => column.key === key)
-            ? workspace.columns.map((column) =>
-                column.key === key ? { ...column, permission } : column,
-              )
-            : workspace.columns
-          void save({ columns: next }, 'Permissions saved').then((ok) => {
-            if (ok) setPermissionKey(null)
-          })
+          savePermission.mutate(
+            { workspace, key, permission },
+            {
+              onSuccess: () => {
+                setPermissionKey(null)
+              },
+            },
+          )
         }}
       />
       <ConfirmDialog
@@ -341,7 +365,7 @@ export function ListView({
         title="Delete column?"
         description={
           deletingKey
-            ? `${COLUMN_LABELS[deletingKey]} leaves the List view and its permissions are cleared. The tasks keep their values, and the "+" can add the column back.`
+            ? `${COLUMN_LABELS[deletingKey]} leaves your List view. The tasks keep their values and the column keeps its permissions; the "+" can add it back.`
             : ''
         }
         confirmLabel="Delete Column"

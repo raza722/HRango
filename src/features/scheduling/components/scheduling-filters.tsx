@@ -13,14 +13,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { branchResource, locationResource, useOrgList } from '@/features/settings'
+import { EmployeeSearchSelect } from '@/features/payroll'
 import { parseDateValue, toDateValue } from '@/lib/date'
 import { cn } from '@/lib/utils'
 
-import { EMPLOYMENT_TYPE_LABELS, VIEW_LABELS } from '../constants'
-import { useSchedulingLookups } from '../hooks/use-scheduling'
+import { EMPLOYEE_STATUS_LABELS, SCHEDULING_PERMISSIONS, VIEW_LABELS } from '../constants'
+import { useOrgLookup, useRosterGroupOptions, useTimeSlotOptions } from '../hooks/use-scheduling'
 import type { SchedulingSearch } from '../routing'
-import { EMPLOYMENT_TYPES, SCHEDULE_VIEWS, type ScheduleView } from '../types/scheduling.types'
+import {
+  EMPLOYEE_STATUS_FILTERS,
+  type OrgLookupKind,
+  SCHEDULE_VIEWS,
+  type ScheduleView,
+} from '../types/scheduling.types'
 
 const ALL = '__all__'
 
@@ -127,30 +132,81 @@ export function DateFilter({
   )
 }
 
+/** An organisation filter (`GET /organisation/lookups/{kind}`), fetched once the panel opens. */
+function LookupFilter({
+  kind,
+  label,
+  allLabel,
+  value,
+  onChange,
+}: {
+  kind: OrgLookupKind
+  label: string
+  allLabel: string
+  value: string | undefined
+  onChange: (value: string | undefined) => void
+}) {
+  const lookup = useOrgLookup(kind)
+  return (
+    <FilterSelect
+      label={label}
+      allLabel={allLabel}
+      options={(lookup.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
+      value={value}
+      onChange={onChange}
+    />
+  )
+}
+
+type FilterKey =
+  | 'locationId'
+  | 'branchId'
+  | 'departmentId'
+  | 'designationId'
+  | 'gradeId'
+  | 'employeeGroupId'
+  | 'employmentTypeId'
+
+const ORG_FILTERS: readonly {
+  key: FilterKey
+  kind: OrgLookupKind
+  label: string
+  allLabel: string
+}[] = [
+  { key: 'locationId', kind: 'locations', label: 'Location', allLabel: 'All locations' },
+  { key: 'branchId', kind: 'branches', label: 'Branch', allLabel: 'All branches' },
+  { key: 'departmentId', kind: 'departments', label: 'Department', allLabel: 'All departments' },
+  {
+    key: 'designationId',
+    kind: 'designations',
+    label: 'Designation',
+    allLabel: 'All designations',
+  },
+  { key: 'gradeId', kind: 'grades', label: 'Grade', allLabel: 'All grades' },
+  { key: 'employeeGroupId', kind: 'employee-groups', label: 'Group', allLabel: 'All groups' },
+  {
+    key: 'employmentTypeId',
+    kind: 'employment-types',
+    label: 'Employment type',
+    allLabel: 'All employment types',
+  },
+]
+
 interface SchedulingFiltersProps {
   search: SchedulingSearch
-  rosterOptions: readonly Option[]
   onChange: (patch: Partial<SchedulingSearch>) => void
   onClear: () => void
 }
 
 /**
- * The filter row(s) under the toolbar. "My" has Status, period and dates as
- * drawn; "All" and "Subordinates" add Roster, Location, Branch, Department,
- * Employee, Employment Type and Group.
+ * The filter row(s) under the toolbar, as `GET /scheduling/schedules` takes them. "My" has
+ * Status, period and dates as drawn; "All" and "Subordinates" add Time Slot, Time Roster,
+ * Location, Branch, Department, Designation, Grade, Group, Employment Type and Employee.
  */
-export function SchedulingFilters({
-  search,
-  rosterOptions,
-  onChange,
-  onClear,
-}: SchedulingFiltersProps) {
-  const lookups = useSchedulingLookups()
-  const locations = useOrgList(locationResource, { page: 1, pageSize: 100 })
-  const branches = useOrgList(branchResource, { page: 1, pageSize: 100 })
+export function SchedulingFilters({ search, onChange, onClear }: SchedulingFiltersProps) {
   const many = search.scope !== 'my'
-  const toOptions = (values: readonly string[] | undefined) =>
-    (values ?? []).map((value) => ({ value, label: value }))
+  const slots = useTimeSlotOptions()
+  const rosters = useRosterGroupOptions()
 
   return (
     <section aria-label="Filters" className="grid gap-3 border-t pt-4">
@@ -158,13 +214,13 @@ export function SchedulingFilters({
         <FilterSelect
           label="Employment status"
           allLabel="All statuses"
-          options={[
-            { value: 'active', label: 'Active' },
-            { value: 'inactive', label: 'In Active' },
-          ]}
+          options={EMPLOYEE_STATUS_FILTERS.map((status) => ({
+            value: status,
+            label: EMPLOYEE_STATUS_LABELS[status],
+          }))}
           value={search.status === 'all' ? undefined : search.status}
           onChange={(status) => {
-            onChange({ status: status === 'active' || status === 'inactive' ? status : 'all' })
+            onChange({ status: EMPLOYEE_STATUS_FILTERS.find((item) => item === status) ?? 'all' })
           }}
         />
         <Select
@@ -189,79 +245,47 @@ export function SchedulingFilters({
             <FilterSelect
               label="Time slot"
               allLabel="All time slots"
-              options={rosterOptions}
+              options={(slots.data ?? []).map((slot) => ({ value: slot.id, label: slot.name }))}
+              value={search.timeSlotId}
+              onChange={(timeSlotId) => {
+                onChange({ timeSlotId })
+              }}
+            />
+            <FilterSelect
+              label="Time roster"
+              allLabel="All time rosters"
+              options={(rosters.data ?? []).map((group) => ({
+                value: group.id,
+                label: group.name,
+              }))}
               value={search.rosterGroupId}
               onChange={(rosterGroupId) => {
                 onChange({ rosterGroupId })
               }}
             />
-            <FilterSelect
-              label="Group"
-              allLabel="All groups"
-              options={toOptions(lookups.data?.groups)}
-              value={search.group}
-              onChange={(group) => {
-                onChange({ group })
-              }}
-            />
-            <FilterSelect
-              label="Location"
-              allLabel="All locations"
-              options={(locations.data?.data ?? []).map((item) => ({
-                value: item.id,
-                label: item.name,
-              }))}
-              value={search.locationId}
-              onChange={(locationId) => {
-                onChange({ locationId })
-              }}
-            />
-            <FilterSelect
-              label="Branch"
-              allLabel="All branches"
-              options={(branches.data?.data ?? []).map((item) => ({
-                value: item.id,
-                label: item.name,
-              }))}
-              value={search.branchId}
-              onChange={(branchId) => {
-                onChange({ branchId })
-              }}
-            />
-            <FilterSelect
-              label="Department"
-              allLabel="All departments"
-              options={toOptions(lookups.data?.departments)}
-              value={search.department}
-              onChange={(department) => {
-                onChange({ department })
-              }}
-            />
-            <FilterSelect
-              label="Employee"
-              allLabel="All employees"
-              options={(lookups.data?.employees ?? []).map((item) => ({
-                value: item.id,
-                label: `${item.name} (${item.code})`,
-              }))}
-              value={search.employeeId}
+            {ORG_FILTERS.map((filter) => (
+              <LookupFilter
+                key={filter.key}
+                kind={filter.kind}
+                label={filter.label}
+                allLabel={filter.allLabel}
+                value={search[filter.key]}
+                onChange={(value) => {
+                  onChange({ [filter.key]: value })
+                }}
+              />
+            ))}
+            {/* Searched on the server and paged ("Load more"), so anyone can be picked. */}
+            <EmployeeSearchSelect
+              aria-label="Employee"
+              placeholder="All employees"
+              clearable
+              filters={{ permission: SCHEDULING_PERMISSIONS.view }}
+              value={search.employeeId ?? null}
               onChange={(employeeId) => {
-                onChange({ employeeId })
+                onChange({ employeeId: employeeId ?? undefined })
               }}
-            />
-            <FilterSelect
-              label="Employment type"
-              allLabel="All employment types"
-              options={EMPLOYMENT_TYPES.map((type) => ({
-                value: type,
-                label: EMPLOYMENT_TYPE_LABELS[type],
-              }))}
-              value={search.employmentType}
-              onChange={(employmentType) => {
-                onChange({
-                  employmentType: EMPLOYMENT_TYPES.find((type) => type === employmentType),
-                })
-              }}
+              className={filterControlClass}
             />
           </>
         )}

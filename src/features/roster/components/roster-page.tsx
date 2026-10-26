@@ -10,8 +10,10 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
+import { ROSTER_PERMISSIONS } from '../constants'
 import {
   useDeleteRosterGroup,
   useRosterGroups,
@@ -59,6 +61,10 @@ export function RosterPage() {
   const setStatus = useSetRosterGroupStatus()
   const deleteGroup = useDeleteRosterGroup()
   const [pendingDelete, setPendingDelete] = useState<RosterGroupRow | null>(null)
+  const canCreate = useCan(ROSTER_PERMISSIONS.groupsCreate)
+  const canEdit = useCan(ROSTER_PERMISSIONS.groupsEdit)
+  const canDelete = useCan(ROSTER_PERMISSIONS.groupsDelete)
+  const canSeeEnrolments = useCan(ROSTER_PERMISSIONS.enrolmentsView)
 
   const update = (patch: Partial<typeof search>, replace = false) =>
     navigate({ search: (prev) => ({ ...prev, ...patch }), replace })
@@ -68,6 +74,15 @@ export function RosterPage() {
   const closeDialog = () => {
     void update({ dialog: undefined, id: undefined })
   }
+  // A dialog in the URL opens only when the user may use it.
+  const groupDialog =
+    dialog === 'add' && canCreate
+      ? 'add'
+      : dialog === 'edit' && canEdit && id
+        ? 'edit'
+        : dialog === 'view' && id
+          ? 'view'
+          : null
 
   // The box updates at once; the URL (and the request) follow when typing pauses.
   const [text, setText] = useState(q)
@@ -123,6 +138,7 @@ export function RosterPage() {
         <Switch
           aria-label={`${row.title} is active`}
           checked={row.isActive}
+          disabled={!canEdit}
           onCheckedChange={(isActive) => {
             setStatus.mutate({ group: row, isActive })
           }}
@@ -136,22 +152,26 @@ export function RosterPage() {
       className: 'w-52',
       cell: (row) => (
         <div className="inline-flex items-center gap-1 md:justify-center">
-          <IconAction
-            label={`Edit ${row.title}`}
-            icon={SquarePen}
-            tone="text-blue-500"
-            onClick={() => {
-              openDialog('edit', row.id)
-            }}
-          />
-          <IconAction
-            label={`Enroll employees in ${row.title}`}
-            icon={PersonStanding}
-            tone="text-emerald-500"
-            onClick={() => {
-              openDialog('enroll', row.id)
-            }}
-          />
+          {canEdit && (
+            <IconAction
+              label={`Edit ${row.title}`}
+              icon={SquarePen}
+              tone="text-blue-500"
+              onClick={() => {
+                openDialog('edit', row.id)
+              }}
+            />
+          )}
+          {canSeeEnrolments && (
+            <IconAction
+              label={`Enroll employees in ${row.title}`}
+              icon={PersonStanding}
+              tone="text-emerald-500"
+              onClick={() => {
+                openDialog('enroll', row.id)
+              }}
+            />
+          )}
           <IconAction
             label={`View ${row.title}`}
             icon={Eye}
@@ -160,14 +180,16 @@ export function RosterPage() {
               openDialog('view', row.id)
             }}
           />
-          <IconAction
-            label={`Delete ${row.title}`}
-            icon={Trash2}
-            tone="text-red-500"
-            onClick={() => {
-              setPendingDelete(row)
-            }}
-          />
+          {canDelete && (
+            <IconAction
+              label={`Delete ${row.title}`}
+              icon={Trash2}
+              tone="text-red-500"
+              onClick={() => {
+                setPendingDelete(row)
+              }}
+            />
+          )}
         </div>
       ),
     },
@@ -200,14 +222,16 @@ export function RosterPage() {
                 className="pl-9 placeholder:text-field-value sm:pl-9"
               />
             </div>
-            <Button
-              onClick={() => {
-                openDialog('add')
-              }}
-              className={rosterType.button}
-            >
-              <Plus /> Add New
-            </Button>
+            {canCreate && (
+              <Button
+                onClick={() => {
+                  openDialog('add')
+                }}
+                className={rosterType.button}
+              >
+                <Plus /> Add New
+              </Button>
+            )}
           </div>
         </div>
         <EntriesSelect
@@ -260,10 +284,10 @@ export function RosterPage() {
         </CardContent>
       </Card>
 
-      {(dialog === 'add' || ((dialog === 'edit' || dialog === 'view') && id)) && (
+      {groupDialog && (
         <RosterGroupDialog
-          key={`${dialog}-${id ?? 'new'}`}
-          mode={dialog}
+          key={`${groupDialog}-${id ?? 'new'}`}
+          mode={groupDialog}
           groupId={id}
           onClose={closeDialog}
           onEdit={(groupId) => {
@@ -271,7 +295,9 @@ export function RosterPage() {
           }}
         />
       )}
-      {dialog === 'enroll' && id && <EnrollmentDialog groupId={id} onClose={closeDialog} />}
+      {dialog === 'enroll' && canSeeEnrolments && id && (
+        <EnrollmentDialog groupId={id} onClose={closeDialog} />
+      )}
 
       <ConfirmDialog
         open={pendingDelete !== null}

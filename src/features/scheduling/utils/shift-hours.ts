@@ -2,10 +2,21 @@ import type { ScheduleBreak, ScheduleEntry } from '../types/scheduling.types'
 
 const MINUTES_PER_DAY = 24 * 60
 
+/** `HH:mm` or `HH:mm:ss` → minutes after midnight. */
 function toMinutes(time: string | null): number | null {
-  const match = time ? /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time) : null
+  const match = time ? /^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/.exec(time) : null
   return match ? Number(match[1]) * 60 + Number(match[2]) : null
 }
+
+/** `"2026-11-02T09:00:00"` (an API date-time) → `"09:00"`; `null` when it has no time. */
+export function clockOf(dateTime: string | null | undefined): string | null {
+  const match = dateTime ? /T(\d{2}:\d{2})/.exec(dateTime) : null
+  return match?.[1] ?? null
+}
+
+/** `"09:00:00"` (an API time) → `"09:00"`. */
+export const hhmm = (time: string | null | undefined): string | null =>
+  time ? time.slice(0, 5) : null
 
 /** Clock in to clock out; a clock out before the clock in ends the next day. */
 export function spanMinutes(clockIn: string | null, clockOut: string | null): number {
@@ -20,7 +31,7 @@ export function breakMinutes(item: ScheduleBreak): number {
 }
 
 /**
- * Planned working minutes of one entry: a flexible slot counts its workable
+ * Planned working minutes of one mock-store entry (the API sends `plannedMinutes`): a flexible slot counts its workable
  * hours; otherwise the shift length minus breaks that are not inclusive.
  */
 export function plannedMinutes(entry: ScheduleEntry): number {
@@ -43,7 +54,7 @@ export function formatHours(minutes: number): string {
   return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
 }
 
-/** "10:00" → "10:00 Am", as the cells print times. */
+/** "10:00" (or "10:00:00") → "10:00 Am", as the cells print times. */
 export function formatClock(time: string | null): string {
   const minutes = toMinutes(time)
   if (minutes === null) return '--:--'

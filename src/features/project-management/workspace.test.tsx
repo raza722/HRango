@@ -2,7 +2,14 @@ import { configure, fireEvent, screen, waitFor, within } from '@testing-library/
 import type { UserEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 
-import { tasks, workspaces } from '@/mocks/project-management/db'
+import {
+  columnPermissions,
+  favorites,
+  reminders,
+  tasks,
+  views,
+  workspaces,
+} from '@/mocks/project-management/db'
 import { renderApp } from '@/test/test-utils'
 
 const PAGE = '/project-management/workspaces/ws_uxui'
@@ -53,6 +60,15 @@ async function openSubMenu(user: UserEvent, menu: HTMLElement, trigger: string) 
 
 const task = (id: string) => tasks.find(id)
 const workspace = () => workspaces.find('ws_uxui')
+
+/** The List view's columns as the workspace's List view keeps them (`config.columns`, API keys). */
+const listColumns = () => {
+  const config = views.find('vw_ws_uxui_list')?.config
+  return (Array.isArray(config?.columns) ? config.columns : []) as {
+    key: string
+    visible: boolean
+  }[]
+}
 
 describe('Workspace page', { timeout: 60_000 }, () => {
   it('draws the banner and groups the tasks by status, subtasks under their task', async () => {
@@ -117,7 +133,11 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     const progress = await group('In-Progress')
     expect(await within(progress).findByText('Usability test plan')).toBeVisible()
     const created = tasks.all().find((entry) => entry.name === 'Usability test plan')
-    expect(created).toMatchObject({ statusId: 'st_progress', listId: null, parentId: null })
+    expect(created).toMatchObject({
+      statusId: 'st_progress',
+      taskListId: null,
+      parentTaskId: null,
+    })
     // The row stays open for the next one; Escape closes it.
     expect(screen.getByRole('textbox', { name: 'Task name' })).toHaveValue('')
     await user.keyboard('{Escape}')
@@ -133,7 +153,7 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     await waitFor(() => {
       expect(tasks.all().find((entry) => entry.name === 'Design sign-off')).toMatchObject({
         statusId: 'st_todo',
-        type: 'milestone',
+        taskType: 'milestone',
       })
     })
   })
@@ -189,7 +209,7 @@ describe('Workspace page', { timeout: 60_000 }, () => {
       expect(screen.queryAllByRole('button', { name: 'Start Date column menu' })).toHaveLength(0)
     })
     await waitFor(() => {
-      expect(workspace()?.columns.find((column) => column.key === 'startDate')?.visible).toBe(false)
+      expect(listColumns().find((column) => column.key === 'start_date')?.visible).toBe(false)
     })
     const [add] = screen.getAllByRole('button', { name: 'Add Column' })
     if (!add) throw new Error('No Add Column button')
@@ -203,10 +223,10 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     menu = await openColumnMenu(user, 'Set Priority')
     await user.click(within(menu).getByRole('menuitem', { name: 'Move to Start' }))
     await waitFor(() => {
-      const shown = workspace()
-        ?.columns.filter((column) => column.visible)
+      const shown = listColumns()
+        .filter((column) => column.visible)
         .map((column) => column.key)
-      expect(shown?.slice(0, 3)).toEqual(['name', 'priority', 'assignees'])
+      expect(shown.slice(0, 3)).toEqual(['name', 'priority', 'assignees'])
     })
     const headers = within(await group('To Do'))
       .getAllByRole('columnheader')
@@ -220,7 +240,7 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     const confirm = await screen.findByRole('alertdialog', { name: 'Delete column?' })
     await user.click(within(confirm).getByRole('button', { name: 'Delete Column' }))
     await waitFor(() => {
-      expect(workspace()?.columns.some((column) => column.key === 'dueDate')).toBe(false)
+      expect(listColumns().some((column) => column.key === 'due_date')).toBe(false)
     })
   })
 
@@ -230,7 +250,11 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     let menu = await openRowMenu(user, 'User Persona List')
     await user.click(within(menu).getByRole('menuitem', { name: 'Add to Favorite' }))
     await waitFor(() => {
-      expect(task('tk_persona')?.favorite).toBe(true)
+      expect(
+        favorites
+          .all()
+          .some((entry) => entry.entityType === 'task' && entry.entityId === 'tk_persona'),
+      ).toBe(true)
     })
     menu = await openRowMenu(user, 'User Persona List')
     expect(within(menu).getByRole('menuitem', { name: 'Remove from Favorite' })).toBeVisible()
@@ -242,7 +266,7 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     const lists = within(moveTo).getByRole('group', { name: 'UX/UI Design Team Work Space' })
     fireEvent.click(within(lists).getByRole('menuitem', { name: /^Information Gathering/ }))
     await waitFor(() => {
-      expect(task('tk_flow')?.listId).toBe('it_info')
+      expect(task('tk_flow')?.taskListId).toBe('it_info')
     })
     expect(await screen.findByText('Moved to Information Gathering')).toBeInTheDocument()
 
@@ -256,7 +280,10 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     ).toHaveFocus()
     await user.keyboard('{Enter}')
     await waitFor(() => {
-      expect(task('tk_persona')).toMatchObject({ parentId: 'tk_quali', listId: 'it_quali' })
+      expect(task('tk_persona')).toMatchObject({
+        parentTaskId: 'tk_quali',
+        taskListId: 'it_quali',
+      })
     })
     // It now opens under its parent.
     const todo = await group('To Do')
@@ -275,7 +302,7 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     expect(within(types).getByRole('menuitemcheckbox', { name: 'Task' })).toBeChecked()
     await user.keyboard('{ArrowDown}{Enter}')
     await waitFor(() => {
-      expect(task('tk_ui')?.type).toBe('milestone')
+      expect(task('tk_ui')?.taskType).toBe('milestone')
     })
 
     // Delete asks first.
@@ -297,7 +324,7 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     await user.keyboard('{ArrowUp}')
     expect(namesIn(todo)).toEqual(['User Persona List', 'User Qualitative Research'])
     await waitFor(() => {
-      expect(task('tk_persona')?.order).toBeLessThan(task('tk_quali')?.order ?? 0)
+      expect(task('tk_persona')?.sortOrder).toBeLessThan(task('tk_quali')?.sortOrder ?? 0)
     })
 
     // Dropped on a row of another group, a task takes that group's status.
@@ -310,6 +337,12 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     fireEvent.drop(row)
     await waitFor(() => {
       expect(task('tk_ui')?.statusId).toBe('st_todo')
+    })
+    // No whole number fits between them: the group is renumbered.
+    await waitFor(() => {
+      expect(['tk_persona', 'tk_ui', 'tk_quali'].map((id) => task(id)?.sortOrder)).toEqual([
+        10, 20, 30,
+      ])
     })
     expect(namesIn(todo)).toEqual([
       'User Persona List',
@@ -326,10 +359,12 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     const popup = await screen.findByRole('dialog', { name: 'Remind me about User Persona List' })
     await user.click(within(popup).getByRole('button', { name: /^Tomorrow/ }))
     await user.click(within(popup).getByRole('button', { name: 'Save' }))
+    // POST /projects/reminders: the caller's own reminder on the task.
+    const reminder = () => reminders.all().find((entry) => entry.entityId === 'tk_persona')
     await waitFor(() => {
-      expect(task('tk_persona')?.reminderAt).not.toBeNull()
+      expect(reminder()).toBeDefined()
     })
-    const at = new Date(task('tk_persona')?.reminderAt ?? '')
+    const at = new Date(`${reminder()?.remindAt ?? ''}Z`)
     const tomorrow = new Date()
     tomorrow.setDate(tomorrow.getDate() + 1)
     expect(at.getDate()).toBe(tomorrow.getDate())
@@ -371,10 +406,11 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Set Role Permission' })).not.toBeInTheDocument()
     })
-    expect(workspace()?.columns.find((column) => column.key === 'assignees')?.permission).toEqual({
-      defaultLevel: 'can-view',
-      roles: { managers: 'private' },
-      members: [{ employeeId: 'em_haroon', level: 'can-edit' }],
+    // PUT /projects/workspaces/{id}/column-permissions/assignees
+    expect(columnPermissions.all().find((entry) => entry.columnKey === 'assignees')).toMatchObject({
+      defaultLevel: 'can_view',
+      roles: [{ memberRole: 'manager', permissionLevel: 'private' }],
+      members: [{ employeeId: 'em_haroon', permissionLevel: 'can_edit' }],
     })
     expect(await screen.findByText('Permissions saved')).toBeInTheDocument()
   })
@@ -413,9 +449,41 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     await user.click(within(dialog).getByRole('button', { name: 'Invite Member' }))
 
     await waitFor(() => {
-      expect(workspace()?.memberIds).toContain('em_daniel')
+      expect(workspace()?.members).toContainEqual({
+        employeeId: 'em_daniel',
+        memberRole: 'contributor',
+      })
     })
     expect(await screen.findByText('Member invited')).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: '9 members' })).toHaveTextContent('6 +')
+  })
+  it('hides what a contributor may not do: the workspace role decides', async () => {
+    const research = workspaces.find('ws_research')
+    if (!research) throw new Error('No ws_research')
+    workspaces.update('ws_research', {
+      ...research,
+      members: [
+        { employeeId: 'em_jack', memberRole: 'workspace_admin' },
+        { employeeId: 'em_shelley', memberRole: 'contributor' },
+      ],
+    })
+    renderApp('/project-management/workspaces/ws_research')
+
+    expect(
+      await screen.findByRole(
+        'heading',
+        { name: 'User Research & Planning', level: 1 },
+        FIRST_LOAD,
+      ),
+    ).toBeVisible()
+    expect(await screen.findByText('No tasks yet')).toBeVisible()
+    // Contributors add subtasks only, keep the workspace as it is and set no permissions.
+    expect(screen.queryByRole('button', { name: 'Add Task' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'More ways to add a task' }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Invite Members' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add View' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Change Cover' })).not.toBeInTheDocument()
   })
 })

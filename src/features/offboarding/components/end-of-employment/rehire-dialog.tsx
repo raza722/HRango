@@ -15,7 +15,7 @@ import {
 import { ApiError } from '@/lib/api-error'
 
 import { useEndOfEmployment, useRehire } from '../../hooks/use-offboarding'
-import type { EndOfEmploymentDetail } from '../../types/offboarding.types'
+import type { EndOfEmployment } from '../../types/offboarding.types'
 
 const DATE = 'MMMM d,yyyy'
 
@@ -38,7 +38,7 @@ export function RehireDialog({ id, onClose }: { id: string; onClose: () => void 
   return <RehireForm record={record.data} onClose={onClose} />
 }
 
-function RehireForm({ record, onClose }: { record: EndOfEmploymentDetail; onClose: () => void }) {
+function RehireForm({ record, onClose }: { record: EndOfEmployment; onClose: () => void }) {
   const formId = useId()
   const rehire = useRehire()
   const [confirming, setConfirming] = useState<string | null>(null)
@@ -46,7 +46,8 @@ function RehireForm({ record, onClose }: { record: EndOfEmploymentDetail; onClos
     resolver: zodResolver(schema),
     defaultValues: { joiningDate: '' },
   })
-  const last = record.lastWorkingDate ?? record.createdAt.slice(0, 10)
+  const last = record.lastWorkingDate
+  const name = record.employeeName ?? record.employeeCode ?? 'the employee'
 
   const submit = form.handleSubmit((values) => {
     setConfirming(values.joiningDate)
@@ -55,7 +56,7 @@ function RehireForm({ record, onClose }: { record: EndOfEmploymentDetail; onClos
   const confirm = () => {
     if (!confirming) return
     rehire.mutate(
-      { id: record.id, joiningDate: confirming },
+      { record, joiningDate: confirming },
       {
         onSuccess: () => {
           onClose()
@@ -96,7 +97,7 @@ function RehireForm({ record, onClose }: { record: EndOfEmploymentDetail; onClos
                 {...a11y}
                 value={record.employeeId}
                 onChange={() => undefined}
-                options={[{ value: record.employeeId, label: record.card.name }]}
+                options={[{ value: record.employeeId, label: name }]}
                 placeholder="Select Employee"
                 disabled
                 className="disabled:opacity-100"
@@ -129,7 +130,7 @@ function RehireForm({ record, onClose }: { record: EndOfEmploymentDetail; onClos
         onOpenChange={(open) => {
           if (!open) setConfirming(null)
         }}
-        title={`Rehire ${record.card.name}`}
+        title={`Rehire ${name}`}
         message="Are you sure you want to Perform this action?"
         onConfirm={confirm}
       />

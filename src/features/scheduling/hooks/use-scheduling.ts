@@ -1,68 +1,143 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import {
-  activeShiftQueryOptions,
   boardQueryOptions,
   employeesQueryOptions,
-  entryQueryOptions,
   geoFencesQueryOptions,
-  lookupsQueryOptions,
+  optionsQueryOptions,
+  orgLookupQueryOptions,
+  scheduleQueryOptions,
   schedulingApi,
   schedulingKeys,
+  yearQueryOptions,
 } from '../api/scheduling.api'
 import type {
-  ApplyDefaultShiftInput,
-  BatchResult,
+  ActiveShift,
   BoardParams,
-  CreateScheduleInput,
-  DeleteScheduleInput,
+  BulkDeleteInput,
+  BulkDeleteResult,
+  BulkEditInput,
+  DefaultShiftInput,
   EmployeeFilters,
-  EntryPatch,
-  GeoFenceInput,
-  ImportRow,
-  RestDayInput,
+  OrgLookupKind,
+  RestDayRangeDeleteInput,
+  RestDayRuleInput,
+  ScheduleBatchInput,
+  ScheduleBatchResult,
+  ScheduleInput,
   SwapInput,
+  YearParams,
 } from '../types/scheduling.types'
+import { toDay } from '../utils/schedule-dates'
+import { clockOf } from '../utils/shift-hours'
 
-export function useScheduleBoard(params: BoardParams) {
-  return useQuery(boardQueryOptions(params))
+export function useScheduleBoard(params: BoardParams, enabled = true) {
+  return useQuery({ ...boardQueryOptions(params), enabled })
 }
 
+export function useScheduleYear(params: YearParams, enabled = true) {
+  return useQuery({ ...yearQueryOptions(params), enabled })
+}
+
+/**
+ * "Active Status": the signed-in person's shift today, read from the My board for today
+ * (the API has no separate endpoint). A user with no employee record has none.
+ */
 export function useActiveShift() {
-  return useQuery(activeShiftQueryOptions())
+  const today = toDay(new Date())
+  return useQuery({
+    queryKey: schedulingKeys.activeShift(today),
+    queryFn: async ({ signal }): Promise<ActiveShift> => {
+      const page = await schedulingApi.board(
+        { scope: 'my', from: today, to: today, page: 1, pageSize: 1 },
+        signal,
+      )
+      const shift = page.data[0]?.shifts[0]
+      return shift
+        ? {
+            slotName: shift.timeSlotName,
+            clockIn: clockOf(shift.startAt),
+            clockOut: clockOf(shift.endAt),
+          }
+        : { slotName: null, clockIn: null, clockOut: null }
+    },
+  })
 }
 
-export function useSchedulingLookups() {
-  return useQuery(lookupsQueryOptions())
+export function useSchedule(id: string | undefined) {
+  return useQuery({ ...scheduleQueryOptions(id ?? ''), enabled: id !== undefined })
 }
 
-export function useEmployeeSearch(filters: EmployeeFilters & { search?: string }) {
-  return useQuery(employeesQueryOptions(filters))
+export function useTimeSlotOptions() {
+  return useQuery(optionsQueryOptions('time-slots'))
 }
 
-export function useScheduleEntry(id: string | undefined) {
-  return useQuery({ ...entryQueryOptions(id ?? ''), enabled: id !== undefined })
+export function useBreakTypeOptions() {
+  return useQuery(optionsQueryOptions('break-types'))
+}
+
+export function useRosterGroupOptions() {
+  return useQuery(optionsQueryOptions('roster-groups'))
 }
 
 export function useGeoFences() {
   return useQuery(geoFencesQueryOptions())
 }
 
-/** "3 shifts created, 1 updated" from a batch result. */
-export function describeBatch(result: BatchResult, noun = 'day'): string {
-  const count = (amount: number) => `${amount} ${noun}${amount === 1 ? '' : 's'}`
-  const parts = [
-    result.created && `${count(result.created)} added`,
-    result.updated && `${count(result.updated)} updated`,
-    result.deleted && `${count(result.deleted)} deleted`,
-  ].filter(Boolean)
-  return parts.length > 0 ? parts.join(', ') : 'Nothing changed'
+export function useOrgLookup(kind: OrgLookupKind, enabled = true) {
+  return useQuery({ ...orgLookupQueryOptions(kind), enabled })
 }
 
 /**
- * A schedule change: on success the board, the "Active Status" box and any
- * open entry refetch, and a toast describes what happened.
+ * People `permission` reaches, searched on the server (`filters.search`, debounced by the
+ * caller) and paged: `rows` holds every page read, `loadMore` reads the next.
+ */
+export function useEmployeeSearch(permission: string, filters: EmployeeFilters) {
+  const query = useInfiniteQuery(employeesQueryOptions(permission, filters))
+  return {
+    rows: query.data?.pages.flatMap((page) => page.data) ?? [],
+    total: query.data?.pages[0]?.meta.total ?? 0,
+    hasMore: query.hasNextPage,
+    loadMore: () => {
+      void query.fetchNextPage()
+    },
+    isPending: query.isPending,
+    isFetchingMore: query.isFetchingNextPage,
+    isError: query.isError,
+    error: query.error,
+  }
+}
+
+const plural = (amount: number, noun: string) => `${amount} ${noun}${amount === 1 ? '' : 's'}`
+
+/** "5 shifts added, 2 replaced, 1 rest day skipped" from a batch result. */
+export function describeBatch(result: ScheduleBatchResult): string {
+  const parts = [
+    `${plural(result.createdCount, 'shift')} added`,
+    result.replacedCount > 0 && `${result.replacedCount} replaced`,
+    result.skippedRestDays > 0 && `${plural(result.skippedRestDays, 'rest day')} skipped`,
+    result.skippedNoShift > 0 && `${plural(result.skippedNoShift, 'day')} without a shift`,
+  ].filter(Boolean)
+  return parts.join(', ')
+}
+
+/** "3 shifts and 1 rest day deleted". */
+export function describeDelete(result: BulkDeleteResult): string {
+  if (result.deletedSchedules === 0 && result.deletedRestDays === 0) {
+    return 'There was nothing to delete in that range'
+  }
+  const parts = [
+    result.deletedSchedules > 0 && plural(result.deletedSchedules, 'shift'),
+    result.deletedRestDays > 0 && plural(result.deletedRestDays, 'rest day'),
+  ].filter(Boolean)
+  return `${parts.join(' and ')} deleted`
+}
+
+/**
+ * A schedule change: on success the board, the "Active Status" box and any open shift
+ * refetch, and a toast describes what happened. Forms that show the API's message
+ * themselves (a 409 overlap they can resend) pass `suppressErrorToast`.
  */
 function useScheduleMutation<TInput, TResult>(
   mutationFn: (input: TInput) => Promise<TResult>,
@@ -80,82 +155,114 @@ function useScheduleMutation<TInput, TResult>(
   })
 }
 
-export const useCreateSchedule = () =>
+export const useCreateBatch = () =>
   useScheduleMutation(
-    (input: CreateScheduleInput) => schedulingApi.createSchedule(input),
+    (input: ScheduleBatchInput) => schedulingApi.createBatch(input),
     (result) => `Schedule saved: ${describeBatch(result)}`,
     { suppressErrorToast: true },
   )
 
 export const useApplyDefaultShift = () =>
   useScheduleMutation(
-    (input: ApplyDefaultShiftInput) => schedulingApi.applyDefault(input),
+    (input: DefaultShiftInput) => schedulingApi.applyDefaultShift(input),
     (result) => `Default shift applied: ${describeBatch(result)}`,
+    { suppressErrorToast: true },
   )
 
-export const useDeleteScheduleRange = () =>
+export const useBulkDelete = () =>
   useScheduleMutation(
-    (input: DeleteScheduleInput) => schedulingApi.deleteRange(input),
-    (result) =>
-      result.deleted === 0
-        ? 'There was nothing to delete in that range'
-        : `${result.deleted} scheduled day${result.deleted === 1 ? '' : 's'} deleted`,
+    (input: BulkDeleteInput) => schedulingApi.bulkDelete(input),
+    (result) => describeDelete(result),
   )
 
 export const useCreateRestDays = () =>
   useScheduleMutation(
-    (input: RestDayInput) => schedulingApi.createRestDays(input),
-    (result) => `Rest days saved: ${describeBatch(result, 'rest day')}`,
+    (input: RestDayRuleInput) => schedulingApi.createRestDayRule(input),
+    (rule) => `Rest days saved: ${plural(rule.restDayCount, 'rest day')} added`,
   )
 
-export const useUpdateEntry = () =>
+export const useDeleteRestDays = () =>
   useScheduleMutation(
-    ({ id, patch }: { id: string; patch: EntryPatch }) => schedulingApi.updateEntry(id, patch),
+    (input: RestDayRangeDeleteInput) => schedulingApi.deleteRestDayRange(input),
+    (result) => (result.deletedRestDays === 1 ? 'Rest day deleted' : describeDelete(result)),
+  )
+
+export const useCreateSchedule = () =>
+  useScheduleMutation(
+    (input: ScheduleInput) => schedulingApi.createSchedule(input),
+    () => 'Shift added',
+    { suppressErrorToast: true },
+  )
+
+export const useUpdateSchedule = () =>
+  useScheduleMutation(
+    ({ id, input }: { id: string; input: ScheduleInput }) =>
+      schedulingApi.updateSchedule(id, input),
     () => 'Schedule updated',
+    { suppressErrorToast: true },
   )
 
-export const useBulkUpdateEntries = () =>
+/** Moves a shift to another date for the same person (an edit that keeps everything else). */
+export const useMoveSchedule = () =>
   useScheduleMutation(
-    ({ ids, patch }: { ids: string[]; patch: EntryPatch }) => schedulingApi.bulkUpdate(ids, patch),
-    (result) => `${result.updated} scheduled day${result.updated === 1 ? '' : 's'} updated`,
+    async ({ id, workDate }: { id: string; workDate: string }) => {
+      const shift = await schedulingApi.schedule(id)
+      return schedulingApi.updateSchedule(id, {
+        workDate,
+        timeSlotId: shift.timeSlotId,
+        startTime: clockOf(shift.startAt),
+        endTime: clockOf(shift.endAt),
+        geoFenceId: shift.geoFenceId,
+        isWfh: shift.isWfh,
+        breaks: shift.breaks.map((item) => ({
+          breakTypeId: item.breakTypeId,
+          startTime: clockOf(item.startAt) ?? '00:00',
+          endTime: clockOf(item.endAt) ?? '00:00',
+          isInclusive: item.isInclusive,
+        })),
+        rowVersion: shift.rowVersion,
+      })
+    },
+    () => 'Shift moved',
   )
 
-export const useBulkDeleteEntries = () =>
+export const useBulkEdit = () =>
   useScheduleMutation(
-    (ids: string[]) => schedulingApi.bulkDelete(ids),
-    (result) =>
-      `${result.deleted} shift${result.deleted === 1 ? '' : 's'} deleted` +
-      (result.skipped ? `, ${result.skipped} rest day${result.skipped === 1 ? '' : 's'} kept` : ''),
+    (input: BulkEditInput) => schedulingApi.bulkEdit(input),
+    (result) => `${plural(result.updatedSchedules, 'shift')} updated`,
   )
 
-export const useDeleteEntry = () =>
+export const useDeleteSchedule = () =>
   useScheduleMutation(
-    (id: string) => schedulingApi.deleteEntry(id),
+    ({ id, rowVersion }: { id: string; rowVersion?: string }) =>
+      schedulingApi.deleteSchedule(id, rowVersion),
     () => 'Shift deleted',
   )
 
 export const useSwapShift = () =>
   useScheduleMutation(
-    (input: SwapInput) => schedulingApi.swap(input),
-    (result) => (result.updated === 2 ? 'Shifts swapped' : 'Shift moved'),
+    ({ id, input }: { id: string; input: SwapInput }) => schedulingApi.swap(id, input),
+    (_result, { input }) => (input.withScheduleId ? 'Shifts swapped' : 'Shift moved'),
   )
 
-export const useImportSchedule = () =>
-  useScheduleMutation(
-    (rows: ImportRow[]) => schedulingApi.importRows(rows),
-    (result) =>
-      `Import finished: ${describeBatch(result)}` +
-      (result.skipped ? `, ${result.skipped} row${result.skipped === 1 ? '' : 's'} skipped` : ''),
-  )
-
-export function useCreateGeoFence() {
-  const queryClient = useQueryClient()
+/** Downloads the filtered board as CSV (`GET /scheduling/schedules/export`). */
+export function useExportSchedule() {
   return useMutation({
-    mutationFn: (input: GeoFenceInput) => schedulingApi.createGeoFence(input),
-    meta: { suppressErrorToast: true },
-    onSuccess: async (fence) => {
-      toast.success(`Geo fence “${fence.name}” created`)
-      await queryClient.invalidateQueries({ queryKey: schedulingKeys.geoFences() })
+    mutationFn: async (params: Omit<BoardParams, 'page' | 'pageSize'>) => {
+      const csv = await schedulingApi.exportCsv(params)
+      return { csv, fileName: `schedule_${params.from}_${params.to}.csv` }
+    },
+    onSuccess: ({ csv, fileName }) => {
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = fileName
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      toast.success('Schedule exported')
     },
   })
 }

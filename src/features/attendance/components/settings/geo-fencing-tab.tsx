@@ -15,8 +15,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
 import { LocationSearch } from '@/features/settings'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import {
@@ -24,18 +26,26 @@ import {
   useSaveSetting,
   useSetSettingActive,
   useSettingsList,
+  useSettingsRecord,
 } from '../../hooks/use-attendance-settings'
 import type { AudienceCriteria, GeoFenceSetting } from '../../types/settings.types'
+import { criteriaIsEmpty, toCriteria, toTargets } from '../../utils/criteria'
 import {
   navyButtonClass,
   poppinsDialogTitleClass,
   poppinsFieldsClass,
   stepDialogButtonClass,
 } from '../../utils/settings-styles'
+import { DateBox } from '../shared/date-box'
 import { CriteriaEditor } from './criteria-editor'
 import { ActiveChip, SettingsListCard } from './settings-list'
 
 type Shape = 'circle' | 'polygon'
+
+const PERMISSION = 'attendance.settings.geo_fencing'
+
+const toCoordinates = (lat: number | null, lng: number | null): Coordinates | null =>
+  lat === null || lng === null ? null : { latitude: lat, longitude: lng }
 
 /**
  * "Select Geo Fence" in two steps: draw it (Circle or Polygon, search a
@@ -51,37 +61,37 @@ function GeoFenceWizard({
 }) {
   const ids = { name: useId(), radius: useId(), shape: useId() }
   const save = useSaveSetting('geoFences')
-  const start = record?.shape
+  const canSave = useCan(`${PERMISSION}.${record ? 'edit' : 'create'}`)
+  const startCenter = record ? toCoordinates(record.centerLat, record.centerLng) : null
+  const startPoints = (record?.polygonPoints ?? []).map((point) => ({
+    latitude: point.lat,
+    longitude: point.lng,
+  }))
   const [step, setStep] = useState<1 | 2>(1)
-  const [shape, setShape] = useState<Shape>(start?.type ?? 'circle')
-  const [center, setCenter] = useState<Coordinates | null>(
-    start?.type === 'circle' ? { latitude: start.latitude, longitude: start.longitude } : null,
-  )
-  const [radius, setRadius] = useState(
-    start?.type === 'circle' ? String(start.radiusMeters) : '200',
-  )
-  const [points, setPoints] = useState<Coordinates[]>(start?.type === 'polygon' ? start.points : [])
-  const [focus, setFocus] = useState<Coordinates | null>(
-    start?.type === 'circle'
-      ? { latitude: start.latitude, longitude: start.longitude }
-      : (start?.points[0] ?? null),
-  )
+  const [shape, setShape] = useState<Shape>(record?.shape ?? 'circle')
+  const [center, setCenter] = useState<Coordinates | null>(startCenter)
+  const [radius, setRadius] = useState(record?.radiusM ? String(record.radiusM) : '200')
+  const [points, setPoints] = useState<Coordinates[]>(startPoints)
+  const [focus, setFocus] = useState<Coordinates | null>(startCenter ?? startPoints[0] ?? null)
   const [name, setName] = useState(record?.name ?? '')
-  const [forShift, setForShift] = useState(record?.forShift ?? true)
-  const [allEmployees, setAllEmployees] = useState(record?.allEmployees ?? true)
-  const [criteria, setCriteria] = useState<AudienceCriteria[]>(record?.criteria ?? [])
+  const [forShift, setForShift] = useState(record?.isForShift ?? true)
+  const [active, setActive] = useState(record?.isActive ?? true)
+  const [allEmployees, setAllEmployees] = useState(record?.appliesToAll ?? true)
+  const [criteria, setCriteria] = useState<AudienceCriteria>(() => toCriteria(record?.targets))
+  const [joiningFrom, setJoiningFrom] = useState(record?.joiningFromDate ?? '')
+  const [joiningTo, setJoiningTo] = useState(record?.joiningToDate ?? '')
   const [error, setError] = useState<string | null>(null)
   const radiusMeters = Number(radius)
 
   const next = () => {
     const drawn =
       shape === 'circle'
-        ? center !== null && radiusMeters >= 10 && radiusMeters <= 50_000
+        ? center !== null && radiusMeters >= 10 && radiusMeters <= 100_000
         : points.length >= 3
     if (!drawn) {
       setError(
         shape === 'circle'
-          ? 'Click the map to place the circle, and keep the radius between 10 and 50,000 m.'
+          ? 'Click the map to place the circle, and keep the radius between 10 and 100,000 m.'
           : 'Click at least three corners on the map.',
       )
       return
@@ -95,34 +105,40 @@ function GeoFenceWizard({
       setError('Give the geo fence a name.')
       return
     }
-    if (!allEmployees && criteria.length === 0) {
+    if (!allEmployees && criteriaIsEmpty(criteria) && !joiningFrom && !joiningTo) {
       setError('Add criteria, or tick All Employees.')
       return
     }
+    if (joiningFrom && joiningTo && joiningTo < joiningFrom) {
+      setError('The joining end date is before the start date.')
+      return
+    }
+    const circle = shape === 'circle' ? center : null
     try {
       await save.mutateAsync({
         id: record?.id,
         input: {
           name: name.trim(),
-          shape:
-            shape === 'circle' && center
-              ? {
-                  type: 'circle',
-                  latitude: center.latitude,
-                  longitude: center.longitude,
-                  radiusMeters,
-                }
-              : { type: 'polygon', points },
-          forShift,
-          allEmployees,
-          criteria: allEmployees ? [] : criteria,
-          active: record?.active ?? true,
+          shape,
+          centerLat: circle ? circle.latitude : null,
+          centerLng: circle ? circle.longitude : null,
+          radiusM: circle ? Math.round(radiusMeters) : null,
+          polygonPoints: circle
+            ? null
+            : points.map((point) => ({ lat: point.latitude, lng: point.longitude })),
+          isForShift: forShift,
+          isActive: active,
+          appliesToAll: allEmployees,
+          joiningFromDate: allEmployees ? null : joiningFrom || null,
+          joiningToDate: allEmployees ? null : joiningTo || null,
+          targets: allEmployees ? [] : toTargets(criteria),
+          rowVersion: record?.rowVersion ?? null,
         },
       })
     } catch (failure) {
       setError(
         failure instanceof ApiError
-          ? (failure.fieldErrors.name ?? failure.message)
+          ? (Object.values(failure.fieldErrors)[0] ?? failure.message)
           : 'Could not save.',
       )
       return
@@ -138,8 +154,11 @@ function GeoFenceWizard({
     } else {
       setName('')
       setForShift(true)
+      setActive(true)
       setAllEmployees(true)
-      setCriteria([])
+      setCriteria(toCriteria(null))
+      setJoiningFrom('')
+      setJoiningTo('')
     }
   }
 
@@ -189,14 +208,16 @@ function GeoFenceWizard({
             >
               Cancel
             </Button>
-            <Button
-              size="lg"
-              disabled={save.isPending}
-              onClick={() => void create()}
-              className={cn(stepDialogButtonClass, navyButtonClass)}
-            >
-              {record ? 'Save Changes' : 'Create'}
-            </Button>
+            {canSave && (
+              <Button
+                size="lg"
+                disabled={save.isPending}
+                onClick={() => void create()}
+                className={cn(stepDialogButtonClass, navyButtonClass)}
+              >
+                {record ? 'Save Changes' : 'Create'}
+              </Button>
+            )}
           </>
         )
       }
@@ -249,7 +270,7 @@ function GeoFenceWizard({
                   type="number"
                   inputMode="numeric"
                   min={10}
-                  max={50_000}
+                  max={100_000}
                   value={radius}
                   onChange={(event) => {
                     setRadius(event.target.value)
@@ -301,6 +322,15 @@ function GeoFenceWizard({
                   />
                   All Employees
                 </label>
+                <label className="flex items-center gap-2 text-xs font-medium text-[#202020] dark:text-heading">
+                  <Checkbox
+                    checked={active}
+                    onCheckedChange={(checked) => {
+                      setActive(checked === true)
+                    }}
+                  />
+                  Active
+                </label>
               </div>
               <div className="grid max-w-md gap-2">
                 <label htmlFor={ids.name} className="text-sm leading-none text-title">
@@ -312,7 +342,7 @@ function GeoFenceWizard({
                 <Input
                   id={ids.name}
                   value={name}
-                  maxLength={80}
+                  maxLength={200}
                   placeholder="Enter name"
                   onChange={(event) => {
                     setName(event.target.value)
@@ -320,13 +350,33 @@ function GeoFenceWizard({
                 />
               </div>
             </div>
-            <div className="border-t pt-4">
+            <div className="@container grid gap-4 border-t pt-4">
               {allEmployees ? (
                 <p className="text-sm text-muted-foreground">
                   Applies to all employees. Untick All Employees to add criteria.
                 </p>
               ) : (
-                <CriteriaEditor value={criteria} onChange={setCriteria} />
+                <>
+                  <CriteriaEditor
+                    value={criteria}
+                    onChange={setCriteria}
+                    permission={`${PERMISSION}.view`}
+                  />
+                  <div className="grid max-w-xl gap-4 @md:grid-cols-2">
+                    <DateBox
+                      label="Joining Start Date"
+                      variant="form"
+                      value={joiningFrom}
+                      onChange={setJoiningFrom}
+                    />
+                    <DateBox
+                      label="Joining End Date"
+                      variant="form"
+                      value={joiningTo}
+                      onChange={setJoiningTo}
+                    />
+                  </div>
+                </>
               )}
             </div>
           </>
@@ -341,6 +391,31 @@ function GeoFenceWizard({
   )
 }
 
+/** Loads the whole fence (the list leaves its targets out), then shows the wizard. */
+function GeoFenceDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const record = useSettingsRecord('geoFences', id)
+  if (id === null) return <GeoFenceWizard record={null} onClose={onClose} />
+  if (!record.data) {
+    return (
+      <AppDialog
+        title="Geo Fence"
+        onRequestClose={onClose}
+        className="max-w-4xl"
+        titleClassName={poppinsDialogTitleClass}
+      >
+        {record.isError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {record.error.message}
+          </p>
+        ) : (
+          <Skeleton className="h-64 w-full" />
+        )}
+      </AppDialog>
+    )
+  }
+  return <GeoFenceWizard record={record.data} onClose={onClose} />
+}
+
 const columns: DataTableColumn<GeoFenceSetting>[] = [
   { id: 'code', header: 'Code', cell: (row) => row.code, mobile: 'heading' },
   { id: 'name', header: 'Name', cell: (row) => row.name, className: 'whitespace-normal' },
@@ -349,14 +424,14 @@ const columns: DataTableColumn<GeoFenceSetting>[] = [
     header: 'For Shift',
     cell: (row) => (
       <span className="font-medium text-sidebar dark:text-heading">
-        {row.forShift ? 'YES' : 'NO'}
+        {row.isForShift ? 'YES' : 'NO'}
       </span>
     ),
   },
   {
     id: 'status',
     header: 'Status',
-    cell: (row) => <ActiveChip active={row.active} />,
+    cell: (row) => <ActiveChip active={row.isActive} />,
     align: 'right',
   },
 ]
@@ -365,11 +440,18 @@ const columns: DataTableColumn<GeoFenceSetting>[] = [
 export function GeoFencingTab() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
-  const [dialog, setDialog] = useState<{ record: GeoFenceSetting | null } | null>(null)
+  const [dialog, setDialog] = useState<{ id: string | null } | null>(null)
   const [deleting, setDeleting] = useState<GeoFenceSetting | null>(null)
-  const list = useSettingsList('geoFences', { page, pageSize: 10, ...(search ? { search } : {}) })
+  const list = useSettingsList('geoFences', {
+    page,
+    pageSize: 10,
+    ...(search ? { q: search } : {}),
+  })
   const remove = useDeleteSetting('geoFences')
   const setActive = useSetSettingActive('geoFences')
+  const canCreate = useCan(`${PERMISSION}.create`)
+  const canEdit = useCan(`${PERMISSION}.edit`)
+  const canDelete = useCan(`${PERMISSION}.delete`)
 
   return (
     <>
@@ -387,9 +469,13 @@ export function GeoFencingTab() {
           setPage(1)
         }}
         onPageChange={setPage}
-        onCreate={() => {
-          setDialog({ record: null })
-        }}
+        {...(canCreate
+          ? {
+              onCreate: () => {
+                setDialog({ id: null })
+              },
+            }
+          : {})}
         emptyText="No geo fences match."
         rowActions={(row) => (
           <RowActionsMenu
@@ -397,31 +483,46 @@ export function GeoFencingTab() {
             label={`Actions for ${row.code}`}
             actions={[
               {
-                label: 'View / Edit',
+                label: canEdit ? 'View / Edit' : 'View',
                 onSelect: () => {
-                  setDialog({ record: row })
+                  setDialog({ id: row.id })
                 },
               },
-              {
-                label: row.active ? 'Deactivate' : 'Activate',
-                onSelect: () => {
-                  setActive.mutate({ id: row.id, active: !row.active })
-                },
-              },
-              {
-                label: 'Delete',
-                variant: 'destructive',
-                onSelect: () => {
-                  setDeleting(row)
-                },
-              },
+              ...(canEdit
+                ? [
+                    {
+                      label: row.isActive ? 'Deactivate' : 'Activate',
+                      onSelect: () => {
+                        setActive.mutate(
+                          { id: row.id, active: !row.isActive },
+                          {
+                            onError: (error) => {
+                              toast.error(error.message)
+                            },
+                          },
+                        )
+                      },
+                    },
+                  ]
+                : []),
+              ...(canDelete
+                ? [
+                    {
+                      label: 'Delete',
+                      variant: 'destructive' as const,
+                      onSelect: () => {
+                        setDeleting(row)
+                      },
+                    },
+                  ]
+                : []),
             ]}
           />
         )}
       />
       {dialog && (
-        <GeoFenceWizard
-          record={dialog.record}
+        <GeoFenceDialog
+          id={dialog.id}
           onClose={() => {
             setDialog(null)
           }}
@@ -433,17 +534,22 @@ export function GeoFencingTab() {
           if (!open) setDeleting(null)
         }}
         title={`Delete ${deleting?.code ?? 'geo fence'}`}
-        description="Are you sure you want to Delete this? Shifts that use it will no longer require it."
+        description="Are you sure you want to Delete this? A fence that shifts use cannot be deleted; make it inactive instead."
         confirmLabel="Yes"
         cancelLabel="No"
         variant="destructive"
         onConfirm={() => {
           if (deleting) {
-            remove.mutate(deleting.id, {
-              onError: () => {
-                toast.error('Could not delete the geo fence.')
+            remove.mutate(
+              { id: deleting.id, rowVersion: deleting.rowVersion },
+              {
+                onError: (error) => {
+                  toast.error(
+                    error instanceof ApiError ? error.message : 'Could not delete the geo fence.',
+                  )
+                },
               },
-            })
+            )
           }
         }}
       />

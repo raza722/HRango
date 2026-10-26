@@ -14,8 +14,8 @@ import type { AssetType } from '../../types/assets.types'
 import { viewFieldsClass } from '../company-assets/view-fields'
 
 const schema = z.object({
-  name: z.string().trim().min(1, 'Enter the name').max(60, 'Keep it under 60 characters'),
-  active: z.boolean(),
+  name: z.string().trim().min(1, 'Enter the name').max(200, 'Keep it under 200 characters'),
+  isActive: z.boolean(),
   description: z.string().trim().max(500, 'Keep it under 500 characters'),
 })
 type Values = z.infer<typeof schema>
@@ -65,14 +65,22 @@ function AssetTypeForm({
     resolver: zodResolver(schema),
     defaultValues: {
       name: type?.name ?? '',
-      active: type?.active ?? true,
+      isActive: type?.isActive ?? true,
       description: type?.description ?? '',
     },
   })
 
   const submit = form.handleSubmit(async (values) => {
     try {
-      await save.mutateAsync({ id: type?.id, input: values })
+      await save.mutateAsync({
+        id: type?.id,
+        input: {
+          name: values.name,
+          isActive: values.isActive,
+          description: values.description || null,
+          rowVersion: type?.rowVersion,
+        },
+      })
       onClose()
     } catch (error) {
       if (error instanceof ApiError && error.fieldErrors.name) {
@@ -110,7 +118,7 @@ function AssetTypeForm({
         />
         <CheckboxField
           control={form.control}
-          name="active"
+          name="isActive"
           label="Active"
           tone="violet"
           disabled={readOnly}

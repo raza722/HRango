@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 
+import type { PmAccess } from '../../hooks/use-pm-access'
 import type {
   ListColumn,
   PmPerson,
@@ -16,6 +17,8 @@ import type { TaskActions } from './use-task-actions'
 export interface ListViewContextValue {
   workspace: Workspace
   tree: WorkspaceTree
+  /** What the caller may do here (company codes and workspace role). */
+  access: PmAccess
   /** Every task of the view (before search and filters), for cells and menus. */
   allTasks: readonly TaskRow[]
   /** Visible columns, Task Name first. */

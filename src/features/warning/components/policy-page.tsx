@@ -7,6 +7,7 @@ import { ArrowLeft, Check, Loader2 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import { PageContainer, PageHeader, splitPageClassName } from '@/components/layout'
 import { Button } from '@/components/ui/button'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 import type { Paginated } from '@/types/api'
 
@@ -16,8 +17,8 @@ import { usePolicyForm } from '../hooks/use-policy-form'
 import { usePolicyTablePrefs } from '../store/policy-table-prefs.store'
 import type { WarningPolicy } from '../types/warning-policy.types'
 import { PolicyFormCard } from './policy-form-card'
+import { PolicyRulesCard } from './policy-rules-card'
 import { PolicyTable } from './policy-table'
-import { TimeSpanCard } from './time-span-card'
 import { warningType } from './type-styles'
 
 const routeApi = getRouteApi('/_app/warning/policy/')
@@ -25,8 +26,8 @@ const routeApi = getRouteApi('/_app/warning/policy/')
 type PendingConfirm = 'leave' | 'new' | null
 
 /**
- * Warning → Policy screen: header card, policy form, time-span card and the
- * Warning Policy table. Page number and the policy being edited live in the
+ * Warning → Policy screen: header card, policy form, rules card and the
+ * Warning Policy table. Saving needs `warning.settings.policies.create` (new) or `.edit`. Page number and the policy being edited live in the
  * URL (`?page=2&edit=wp_123`), so both survive reloads and can be shared.
  */
 export function PolicyPage() {
@@ -56,8 +57,11 @@ export function PolicyPage() {
       }
     },
   })
-  const { form, periods } = policyForm
+  const { form, rules } = policyForm
   const { isDirty } = form.formState
+  const canCreate = useCan('warning.settings.policies.create')
+  const canEdit = useCan('warning.settings.policies.edit')
+  const canSave = edit ? canEdit : canCreate
 
   const discard = () => {
     policyForm.resetToNew()
@@ -97,14 +101,16 @@ export function PolicyPage() {
               >
                 <ArrowLeft /> Cancel
               </Button>
-              <Button
-                type="submit"
-                form={POLICY_FORM_ID}
-                disabled={policyForm.isSaving || policyForm.isLoadingPolicy}
-              >
-                {policyForm.isSaving ? <Loader2 className="animate-spin" /> : <Check />}
-                {policyForm.isSaving ? 'Saving…' : 'Save'}
-              </Button>
+              {canSave && (
+                <Button
+                  type="submit"
+                  form={POLICY_FORM_ID}
+                  disabled={policyForm.isSaving || policyForm.isLoadingPolicy}
+                >
+                  {policyForm.isSaving ? <Loader2 className="animate-spin" /> : <Check />}
+                  {policyForm.isSaving ? 'Saving…' : 'Save'}
+                </Button>
+              )}
             </>
           }
         />
@@ -118,18 +124,22 @@ export function PolicyPage() {
             className={cn('flex min-w-0 flex-col gap-4 sm:gap-5', warningType.form)}
           >
             <PolicyFormCard
-              onAddPolicy={() => {
-                if (isDirty) setPendingConfirm('new')
-                else startNewPolicy()
-              }}
-              onTimeSpanChange={policyForm.changeTimeSpan}
+              onAddPolicy={
+                canCreate
+                  ? () => {
+                      if (isDirty) setPendingConfirm('new')
+                      else startNewPolicy()
+                    }
+                  : undefined
+              }
+              onAppliesToChange={policyForm.changeAppliesTo}
               editingTitle={edit ? policyForm.editingPolicy?.title : undefined}
               isLoadingPolicy={policyForm.isLoadingPolicy}
             />
-            <TimeSpanCard
-              periods={periods.fields}
-              onAddPeriod={policyForm.addPeriod}
-              onRemovePeriod={periods.remove}
+            <PolicyRulesCard
+              rules={rules.fields}
+              onAddRule={policyForm.addRule}
+              onRemoveRule={rules.remove}
               disabled={policyForm.isLoadingPolicy}
             />
           </form>

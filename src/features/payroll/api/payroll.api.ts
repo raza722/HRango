@@ -1,56 +1,70 @@
 import { keepPreviousData, queryOptions } from '@tanstack/react-query'
 
+import { type EmployeeLookupParams, fetchEmployeeLookup } from '@/hooks/use-employee-lookup'
 import { apiClient } from '@/lib/axios'
 import type { ApiItem, Paginated } from '@/types/api'
 
 import type {
+  AccountImportRow,
   AccountStatementRow,
   AccountType,
   AccountTypeInput,
   Benefit,
   BenefitInput,
+  ChangedResult,
+  CurrentSalary,
   DailyWageBatchRow,
   DailyWageDetail,
+  DailyWageEditInput,
   DailyWageInput,
+  DailyWagesReportRow,
   DisbursementBank,
   DisbursementBankInput,
   EmployeeAccountInput,
   EmployeeAccountReportRow,
   EmployeeAccountRow,
-  EmployeeProfile,
-  EmployeeVoucherInput,
-  EmployeeVoucherRow,
-  EmploymentRow,
-  ExpenseReportRow,
+  EmployeeCount,
+  EmployeeFilterInput,
+  EmployeeLookup,
+  EmployeeWiseRow,
+  ExpressionCheck,
+  ExpressionVariable,
+  FinalSettlementCloseInput,
   FinalSettlementRow,
   Formula,
   FormulaInput,
+  ImportResult,
   IncentiveInput,
   IncentiveRow,
   LeaveEncashmentDetail,
   LeaveEncashmentInput,
   LeaveEncashmentRow,
+  LeaveTypeOption,
   ListParams,
-  MonthAmount,
+  LookupItem,
   MyAccountsSummary,
   OpeningBalanceDetail,
+  OpeningBalanceEntry,
+  OpeningBalanceImportRow,
   OpeningBalanceInput,
   OpeningBalanceRow,
   PayItem,
   PayItemInput,
   PayrollDashboard,
+  PayrollEmployeeRow,
   PayrollError,
-  PayrollHistoryEntry,
   PayrollInput,
-  PayrollLookups,
   PayrollRow,
   PayrollSettings,
+  PayrollSummary,
   PayRule,
   PayRuleInput,
   PayslipDetail,
-  PayslipItemInput,
+  PayslipHistoryEntry,
+  PayslipLineInput,
   PayslipRow,
-  SalaryRevisionDetail,
+  RunLog,
+  SalaryImportRow,
   SalaryRevisionInput,
   SalaryRevisionRow,
   SalarySheet,
@@ -58,6 +72,9 @@ import type {
   TaxRebateRow,
   TaxStructure,
   TaxStructureInput,
+  TimeSlotOption,
+  VoucherDecisionInput,
+  VoucherInput,
   VoucherRow,
 } from '../types/payroll.types'
 
@@ -90,29 +107,32 @@ async function send<T>(method: 'post' | 'put' | 'patch', url: string, body?: unk
   return data.data
 }
 
-async function remove(url: string) {
-  await apiClient.delete(path(url))
+/** `DELETE` with the row version last read (`?rowVersion=`). */
+async function remove(url: string, rowVersion?: string | null) {
+  await apiClient.delete(path(url), rowVersion ? { params: { rowVersion } } : undefined)
 }
 
-/** The filters every list can take: who, and where they work. */
+/** Filters the people lists take (all ids are the API's string ids). */
 export interface PeopleFilters {
   employeeId?: string | undefined
   branchId?: string | undefined
   locationId?: string | undefined
-  department?: string | undefined
-  designation?: string | undefined
+  departmentId?: string | undefined
+  designationId?: string | undefined
   employmentStatus?: string | undefined
-  code?: string | undefined
 }
 
 export type PageQuery<F = PeopleFilters> = ListParams & F
 
 interface ResourceApi<TRow, TInput> {
-  list: (params: PageQuery, signal?: AbortSignal) => Promise<Paginated<TRow>>
+  list: (
+    params: PageQuery<Record<string, unknown>>,
+    signal?: AbortSignal,
+  ) => Promise<Paginated<TRow>>
   get: (id: string, signal?: AbortSignal) => Promise<TRow>
   create: (input: TInput) => Promise<TRow>
   update: (id: string, input: TInput) => Promise<TRow>
-  remove: (id: string) => Promise<void>
+  remove: (id: string, rowVersion?: string | null) => Promise<void>
 }
 
 function resource<TRow, TInput>(url: string): ResourceApi<TRow, TInput> {
@@ -121,7 +141,7 @@ function resource<TRow, TInput>(url: string): ResourceApi<TRow, TInput> {
     get: (id, signal) => getData<TRow>(`${url}/${id}`, undefined, signal),
     create: (input) => send<TRow>('post', url, input),
     update: (id, input) => send<TRow>('put', `${url}/${id}`, input),
-    remove: (id) => remove(`${url}/${id}`),
+    remove: (id, rowVersion) => remove(`${url}/${id}`, rowVersion),
   }
 }
 
@@ -149,18 +169,28 @@ const settingsResources: {
   formulas: resource('/formulas'),
   rules: resource('/rules'),
   accountTypes: resource('/account-types'),
-  banks: resource('/banks'),
+  banks: resource('/disbursement-banks'),
   taxStructures: resource('/tax-structures'),
   taxRebates: resource('/tax-rebates'),
   benefits: resource('/benefits'),
   incentives: resource('/incentives'),
 }
 
-export interface PayslipFilters extends PeopleFilters {
+export interface PayrollListFilters {
+  status?: string | undefined
+  month?: string | undefined
+}
+
+export interface PayslipFilters {
   scope?: 'my' | 'all'
   status?: string | undefined
   payrollId?: string | undefined
   month?: string | undefined
+  employeeId?: string | undefined
+  branchId?: string | undefined
+  departmentId?: string | undefined
+  employmentStatus?: string | undefined
+  finalSettlement?: boolean | undefined
   earningsFrom?: number | undefined
   earningsTo?: number | undefined
   deductionFrom?: number | undefined
@@ -170,78 +200,122 @@ export interface PayslipFilters extends PeopleFilters {
 }
 
 export interface DailyWageFilters {
+  status?: string | undefined
   timeSlotId?: string | undefined
-  name?: string | undefined
   from?: string | undefined
   to?: string | undefined
 }
 
-export interface VoucherFilters extends PeopleFilters {
+export interface VoucherFilters {
+  employeeId?: string | undefined
+  departmentId?: string | undefined
+  designationId?: string | undefined
+  type?: string | undefined
+  status?: string | undefined
+  voucherCode?: string | undefined
+  payrollId?: string | undefined
+  from?: string | undefined
+  to?: string | undefined
   amountFrom?: number | undefined
   amountTo?: number | undefined
-  voucherCode?: string | undefined
-  type?: string | undefined
-  date?: string | undefined
 }
 
-export interface BalanceFilters extends PeopleFilters {
-  balanceCode?: string | undefined
+export interface FinalSettlementFilters {
+  status?: string | undefined
+  month?: string | undefined
+  branchId?: string | undefined
+  departmentId?: string | undefined
+  locationId?: string | undefined
+  employmentStatus?: string | undefined
+}
+
+export interface OpeningBalanceFilters {
+  employeeId?: string | undefined
+  departmentId?: string | undefined
+  month?: string | undefined
   netFrom?: number | undefined
   netTo?: number | undefined
+}
+
+export interface AccountFilters {
+  scope?: 'my' | 'all'
+  employeeId?: string | undefined
+  accountTypeId?: string | undefined
   month?: string | undefined
 }
 
-export interface RevisionFilters extends PeopleFilters {
+export interface StatementFilters {
+  employeeId?: string | undefined
+  accountTypeId?: string | undefined
   from?: string | undefined
   to?: string | undefined
 }
 
-export interface EncashmentFilters extends PeopleFilters {
+export interface RevisionFilters {
+  employeeId?: string | undefined
+  from?: string | undefined
+  to?: string | undefined
+  salaryFrom?: number | undefined
+  salaryTo?: number | undefined
+}
+
+export interface EncashmentFilters {
   leaveTypeId?: string | undefined
   year?: number | undefined
+  employeeId?: string | undefined
 }
 
-export interface ImportResult {
-  created: number
-  errors: string[]
+export interface ReportFilters {
+  from?: string | undefined
+  to?: string | undefined
+  departmentId?: string | undefined
+  employeeId?: string | undefined
 }
 
-export interface BalanceImportRow {
-  employeeCode: string
-  payItem: string
-  month: string
-  amount: number
-  taxable: boolean
-  description: string
-}
+/** An import: the rows read from the sheet, or an uploaded CSV (`fileId`). */
+export type ImportBody<Row> = { rows: Row[] } | { fileId: string }
+
+/** Kept name: an opening balance import row. */
+export type BalanceImportRow = OpeningBalanceImportRow
+
+export type { ImportResult }
 
 export const payrollApi = {
-  lookups: (signal?: AbortSignal) => getData<PayrollLookups>('/lookups', undefined, signal),
-
-  // Settings
-  settings: (signal?: AbortSignal) => getData<PayrollSettings>('/settings', undefined, signal),
-  saveSettings: (input: PayrollSettings) => send<PayrollSettings>('put', '/settings', input),
+  // Settings → General
+  settings: (signal?: AbortSignal) =>
+    getData<PayrollSettings>('/settings/general', undefined, signal),
+  saveSettings: (input: PayrollSettings) =>
+    send<PayrollSettings>('put', '/settings/general', input),
+  variables: (signal?: AbortSignal) =>
+    getData<ExpressionVariable[]>('/settings/variables', undefined, signal),
+  checkExpression: (expression: string, kind: 'value' | 'condition' = 'value') =>
+    send<ExpressionCheck>('post', '/settings/expressions/check', { expression, kind }),
   resource: <N extends SettingsResourceName>(name: N) => settingsResources[name],
 
   // Payrolls → Monthly
-  payrolls: (params: ListParams, signal?: AbortSignal) =>
+  payrolls: (params: PageQuery<PayrollListFilters>, signal?: AbortSignal) =>
     getPage<PayrollRow>('/payrolls', params, signal),
   payroll: (id: string, signal?: AbortSignal) =>
     getData<PayrollRow>(`/payrolls/${id}`, undefined, signal),
   createPayroll: (input: PayrollInput) => send<PayrollRow>('post', '/payrolls', input),
   updatePayroll: (id: string, input: PayrollInput) =>
     send<PayrollRow>('put', `/payrolls/${id}`, input),
-  runPayroll: (id: string) => send<PayrollRow>('post', `/payrolls/${id}/run`),
-  closePayroll: (id: string) => send<PayrollRow>('post', `/payrolls/${id}/close`),
-  holdPayrolls: (ids: string[]) => send<{ held: number }>('post', '/payrolls/hold', { ids }),
-  employments: (id: string, search: string, signal?: AbortSignal) =>
-    getData<EmploymentRow[]>(`/payrolls/${id}/employments`, { search }, signal),
-  setEmployments: (id: string, employeeIds: string[]) =>
-    send<PayrollRow>('put', `/payrolls/${id}/employments`, { employeeIds }),
+  deletePayroll: (id: string, rowVersion: string) => remove(`/payrolls/${id}`, rowVersion),
+  runPayroll: (id: string) => send<RunLog>('post', `/payrolls/${id}/run`),
+  closePayroll: (id: string, rowVersion: string) =>
+    send<PayrollRow>('post', `/payrolls/${id}/close`, { rowVersion }),
+  holdPayroll: (id: string, hold: boolean) =>
+    send<PayrollRow>('post', `/payrolls/${id}/${hold ? 'hold' : 'unhold'}`),
+  payrollEmployees: (id: string, q: string, signal?: AbortSignal) =>
+    getData<PayrollEmployeeRow[]>(`/payrolls/${id}/employees`, { q }, signal),
+  setPayrollEmployees: (id: string, employeeIds: string[]) =>
+    send<EmployeeCount>('put', `/payrolls/${id}/employees`, { employeeIds }),
+  addPayrollEmployees: (id: string, filter: EmployeeFilterInput) =>
+    send<EmployeeCount>('post', `/payrolls/${id}/employees/add`, compact(filter)),
   payrollHistory: (id: string, signal?: AbortSignal) =>
-    getData<PayrollHistoryEntry[]>(`/payrolls/${id}/history`, undefined, signal),
-  payrollErrors: (id: string, signal?: AbortSignal) =>
-    getData<PayrollError[]>(`/payrolls/${id}/errors`, undefined, signal),
+    getData<RunLog[]>(`/payrolls/${id}/history`, undefined, signal),
+  payrollErrors: (id: string, runLogId?: string, signal?: AbortSignal) =>
+    getData<PayrollError[]>(`/payrolls/${id}/errors`, { runLogId }, signal),
 
   salarySheet: (
     params: { payrollId?: string | undefined; month?: string | undefined },
@@ -251,65 +325,83 @@ export const payrollApi = {
   // Pay Slips
   payslips: (params: PageQuery<PayslipFilters>, signal?: AbortSignal) =>
     getPage<PayslipRow>('/payslips', params, signal),
-  myAccounts: (signal?: AbortSignal) =>
-    getData<MyAccountsSummary>('/payslips/summary', undefined, signal),
+  myAccounts: (employeeId?: string, signal?: AbortSignal) =>
+    getData<MyAccountsSummary>('/payslips/summary', { employeeId }, signal),
   payslip: (id: string, signal?: AbortSignal) =>
     getData<PayslipDetail>(`/payslips/${id}`, undefined, signal),
-  updatePayslip: (id: string, items: PayslipItemInput[]) =>
-    send<PayslipDetail>('put', `/payslips/${id}`, { items }),
-  payslipAction: (id: string, action: 'hold' | 'pay' | 'recalculate') =>
+  updatePayslip: (id: string, lines: PayslipLineInput[], rowVersion: string) =>
+    send<PayslipDetail>('put', `/payslips/${id}`, { lines, rowVersion }),
+  payslipAction: (id: string, action: 'hold' | 'unhold' | 'pay' | 'recalculate') =>
     send<PayslipDetail>('post', `/payslips/${id}/${action}`),
-  holdPayslips: (ids: string[]) => send<{ held: number }>('post', '/payslips/hold', { ids }),
+  payslipsBulk: (ids: string[], action: 'hold' | 'unhold' | 'pay' | 'recalculate') =>
+    send<ChangedResult>('post', `/payslips/${action}`, { ids }),
+  payslipHistory: (id: string, signal?: AbortSignal) =>
+    getData<PayslipHistoryEntry[]>(`/payslips/${id}/history`, undefined, signal),
 
   // Payrolls → Daily Wages
   dailyWages: (params: PageQuery<DailyWageFilters>, signal?: AbortSignal) =>
     getPage<DailyWageBatchRow>('/daily-wages', params, signal),
   dailyWage: (id: string, signal?: AbortSignal) =>
     getData<DailyWageDetail>(`/daily-wages/${id}`, undefined, signal),
-  createDailyWage: (input: DailyWageInput) =>
-    send<DailyWageBatchRow>('post', '/daily-wages', input),
-  updateDailyWage: (
-    id: string,
-    input: {
-      name: string
-      rows: { employeeId: string; totalEarnings: number; totalDeductions: number; wage: number }[]
-    },
-  ) => send<DailyWageDetail>('put', `/daily-wages/${id}`, input),
+  createDailyWage: (input: DailyWageInput) => send<DailyWageDetail>('post', '/daily-wages', input),
+  updateDailyWage: (id: string, input: DailyWageEditInput) =>
+    send<DailyWageDetail>('put', `/daily-wages/${id}`, input),
+  setDailyWageEmployees: (id: string, employeeIds: string[]) =>
+    send<EmployeeCount>('put', `/daily-wages/${id}/employees`, { employeeIds }),
+  deleteDailyWage: (id: string, rowVersion: string) => remove(`/daily-wages/${id}`, rowVersion),
+  processDailyWage: (id: string) => send<RunLog>('post', `/daily-wages/${id}/process`),
+  closeDailyWage: (id: string, rowVersion: string) =>
+    send<PayrollRow>('post', `/daily-wages/${id}/close`, { rowVersion }),
   dailyWageVouchers: (id: string) =>
     send<{ created: number }>('post', `/daily-wages/${id}/vouchers`),
+  dailyWageErrors: (id: string, signal?: AbortSignal) =>
+    getData<PayrollError[]>(`/daily-wages/${id}/errors`, undefined, signal),
 
-  // Vouchers
+  // Vouchers (one resource; the employee-voucher screen is the same records)
   vouchers: (params: PageQuery<VoucherFilters>, signal?: AbortSignal) =>
     getPage<VoucherRow>('/vouchers', params, signal),
-  deleteVoucher: (id: string) => remove(`/vouchers/${id}`),
-  employeeVouchers: resource<EmployeeVoucherRow, EmployeeVoucherInput>('/employee-vouchers'),
+  voucher: (id: string, signal?: AbortSignal) =>
+    getData<VoucherRow>(`/vouchers/${id}`, undefined, signal),
+  createVoucher: (input: VoucherInput) => send<VoucherRow>('post', '/vouchers', input),
+  updateVoucher: (id: string, input: VoucherInput) =>
+    send<VoucherRow>('put', `/vouchers/${id}`, input),
+  deleteVoucher: (id: string, rowVersion: string) => remove(`/vouchers/${id}`, rowVersion),
+  decideVoucher: (
+    id: string,
+    action: 'approve' | 'reject' | 'verify',
+    input: VoucherDecisionInput,
+  ) => send<VoucherRow>('post', `/vouchers/${id}/${action}`, input),
 
   // Final Settlement
-  finalSettlements: (
-    params: PageQuery<{ month?: string | undefined } & PeopleFilters>,
-    signal?: AbortSignal,
-  ) => getPage<FinalSettlementRow>('/final-settlements', params, signal),
+  finalSettlements: (params: PageQuery<FinalSettlementFilters>, signal?: AbortSignal) =>
+    getPage<FinalSettlementRow>('/final-settlements', params, signal),
   finalSettlement: (id: string, signal?: AbortSignal) =>
-    getData<FinalSettlementRow & { profile: EmployeeProfile }>(
-      `/final-settlements/${id}`,
-      undefined,
-      signal,
-    ),
+    getData<FinalSettlementRow>(`/final-settlements/${id}`, undefined, signal),
   finalSettlementPayslip: (id: string, signal?: AbortSignal) =>
     getData<PayslipDetail>(`/final-settlements/${id}/payslip`, undefined, signal),
-  finalSettlementAction: (id: string, action: 'recalculate' | 'close') =>
-    send<FinalSettlementRow>('post', `/final-settlements/${id}/${action}`),
+  recalculateFinalSettlement: (id: string) =>
+    send<FinalSettlementRow>('post', `/final-settlements/${id}/recalculate`),
+  closeFinalSettlement: (id: string, input: FinalSettlementCloseInput) =>
+    send<FinalSettlementRow>('post', `/final-settlements/${id}/close`, input),
 
-  // Balances
-  openingBalances: (params: PageQuery<BalanceFilters>, signal?: AbortSignal) =>
+  // Balances → Opening balances
+  openingBalances: (params: PageQuery<OpeningBalanceFilters>, signal?: AbortSignal) =>
     getPage<OpeningBalanceRow>('/opening-balances', params, signal),
+  openingBalancesOf: (employeeId: string, signal?: AbortSignal) =>
+    getData<OpeningBalanceDetail>(`/opening-balances/employees/${employeeId}`, undefined, signal),
   openingBalance: (id: string, signal?: AbortSignal) =>
-    getData<OpeningBalanceDetail>(`/opening-balances/${id}`, undefined, signal),
-  addOpeningBalance: (input: OpeningBalanceInput) =>
-    send<OpeningBalanceRow>('post', '/opening-balances', input),
-  importOpeningBalances: (kind: 'opening-balance' | 'provident-fund', rows: BalanceImportRow[]) =>
-    send<ImportResult>('post', '/opening-balances/import', { kind, rows }),
-  employeeAccounts: (params: PageQuery<BalanceFilters>, signal?: AbortSignal) =>
+    getData<OpeningBalanceEntry>(`/opening-balances/${id}`, undefined, signal),
+  createOpeningBalance: (input: OpeningBalanceInput) =>
+    send<OpeningBalanceEntry>('post', '/opening-balances', input),
+  updateOpeningBalance: (id: string, input: OpeningBalanceInput) =>
+    send<OpeningBalanceEntry>('put', `/opening-balances/${id}`, input),
+  deleteOpeningBalance: (id: string, rowVersion: string) =>
+    remove(`/opening-balances/${id}`, rowVersion),
+  importOpeningBalances: (body: ImportBody<OpeningBalanceImportRow>) =>
+    send<ImportResult>('post', '/opening-balances/import', body),
+
+  // Balances → Employee accounts, statement
+  employeeAccounts: (params: PageQuery<AccountFilters>, signal?: AbortSignal) =>
     getPage<EmployeeAccountRow>('/employee-accounts', params, signal),
   employeeAccount: (id: string, signal?: AbortSignal) =>
     getData<EmployeeAccountRow>(`/employee-accounts/${id}`, undefined, signal),
@@ -317,30 +409,28 @@ export const payrollApi = {
     send<EmployeeAccountRow>('post', '/employee-accounts', input),
   updateEmployeeAccount: (id: string, input: EmployeeAccountInput) =>
     send<EmployeeAccountRow>('put', `/employee-accounts/${id}`, input),
-  importEmployeeAccounts: (kind: 'opening-balance' | 'provident-fund', rows: BalanceImportRow[]) =>
-    send<ImportResult>('post', '/employee-accounts/import', { kind, rows }),
-  accountStatement: (params: PageQuery<BalanceFilters>, signal?: AbortSignal) =>
+  deleteEmployeeAccount: (id: string, rowVersion: string) =>
+    remove(`/employee-accounts/${id}`, rowVersion),
+  importEmployeeAccounts: (body: ImportBody<AccountImportRow>) =>
+    send<ImportResult>('post', '/employee-accounts/import', body),
+  accountStatement: (params: PageQuery<StatementFilters>, signal?: AbortSignal) =>
     getPage<AccountStatementRow>('/account-statement', params, signal),
 
   // Salary Revision
   salaryRevisions: (params: PageQuery<RevisionFilters>, signal?: AbortSignal) =>
     getPage<SalaryRevisionRow>('/salary-revisions', params, signal),
   salaryRevision: (id: string, signal?: AbortSignal) =>
-    getData<SalaryRevisionDetail>(`/salary-revisions/${id}`, undefined, signal),
+    getData<SalaryRevisionRow>(`/salary-revisions/${id}`, undefined, signal),
   currentSalary: (employeeId: string, date: string, signal?: AbortSignal) =>
-    getData<{ salary: number; profile: EmployeeProfile }>(
-      `/salary-revisions/current/${employeeId}`,
-      { date },
-      signal,
-    ),
+    getData<CurrentSalary>(`/salary-revisions/current/${employeeId}`, { date }, signal),
   createSalaryRevision: (input: SalaryRevisionInput) =>
     send<SalaryRevisionRow>('post', '/salary-revisions', input),
   updateSalaryRevision: (id: string, input: SalaryRevisionInput) =>
     send<SalaryRevisionRow>('put', `/salary-revisions/${id}`, input),
-  deleteSalaryRevision: (id: string) => remove(`/salary-revisions/${id}`),
-  importSalaryRevisions: (
-    rows: { employeeCode: string; effectiveDate: string; salary: number }[],
-  ) => send<ImportResult>('post', '/salary-revisions/import', { rows }),
+  deleteSalaryRevision: (id: string, rowVersion: string) =>
+    remove(`/salary-revisions/${id}`, rowVersion),
+  importSalaryRevisions: (body: ImportBody<SalaryImportRow>) =>
+    send<ImportResult>('post', '/salary-revisions/import', body),
 
   // Leave Encashment
   leaveEncashments: (params: PageQuery<EncashmentFilters>, signal?: AbortSignal) =>
@@ -351,21 +441,62 @@ export const payrollApi = {
     send<LeaveEncashmentDetail>('post', '/leave-encashments', input),
   updateLeaveEncashment: (id: string, input: LeaveEncashmentInput) =>
     send<LeaveEncashmentDetail>('put', `/leave-encashments/${id}`, input),
-  deleteLeaveEncashment: (id: string) => remove(`/leave-encashments/${id}`),
+  deleteLeaveEncashment: (id: string, rowVersion: string) =>
+    remove(`/leave-encashments/${id}`, rowVersion),
 
   // Reports, dashboard
-  employeeAccountReport: (params: PageQuery, signal?: AbortSignal) =>
+  employeeAccountReport: (params: PageQuery<ReportFilters>, signal?: AbortSignal) =>
     getPage<EmployeeAccountReportRow>('/reports/employee-accounts', params, signal),
-  dashboard: (signal?: AbortSignal) => getData<PayrollDashboard>('/dashboard', undefined, signal),
-  employeeEarning: (employeeId: string, signal?: AbortSignal) =>
-    getData<MonthAmount[]>(`/dashboard/employees/${employeeId}`, undefined, signal),
-  expenseReport: (month: string, signal?: AbortSignal) =>
-    getData<ExpenseReportRow[]>('/dashboard/expenses', { month }, signal),
+  payrollSummary: (payrollId: string, signal?: AbortSignal) =>
+    getData<PayrollSummary>(`/reports/payroll-summary/${payrollId}`, undefined, signal),
+  employeeWiseReport: (params: PageQuery<ReportFilters>, signal?: AbortSignal) =>
+    getPage<EmployeeWiseRow>('/reports/employee-wise', params, signal),
+  dailyWagesReport: (params: PageQuery<ReportFilters>, signal?: AbortSignal) =>
+    getPage<DailyWagesReportRow>('/reports/daily-wages', params, signal),
+  dashboard: (
+    params: { year?: number | undefined; month?: string | undefined },
+    signal?: AbortSignal,
+  ) => getData<PayrollDashboard>('/dashboard', params, signal),
+}
+
+/** Pickers other modules serve (not under `/payroll`). */
+export const lookupApi = {
+  /**
+   * One page of the employees the caller reaches through `permission` (`GET /employees/lookup`
+   * → `{data, meta}`), searched on the server by `q` (code or name); `pageSize` 1–100.
+   * Pickers page through it with `EmployeeSearchSelect` ("Load more").
+   */
+  employees: (params: EmployeeLookupParams & { permission: string }, signal?: AbortSignal) =>
+    fetchEmployeeLookup<EmployeeLookup>(params, signal),
+  /** branches, departments, designations, locations, employee-groups … */
+  organisation: async (kind: string, signal?: AbortSignal) => {
+    const { data } = await apiClient.get<ApiItem<LookupItem[]>>(`/organisation/lookups/${kind}`, {
+      signal,
+    })
+    return data.data
+  },
+  timeSlots: async (signal?: AbortSignal) => {
+    const { data } = await apiClient.get<ApiItem<TimeSlotOption[]>>(
+      '/scheduling/options/time-slots',
+      { signal },
+    )
+    return data.data
+  },
+  leaveTypes: async (signal?: AbortSignal) => {
+    const { data } = await apiClient.get<Paginated<{ id: string; title: string }>>(
+      '/leaves/types',
+      { params: { page: 1, pageSize: 100 }, signal },
+    )
+    return data.data.map((type): LeaveTypeOption => ({ id: type.id, name: type.title }))
+  },
 }
 
 export const payrollKeys = {
   all: ['payroll'] as const,
-  lookups: () => [...payrollKeys.all, 'lookups'] as const,
+  lookups: (name: string, params?: object) =>
+    params
+      ? ([...payrollKeys.all, 'lookups', name, compact(params)] as const)
+      : ([...payrollKeys.all, 'lookups', name] as const),
   settings: () => [...payrollKeys.all, 'settings'] as const,
   resource: (name: SettingsResourceName, params?: object) =>
     params
@@ -383,14 +514,10 @@ export const payrollKeys = {
   detail: (name: string, id: string) => [...payrollKeys.all, name, 'detail', id] as const,
 }
 
-export const lookupsQueryOptions = () =>
-  queryOptions({
-    queryKey: payrollKeys.lookups(),
-    queryFn: ({ signal }) => payrollApi.lookups(signal),
-    staleTime: 60_000,
-  })
-
-export const resourceQueryOptions = <N extends SettingsResourceName>(name: N, params: PageQuery) =>
+export const resourceQueryOptions = <N extends SettingsResourceName>(
+  name: N,
+  params: PageQuery<Record<string, unknown>>,
+) =>
   queryOptions({
     queryKey: payrollKeys.resource(name, params),
     queryFn: ({ signal }) => payrollApi.resource(name).list(params, signal),

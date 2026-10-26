@@ -3,8 +3,9 @@ import { cn } from '@/lib/utils'
 
 import { OVERVIEW_TILES } from '../../constants'
 import type { DaysOverview } from '../../types/attendance.types'
+import { formatDuration } from '../../utils/local-time'
 
-/** "Days Overview This Month": a coloured tile per count, as drawn. */
+/** "Days Overview This Month": a coloured tile per count of the time-sheet summary, as drawn. */
 export function DaysOverviewCard({
   overview,
   personName,
@@ -31,11 +32,12 @@ export function DaysOverviewCard({
             {overview ? (
               <span
                 className={cn(
-                  'flex h-11 w-12 items-center justify-center rounded-md text-lg font-medium tabular-nums',
+                  'flex h-11 min-w-12 items-center justify-center rounded-md px-1 text-lg font-medium tabular-nums',
+                  tile.minutes && 'text-sm',
                   tile.className,
                 )}
               >
-                {overview[tile.key]}
+                {tile.minutes ? formatDuration(tile.value(overview)) : tile.value(overview)}
               </span>
             ) : (
               <Skeleton className="h-11 w-12" />

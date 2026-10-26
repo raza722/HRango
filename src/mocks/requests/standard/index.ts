@@ -1,9 +1,14 @@
 import { createMockCollection } from '../../collection'
+import { approvalHandlers } from '../backend'
 import type { StandardKindModule, StoredStandardRequest } from './engine'
+import { airTicketsServer } from './kinds/air-tickets'
+import { bindExpenseRecords, expenseServer, resetExpenseSettingsDb } from './kinds/expense'
 import { leaveServer } from './kinds/leave'
 import { loanAdvancesServer } from './kinds/loan-advances'
+import { officialVisitsServer } from './kinds/official-visits'
 import { promotionServer } from './kinds/promotion'
 import { relaxationServer } from './kinds/relaxation'
+import { requisitionServer } from './kinds/requisition'
 import { resignationServer } from './kinds/resignation'
 import { restDaysServer } from './kinds/rest-days'
 import { travelServer } from './kinds/travel'
@@ -14,10 +19,14 @@ import { workFromHomeServer } from './kinds/work-from-home'
  * `src/features/requests/standard/registry.ts`.
  */
 const SERVERS: readonly StandardKindModule[] = [
+  airTicketsServer,
+  expenseServer,
   leaveServer,
   loanAdvancesServer,
+  officialVisitsServer,
   promotionServer,
   relaxationServer,
+  requisitionServer,
   resignationServer,
   restDaysServer,
   travelServer,
@@ -30,10 +39,18 @@ export const standardRequests = createMockCollection<StoredStandardRequest>({
   seed: () => SERVERS.flatMap((server) => server.seed()),
 })
 
-export const standardRequestHandlers = SERVERS.flatMap((server) =>
-  server.handlers(standardRequests),
-)
+/**
+ * The standard types' endpoints, after the shared Approvals screen
+ * (`/requests/approvals…`, which reads every type that registered with it).
+ */
+export const standardRequestHandlers = [
+  ...SERVERS.flatMap((server) => server.handlers(standardRequests)),
+  ...approvalHandlers,
+]
+
+bindExpenseRecords(() => standardRequests.all().filter((record) => record.kind === 'expense'))
 
 export function resetStandardRequestsDb(): void {
   standardRequests.reset()
+  resetExpenseSettingsDb()
 }

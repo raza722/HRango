@@ -1,28 +1,37 @@
 import { z } from 'zod'
 
-import type { Payroll, PayrollInput } from '../types/payroll.types'
+import type { PayrollInput, PayrollRow } from '../types/payroll.types'
+import { monthOf, monthStart } from '../utils/format'
 
 const payItemRow = z.object({
   payItemId: z.string().min(1, 'Choose the pay item'),
-  taxable: z.boolean(),
+  isTaxable: z.boolean(),
   arrearApplicable: z.boolean(),
   finalSettlement: z.boolean(),
   calculateOnly: z.boolean(),
 })
 
-/** "Payrolls Monthly" (create / edit). Selects hold strings; the mapper makes numbers. */
+/**
+ * "Payrolls Monthly" (create / edit), as `POST/PUT /payroll/payrolls` takes it. The month is
+ * `yyyy-MM` in the picker and `yyyy-MM-01` on the wire; selects hold strings.
+ */
 export const payrollFormSchema = z
   .object({
-    name: z.string().trim().min(1, 'Enter the payroll name').max(80, 'Keep it under 80 characters'),
-    currency: z.literal('PKR'),
+    name: z
+      .string()
+      .trim()
+      .min(1, 'Enter the payroll name')
+      .max(200, 'Keep it under 200 characters'),
+    payrollMonth: z.string().regex(/^\d{4}-\d{2}$/, 'Choose the payroll month'),
+    currency: z.string().regex(/^[A-Z]{3}$/, 'Choose the currency'),
     taxStructureId: z.string().min(1, 'Choose the tax structure'),
     taxApplicable: z.boolean(),
-    processing: z.enum(['from-date', 'month-end']),
-    processingDay: z.string().min(1, 'Choose the payroll processing date'),
+    processingMode: z.enum(['from_date', 'month_end']),
+    processingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose the payroll processing date'),
     applicableDays: z.enum(['actual', 'fixed']),
     fixedDays: z.string(),
-    companyBankId: z.string(),
-    description: z.string().trim().max(500, 'Keep it under 500 characters'),
+    disbursementBankId: z.string().min(1, 'Choose the disbursement bank'),
+    description: z.string().trim().max(200, 'Keep it under 200 characters'),
     payItems: z.array(payItemRow),
   })
   .refine(
@@ -45,46 +54,63 @@ export type PayrollFormValues = z.infer<typeof payrollFormSchema>
 
 export const emptyPayrollForm = (): PayrollFormValues => ({
   name: '',
+  payrollMonth: '',
   currency: 'PKR',
   taxStructureId: '',
   taxApplicable: true,
-  processing: 'month-end',
-  processingDay: '',
+  processingMode: 'month_end',
+  processingDate: '',
   applicableDays: 'actual',
   fixedDays: '',
-  companyBankId: '',
+  disbursementBankId: '',
   description: '',
   payItems: [],
 })
 
-export function toPayrollForm(payroll: Payroll): PayrollFormValues {
+export function toPayrollForm(payroll: PayrollRow): PayrollFormValues {
   return {
     name: payroll.name,
-    currency: payroll.currency,
+    payrollMonth: monthOf(payroll.payrollMonth),
+    currency: payroll.currency ?? 'PKR',
     taxStructureId: payroll.taxStructureId ?? '',
     taxApplicable: payroll.taxApplicable,
-    processing: payroll.processing,
-    processingDay: payroll.processingDay === null ? '' : String(payroll.processingDay),
-    applicableDays: payroll.applicableDays,
+    processingMode: payroll.processingMode ?? 'month_end',
+    processingDate: payroll.processingDate ?? '',
+    applicableDays: payroll.applicableDays ?? 'actual',
     fixedDays: payroll.fixedDays === null ? '' : String(payroll.fixedDays),
-    companyBankId: payroll.companyBankId ?? '',
-    description: payroll.description,
-    payItems: payroll.payItems.map((row) => ({ ...row })),
+    disbursementBankId: payroll.disbursementBankId ?? '',
+    description: payroll.description ?? '',
+    payItems: payroll.payItems.map((row) => ({
+      payItemId: row.payItemId,
+      isTaxable: row.isTaxable,
+      arrearApplicable: row.arrearApplicable,
+      finalSettlement: row.finalSettlement,
+      calculateOnly: row.calculateOnly,
+    })),
   }
 }
 
-export function toPayrollInput(values: PayrollFormValues): PayrollInput {
+/**
+ * The request body. On create an empty pay item list is left out, so the API puts every pay
+ * item of the company on the payroll.
+ */
+export function toPayrollInput(
+  values: PayrollFormValues,
+  payroll: PayrollRow | null,
+): PayrollInput {
   return {
     name: values.name.trim(),
+    payrollMonth: monthStart(values.payrollMonth),
     currency: values.currency,
-    taxStructureId: values.taxStructureId || null,
+    taxStructureId: values.taxStructureId,
     taxApplicable: values.taxApplicable,
-    processing: values.processing,
-    processingDay: values.processingDay ? Number(values.processingDay) : null,
+    processingMode: values.processingMode,
+    processingDate: values.processingDate,
     applicableDays: values.applicableDays,
     fixedDays: values.applicableDays === 'fixed' ? Number(values.fixedDays) : null,
-    companyBankId: values.companyBankId || null,
-    description: values.description.trim(),
-    payItems: values.payItems,
+    disbursementBankId: values.disbursementBankId,
+    description: values.description.trim() || null,
+    payItems: payroll === null && values.payItems.length === 0 ? null : values.payItems,
+    ...(payroll ? { rowVersion: payroll.rowVersion } : {}),
   }
 }

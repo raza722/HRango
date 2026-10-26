@@ -1,516 +1,643 @@
-import { format } from 'date-fns'
-import { http, type HttpHandler } from 'msw'
+import { http, HttpResponse } from 'msw'
 import { z } from 'zod'
 
-import {
-  type BenefitFileRow,
-  type BenefitPlan,
-  type BenefitsLookups,
-  type BenefitsSummary,
-  CARRIERS,
-  CATEGORY_VALUES,
-  categoryMeta,
-  type Election,
-  ELECTION_UNITS,
-  type EmployeeRow,
-  type EnrollmentWindow,
-  type EnrollmentWindowRow,
-  MARITAL_STATUSES,
-  NEW_HIRE_VALUES,
-  type PlanRow,
-  type PlanYear,
-  type PlanYearRow,
-  type PlanYearStatus,
-  PROFILE_FIELDS,
+import type {
+  BenefitEmployee,
+  BenefitFile,
+  BenefitPlan,
+  BenefitsSummary,
+  EnrollmentWindow,
+  MissingDetail,
+  PlanYear,
 } from '@/features/benefits'
+import type { ApiErrorBody, ApiItem } from '@/types/api'
 
-import { DIRECTORY, findEmployee } from '../employees/seed'
-import { conflict, day, invalid, notFound, ok, param, readBody, rejected } from '../payroll/http'
-import { apiPath, createId, latency, requireAuth } from '../utils'
-import { elections, enrollmentWindows, plans, planYears, profiles } from './db'
+import { mockFileUrl } from '../files/handlers'
+import { findPerson, orgLookupHandlers, orgName, PEOPLE } from '../manpower-planning/org-lookups'
+import {
+  apiPath,
+  createId,
+  errorResponse,
+  latency,
+  paginate,
+  readPageParams,
+  requireAuth,
+} from '../utils'
+import {
+  elections,
+  enrollmentWindows,
+  type FileRec,
+  planFiles,
+  type PlanRec,
+  plans,
+  type PlanYearRec,
+  planYears,
+  resetBenefitsCollections,
+  updateRequests,
+  type WindowRec,
+} from './db'
 
-export { resetBenefitsDb } from './db'
+// The mock of `/api/benefits/*` (backend app/routers/benefits.py) and of the Update Information
+// request the Employees tab sends (`POST /employees/{id}/update-requests`): the same routes,
+// bodies, statuses and field errors, over the tables in db.ts.
 
 const base = (path: string) => apiPath(`/benefits${path}`)
+const ME = 'Administrator'
+const now = () => new Date().toISOString().slice(0, 19)
+const today = () => new Date().toISOString().slice(0, 10)
+const nextVersion = (version: string) => String(Number.parseInt(version, 16) + 1).padStart(16, '0')
 
-const authed = async (request: Request) => {
-  await latency()
-  return requireAuth(request)
+const invalid = (field: string, message: string) =>
+  errorResponse(422, message, { code: 'VALIDATION_FAILED', fieldErrors: { [field]: message } })
+const notFound = (what: string) => errorResponse(404, `${what} not found`, { code: 'NOT_FOUND' })
+const conflict = () =>
+  errorResponse(409, 'Someone else changed this record. Reload it and try again', {
+    code: 'CONFLICT',
+  })
+
+async function readBody<T extends z.ZodType>(
+  request: Request,
+  schema: T,
+): Promise<z.infer<T> | Response> {
+  const parsed = schema.safeParse(await request.json().catch(() => null))
+  if (parsed.success) return parsed.data
+  const fieldErrors: Record<string, string> = {}
+  for (const issue of parsed.error.issues) {
+    fieldErrors[issue.path.map(String).join('.') || 'body'] ??= issue.message
+  }
+  return HttpResponse.json<ApiErrorBody>(
+    { message: 'Some fields need your attention.', code: 'VALIDATION_FAILED', fieldErrors },
+    { status: 422 },
+  )
 }
 
-const today = () => format(new Date(), 'yyyy-MM-dd')
-const now = () => new Date().toISOString()
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+const ids = z.array(z.coerce.string())
+const text = (value: string | null | undefined) => (value?.trim() ? value.trim() : null)
+const versionOf = (request: Request) => new URL(request.url).searchParams.get('rowVersion')
 
-// --- derived values -----------------------------------------------------------------------------
+// --- shaping ---------------------------------------------------------------------------------
 
-function planYearStatus(year: PlanYear): PlanYearStatus {
-  const date = today()
-  if (date < year.startDate) return 'upcoming'
-  if (date > year.endDate) return 'ended'
-  return 'active'
-}
+const missingOf = (person: (typeof PEOPLE)[number]): MissingDetail[] => [
+  ...(person.dateOfBirth ? [] : (['date_of_birth'] as const)),
+  ...(person.maritalStatus ? [] : (['marital_status'] as const)),
+]
 
-/** People whose benefit details are not complete. */
-function missingOf(employeeId: string): string[] {
-  const profile = profiles.find(employeeId)
-  return PROFILE_FIELDS.filter((field) => !profile?.[field.key]).map((field) => field.label)
-}
-
-const missingCount = () => DIRECTORY.filter((person) => missingOf(person.id).length > 0).length
-
-function planYearRow(year: PlanYear): PlanYearRow {
-  const mine = elections.all().filter((election) => election.planYearId === year.id)
-  const count = (status: Election['status']) =>
-    mine.filter((election) => election.status === status).length
+function toPlanYear(rec: PlanYearRec): PlanYear {
+  const mine = elections.all().filter((election) => election.planYearId === rec.id)
+  const count = (status: string) => mine.filter((election) => election.status === status).length
   return {
-    ...year,
-    status: planYearStatus(year),
+    ...rec,
+    status: today() < rec.startDate ? 'upcoming' : today() > rec.endDate ? 'ended' : 'active',
+    planCount: rec.planIds.length,
+    windowCount: enrollmentWindows.all().filter((window) => window.planYearId === rec.id).length,
     pending: count('pending'),
     approved: count('approved'),
     incomplete: count('incomplete'),
-    missingInformation: missingCount(),
+    missingInformation: PEOPLE.filter((person) => missingOf(person).length > 0).length,
   }
 }
 
-/** The plan years a `?year=` filter keeps (all of them without one). */
-function yearsInScope(url: URL): PlanYear[] {
-  const id = param(url, 'year')
-  return planYears.all().filter((year) => !id || year.id === id)
-}
-
-function planRow(plan: BenefitPlan, scope: PlanYear[]): PlanRow {
-  const ids = new Set(scope.map((year) => year.id))
-  const enrolled = new Set(
+function toPlan(rec: PlanRec): BenefitPlan {
+  const chosen = (status: string) =>
     elections
       .all()
-      .filter(
-        (election) =>
-          ids.has(election.planYearId) &&
-          election.status === 'approved' &&
-          election.planIds.includes(plan.id),
-      )
-      .map((election) => election.employeeId),
-  ).size
-  return { ...plan, enrolled, notEnrolled: Math.max(0, DIRECTORY.length - enrolled) }
-}
-
-function windowRow(window: EnrollmentWindow): EnrollmentWindowRow {
+      .filter((election) => election.status === status && election.planIds.includes(rec.id)).length
   return {
-    ...window,
-    planYearName: planYears.find(window.planYearId)?.name ?? '—',
-    status: today() > window.enrollmentEndDate ? 'closed' : 'open',
+    ...rec,
+    enrolled: chosen('approved'),
+    pending: chosen('pending'),
+    fileCount: planFiles.all().filter((file) => file.planId === rec.id).length,
+    planYearIds: planYears
+      .all()
+      .filter((year) => year.planIds.includes(rec.id))
+      .map((year) => year.id),
   }
 }
 
-const byStart = (a: PlanYear, b: PlanYear) => b.startDate.localeCompare(a.startDate)
-const byCreated = (a: { createdAt: string }, b: { createdAt: string }) =>
-  b.createdAt.localeCompare(a.createdAt)
-
-// --- validation ---------------------------------------------------------------------------------
-
-const knownPlans = (ids: string[]) => ids.every((id) => Boolean(plans.find(id)))
-
-const planYearInput = z
-  .object({
-    name: z
-      .string()
-      .trim()
-      .min(1, 'Enter the plan year name')
-      .max(60, 'Keep it under 60 characters'),
-    startDate: day,
-    endDate: day,
-    planIds: z.array(z.string()).min(1, 'Choose at least one plan'),
-    newHireStart: z.enum(NEW_HIRE_VALUES),
-    electionPeriod: z
-      .number({ error: 'Enter how long' })
-      .int('Enter a whole number')
-      .min(1, 'Enter at least 1')
-      .max(365, 'Enter 365 or less'),
-    electionUnit: z.enum(ELECTION_UNITS as ['day', 'week', 'month']),
-  })
-  .refine((value) => value.endDate > value.startDate, {
-    message: 'The plan year must end after it starts',
-    path: ['endDate'],
-  })
-
-const planInput = z
-  .object({
-    category: z.enum(CATEGORY_VALUES),
-    name: z.string().trim().min(1, 'Enter the plan name').max(60, 'Keep it under 60 characters'),
-    planType: z.string().min(1, 'Choose the plan type'),
-    planTypeId: z
-      .string()
-      .trim()
-      .min(1, 'Enter the plan type ID')
-      .max(30, 'Keep it under 30 characters'),
-    carrier: z.string().refine((value) => (CARRIERS as readonly string[]).includes(value), {
-      message: 'Choose the carrier',
-    }),
-    startDate: day,
-    endDate: day,
-    attachmentName: z.string().trim().min(1, 'Choose a file'),
-    attachmentSize: z.number().min(0),
-  })
-  .refine((value) => value.endDate > value.startDate, {
-    message: 'The plan must end after it starts',
-    path: ['endDate'],
-  })
-  .refine((value) => categoryMeta(value.category).planTypes.includes(value.planType), {
-    message: 'Choose the plan type',
-    path: ['planType'],
-  })
-
-const windowInput = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, 'Enter the enrollment name')
-    .max(80, 'Keep it under 80 characters'),
-  planYearId: z.string().min(1, 'Choose the plan year'),
-  effectiveDate: day,
-  enrollmentEndDate: day,
-  planIds: z.array(z.string()).min(1, 'Choose at least one plan'),
-  employeeIds: z.array(z.string()).min(1, 'Choose who can enroll'),
-})
-
-const profileInput = z.object({
-  dateOfBirth: day,
-  maritalStatus: z
-    .string()
-    .refine((value) => (MARITAL_STATUSES as readonly string[]).includes(value), {
-      message: 'Choose the marital status',
-    }),
-  homeAddress: z
-    .string()
-    .trim()
-    .min(1, 'Enter the home address')
-    .max(200, 'Keep it under 200 characters'),
-})
-
-function checkPlanYear(input: z.infer<typeof planYearInput>, id?: string) {
-  if (planYears.all().some((year) => year.id !== id && sameName(year.name, input.name))) {
-    return conflict('A plan year with this name already exists.', 'DUPLICATE', {
-      name: 'A plan year with this name already exists',
-    })
+function toWindow(rec: WindowRec): EnrollmentWindow {
+  return {
+    ...rec,
+    planYearName: planYears.find(rec.planYearId)?.name ?? '',
+    status: today() <= rec.closesOn ? 'open' : 'closed',
+    electionCount: elections.all().filter((election) => election.enrollmentWindowId === rec.id)
+      .length,
   }
-  if (!knownPlans(input.planIds)) return invalid('Choose plans from the list.')
-  return null
 }
 
-// --- handlers -----------------------------------------------------------------------------------
+function toFile(rec: FileRec): BenefitFile {
+  const plan = plans.find(rec.planId)
+  return {
+    ...rec,
+    planName: plan?.name ?? '',
+    category: plan?.category ?? 'others',
+    file: { id: rec.fileId, name: rec.fileName, url: mockFileUrl(rec.fileId) },
+  }
+}
 
-export const benefitsHandlers: HttpHandler[] = [
+// --- bodies ----------------------------------------------------------------------------------
+
+const planYearBody = z.object({
+  name: z.string().trim().min(1).max(200),
+  startDate: z.string().min(10),
+  endDate: z.string().min(10),
+  planIds: ids.max(200).default([]),
+  newHireStart: z.enum(['immediately', 'waiting_period', 'per_employee']).default('immediately'),
+  waitingPeriodDays: z.coerce.number().int().min(1).max(365).nullish(),
+  electionPeriod: z.coerce.number().int().min(1).max(365).default(30),
+  electionUnit: z.enum(['day', 'week', 'month']).default('day'),
+  rowVersion: z.string().nullish(),
+})
+
+const planBody = z.object({
+  category: z.enum(['medical', 'dental', 'vision', 'retirement', 'hsa', 'life', 'others']),
+  name: z.string().trim().min(1).max(200),
+  planType: z.string().max(100).nullish(),
+  planTypeRef: z.string().max(50).nullish(),
+  carrier: z.string().max(200).nullish(),
+  startDate: z.string().min(10),
+  endDate: z.string().min(10),
+  description: z.string().max(4000).nullish(),
+  status: z.enum(['active', 'inactive']).default('active'),
+  rowVersion: z.string().nullish(),
+})
+
+const windowBody = z.object({
+  planYearId: z.coerce.string().min(1),
+  kind: z.enum(['open_enrollment', 'life_event', 'new_hire']).default('open_enrollment'),
+  name: z.string().trim().min(1).max(200),
+  effectiveDate: z.string().min(10),
+  closesOn: z.string().min(10),
+  description: z.string().max(4000).nullish(),
+  planIds: ids.min(1).max(200),
+  employeeIds: ids.max(5000).default([]),
+  rowVersion: z.string().nullish(),
+})
+
+const updateRequestBody = z.object({
+  changes: z.object({
+    dateOfBirth: z.string().min(10).nullish(),
+    maritalStatus: z.enum(['single', 'married', 'divorced', 'widowed']).nullish(),
+    homeAddress: z.string().max(500).nullish(),
+  }),
+  remarks: z.string().max(2000).nullish(),
+})
+
+// --- handlers ----------------------------------------------------------------------------------
+
+export const benefitsHandlers = [
+  ...orgLookupHandlers,
+
   http.get(base('/summary'), async ({ request }) => {
-    const denied = await authed(request)
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
-    return ok<BenefitsSummary>({
-      employees: DIRECTORY.length,
-      planYears: planYears.all().length,
-      plans: plans.all().length,
-      enrollmentWindows: enrollmentWindows.all().length,
+    return HttpResponse.json<ApiItem<BenefitsSummary>>({
+      data: {
+        planYears: planYears.all().length,
+        plans: plans.all().length,
+        enrollmentWindows: enrollmentWindows.all().length,
+        employees: PEOPLE.length,
+      },
     })
   }),
 
-  http.get(base('/lookups'), async ({ request }) => {
-    const denied = await authed(request)
-    if (denied) return denied
-    return ok<BenefitsLookups>({
-      planYears: planYears
-        .all()
-        .sort(byStart)
-        .map(({ id, name, startDate, endDate, planIds }) => ({
-          id,
-          name,
-          startDate,
-          endDate,
-          planIds,
-        })),
-      plans: plans.all().map(({ id, name, category }) => ({ id, name, category })),
-      employees: DIRECTORY.map(({ id, name, jobTitle, department }) => ({
-        id,
-        name,
-        jobTitle,
-        department,
-      })),
-      departments: [...new Set(DIRECTORY.map((person) => person.department))].sort(),
-      carriers: [...CARRIERS],
-    })
-  }),
-
-  // Plan Years
+  // Plan years
   http.get(base('/plan-years'), async ({ request }) => {
-    const denied = await authed(request)
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
-    return ok(yearsInScope(new URL(request.url)).sort(byStart).map(planYearRow))
+    const url = new URL(request.url)
+    const q = (url.searchParams.get('q') ?? '').toLowerCase()
+    const status = url.searchParams.get('status')
+    const rows = planYears
+      .all()
+      .map(toPlanYear)
+      .filter(
+        (row) => (!q || row.name.toLowerCase().includes(q)) && (!status || row.status === status),
+      )
+      .sort((a, b) => b.startDate.localeCompare(a.startDate))
+    const { page, pageSize } = readPageParams(url)
+    return HttpResponse.json(paginate(rows, page, pageSize))
   }),
 
   http.get(base('/plan-years/:id'), async ({ request, params }) => {
-    const denied = await authed(request)
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
-    const year = planYears.find(String(params.id))
-    return year ? ok(planYearRow(year)) : notFound('plan year')
+    const rec = planYears.find(String(params.id))
+    if (!rec) return notFound('Plan year')
+    return HttpResponse.json<ApiItem<PlanYear>>({ data: toPlanYear(rec) })
   }),
 
-  http.post(base('/plan-years'), async ({ request }) => {
-    const denied = await authed(request)
-    if (denied) return denied
-    const parsed = await readBody(request, planYearInput)
-    if (!parsed.success) return rejected(parsed.error)
-    const refused = checkPlanYear(parsed.data)
-    if (refused) return refused
-    const year = planYears.insert({ id: createId('by'), ...parsed.data, createdAt: now() })
-    return ok(planYearRow(year))
-  }),
-
-  http.put(base('/plan-years/:id'), async ({ request, params }) => {
-    const denied = await authed(request)
-    if (denied) return denied
-    const year = planYears.find(String(params.id))
-    if (!year) return notFound('plan year')
-    const parsed = await readBody(request, planYearInput)
-    if (!parsed.success) return rejected(parsed.error)
-    const refused = checkPlanYear(parsed.data, year.id)
-    if (refused) return refused
-    const next = planYears.update(year.id, { ...year, ...parsed.data }) ?? year
-    // Windows keep only the plans the year still offers.
-    for (const window of enrollmentWindows.all().filter((item) => item.planYearId === year.id)) {
-      enrollmentWindows.update(window.id, {
-        ...window,
-        planIds: window.planIds.filter((id) => next.planIds.includes(id)),
-      })
-    }
-    return ok(planYearRow(next))
-  }),
+  http.post(base('/plan-years'), async ({ request }) => savePlanYear(request, null)),
+  http.put(base('/plan-years/:id'), async ({ request, params }) =>
+    savePlanYear(request, String(params.id)),
+  ),
 
   http.delete(base('/plan-years/:id'), async ({ request, params }) => {
-    const denied = await authed(request)
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
-    const year = planYears.find(String(params.id))
-    if (!year) return notFound('plan year')
-    planYears.remove(year.id)
-    for (const window of enrollmentWindows.all()) {
-      if (window.planYearId === year.id) enrollmentWindows.remove(window.id)
+    const rec = planYears.find(String(params.id))
+    if (!rec) return notFound('Plan year')
+    if (versionOf(request) && versionOf(request) !== rec.rowVersion) return conflict()
+    const mine = elections.all().filter((election) => election.planYearId === rec.id)
+    if (mine.some((election) => election.status === 'approved')) {
+      return errorResponse(409, 'This plan year has approved elections; it cannot be deleted.', {
+        code: 'PLAN_YEAR_IN_USE',
+      })
     }
-    for (const election of elections.all()) {
-      if (election.planYearId === year.id) elections.remove(election.id)
+    for (const election of mine) elections.remove(election.id)
+    for (const window of enrollmentWindows.all().filter((item) => item.planYearId === rec.id)) {
+      enrollmentWindows.remove(window.id)
     }
-    return ok({ id: year.id })
+    planYears.remove(rec.id)
+    return new HttpResponse(null, { status: 204 })
   }),
 
   // Plans
   http.get(base('/plans'), async ({ request }) => {
-    const denied = await authed(request)
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
     const url = new URL(request.url)
-    const scope = yearsInScope(url)
-    const offered = new Set(scope.flatMap((year) => year.planIds))
+    const q = (url.searchParams.get('q') ?? '').toLowerCase()
+    const category = url.searchParams.get('category')
+    const yearId = url.searchParams.get('planYearId')
+    const status = url.searchParams.get('status')
     const rows = plans
       .all()
-      .filter((plan) => !param(url, 'year') || offered.has(plan.id))
-      // By category (the menu's order), then oldest first; the seed keeps its own order.
-      .sort(
-        (a, b) =>
-          CATEGORY_VALUES.indexOf(a.category) - CATEGORY_VALUES.indexOf(b.category) ||
-          a.createdAt.localeCompare(b.createdAt),
+      .map(toPlan)
+      .filter(
+        (row) =>
+          (!q || row.name.toLowerCase().includes(q)) &&
+          (!category || row.category === category) &&
+          (!yearId || row.planYearIds.includes(yearId)) &&
+          (!status || row.status === status),
       )
-      .map((plan) => planRow(plan, scope))
-    return ok(rows)
-  }),
-
-  http.post(base('/plans'), async ({ request }) => {
-    const denied = await authed(request)
-    if (denied) return denied
-    const parsed = await readBody(request, planInput)
-    if (!parsed.success) return rejected(parsed.error)
-    const input = parsed.data
-    if (
-      plans
-        .all()
-        .some((plan) => plan.category === input.category && sameName(plan.name, input.name))
-    ) {
-      const message = `A ${categoryMeta(input.category).label} plan with this name already exists`
-      return conflict(`${message}.`, 'DUPLICATE', { name: message })
-    }
-    const plan = plans.insert({
-      id: createId('bp'),
-      ...input,
-      eligibility: 'Full-Time',
-      createdAt: now(),
-    })
-    return ok(planRow(plan, planYears.all()))
+      .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name))
+    const { page, pageSize } = readPageParams(url)
+    return HttpResponse.json(paginate(rows, page, pageSize))
   }),
 
   http.post(base('/plans/:id/duplicate'), async ({ request, params }) => {
-    const denied = await authed(request)
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const rec = plans.find(String(params.id))
+    if (!rec) return notFound('Plan')
+    const copy: PlanRec = {
+      ...rec,
+      id: createId('bp'),
+      name: `${rec.name} (copy)`,
+      createdAt: now(),
+      createdByName: ME,
+      updatedAt: null,
+      rowVersion: '0000000000000001',
+    }
+    plans.insert(copy)
+    return HttpResponse.json<ApiItem<BenefitPlan>>({ data: toPlan(copy) }, { status: 201 })
+  }),
+
+  http.post(base('/plans/:id/files'), async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
     const plan = plans.find(String(params.id))
-    if (!plan) return notFound('plan')
-    const taken = (name: string) =>
-      plans.all().some((item) => item.category === plan.category && sameName(item.name, name))
-    let name = `${plan.name} (copy)`
-    for (let index = 2; taken(name); index += 1) name = `${plan.name} (copy ${String(index)})`
-    const copy = plans.insert({ ...plan, id: createId('bp'), name, createdAt: now() })
-    return ok(planRow(copy, planYears.all()))
+    if (!plan) return notFound('Plan')
+    const body = await readBody(request, z.object({ fileId: z.coerce.string().min(1) }))
+    if (body instanceof Response) return body
+    // The shared files mock keeps the upload's name to itself: the mock names it by its id.
+    const rec: FileRec = {
+      id: createId('at'),
+      fileId: body.fileId,
+      fileName: `${body.fileId}.pdf`,
+      mimeType: 'application/pdf',
+      sizeBytes: null,
+      planId: plan.id,
+      createdAt: now(),
+      rowVersion: '0000000000000001',
+    }
+    planFiles.insert(rec)
+    return HttpResponse.json<ApiItem<BenefitFile>>({ data: toFile(rec) }, { status: 201 })
   }),
+
+  http.get(base('/plans/:id'), async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const rec = plans.find(String(params.id))
+    if (!rec) return notFound('Plan')
+    return HttpResponse.json<ApiItem<BenefitPlan>>({ data: toPlan(rec) })
+  }),
+
+  http.post(base('/plans'), async ({ request }) => savePlan(request, null)),
+  http.put(base('/plans/:id'), async ({ request, params }) => savePlan(request, String(params.id))),
 
   http.delete(base('/plans/:id'), async ({ request, params }) => {
-    const denied = await authed(request)
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
-    const plan = plans.find(String(params.id))
-    if (!plan) return notFound('plan')
-    const enrolled = planRow(plan, planYears.all()).enrolled
-    if (enrolled > 0) {
-      return conflict(
-        `${plan.name} has ${String(enrolled)} enrolled ${enrolled === 1 ? 'employee' : 'employees'}, so it cannot be deleted.`,
-        'IN_USE',
-      )
+    const rec = plans.find(String(params.id))
+    if (!rec) return notFound('Plan')
+    if (versionOf(request) && versionOf(request) !== rec.rowVersion) return conflict()
+    if (elections.all().some((election) => election.planIds.includes(rec.id))) {
+      return errorResponse(409, 'People have elected this plan; it cannot be deleted.', {
+        code: 'PLAN_IN_USE',
+      })
     }
-    plans.remove(plan.id)
-    for (const year of planYears.all()) {
-      if (year.planIds.includes(plan.id)) {
-        planYears.update(year.id, { ...year, planIds: year.planIds.filter((id) => id !== plan.id) })
-      }
+    for (const year of planYears.all().filter((item) => item.planIds.includes(rec.id))) {
+      planYears.update(year.id, { ...year, planIds: year.planIds.filter((id) => id !== rec.id) })
     }
-    for (const window of enrollmentWindows.all()) {
-      if (window.planIds.includes(plan.id)) {
-        enrollmentWindows.update(window.id, {
-          ...window,
-          planIds: window.planIds.filter((id) => id !== plan.id),
-        })
-      }
+    for (const file of planFiles.all().filter((item) => item.planId === rec.id)) {
+      planFiles.remove(file.id)
     }
-    for (const election of elections.all()) {
-      if (election.planIds.includes(plan.id)) {
-        elections.update(election.id, {
-          ...election,
-          planIds: election.planIds.filter((id) => id !== plan.id),
-        })
-      }
-    }
-    return ok({ id: plan.id })
+    plans.remove(rec.id)
+    return new HttpResponse(null, { status: 204 })
   }),
 
-  // Enrollment Windows
-  http.get(base('/enrollment-windows'), async ({ request }) => {
-    const denied = await authed(request)
+  // Files
+  http.get(base('/files'), async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
-    const ids = new Set(yearsInScope(new URL(request.url)).map((year) => year.id))
-    return ok(
-      enrollmentWindows
-        .all()
-        .filter((window) => ids.has(window.planYearId))
-        .sort(byCreated)
-        .map(windowRow),
-    )
+    const url = new URL(request.url)
+    const q = (url.searchParams.get('q') ?? '').toLowerCase()
+    const planId = url.searchParams.get('planId')
+    const yearId = url.searchParams.get('planYearId')
+    const offered = yearId ? (planYears.find(yearId)?.planIds ?? []) : null
+    const rows = planFiles
+      .all()
+      .filter(
+        (file) =>
+          (!planId || file.planId === planId) &&
+          (!offered || offered.includes(file.planId)) &&
+          (!q || file.fileName.toLowerCase().includes(q)),
+      )
+      .map(toFile)
+    const { page, pageSize } = readPageParams(url)
+    return HttpResponse.json(paginate(rows, page, pageSize))
+  }),
+
+  http.delete(base('/files/:id'), async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const rec = planFiles.find(String(params.id))
+    if (!rec) return notFound('File')
+    if (versionOf(request) && versionOf(request) !== rec.rowVersion) return conflict()
+    planFiles.remove(rec.id)
+    return new HttpResponse(null, { status: 204 })
+  }),
+
+  // Enrollment windows
+  http.get(base('/enrollment-windows'), async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const url = new URL(request.url)
+    const q = (url.searchParams.get('q') ?? '').toLowerCase()
+    const yearId = url.searchParams.get('planYearId')
+    const kind = url.searchParams.get('kind')
+    const status = url.searchParams.get('status')
+    const rows = enrollmentWindows
+      .all()
+      .map(toWindow)
+      .filter(
+        (row) =>
+          (!q || row.name.toLowerCase().includes(q)) &&
+          (!yearId || row.planYearId === yearId) &&
+          (!kind || row.kind === kind) &&
+          (!status || row.status === status),
+      )
+      .sort(
+        (a, b) =>
+          Number(b.status === 'open') - Number(a.status === 'open') ||
+          a.closesOn.localeCompare(b.closesOn),
+      )
+    const { page, pageSize } = readPageParams(url)
+    return HttpResponse.json(paginate(rows, page, pageSize))
   }),
 
   http.post(base('/enrollment-windows'), async ({ request }) => {
-    const denied = await authed(request)
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
-    const parsed = await readBody(request, windowInput)
-    if (!parsed.success) return rejected(parsed.error)
-    const input = parsed.data
-    const year = planYears.find(input.planYearId)
-    if (!year) return invalid('Choose the plan year.', { planYearId: 'Choose the plan year' })
-    if (input.effectiveDate < year.startDate || input.effectiveDate > year.endDate) {
-      const message = 'Choose a date within the plan year'
-      return invalid(`${message}.`, { effectiveDate: message })
+    const body = await readBody(request, windowBody)
+    if (body instanceof Response) return body
+    const year = planYears.find(body.planYearId)
+    if (!year) return invalid('planYearId', 'Choose the plan year.')
+    if (body.effectiveDate < year.startDate || body.effectiveDate > year.endDate) {
+      return invalid('effectiveDate', 'The effective date must fall in the plan year.')
     }
-    if (!input.planIds.every((id) => year.planIds.includes(id))) {
-      return invalid('Choose plans the plan year offers.', {
-        planIds: 'Choose plans the plan year offers',
-      })
+    if (body.planIds.some((planId) => !year.planIds.includes(planId))) {
+      return invalid('planIds', 'Choose plans offered in the plan year.')
     }
-    if (!input.employeeIds.every((id) => Boolean(findEmployee(id)))) {
-      return invalid('Choose people from the list.', { employeeIds: 'Choose people from the list' })
+    const rec: WindowRec = {
+      id: createId('ew'),
+      name: body.name.trim(),
+      kind: body.kind,
+      planYearId: year.id,
+      effectiveDate: body.effectiveDate,
+      closesOn: body.closesOn,
+      description: text(body.description),
+      planIds: body.planIds,
+      employeeIds: body.employeeIds,
+      createdAt: now(),
+      createdByName: ME,
+      updatedAt: null,
+      rowVersion: '0000000000000001',
     }
-    const window = enrollmentWindows.insert({ id: createId('ew'), ...input, createdAt: now() })
-    return ok(windowRow(window))
+    enrollmentWindows.insert(rec)
+    return HttpResponse.json<ApiItem<EnrollmentWindow>>({ data: toWindow(rec) }, { status: 201 })
   }),
 
   http.delete(base('/enrollment-windows/:id'), async ({ request, params }) => {
-    const denied = await authed(request)
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
-    const window = enrollmentWindows.find(String(params.id))
-    if (!window) return notFound('enrollment window')
-    enrollmentWindows.remove(window.id)
-    return ok({ id: window.id })
+    const rec = enrollmentWindows.find(String(params.id))
+    if (!rec) return notFound('Enrollment window')
+    if (versionOf(request) && versionOf(request) !== rec.rowVersion) return conflict()
+    enrollmentWindows.remove(rec.id)
+    return new HttpResponse(null, { status: 204 })
   }),
 
-  // Employees
+  // Employees tab
   http.get(base('/employees'), async ({ request }) => {
-    const denied = await authed(request)
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
     const url = new URL(request.url)
-    const scope = yearsInScope(url).sort(byStart)
-    const onlyMissing = param(url, 'missing') === 'true'
-    const rows: EmployeeRow[] = DIRECTORY.map((person) => {
-      const profile = profiles.find(person.id) ?? {
-        id: person.id,
-        dateOfBirth: null,
-        maritalStatus: null,
-        homeAddress: null,
-      }
-      return {
-        id: person.id,
-        name: person.name,
-        jobTitle: person.jobTitle,
-        department: person.department,
-        elections: scope.map((year) => ({
-          planYearId: year.id,
-          planYearName: year.name,
-          status:
-            elections
+    const q = (url.searchParams.get('q') ?? '').toLowerCase()
+    const yearId = url.searchParams.get('planYearId')
+    const missingOnly = url.searchParams.get('missingOnly') === 'true'
+    const rows: BenefitEmployee[] = PEOPLE.filter(
+      (person) =>
+        (!q || person.name.toLowerCase().includes(q)) &&
+        (!missingOnly || missingOf(person).length > 0),
+    )
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((person) => {
+        const election = yearId
+          ? elections
               .all()
-              .find(
-                (election) => election.planYearId === year.id && election.employeeId === person.id,
-              )?.status ?? null,
-        })),
-        missing: missingOf(person.id),
-        profile,
-      }
-    }).filter((row) => !onlyMissing || row.missing.length > 0)
-    return ok(rows)
-  }),
-
-  http.put(base('/employees/:id/profile'), async ({ request, params }) => {
-    const denied = await authed(request)
-    if (denied) return denied
-    const person = findEmployee(String(params.id))
-    if (!person) return notFound('employee')
-    const parsed = await readBody(request, profileInput)
-    if (!parsed.success) return rejected(parsed.error)
-    if (parsed.data.dateOfBirth >= today()) {
-      return invalid('Choose a date of birth in the past.', {
-        dateOfBirth: 'Choose a date in the past',
+              .find((item) => item.employeeId === person.id && item.planYearId === yearId)
+          : undefined
+        return {
+          id: person.id,
+          code: person.code,
+          name: person.name,
+          jobTitleName: orgName.jobTitle(person.jobTitleId),
+          departmentName: orgName.department(person.departmentId),
+          dateOfBirth: person.dateOfBirth,
+          maritalStatus: person.maritalStatus,
+          missing: missingOf(person),
+          electionId: election?.id ?? null,
+          electionStatus: election?.status ?? null,
+        }
       })
-    }
-    const profile = { id: person.id, ...parsed.data }
-    if (profiles.find(person.id)) profiles.update(person.id, profile)
-    else profiles.insert(profile)
-    return ok(profile)
+    const { page, pageSize } = readPageParams(url)
+    return HttpResponse.json(paginate(rows, page, pageSize))
   }),
 
-  // Files: the plans' attachments.
-  http.get(base('/files'), async ({ request }) => {
-    const denied = await authed(request)
+  // Update Information (Employees module): a request HR approves.
+  http.post(apiPath('/employees/:id/update-requests'), async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
     if (denied) return denied
-    const url = new URL(request.url)
-    const offered = new Set(yearsInScope(url).flatMap((year) => year.planIds))
-    const rows: BenefitFileRow[] = plans
-      .all()
-      .filter((plan) => !param(url, 'year') || offered.has(plan.id))
-      .sort(byCreated)
-      .map((plan) => ({
-        id: plan.id,
-        fileName: plan.attachmentName,
-        size: plan.attachmentSize,
-        planId: plan.id,
-        planName: plan.name,
-        category: plan.category,
-        addedOn: plan.createdAt.slice(0, 10),
-      }))
-    return ok(rows)
+    const person = findPerson(String(params.id))
+    if (!person) return undefined
+    const body = await readBody(request, updateRequestBody)
+    if (body instanceof Response) return body
+    const changes = Object.fromEntries(
+      Object.entries(body.changes).filter(([, value]) => typeof value === 'string'),
+    ) as Record<string, string>
+    if (Object.keys(changes).length === 0) return invalid('changes', 'Ask for at least one change.')
+    const rec = {
+      id: createId('ur'),
+      employeeId: person.id,
+      changes,
+      status: 'pending' as const,
+      createdAt: now(),
+    }
+    updateRequests.insert(rec)
+    return HttpResponse.json(
+      {
+        data: {
+          ...rec,
+          employeeCode: person.code,
+          employeeName: person.name,
+          previous: { dateOfBirth: person.dateOfBirth, maritalStatus: person.maritalStatus },
+          remarks: body.remarks ?? null,
+          rowVersion: '0000000000000001',
+        },
+      },
+      { status: 201 },
+    )
   }),
 ]
+
+// --- handler bodies --------------------------------------------------------------------------
+
+async function savePlanYear(request: Request, yearId: string | null) {
+  await latency()
+  const denied = requireAuth(request)
+  if (denied) return denied
+  const current = yearId ? planYears.find(yearId) : undefined
+  if (yearId && !current) return notFound('Plan year')
+  const body = await readBody(request, planYearBody)
+  if (body instanceof Response) return body
+  if (current && body.rowVersion !== current.rowVersion) return conflict()
+  if (body.endDate <= body.startDate) {
+    return invalid('endDate', 'The end date must be after the start date.')
+  }
+  if (body.newHireStart === 'waiting_period' && !body.waitingPeriodDays) {
+    return invalid('waitingPeriodDays', 'Enter the waiting period in days.')
+  }
+  const name = body.name.trim()
+  if (
+    planYears
+      .all()
+      .some((rec) => rec.id !== yearId && rec.name.toLowerCase() === name.toLowerCase())
+  ) {
+    return errorResponse(409, 'A plan year with this name already exists.', {
+      code: 'PLAN_YEAR_DUPLICATE',
+      fieldErrors: { name: 'A plan year with this name already exists.' },
+    })
+  }
+  if (body.planIds.some((planId) => !plans.find(planId))) {
+    return invalid('planIds', 'A chosen plan was not found.')
+  }
+  const saved: PlanYearRec = {
+    id: current?.id ?? createId('by'),
+    name,
+    startDate: body.startDate,
+    endDate: body.endDate,
+    newHireStart: body.newHireStart,
+    waitingPeriodDays:
+      body.newHireStart === 'waiting_period' ? (body.waitingPeriodDays ?? null) : null,
+    electionPeriod: body.electionPeriod,
+    electionUnit: body.electionUnit,
+    planIds: [...new Set(body.planIds)],
+    createdAt: current?.createdAt ?? now(),
+    createdByName: current?.createdByName ?? ME,
+    updatedAt: current ? now() : null,
+    rowVersion: current ? nextVersion(current.rowVersion) : '0000000000000001',
+  }
+  if (current) planYears.update(saved.id, saved)
+  else planYears.insert(saved)
+  return HttpResponse.json<ApiItem<PlanYear>>(
+    { data: toPlanYear(saved) },
+    { status: current ? 200 : 201 },
+  )
+}
+
+async function savePlan(request: Request, planId: string | null) {
+  await latency()
+  const denied = requireAuth(request)
+  if (denied) return denied
+  const current = planId ? plans.find(planId) : undefined
+  if (planId && !current) return notFound('Plan')
+  const body = await readBody(request, planBody)
+  if (body instanceof Response) return body
+  if (current && body.rowVersion !== current.rowVersion) return conflict()
+  if (body.endDate < body.startDate) {
+    return invalid('endDate', 'The end date cannot be before the start date.')
+  }
+  const name = body.name.trim()
+  if (
+    plans.all().some((rec) => rec.id !== planId && rec.name.toLowerCase() === name.toLowerCase())
+  ) {
+    return errorResponse(409, 'A plan with this name already exists.', {
+      code: 'BENEFIT_PLAN_DUPLICATE',
+      fieldErrors: { name: 'A plan with this name already exists.' },
+    })
+  }
+  const saved: PlanRec = {
+    id: current?.id ?? createId('bp'),
+    category: body.category,
+    name,
+    planType: text(body.planType),
+    planTypeRef: text(body.planTypeRef),
+    carrier: text(body.carrier),
+    startDate: body.startDate,
+    endDate: body.endDate,
+    description: text(body.description),
+    status: body.status,
+    createdAt: current?.createdAt ?? now(),
+    createdByName: current?.createdByName ?? ME,
+    updatedAt: current ? now() : null,
+    rowVersion: current ? nextVersion(current.rowVersion) : '0000000000000001',
+  }
+  if (current) plans.update(saved.id, saved)
+  else plans.insert(saved)
+  return HttpResponse.json<ApiItem<BenefitPlan>>(
+    { data: toPlan(saved) },
+    { status: current ? 200 : 201 },
+  )
+}
+
+export function resetBenefitsDb(): void {
+  resetBenefitsCollections()
+}

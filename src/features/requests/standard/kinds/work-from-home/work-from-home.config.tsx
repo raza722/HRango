@@ -2,6 +2,8 @@ import { format, parseISO } from 'date-fns'
 
 import type { FilterField } from '@/features/payroll'
 
+import { typePermission } from '../../../api/backend'
+import { employeeFilterField } from '../../../components/shared/request-employee'
 import { REQUEST_STATUSES, type RequestStatus } from '../../../types/requests.types'
 import type { StandardFilterContext, StandardKindConfig } from '../../standard.types'
 import { nowrap, standardColumns as col } from '../../standard-columns'
@@ -20,23 +22,19 @@ const statusWord = (status: RequestStatus) =>
 const created = (stamp: string) => format(parseISO(stamp), 'EEE, d MMM yyyy')
 
 function filterFields({
+  kind,
   tab,
   scope,
   view,
   lookups,
 }: StandardFilterContext): readonly FilterField[] {
-  const people = (lookups?.employees ?? []).map((person) => ({
-    value: person.id,
-    label: person.name,
-    hint: person.code,
-  }))
   const fields: FilterField[] = [
     {
       kind: 'select',
-      key: 'department',
+      key: 'departmentId',
       label: 'Department',
       placeholder: 'Select Department',
-      options: (lookups?.departments ?? []).map((name) => ({ value: name, label: name })),
+      options: (lookups?.departments ?? []).map((item) => ({ value: item.id, label: item.name })),
     },
     {
       kind: 'select',
@@ -49,13 +47,7 @@ function filterFields({
     { kind: 'date', key: 'to', label: 'To' },
   ]
   if (tab === 'approvals' || scope === 'all') {
-    fields.unshift({
-      kind: 'select',
-      key: 'employeeId',
-      label: 'Employee',
-      placeholder: 'Select Employee',
-      options: people,
-    })
+    fields.unshift(employeeFilterField(typePermission(kind, 'create')))
   }
   if (tab === 'approvals' && view === 'delegates') {
     fields.splice(1, 0, {
@@ -76,7 +68,8 @@ function filterFields({
 /**
  * Work From Home (frames 2697:5533 … 4013:36535): Requests with My / All,
  * the status tabs and bulk Approved / Unapproved; Approvals with Requested and
- * Delegates. "Completed" replaces "Approved".
+ * Delegates. "Completed" replaces "Approved". The API's type is
+ * `work_from_home` (`/requests/work-from-home`).
  */
 export const workFromHomeConfig: StandardKindConfig<WorkFromHomePayload> = {
   kind: 'work-from-home',
@@ -85,7 +78,8 @@ export const workFromHomeConfig: StandardKindConfig<WorkFromHomePayload> = {
   requestsTitle: 'WFH Requests',
   approvalsTitle: 'WFH Approvals',
   scopeLabels: { my: 'My Requests', all: 'All Requests' },
-  approvalViews: ['requested', 'delegates'],
+  // The API decides a cancellation from its own box (Cancellations).
+  approvalViews: ['requested', 'cancellations', 'delegates'],
   statusTabs: true,
   bulk: true,
   statusLabels: STATUS_LABELS,
@@ -94,7 +88,7 @@ export const workFromHomeConfig: StandardKindConfig<WorkFromHomePayload> = {
     col.employee(),
     col.department(),
     col.text('created', 'Created Date', (row) => nowrap(created(row.createdAt))),
-    col.text('count', 'Count', (row) => row.payload.count),
+    col.text('count', 'Count', (row) => row.days ?? row.payload.days.length),
     col.status({ statusLabels: STATUS_LABELS }),
   ],
   approvalColumns: () => [
@@ -102,7 +96,7 @@ export const workFromHomeConfig: StandardKindConfig<WorkFromHomePayload> = {
     col.employee(),
     col.department(),
     col.text('created', 'Created Date', (row) => nowrap(created(row.createdAt))),
-    col.text('count', 'Count', (row) => row.payload.count),
+    col.text('count', 'Count', (row) => row.days ?? row.payload.days.length),
     // Who decides next; once decided, who decided last.
     col.text(
       'approver',
@@ -111,7 +105,7 @@ export const workFromHomeConfig: StandardKindConfig<WorkFromHomePayload> = {
         const person =
           row.currentStep?.approver ??
           row.flow.filter((step) => step.actedBy).at(-1)?.actedBy ??
-          row.flow.at(-1)?.approver
+          row.finalAuthority
         return person ? <StandardPersonCell person={person} /> : '—'
       },
       'min-w-32',

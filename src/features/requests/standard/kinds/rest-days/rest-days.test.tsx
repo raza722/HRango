@@ -38,7 +38,7 @@ const confirmYes = async (user: UserEvent) => {
   )
 }
 
-describe('Rest Days (the shared standard request pages)', () => {
+describe('Rest Days (the shared standard request pages, on /requests/rest-day)', () => {
   it('lists my requests and everyone’s, and submits a new one', async () => {
     const { user } = renderApp('/requests/rest-days')
 
@@ -59,9 +59,13 @@ describe('Rest Days (the shared standard request pages)', () => {
     const from = addDays(new Date(), 40)
     await pickDate(user, /^Date \(from\)/, from)
     await pickDate(user, /^Date \(to\)/, addDays(from, 6), from)
-    expect(within(dialog).getByText('Selected Days').nextElementSibling).not.toHaveTextContent(
-      /^0$/,
-    )
+    await waitFor(() => {
+      expect(within(dialog).getByText('Selected Days').nextElementSibling).not.toHaveTextContent(
+        /^0$/,
+      )
+    })
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Payable' }))
+    await user.type(within(dialog).getByRole('textbox', { name: /^Reason/ }), 'Family event.')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     expect((await screen.findAllByText('Request submitted')).length).toBeGreaterThan(0)
@@ -72,7 +76,15 @@ describe('Rest Days (the shared standard request pages)', () => {
           .filter((record) => record.kind === 'rest-days' && record.employeeId === 'em_shelley'),
       ).toHaveLength(3)
     })
-  })
+    const saved = standardRequests
+      .all()
+      .find((record) => record.kind === 'rest-days' && record.payload.reason === 'Family event.')
+    // The department is the person's own when the form has none to offer.
+    expect(saved?.payload).toMatchObject({
+      department: 'Human Resource Management',
+      payable: true,
+    })
+  }, 30_000)
 
   it('approves a request into rest days on the schedule', async () => {
     const { user } = renderApp('/requests/rest-days?tab=approvals')

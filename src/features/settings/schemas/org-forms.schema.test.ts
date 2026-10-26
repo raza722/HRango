@@ -13,17 +13,12 @@ describe('branchFormSchema', () => {
   const valid = {
     ...branchMapper.empty(),
     name: 'Gulberg Annex',
-    companyId: 'co_topedge',
     locationId: 'lc_lhr',
   }
 
-  it('needs a name, a company and a location; the rest is optional', () => {
+  it('needs a name and a location; the rest is optional', () => {
     expect(issuePaths(branchFormSchema, valid)).toEqual([])
-    expect(issuePaths(branchFormSchema, branchMapper.empty())).toEqual([
-      'name',
-      'companyId',
-      'locationId',
-    ])
+    expect(issuePaths(branchFormSchema, branchMapper.empty())).toEqual(['name', 'locationId'])
   })
 
   it('checks coordinate ranges and wants latitude and longitude together', () => {
@@ -42,7 +37,7 @@ describe('branchFormSchema', () => {
     ])
   })
 
-  it('maps empty selects to null and upper-cases the prefix', () => {
+  it('maps empty selects and text to null and upper-cases the prefix', () => {
     const input = branchMapper.toInput({
       ...valid,
       employeePrefix: 'te-lhr',
@@ -53,7 +48,10 @@ describe('branchFormSchema', () => {
       employeePrefix: 'TE-LHR',
       areaId: null,
       managerId: null,
-      countryCode: null,
+      description: null,
+      countryId: null,
+      stateId: null,
+      cityId: null,
       latitude: 31.5,
       longitude: 74.3,
     })

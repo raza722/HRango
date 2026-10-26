@@ -6,14 +6,15 @@ import { Loader2 } from 'lucide-react'
 
 import { DatePickerField, SelectField, SwitchField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
+import { ApiError } from '@/lib/api-error'
 import { parseDateValue, toDateValue } from '@/lib/date'
 import { cn } from '@/lib/utils'
 
-import { REPEAT_OPTIONS, WEEKDAY_LABELS } from '../../constants'
+import { REPEAT_OPTIONS, SCHEDULING_PERMISSIONS, WEEKDAY_LABELS } from '../../constants'
 import { useCreateRestDays } from '../../hooks/use-scheduling'
 import { restDaySchema, type RestDayValues } from '../../schemas/schedule-forms.schema'
 import { WEEKDAYS } from '../../types/scheduling.types'
-import { toDate, weekdayOf } from '../../utils/schedule-dates'
+import { toDate, weekdayNumber, weekdayOf } from '../../utils/schedule-dates'
 import { EmployeeSelector } from '../fields/employee-selector'
 import { schedulingType } from '../type-styles'
 import { SchedulingDialog } from './scheduling-dialog'
@@ -63,19 +64,19 @@ function DayChips({ control }: { control: ReturnType<typeof useForm<RestDayValue
 }
 
 /**
- * Create New Rest Day: the rule on the left (Start Date, Repeat, Step, From,
- * To, days, payable) and the people on the right (filters, All Employees,
- * Selected Employees). Cancel / Create.
+ * Create New Rest Day (`POST /scheduling/settings/rest-days`): the rule on the left (From,
+ * To, Repeat, Step, days, payable) and the people on the right (filters, All Employees,
+ * Selected Employees). Cancel / Create. Dates that are already rest days are left alone;
+ * shifts on the new rest days stay (the board shows the shift first).
  */
 export function RestDayDialog({ employeeIds = [], date, onClose }: RestDayDialogProps) {
   const create = useCreateRestDays()
   const [initial] = useState<RestDayValues>(() => {
     const start = date ?? toDateValue(new Date())
     return {
-      startDate: start,
+      fromDate: start,
+      toDate: date ? start : toDateValue(addDays(toDate(start), 27)),
       repeat: '1',
-      repeatFrom: start,
-      repeatTo: toDateValue(addDays(toDate(start), 27)),
       weekdays: [date ? weekdayOf(date) : 'sun'],
       step: '1',
       payable: false,
@@ -88,24 +89,25 @@ export function RestDayDialog({ employeeIds = [], date, onClose }: RestDayDialog
     mode: 'onTouched',
   })
   const { control } = form
-  const repeatFrom = useWatch({ control, name: 'repeatFrom' })
+  const fromDate = useWatch({ control, name: 'fromDate' })
   const { field, fieldState } = useController({ control, name: 'employeeIds' })
 
   const submit = form.handleSubmit(async (values) => {
+    const every = Number(values.repeat)
     try {
       await create.mutateAsync({
-        startDate: values.startDate,
-        payable: values.payable,
+        fromDate: values.fromDate,
+        toDate: values.toDate,
+        weekdays: values.weekdays.map(weekdayNumber),
+        repeatEveryWeeks: every,
+        step: every > 0 && values.step !== '' ? Number(values.step) : 1,
+        isPayable: values.payable,
         employeeIds: values.employeeIds,
-        repeat: {
-          everyWeeks: Number(values.repeat),
-          from: values.repeatFrom,
-          to: values.repeatTo,
-          weekdays: values.weekdays,
-          step: values.step === '' ? 1 : Number(values.step),
-        },
       })
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.fieldErrors.toDate) {
+        form.setError('toDate', { message: error.fieldErrors.toDate })
+      }
       return
     }
     onClose()
@@ -153,13 +155,22 @@ export function RestDayDialog({ employeeIds = [], date, onClose }: RestDayDialog
         )}
       >
         <div className="grid content-start gap-4 @3xl:border-r @3xl:pr-8">
-          <DatePickerField control={control} name="startDate" label="Start Date" required />
+          <div className="grid grid-cols-2 gap-3">
+            <DatePickerField control={control} name="fromDate" label="From" required />
+            <DatePickerField
+              control={control}
+              name="toDate"
+              label="To"
+              required
+              minDate={parseDateValue(fromDate)}
+            />
+          </div>
           <SelectField
             control={control}
             name="repeat"
             label="Repeat"
             required
-            options={REPEAT_OPTIONS.filter((option) => option.value !== '0')}
+            options={REPEAT_OPTIONS}
           />
           <TextField
             control={control}
@@ -168,16 +179,6 @@ export function RestDayDialog({ employeeIds = [], date, onClose }: RestDayDialog
             placeholder="How many steps"
             inputMode="numeric"
           />
-          <div className="grid grid-cols-2 gap-3">
-            <DatePickerField control={control} name="repeatFrom" label="From" required />
-            <DatePickerField
-              control={control}
-              name="repeatTo"
-              label="To"
-              required
-              minDate={parseDateValue(repeatFrom)}
-            />
-          </div>
           <DayChips control={control} />
           <SwitchField
             control={control}
@@ -190,6 +191,7 @@ export function RestDayDialog({ employeeIds = [], date, onClose }: RestDayDialog
           <h3 className="text-lg font-medium text-[#202020] dark:text-heading">Search Filter</h3>
           <EmployeeSelector
             appearance="poppins"
+            permission={SCHEDULING_PERMISSIONS.restDaysCreate}
             value={field.value}
             onChange={field.onChange}
             error={fieldState.error?.message}

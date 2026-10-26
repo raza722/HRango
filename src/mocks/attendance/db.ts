@@ -1,5 +1,8 @@
 import { format, isWeekend, subDays } from 'date-fns'
 
+import { createMockCollection } from '../collection'
+import { findEmployee } from '../employees/seed'
+import { PROFILES } from '../scheduling/seed'
 import type {
   AttendanceBreak,
   AttendanceComment,
@@ -7,11 +10,7 @@ import type {
   HistoryEntry,
   LocalDateTime,
   PunchLog,
-} from '@/features/attendance'
-
-import { createMockCollection } from '../collection'
-import { findEmployee } from '../employees/seed'
-import { PROFILES } from '../scheduling/seed'
+} from './types'
 
 /** A punch recorded by a person or HR (machine punches are generated). */
 export interface StoredPunch extends PunchLog {
@@ -37,6 +36,8 @@ export interface DayEdit {
   status?: DayStatus
   relaxationReason?: string
   approvedOvertimeMinutes?: number
+  /** The day's comments (one text, as the API keeps it). */
+  comments?: string | null
   updatedAt: string
 }
 
@@ -79,6 +80,8 @@ function seedEdits(): DayEdit[] {
       employeeId: 'em_shelley',
       date,
       checkIn: `${date}T08:58`,
+      comments:
+        'The main gate device was offline in the morning; the check-in time was taken from the guard log.',
       updatedAt: `${date}T11:20:00.000Z`,
     },
   ]
@@ -157,7 +160,14 @@ export const attendanceHistory = createMockCollection<StoredHistory>({
   seed: seedHistory,
 })
 
+/** Punches HR set aside (`PATCH /attendance/logs/{id}/ignore`): listed, but not counted. */
+export const attendanceIgnored = createMockCollection<{ id: string }>({
+  storageKey: 'hrms-mock-attendance-ignored',
+  seed: () => [],
+})
+
 export function resetAttendanceDb(): void {
+  attendanceIgnored.reset()
   attendancePunches.reset()
   attendanceEdits.reset()
   attendanceComments.reset()

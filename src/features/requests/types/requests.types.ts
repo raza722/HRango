@@ -21,14 +21,22 @@ export type RequestTab = (typeof REQUEST_TABS)[number]
 export const REQUEST_SCOPES = ['my', 'all'] as const
 export type RequestScope = (typeof REQUEST_SCOPES)[number]
 
-/** Approvals → Requested (yours), Delegates (passed to you), Consents (your say asked). */
-export const APPROVAL_VIEWS = ['requested', 'delegates', 'consents'] as const
+/**
+ * Approvals → Requested (yours), Delegates (passed to you), Consents (your say
+ * asked), Cancellations (cancellations of approved requests to decide). The API's `box`.
+ */
+export const APPROVAL_VIEWS = ['requested', 'delegates', 'consents', 'cancellations'] as const
 export type ApprovalView = (typeof APPROVAL_VIEWS)[number]
 
-export const PUNCH_REQUEST_TYPES = ['check-in', 'check-out', 'missing-punch'] as const
+/** The API's punch types (`req_punch.punch_type`). */
+export const PUNCH_REQUEST_TYPES = ['check_in', 'check_out', 'break_out', 'break_in'] as const
 export type PunchRequestType = (typeof PUNCH_REQUEST_TYPES)[number]
 
-/** What the signed-in person may do with a request (decided by the server). */
+/**
+ * What the signed-in person may do with a request. The API's detail lists them
+ * (approve / reject read as `decide`, consent / disagree as `consent`); list rows
+ * get them from the status and the tab (see `api/backend.ts`).
+ */
 export const REQUEST_ACTIONS = [
   'view',
   'edit',
@@ -38,6 +46,7 @@ export const REQUEST_ACTIONS = [
   'cancel',
   'decide',
   'consent',
+  'forward',
 ] as const
 export type RequestAction = (typeof REQUEST_ACTIONS)[number]
 
@@ -58,7 +67,21 @@ export interface RequestEmployee extends PersonRef {
   photoUrl: string | null
 }
 
-export type FlowStepStatus = 'waiting' | 'pending' | 'approved' | 'rejected' | 'skipped'
+/**
+ * A step's state. The API records steps as the flow reaches them (`actionTaken`): pending,
+ * approved, rejected, skipped, informed (an On Looker node), forwarded, consented, disagreed.
+ * `waiting` is a step not reached yet (the mock API plans the whole flow).
+ */
+export type FlowStepStatus =
+  | 'waiting'
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'skipped'
+  | 'informed'
+  | 'forwarded'
+  | 'consented'
+  | 'disagreed'
 
 /** One approver in the request's flow (Line Manager, then HR Manager). */
 export interface FlowStep {
@@ -69,6 +92,57 @@ export interface FlowStep {
   actedBy: PersonRef | null
   actedAt: string | null
   remarks: string | null
+  /** The request's own flow, or its cancellation's. */
+  purpose?: 'request' | 'cancellation'
+  /** A "Can Disagree" step: agree or disagree, and the flow goes on. */
+  isConsent?: boolean
+  /** A delegate acted for the approver. */
+  isDelegate?: boolean
+}
+
+/** A file attached to a request: `url` is a signed link that expires (reopen for a fresh one). */
+export interface RequestAttachment {
+  /** The attachment row (DELETE /requests/<type>/<id>/attachments/<id>). */
+  id: string
+  fileId: string
+  name: string
+  mimeType: string | null
+  sizeBytes: number | null
+  label: string | null
+  url: string
+}
+
+/** The fields every request has in the API, whatever its type. */
+export interface RequestHeader {
+  /** The API's request type code (`leave`, `shift_swap`). */
+  requestType: string
+  /** Sent back with edits, decisions, cancellations and deletes. */
+  rowVersion: string
+  fromDate: string | null
+  toDate: string | null
+  /** Counted days (leave, rest days, work from home). */
+  days: number | null
+  reason: string | null
+  description: string | null
+  /** The application letter (Transfer), as sent. */
+  application: string | null
+  submittedAt: string | null
+  decidedAt: string | null
+  /** Who must act now. */
+  nextApprover: PersonRef | null
+  finalAuthority: PersonRef | null
+  /** Files; only the detail (View, Approve) carries them, lists give `[]`. */
+  attachments: RequestAttachment[]
+  /** Approvals lists: the request waits for the caller (or their delegator). */
+  isWaiting?: boolean
+  /** Approvals → Delegates: whose approval was passed on. */
+  delegator?: PersonRef | null
+  /**
+   * The detail's own decision actions as the API lists them for the caller (`approve`,
+   * `reject`, `consent`, `disagree`, `forward`); absent on list rows. The popups enable
+   * each button only when its action is listed.
+   */
+  decisions?: readonly ('approve' | 'reject' | 'consent' | 'disagree' | 'forward')[]
 }
 
 export interface ConsentEntry {
@@ -88,30 +162,35 @@ export interface RequestHistoryEntry {
   at: string
 }
 
+/**
+ * Punch: the API's `details` (`req_punch`). The reason and description are
+ * the request's own (`RequestHeader`).
+ */
 export interface PunchPayload {
-  date: string
-  expectedIn: string | null
-  expectedOut: string | null
+  punchDate: string | null
   punchType: PunchRequestType
+  /** `HH:mm:ss` from the API. */
   punchTime: string
-  description: string
 }
 
+/**
+ * Shift: either a new time slot for the day (`timeSlotId`) or a swap with a
+ * colleague (`withEmployeeId`, who gives consent first). The API adds the
+ * shift the person has that day and the colleague's.
+ */
 export interface ShiftPayload {
-  date: string
-  /** The time roster asked for; null when swapping with a colleague. */
-  rosterGroupId: string | null
-  rosterTitle: string | null
-  /** The shift the person has that day ("Swap From"). */
-  swapFrom: string | null
-  /** The colleague to swap with ("Swap To"). */
-  swapWith: PersonRef | null
-  /** The colleague's shift that day, when swapping. */
-  swapToShift: string | null
-  description: string
+  shiftDate: string | null
+  fromScheduleId?: string | null
+  fromTimeSlotName?: string | null
+  timeSlotId: string | null
+  timeSlotName?: string | null
+  withEmployeeId: string | null
+  withEmployeeName?: string | null
+  toScheduleId?: string | null
+  toTimeSlotName?: string | null
 }
 
-interface RequestBase {
+interface RequestBase extends RequestHeader {
   id: string
   code: string
   status: RequestStatus
@@ -142,20 +221,22 @@ export interface NamedRef {
   name: string
 }
 
-/** A transfer: where the person moves, from when, and who they will report to. */
+/**
+ * A transfer (`req_transfer`): where the person moves, from when, and who they
+ * will report to. The application letter and description are the request's own.
+ */
 export interface TransferPayload {
-  location: NamedRef
-  branch: NamedRef
-  department: string
-  /** Where the person worked when they asked. */
-  current: { location: string | null; branch: string | null; department: string }
-  lineManager: PersonRef
-  finalAuthority: PersonRef
-  effectiveDate: string
-  attachmentName: string | null
-  description: string
-  /** The application letter, as simple HTML from the editor. */
-  application: string
+  locationId: string
+  locationName: string | null
+  branchId: string
+  branchName: string | null
+  departmentId: string
+  departmentName: string | null
+  lineManagerId: string
+  lineManagerName: string | null
+  finalAuthorityId: string
+  finalAuthorityName: string | null
+  effectiveDate: string | null
 }
 
 export interface TransferRequest extends RequestBase {
@@ -182,112 +263,81 @@ export interface RequestDetail<T> {
   history: RequestHistoryEntry[]
 }
 
+/**
+ * The lists' filters the API reads: `q`, `employeeId`, `departmentId`,
+ * `branchId`, `locationId`, `from`, `to` (and `delegatorId` on Approvals).
+ */
+export type RequestFilters = Record<string, string | undefined>
+
 export interface RequestListParams {
   scope: RequestScope
-  status?: RequestStatus
+  status?: RequestStatus | undefined
   page: number
   pageSize: number
-  /** The Filters dialog's values (Punch), sent as query parameters. */
-  filters?: Record<string, string | undefined>
+  /** The Filters dialog's values, sent as query parameters. */
+  filters?: RequestFilters | undefined
 }
 
 export interface ApprovalListParams {
   view: ApprovalView
-  status?: RequestStatus
+  status?: RequestStatus | undefined
   page: number
   pageSize: number
-  filters?: Record<string, string | undefined>
+  filters?: RequestFilters | undefined
 }
 
-export interface PunchRequestInput {
-  /** Omitted: the signed-in person. */
-  employeeId?: string
+/** The person's shift on a date (`GET /scheduling/schedules`), for the request forms. */
+export interface DayShift {
   date: string
-  punchType: PunchRequestType
-  punchTime: string
-  description: string
+  /** The time slot's name ("RS Morning"); null when nothing is scheduled. */
+  slotName: string | null
+  timeSlotId: string | null
+  /** `HH:mm`. */
+  clockIn: string | null
+  clockOut: string | null
+  /** A rest day is scheduled. */
+  restDay: boolean
 }
 
-export interface ShiftRequestInput {
-  employeeId?: string
-  date: string
-  rosterGroupId: string | null
-  swapWithId: string | null
-  description: string
+/** A time slot to change a shift to (`GET /scheduling/options/time-slots`). */
+export interface TimeSlotOption {
+  id: string
+  name: string
+  code: string | null
+  /** `HH:mm:ss`. */
+  startTime: string | null
+  endTime: string | null
 }
 
-export interface TransferRequestInput {
-  employeeId?: string
-  locationId: string
-  branchId: string
-  department: string
-  lineManagerId: string
-  finalAuthorityId: string
-  effectiveDate: string
-  attachmentName: string | null
-  description: string
-  application: string
-}
-
-export interface RequestInputMap {
-  punch: PunchRequestInput
-  shift: ShiftRequestInput
-  transfer: TransferRequestInput
+/** A colleague who works that day, and their shift ("Swap To"). */
+export interface SwapColleague {
+  person: PersonRef
+  shift: string | null
 }
 
 /**
- * The Transfer lists' Filters: the request's employee, new location, branch,
- * department and effective date; Delegates adds employment status, the
- * delegator, the next requestee and an effective-date range.
+ * `GET /requests/options/colleagues`: someone the requester may swap a shift with (the
+ * company's current employees but the requester; held with `requests.shift_swap.create`).
  */
-export interface TransferFilters {
-  employeeId?: string | undefined
-  locationId?: string | undefined
-  branchId?: string | undefined
-  department?: string | undefined
-  effectiveDate?: string | undefined
-  employmentStatus?: string | undefined
-  delegatorId?: string | undefined
-  nextRequesteeId?: string | undefined
-  from?: string | undefined
-  to?: string | undefined
-}
-
-/** A person on the Transfer form, with where they work now. */
-export interface TransferPerson extends PersonRef {
-  department: string
-  designation: string
-  locationId: string | null
+export interface ColleagueOption {
+  id: string
+  code: string | null
+  name: string | null
+  departmentId: string | null
+  departmentName: string | null
   branchId: string | null
-  active: boolean
+  branchName: string | null
 }
 
+/** The Transfer form's and filters' pickers. */
 export interface TransferLookups {
-  employees: TransferPerson[]
   locations: NamedRef[]
-  branches: (NamedRef & { locationId: string })[]
-  departments: string[]
-  /** People whose approvals are passed on to the signed-in person. */
-  delegators: PersonRef[]
+  branches: (NamedRef & { locationId: string | null })[]
+  departments: NamedRef[]
 }
 
 export interface DecisionInput {
   decision: 'approve' | 'reject'
   remarks: string
-}
-
-/** The person's day for a request form: shift times, or the shift to swap. */
-export interface DayShift {
-  date: string
-  slotName: string | null
-  rosterGroupId: string | null
-  clockIn: string | null
-  clockOut: string | null
-  /** Colleagues who work a different shift that day (Swap To options). */
-  colleagues: { person: PersonRef; shift: string }[]
-}
-
-export interface RequestLookups {
-  employees: (PersonRef & { department: string })[]
-  rosters: { id: string; title: string }[]
+  rowVersion: string
 }

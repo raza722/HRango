@@ -13,6 +13,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 
+import type { MentionContext } from '../../api/pm.api'
 import {
   useAddComment,
   useComments,
@@ -60,8 +61,11 @@ export function CommentsProvider({ children }: { children: React.ReactNode }) {
 }
 
 interface Shared {
-  me: PmPerson | undefined
+  /** Null for an account without an employee (it cannot like or own comments). */
+  me: PmPerson | null | undefined
   people: Map<string, PmPerson>
+  /** Who and what a comment's text can mention (`mentions` of the request). */
+  context: MentionContext
   employees: readonly PmPerson[]
   tasks: readonly TaskRow[]
   taskLink: (taskId: string) => string
@@ -77,10 +81,12 @@ function CommentsPanel({ target, onClose }: { target: CommentsTarget; onClose: (
   const task = tasks.data?.find((entry) => entry.id === target.taskId)
   const workspaceName = tree.data?.workspaces.find((w) => w.id === target.workspaceId)?.name
 
+  const employees = lookups.data?.employees ?? []
   const shared: Shared = {
     me: lookups.data?.me,
     people,
-    employees: lookups.data?.employees ?? [],
+    context: { people: employees, tasks: tasks.data ?? [] },
+    employees,
     tasks: tasks.data ?? [],
     taskLink: (taskId) =>
       `${window.location.origin}/project-management/workspaces/${target.workspaceId}#${taskId}`,
@@ -181,23 +187,35 @@ function CommentThread({
   return (
     <article
       className="rounded-[1.125rem] bg-white"
-      aria-label={`Comment by ${name(comment.authorId)}`}
+      aria-label={`Comment by ${comment.authorName}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5">
         <label className="flex items-center gap-3 text-base text-[#4A4A4A] sm:text-xl">
           <Checkbox
             checked={comment.resolved}
             onCheckedChange={(checked) => {
-              update.mutate({ id: comment.id, patch: { resolved: checked === true } })
+              update.mutate({
+                comment,
+                patch: { resolved: checked === true },
+                context: shared.context,
+              })
             }}
             className="size-6 rounded-md"
           />
-          {comment.resolved ? `Resolved by ${name(comment.resolvedById)}` : 'Mark as Resolve'}
+          {comment.resolved
+            ? `Resolved by ${comment.resolvedByName ?? name(comment.resolvedById)}`
+            : 'Mark as Resolve'}
         </label>
         {comment.assignedToId && (
           <span className="rounded-lg bg-[#E7F3FF] px-3 py-1 text-xs font-medium text-[#626262] sm:text-sm">
-            Assigned to <span className="text-[#2E64E2]">{name(comment.assignedToId)}</span> by{' '}
-            <span className="text-[#2E64E2]">{name(comment.assignedById)}</span>
+            Assigned to{' '}
+            <span className="text-[#2E64E2]">
+              {comment.assignedToName ?? name(comment.assignedToId)}
+            </span>{' '}
+            by{' '}
+            <span className="text-[#2E64E2]">
+              {comment.assignedByName ?? name(comment.assignedById)}
+            </span>
           </span>
         )}
       </div>
@@ -234,7 +252,7 @@ function CommentThread({
                   {[...new Set(replies.map((reply) => reply.authorId))].slice(0, 4).map((id) => (
                     <EmployeeAvatar
                       key={id}
-                      name={name(id)}
+                      name={replies.find((reply) => reply.authorId === id)?.authorName ?? name(id)}
                       photoUrl={shared.people.get(id)?.photoUrl ?? null}
                       className="size-7 border-[1.5px] border-white"
                       fallbackClassName="text-[0.6rem]"
@@ -319,12 +337,13 @@ function CommentCard({
   const [draft, setDraft] = useState(comment.body)
   const author = shared.people.get(comment.authorId)
   const mine = shared.me?.id === comment.authorId
+  const authorName = author?.name ?? comment.authorName
 
   const saveEdit = () => {
     const body = draft.trim()
     if (!body) return
     update.mutate(
-      { id: comment.id, patch: { body } },
+      { comment, patch: { body }, context: shared.context },
       {
         onSuccess: () => {
           setEditing(false)
@@ -338,7 +357,7 @@ function CommentCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <EmployeeAvatar
-            name={author?.name ?? 'Someone'}
+            name={authorName}
             photoUrl={author?.photoUrl ?? null}
             className={cn('size-12 shrink-0', compact && 'size-10')}
           />
@@ -405,7 +424,7 @@ function CommentCard({
                 <DropdownMenuItem
                   className="text-[#B7192C] focus:text-[#B7192C]"
                   onSelect={() => {
-                    remove.mutate(comment.id, { onSuccess: () => toast.success('Comment deleted') })
+                    remove.mutate(comment, { onSuccess: () => toast.success('Comment deleted') })
                   }}
                 >
                   Delete Comment
@@ -523,7 +542,7 @@ function AssignButton({ comment, shared }: { comment: TaskComment; shared: Share
   )
   const assign = (assignedToId: string | null) => {
     update.mutate(
-      { id: comment.id, patch: { assignedToId } },
+      { comment, patch: { assignedToId }, context: shared.context },
       {
         onSuccess: () => {
           setOpen(false)
@@ -613,10 +632,7 @@ function Reactions({
         disabled={!meId}
         onClick={() => {
           if (!meId) return
-          const likedByIds = liked
-            ? comment.likedByIds.filter((id) => id !== meId)
-            : [...comment.likedByIds, meId]
-          update.mutate({ id: comment.id, patch: { likedByIds } })
+          update.mutate({ comment, patch: { liked: !liked }, context: shared.context })
         }}
         className={cn(
           'flex h-9 items-center gap-1 rounded-lg px-2 text-xs font-semibold hover:bg-[#F0E9FD]',
@@ -697,7 +713,7 @@ function Composer({
     const text = body.trim()
     if (!text) return
     add.mutate(
-      { taskId, input: { body: text, parentId } },
+      { taskId, input: { body: text, parentId }, context: shared.context },
       {
         onSuccess: () => {
           setBody('')
@@ -759,13 +775,14 @@ function Composer({
 }
 
 const MENTION_TABS = ['People', 'Tasks', 'Docs', 'Locations'] as const
+/** Tabs the API has nothing behind (no docs or locations in Project Management). */
+const OFF_TABS: ReadonlySet<string> = new Set(['Docs', 'Locations'])
 
 /** "Mention Tasks, User, or Docs": People, Tasks, Docs and Locations tabs. */
 function MentionMenu({ shared, onPick }: { shared: Shared; onPick: (text: string) => void }) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<(typeof MENTION_TABS)[number]>('People')
   const [query, setQuery] = useState('')
-  const tree = useWorkspaceTree()
   const q = query.trim().toLowerCase()
   const people = useMemo(
     () => shared.employees.filter((person) => person.name.toLowerCase().includes(q)),
@@ -773,9 +790,6 @@ function MentionMenu({ shared, onPick }: { shared: Shared; onPick: (text: string
   )
   const tasks = shared.tasks.filter(
     (task) => task.name.toLowerCase().includes(q) || task.code.toLowerCase().includes(q),
-  )
-  const docs = (tree.data?.items ?? []).filter(
-    (item) => item.kind === 'doc' && item.name.toLowerCase().includes(q),
   )
   const pick = (text: string) => {
     onPick(text)
@@ -806,8 +820,8 @@ function MentionMenu({ shared, onPick }: { shared: Shared; onPick: (text: string
               type="button"
               role="tab"
               aria-selected={tab === name}
-              disabled={name === 'Locations'}
-              title={name === 'Locations' ? 'Locations are not part of this app yet' : undefined}
+              disabled={OFF_TABS.has(name)}
+              title={OFF_TABS.has(name) ? `${name} are not part of this app yet` : undefined}
               onClick={() => {
                 setTab(name)
               }}
@@ -859,7 +873,7 @@ function MentionMenu({ shared, onPick }: { shared: Shared; onPick: (text: string
                   <button
                     type="button"
                     onClick={() => {
-                      pick(task.code)
+                      pick(`#${task.code}`)
                     }}
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-[#F0E9FD]"
                   >
@@ -872,20 +886,6 @@ function MentionMenu({ shared, onPick }: { shared: Shared; onPick: (text: string
               ))}
             </>
           )}
-          {tab === 'Docs' &&
-            docs.map((doc) => (
-              <li key={doc.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    pick(doc.name)
-                  }}
-                  className="w-full truncate rounded-lg px-2 py-1.5 text-left text-sm hover:bg-[#F0E9FD]"
-                >
-                  {doc.name}
-                </button>
-              </li>
-            ))}
         </ul>
       </PopoverContent>
     </Popover>

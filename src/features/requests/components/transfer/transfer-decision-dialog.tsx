@@ -7,13 +7,16 @@ import { EmployeeAvatar } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
-import { AttachmentField, btn, ConfirmAction, footerButton, ReadOnlyRow } from '@/features/payroll'
+import { btn, ConfirmAction, footerButton, ReadOnlyRow } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
+import type { DetailSource } from '../../api/engine.api'
 import { useDecideRequest, useRequestDetail } from '../../hooks/use-requests'
 import type { RequestEmployee } from '../../types/requests.types'
 import { RequestFlowDialog, RequestHistoryDialog } from '../dialogs/request-dialogs'
+import { RequestFileLinks } from '../shared/request-files'
 import { ApplicationEditor } from './application-editor'
 import { TransferDialogShell } from './transfer-dialog-shell'
 import { decisionButton } from './transfer-styles'
@@ -56,7 +59,10 @@ function TransferEmployeeCard({ employee }: { employee: RequestEmployee }) {
         <Fact label="Employee Code" value={employee.code} />
         <Fact label="Branch" value={employee.branch ?? '—'} />
         <Fact label="Company" value={employee.company ?? '—'} />
-        <Fact label="Joining Date" value={format(day(employee.joiningDate), 'd, MMMM yyyy')} />
+        <Fact
+          label="Joining Date"
+          value={employee.joiningDate ? format(day(employee.joiningDate), 'd, MMMM yyyy') : '—'}
+        />
       </dl>
     </section>
   )
@@ -70,21 +76,27 @@ function TransferEmployeeCard({ employee }: { employee: RequestEmployee }) {
 export function TransferDecisionDialog({
   id,
   mode,
+  via = 'approvals',
   onClose,
 }: {
   id: string
   mode: 'decide' | 'view'
+  via?: DetailSource
   onClose: () => void
 }) {
   const remarksId = useId()
-  const detail = useRequestDetail('transfer', id)
-  const decide = useDecideRequest('transfer')
+  const detail = useRequestDetail('transfer', id, via)
+  const decide = useDecideRequest()
+  const canApprove = useCan('requests.approvals.approve')
+  const canReject = useCan('requests.approvals.reject')
   const [remarks, setRemarks] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<'approve' | 'reject' | null>(null)
   const [panel, setPanel] = useState<'flow' | 'history' | null>(null)
   const request = detail.data?.request
-  const deciding = mode === 'decide'
+  const deciding = mode === 'decide' && Boolean(request?.actions.includes('decide'))
+  // Each button only when the API lists it for the caller (the detail's `actions`).
+  const may = (action: 'approve' | 'reject') => request?.decisions?.includes(action) ?? true
 
   const ask = (decision: 'approve' | 'reject') => {
     if (decision === 'reject' && !remarks.trim()) {
@@ -97,8 +109,12 @@ export function TransferDecisionDialog({
 
   const submit = async (decision: 'approve' | 'reject') => {
     setConfirming(null)
+    if (!request) return
     try {
-      await decide.mutateAsync({ id, input: { decision, remarks: remarks.trim() } })
+      await decide.mutateAsync({
+        id,
+        input: { decision, remarks: remarks.trim(), rowVersion: request.rowVersion },
+      })
     } catch (failure) {
       setError(
         failure instanceof ApiError
@@ -117,7 +133,7 @@ export function TransferDecisionDialog({
       <TransferDialogShell
         title={deciding ? 'Transfer Approval Approve' : 'Transfer Approval View'}
         onClose={onClose}
-        aside={<ApplicationEditor value={request?.payload.application ?? ''} readOnly />}
+        aside={<ApplicationEditor value={request?.application ?? ''} readOnly />}
         footer={
           <>
             {deciding && request && (
@@ -142,7 +158,7 @@ export function TransferDecisionDialog({
                 </Button>
                 <Button
                   type="button"
-                  disabled={decide.isPending}
+                  disabled={decide.isPending || !canApprove || !may('approve')}
                   onClick={() => {
                     ask('approve')
                   }}
@@ -152,7 +168,7 @@ export function TransferDecisionDialog({
                 </Button>
                 <Button
                   type="button"
-                  disabled={decide.isPending}
+                  disabled={decide.isPending || !canReject || !may('reject')}
                   onClick={() => {
                     ask('reject')
                   }}
@@ -193,30 +209,34 @@ export function TransferDecisionDialog({
                 cancellation takes it out of the transfer records.
               </p>
             )}
-            <ReadOnlyRow label="Location" value={request.payload.location.name} />
-            <ReadOnlyRow label="Branch" value={request.payload.branch.name} />
-            <ReadOnlyRow label="Department" value={request.payload.department} />
+            <ReadOnlyRow label="Location" value={request.payload.locationName ?? '—'} />
+            <ReadOnlyRow label="Branch" value={request.payload.branchName ?? '—'} />
+            <ReadOnlyRow label="Department" value={request.payload.departmentName ?? '—'} />
             <ReadOnlyRow
               label="Effective Date"
               value={
                 <span className="flex w-full items-center justify-between gap-2">
-                  {format(day(request.payload.effectiveDate), 'MMMM d, yyyy')}
+                  {request.payload.effectiveDate
+                    ? format(day(request.payload.effectiveDate), 'MMMM d, yyyy')
+                    : '—'}
                   <CalendarDays aria-hidden="true" className="size-4 text-heading" />
                 </span>
               }
             />
-            <ReadOnlyRow label="Line Manager" value={request.payload.lineManager.name} />
-            <ReadOnlyRow label="Final Authority" value={request.payload.finalAuthority.name} />
-            <AttachmentField
-              value={request.payload.attachmentName}
-              disabled
-              onChange={() => undefined}
+            <ReadOnlyRow label="Line Manager" value={request.payload.lineManagerName ?? '—'} />
+            <ReadOnlyRow
+              label="Final Authority"
+              value={request.payload.finalAuthorityName ?? '—'}
+            />
+            <ReadOnlyRow
+              label="Attachment"
+              value={<RequestFileLinks files={request.attachments} />}
             />
             <ReadOnlyRow
               label="Description"
               value={
                 <span className="min-h-24 w-full py-1 whitespace-pre-wrap">
-                  {request.payload.description}
+                  {request.description ?? ''}
                 </span>
               }
             />
@@ -275,7 +295,9 @@ export function TransferDecisionDialog({
       />
       {panel === 'flow' && request && (
         <RequestFlowDialog
-          request={request}
+          kind="transfer"
+          id={id}
+          via={via}
           onClose={() => {
             setPanel(null)
           }}
@@ -285,6 +307,7 @@ export function TransferDecisionDialog({
         <RequestHistoryDialog
           kind="transfer"
           id={id}
+          via={via}
           onClose={() => {
             setPanel(null)
           }}

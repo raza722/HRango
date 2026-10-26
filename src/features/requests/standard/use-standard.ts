@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
+import type { RequestBody } from '../api/backend'
+import type { DetailSource } from '../api/engine.api'
+import { engineApi } from '../api/engine.api'
 import {
   standardApi,
   standardApprovalsQueryOptions,
@@ -21,8 +24,9 @@ export const useStandardList = <P>(kind: StandardKind, params: StandardListParam
 export const useStandardApprovals = <P>(kind: StandardKind, params: StandardApprovalParams) =>
   useQuery(standardApprovalsQueryOptions<P>(kind, params))
 
-export const useStandardDetail = <P>(kind: StandardKind, id: string) =>
-  useQuery(standardDetailQueryOptions<P>(kind, id))
+/** One request; `via: 'approvals'` reads it as an approver (wider than the type's own scope). */
+export const useStandardDetail = <P>(kind: StandardKind, id: string, via?: DetailSource) =>
+  useQuery(standardDetailQueryOptions<P>(kind, id, via))
 
 export const useStandardLookups = <X>(kind: StandardKind) =>
   useQuery(standardLookupsQueryOptions<X>(kind))
@@ -48,60 +52,94 @@ function useStandardMutation<TVariables, TResult>(
 
 export const useCreateStandard = (kind: StandardKind) =>
   useStandardMutation(
-    (input: object) => standardApi.create(kind, input),
+    (body: RequestBody) => standardApi.create(kind, body),
     () => 'Request submitted',
   )
 
 export const useUpdateStandard = (kind: StandardKind) =>
   useStandardMutation(
-    ({ id, input }: { id: string; input: object }) => standardApi.update(kind, id, input),
+    ({ id, body }: { id: string; body: RequestBody }) => standardApi.update(kind, id, body),
     () => 'Request updated',
   )
 
 export const useDeleteStandard = (kind: StandardKind) =>
   useStandardMutation(
-    (id: string) => standardApi.remove(kind, id),
+    ({ id, rowVersion }: { id: string; rowVersion: string }) =>
+      standardApi.remove(kind, id, rowVersion),
     () => 'Request deleted',
   )
 
-export const useDecideStandard = (kind: StandardKind) =>
+export const useDecideStandard = () =>
   useStandardMutation(
-    ({ id, input }: { id: string; input: StandardDecisionInput }) =>
-      standardApi.decide(kind, id, input),
+    ({ id, input }: { id: string; input: StandardDecisionInput }) => standardApi.decide(id, input),
     ({ input }) => (input.decision === 'approve' ? 'Request approved' : 'Request rejected'),
   )
 
+export const useConsentStandard = () =>
+  useStandardMutation(
+    ({
+      id,
+      agree,
+      remarks,
+      rowVersion,
+    }: {
+      id: string
+      agree: boolean
+      remarks: string
+      rowVersion: string
+    }) => engineApi.consent(id, agree, remarks || null, rowVersion),
+    ({ agree }) => (agree ? 'Consent given' : 'Disagreement recorded'),
+  )
+
+export const useForwardStandard = () =>
+  useStandardMutation(
+    ({
+      id,
+      employeeId,
+      remarks,
+      rowVersion,
+    }: {
+      id: string
+      employeeId: string
+      remarks: string
+      rowVersion: string
+    }) => engineApi.forward(id, employeeId, remarks || null, rowVersion),
+    () => 'Request forwarded',
+  )
+
+/** Withdraws a pending request, or asks to cancel an approved one. */
 export const useCancelStandard = (kind: StandardKind) =>
   useStandardMutation(
-    ({ id, reason }: { id: string; reason: string }) => standardApi.cancel(kind, id, reason),
+    ({ id, reason, rowVersion }: { id: string; reason: string; rowVersion: string }) =>
+      standardApi.cancel(kind, id, reason, rowVersion),
     () => 'Cancellation requested',
   )
 
 /**
- * "Approved" / "Unapproved" on the ticked rows: the same decision on each, one
- * after another. Resolves with how many went through.
+ * "Approved" / "Unapproved" on the ticked rows (`/requests/approvals/bulk-*`):
+ * each request is decided on its own. Resolves with how many went through.
  */
-export function useBulkStandard(kind: StandardKind) {
+export function useBulkStandard() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async ({
-      ids,
-      input,
+      items,
+      decision,
+      remarks,
     }: {
-      ids: readonly string[]
-      input: StandardDecisionInput
+      items: readonly { id: string; rowVersion: string }[]
+      decision: 'approve' | 'reject'
+      remarks: string
     }) => {
-      let done = 0
-      for (const id of ids) {
-        try {
-          await standardApi.decide(kind, id, input)
-          done += 1
-        } catch {
-          // Counted as not done; the toast says how many went through.
-        }
+      const results = await engineApi.bulk(decision, items, remarks || null)
+      const done = results.filter((result) => result.ok).length
+      if (done === 0) {
+        throw new Error(
+          results.find((result) => result.message)?.message ??
+            'None of the requests could be updated.',
+        )
       }
-      if (done === 0) throw new Error('None of the requests could be updated.')
-      return { done, failed: ids.length - done }
+      return { done, failed: items.length - done }
     },
     meta: { suppressErrorToast: true },
     onSettled: () => queryClient.invalidateQueries(),

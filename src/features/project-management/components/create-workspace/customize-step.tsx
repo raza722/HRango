@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 
 import { cn } from '@/lib/utils'
 
-import { WORKFLOW_TEMPLATES_BY_ID } from '../../constants'
 import type { WorkflowTemplateId, WorkspaceSetup } from '../../types/pm.types'
+import { useWorkflowTemplate } from './templates-context'
 import { useFocusOnMount } from './use-focus-on-mount'
 import { HelpTip, IconTile, StatusRing } from './wizard-controls'
 import { SUMMARY_HELP } from './wizard-icon-maps'
@@ -29,7 +29,7 @@ export function CustomizeStep({
   focusHeading,
   returnTo,
 }: CustomizeStepProps) {
-  const name = WORKFLOW_TEMPLATES_BY_ID[template].name
+  const { name } = useWorkflowTemplate(template)
   const headingRef = useFocusOnMount<HTMLHeadingElement>(focusHeading)
   const statuses = orderedStatuses(setup.statuses)
 

@@ -4,10 +4,15 @@ import { z } from 'zod'
 import { PenaltyPage, usePolicyTablePrefs, warningPenaltiesQueryOptions } from '@/features/warning'
 import { pageTitle } from '@/lib/constants'
 
-/** `?page=2&edit=pn_123`. Bad values fall back instead of throwing. */
+/** `?page=2` (penalty list) and `edit=<policy id>` (the policy whose penalties are edited). */
 const penaltySearchSchema = z.object({
   page: z.number().int().min(1).default(1).catch(1),
-  edit: z.string().min(1).optional().catch(undefined),
+  // API ids are numeric strings; a typed-in `?edit=4` parses as a number.
+  edit: z
+    .union([z.string().min(1), z.number().int().positive()])
+    .transform(String)
+    .optional()
+    .catch(undefined),
 })
 
 export const Route = createFileRoute('/_app/warning/penalty/')({

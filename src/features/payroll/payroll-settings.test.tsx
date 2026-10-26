@@ -79,7 +79,7 @@ describe('Payroll Settings', () => {
 
     // A toast from an earlier test can still be up, so check what was saved.
     await waitFor(() => {
-      expect(currentPayrollSettings().configuration.excludeFinalSettlement).toBe(true)
+      expect(currentPayrollSettings().excludeFinalSettlement).toBe(true)
     })
   })
 
@@ -94,41 +94,61 @@ describe('Payroll Settings', () => {
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() => {
-      expect(currentPayrollSettings().leave).toMatchObject({
-        fiscalYear: 'fiscal',
-        yearStartMonth: 7,
-        yearEndMonth: 6,
+      expect(currentPayrollSettings()).toMatchObject({
+        leaveYearBasis: 'fiscal',
+        fiscalYearStartMonth: 7,
+        fiscalYearEndMonth: 6,
       })
     })
   })
 
-  it('creates a pay item and rejects an expression that does not work out', async () => {
+  it('creates a formula pay item and rejects an unknown reference', async () => {
     const { user } = renderApp('/payroll/settings/pay-components')
 
-    await user.click(await screen.findByRole('button', { name: '+ Create' }))
+    expect(await rowOf('Salary')).toBeVisible()
+    // System items cannot be deleted.
+    await user.click(
+      within(await rowOf('Salary')).getByRole('button', { name: 'Actions for Salary' }),
+    )
+    expect(await screen.findByRole('menuitem', { name: 'Edit' })).toBeVisible()
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+
+    await user.click(screen.getByRole('button', { name: '+ Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Pay Item Create' })
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(await within(dialog).findByText('Enter a name')).toBeVisible()
 
     await user.type(within(dialog).getByRole('textbox', { name: /^Name/ }), 'Night Allowance')
     await choose(user, /^Pay item Type/, 'Earning')
-    await choose(user, /^Calculation Type/, 'Fixed')
+    await choose(user, /^Calculation Type/, 'Formula')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(dialog).findByText('Choose the formula')).toBeVisible()
+    await choose(user, /^Employee Formula/, /^Per Day Salary/)
+
     await user.click(within(dialog).getByRole('button', { name: 'Insert a variable' }))
     await user.click(await screen.findByRole('button', { name: /^\{gross_salary\}/ }))
-    const expression = within(dialog).getByRole('textbox', { name: /^Expression/ })
-    expect(expression).toHaveValue('{gross_salary}')
-    await user.type(expression, ' * (2')
+    const eligibility = within(dialog).getByRole('textbox', { name: /^Eligibility Criteria/ })
+    expect(eligibility).toHaveValue('{gross_salary}')
+    await user.type(eligibility, ' > {{foo}')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-    expect(await within(dialog).findByText(/The expression is not valid/)).toBeVisible()
+    expect(
+      await within(dialog).findByText('{foo} is not a variable, pay item or formula.'),
+    ).toBeVisible()
 
-    await user.type(expression, ')')
+    await user.clear(eligibility)
+    await user.type(eligibility, '{{service_months} > 3')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('Pay item created')).toBeInTheDocument()
-    expect(within(await rowOf('Night Allowance')).getByText('{gross_salary} * (2)')).toBeVisible()
+    expect(
+      within(await rowOf('Night Allowance')).getByText('{gross_salary} / {applicable_days}'),
+    ).toBeVisible()
     expect(payItems.all().find((item) => item.name === 'Night Allowance')).toMatchObject({
-      type: 'earning',
-      calculationType: 'fixed',
-      expression: '{gross_salary} * (2)',
+      itemType: 'earning',
+      calculationType: 'formula',
+      employeeFormulaId: 'f_per_day',
+      reference: '{night_allowance}',
+      eligibilityExpression: '{service_months} > 3',
     })
   })
 
@@ -158,7 +178,9 @@ describe('Payroll Settings', () => {
     expect(await screen.findByText('Tax structure created')).toBeInTheDocument()
     expect(await rowOf('Tax Structure 2027-2028')).toBeVisible()
     const saved = taxStructures.all().find((item) => item.name === 'Tax Structure 2027-2028')
-    expect(saved?.slabs).toMatchObject([{ min: 0, max: 600000, fixedAmount: 0, percentage: 5 }])
+    expect(saved?.slabs).toMatchObject([
+      { minAmount: 0, maxAmount: 600000, fixedAmount: 0, percentage: 5 },
+    ])
   })
 
   it('creates a group benefit once it has a member', async () => {
@@ -167,8 +189,8 @@ describe('Payroll Settings', () => {
     await user.click(await screen.findByRole('button', { name: '+ Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Benefit Create' })
     await user.type(within(dialog).getByRole('textbox', { name: /^Name/ }), 'Fuel Allowance')
-    await choose(user, /^Type/, 'Reimbursement')
-    await choose(user, /^Payitem/, 'Gross Salary')
+    await choose(user, /^Type/, 'Allowance')
+    await choose(user, /^Payitem/, 'Travel Allowance')
     await user.click(within(dialog).getByRole('checkbox', { name: 'Group' }))
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(
@@ -177,16 +199,18 @@ describe('Payroll Settings', () => {
 
     const members = within(dialog).getByRole('region', { name: 'Members' })
     await user.click(within(members).getByRole('button', { name: '+Add' }))
-    await user.type(within(members).getByRole('textbox', { name: 'Member 1 name' }), 'Driver')
-    await choose(user, 'Member 1 formula', 'Gross Salary')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(members).findByText('Choose who')).toBeVisible()
+    await choose(user, 'Member 1 employee', /^Daniel Brooks/)
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByText('Benefit created')).toBeInTheDocument()
     expect(await rowOf('Fuel Allowance')).toBeVisible()
     expect(benefits.all().find((item) => item.name === 'Fuel Allowance')).toMatchObject({
-      type: 'reimbursement',
-      group: true,
-      members: [{ name: 'Driver', formulaId: 'f_gross' }],
+      benefitType: 'allowance',
+      payItemId: 'pi_travel',
+      isGroup: true,
+      members: [{ employeeId: 'em_daniel', employeeName: 'Daniel Brooks', employeeGroupId: null }],
     })
   })
 
@@ -206,6 +230,8 @@ describe('Payroll Settings', () => {
     await fill(/^Bank Name/, 'Bank Alfalah')
     await fill(/^Branch Name/, 'Clifton Branch')
     await fill(/^Branch Code/, '0101')
+    await fill(/^Branch Location/, 'Karachi')
+    await fill(/^Tax Payer ID/, '7364519-2')
     await pickToday(user, /^Effective Date/)
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
@@ -214,7 +240,7 @@ describe('Payroll Settings', () => {
     expect(within(row).getByText(format(new Date(), 'MMMM d, yyyy'))).toBeVisible()
 
     await user.click(
-      within(row).getByRole('button', { name: 'Actions for Bank Alfalah (Clifton Branch)' }),
+      within(row).getByRole('button', { name: 'Actions for Bank Alfalah (0101-7788990011)' }),
     )
     await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
     const confirm = await screen.findByRole('alertdialog', { name: 'Delete' })

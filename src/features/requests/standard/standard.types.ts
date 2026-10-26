@@ -3,14 +3,10 @@ import type { ComponentType, ReactNode } from 'react'
 import type { DataTableColumn } from '@/components/layout'
 import type { FilterField } from '@/features/payroll'
 
-import type {
-  ConsentEntry,
-  FlowStep,
-  PersonRef,
-  RequestAction,
-  RequestEmployee,
-  RequestStatus,
-} from '../types/requests.types'
+import type { ApprovalDetails } from '../api/backend'
+import type { EngineRequest } from '../api/engine.api'
+import type { PersonOption } from '../api/lookups.api'
+import type { NamedRef, PersonRef, RequestStatus } from '../types/requests.types'
 
 /**
  * The request types built on the shared "standard" pages (the design's newer
@@ -26,39 +22,41 @@ export const STANDARD_KINDS = [
   'rest-days',
   'travel',
   'resignation',
+  'expense',
+  'official-visits',
+  'air-tickets',
+  'requisition',
 ] as const
 export type StandardKind = (typeof STANDARD_KINDS)[number]
 
 export const isStandardKind = (value: string): value is StandardKind =>
   (STANDARD_KINDS as readonly string[]).includes(value)
 
-/** Approvals → Requested (yours), Cancellations (cancellations to decide), Delegates. */
-export const STANDARD_APPROVAL_VIEWS = ['requested', 'cancellations', 'delegates'] as const
+/**
+ * Approvals → Requested (yours), Cancellations (cancellations to decide),
+ * Delegates (passed to you), Consents (your agreement asked: a Can Disagree step).
+ * The API's `box`.
+ */
+export const STANDARD_APPROVAL_VIEWS = [
+  'requested',
+  'cancellations',
+  'delegates',
+  'consents',
+] as const
 export type StandardApprovalView = (typeof STANDARD_APPROVAL_VIEWS)[number]
 
-/** A request of a standard type; `payload` is the type's own fields. */
-export interface StandardRequest<P = Record<string, unknown>> {
-  id: string
-  code: string
-  kind: StandardKind
-  status: RequestStatus
-  employee: RequestEmployee
-  createdBy: PersonRef
-  createdAt: string
-  updatedAt: string
-  flow: FlowStep[]
-  consents: ConsentEntry[]
-  cancelReason: string | null
-  /** The flow step waiting for a decision, if any. */
-  currentStep: FlowStep | null
-  actions: RequestAction[]
-  payload: P
-}
+/**
+ * A request of a standard type: the API's header fields (`RequestHeader`), the
+ * employee, flow and actions, and `payload`: the type's `details` as the API
+ * sends them (camelCase, ids as strings).
+ */
+export type StandardRequest<P = Record<string, unknown>> = EngineRequest<StandardKind, P>
 
 /** The Filters dialog's values, sent as query parameters. */
 export type StandardFilters = Record<string, string | undefined>
 
 export interface StandardListParams {
+  /** My Requests / All Requests (the API's `view`). */
   scope: 'my' | 'all'
   status?: RequestStatus | undefined
   page: number
@@ -74,19 +72,19 @@ export interface StandardApprovalParams {
   filters?: StandardFilters | undefined
 }
 
-/** A person on the forms and filters. */
-export interface StandardPerson extends PersonRef {
-  department: string
-  designation: string
-  active: boolean
-}
+/** A person on the forms and filters (`GET /employees/lookup`). */
+export type StandardPerson = PersonOption
 
 /** Look-ups every standard type gets, plus the type's own (`extra`). */
 export interface StandardLookups<X = Record<string, unknown>> {
-  /** The signed-in person (My Requests forms start from them). */
-  me: StandardPerson
+  /** The signed-in person (My Requests); null for a user without an employee record. */
+  me: PersonRef | null
+  /**
+   * The first page of whom the caller may file for (`requests.<type>.create`). The pickers and
+   * filters search `GET /employees/lookup` themselves; nothing should need everyone here.
+   */
   employees: StandardPerson[]
-  departments: string[]
+  departments: NamedRef[]
   /** People whose approvals of this type are passed to the signed-in person. */
   delegators: PersonRef[]
   extra: X
@@ -96,7 +94,8 @@ export interface StandardDecisionInput {
   decision: 'approve' | 'reject'
   remarks: string
   /** Fields the type adds to the Approve popup (Loan: approved amount, payment method…). */
-  extras?: Record<string, unknown>
+  extras?: ApprovalDetails | undefined
+  rowVersion: string
 }
 
 // --- what a type supplies to the shared pages ------------------------------------------------------
@@ -121,6 +120,8 @@ export interface StandardDecisionFieldsProps<P> {
 }
 
 export interface StandardFilterContext {
+  /** The request type (its `requests.<type>.create` code names whom the Employee filter offers). */
+  kind: StandardKind
   tab: 'request' | 'approvals'
   scope: 'my' | 'all'
   view: StandardApprovalView

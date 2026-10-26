@@ -9,18 +9,18 @@ import { PayrollDialog } from '@/features/payroll'
 import { cn } from '@/lib/utils'
 
 import { CHECKLIST_FIELD_TYPE_LABELS } from '../../constants'
-import { CHECKLIST_FIELD_TYPES, type ChecklistFieldType } from '../../types/offboarding.types'
+import { CHECKLIST_FIELD_TYPES, type ChecklistFieldInput } from '../../types/offboarding.types'
 
 /** A field of the checklist being edited; `key` tells rows apart before they have an id. */
-export interface DraftField {
+export interface DraftField extends ChecklistFieldInput {
   key: string
-  id?: string | undefined
-  name: string
-  type: ChecklistFieldType
-  required: boolean
-  min: number | null
-  max: number | null
 }
+
+/** The Min / Max boxes: a value range for a Number, a length range for a String. */
+const boundsOf = (field: DraftField | null) =>
+  field?.fieldType === 'string'
+    ? { min: field.minLength, max: field.maxLength }
+    : { min: field?.minValue ?? null, max: field?.maxValue ?? null }
 
 const hasConditions = (type: string) => type === 'number' || type === 'string'
 
@@ -28,7 +28,7 @@ const bound = z.string().trim()
 
 const schema = z
   .object({
-    name: z.string().trim().min(1, 'Enter the name').max(60, 'Keep it under 60 characters'),
+    name: z.string().trim().min(1, 'Enter the name').max(200, 'Keep it under 200 characters'),
     type: z.string().min(1, 'Choose the type'),
     required: z.boolean(),
     min: bound,
@@ -128,14 +128,15 @@ export function ChecklistFieldDialog({
 }) {
   const formId = useId()
   const readOnly = mode === 'view'
+  const bounds = boundsOf(field)
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: field?.name ?? '',
-      type: field?.type ?? '',
-      required: field?.required ?? false,
-      min: field?.min === null || field?.min === undefined ? '' : String(field.min),
-      max: field?.max === null || field?.max === undefined ? '' : String(field.max),
+      type: field?.fieldType ?? '',
+      required: field?.isRequired ?? false,
+      min: bounds.min === null ? '' : String(bounds.min),
+      max: bounds.max === null ? '' : String(bounds.max),
     },
   })
   const type = useWatch({ control: form.control, name: 'type' })
@@ -147,14 +148,15 @@ export function ChecklistFieldDialog({
       form.setError('name', { message: 'Another field has this name' })
       return
     }
-    const conditions = hasConditions(picked)
     onSave({
       id: field?.id,
       name: values.name.trim(),
-      type: picked,
-      required: values.required,
-      min: conditions && values.min !== '' ? Number(values.min) : null,
-      max: conditions && values.max !== '' ? Number(values.max) : null,
+      fieldType: picked,
+      isRequired: values.required,
+      minValue: picked === 'number' && values.min !== '' ? Number(values.min) : null,
+      maxValue: picked === 'number' && values.max !== '' ? Number(values.max) : null,
+      minLength: picked === 'string' && values.min !== '' ? Number(values.min) : null,
+      maxLength: picked === 'string' && values.max !== '' ? Number(values.max) : null,
     })
   })
 

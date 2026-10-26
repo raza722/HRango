@@ -1,14 +1,17 @@
-import { useId } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+import { useId, useState } from 'react'
+import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { z } from 'zod'
 
 import { TextareaField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
-import { AttachmentField, DateField, PayrollDialog, SearchSelectField } from '@/features/payroll'
+import { DateField, PayrollDialog, SearchSelectField } from '@/features/payroll'
+import type { FileRef } from '@/lib/files'
 import { cn } from '@/lib/utils'
 
+import { RequestFileField } from '../../../components/shared/request-files'
+import { detailFileRef } from '../../../utils/request-files'
 import { standardButton } from '../../standard-styles'
 import { CNIC_PATTERN, RELATIONSHIPS, viewDay } from './loan-advances.constants'
 import type { LoanGuarantor } from './loan-advances.types'
@@ -16,7 +19,6 @@ import type { LoanGuarantor } from './loan-advances.types'
 const schema = z.object({
   name: z.string().trim().min(1, 'Write the name').max(80, 'Keep it under 80 characters'),
   cnic: z.string().trim().regex(CNIC_PATTERN, 'Write the CNIC as 12345-1234567-1'),
-  attachment: z.string().nullable(),
   knownSince: z.string().min(1, 'Choose since when'),
   relationship: z
     .string()
@@ -56,16 +58,21 @@ export function GuarantorDialog({
     defaultValues: {
       name: guarantor?.name ?? '',
       cnic: guarantor?.cnic ?? '',
-      attachment: guarantor?.attachment ?? null,
       knownSince: guarantor?.knownSince ?? '',
       relationship: guarantor?.relationship ?? null,
       extensionNo: guarantor?.extensionNo ?? '',
       description: guarantor?.description ?? '',
     },
   })
-  const attachment = useWatch({ control: form.control, name: 'attachment' })
+  const [file, setFile] = useState<FileRef | null>(guarantor ? detailFileRef(guarantor) : null)
   const submit = form.handleSubmit((values) => {
-    onSave({ ...values, relationship: values.relationship ?? '' })
+    onSave({
+      ...values,
+      relationship: values.relationship ?? '',
+      fileId: file?.id ?? null,
+      fileName: file?.name ?? null,
+      fileUrl: file?.url ?? null,
+    })
   })
 
   return (
@@ -104,12 +111,7 @@ export function GuarantorDialog({
           inputMode="numeric"
           maxLength={15}
         />
-        <AttachmentField
-          value={attachment}
-          onChange={(name) => {
-            form.setValue('attachment', name)
-          }}
-        />
+        <RequestFileField value={file} onChange={setFile} />
         <DateField
           control={form.control}
           name="knownSince"

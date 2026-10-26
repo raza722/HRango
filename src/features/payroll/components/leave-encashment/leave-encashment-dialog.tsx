@@ -11,18 +11,20 @@ import { cn } from '@/lib/utils'
 import { ENCASHMENT_BASIS_LABELS } from '../../constants'
 import {
   useLeaveEncashment,
+  useLeaveTypeLookup,
   usePayrollSettings,
   useSaveLeaveEncashment,
 } from '../../hooks/use-payroll'
-import { usePayrollOptions } from '../../hooks/use-payroll-records'
+import { personHint, usePayrollOptions } from '../../hooks/use-payroll-records'
 import {
   ENCASHMENT_BASES,
   ENCASHMENT_TYPES,
   type LeaveEncashmentDetail,
 } from '../../types/payroll.types'
-import { formatMonth } from '../../utils/format'
+import { formatRs } from '../../utils/format'
 import { currentLeaveYear } from '../../utils/leave-year'
-import { MultiSearchSelectField } from '../shared/multi-search-select'
+import { RsField } from '../balances/list-parts'
+import { EmployeeMultiSearchSelectField } from '../shared/employee-search-select'
 import { PayrollDialog } from '../shared/payroll-dialog'
 import { TwoWaySwitchField } from '../shared/two-way-switch'
 import { YearField } from '../shared/year-picker'
@@ -33,22 +35,29 @@ const schema = z
     allEmployees: z.boolean(),
     employeeIds: z.array(z.string()),
     year: z.string().min(1, 'Choose the year'),
-    type: z.enum(ENCASHMENT_TYPES),
+    mode: z.enum(ENCASHMENT_TYPES),
     basis: z.enum(ENCASHMENT_BASES),
+    amountPerLeave: z.string(),
   })
   .refine((value) => value.allEmployees || value.employeeIds.length > 0, {
     message: 'Choose the employees',
     path: ['employeeIds'],
   })
+  .refine(
+    (value) =>
+      value.basis === 'earned_salary' || Number(value.amountPerLeave.replace(/,/g, '')) > 0,
+    { message: 'Enter the amount per leave for this basis', path: ['amountPerLeave'] },
+  )
 type Values = z.infer<typeof schema>
 
 const toValues = (detail: LeaveEncashmentDetail | undefined): Values => ({
   leaveTypeId: detail?.leaveTypeId ?? '',
-  allEmployees: detail?.allEmployees ?? false,
-  employeeIds: detail?.employeeIds ?? [],
-  year: detail ? String(detail.year) : '',
-  type: detail?.type ?? 'payroll',
-  basis: detail?.basis ?? 'overtime',
+  allEmployees: detail?.appliesToAll ?? false,
+  employeeIds: detail ? detail.employees.map((line) => line.employeeId) : [],
+  year: detail ? String(detail.fiscalYear) : '',
+  mode: detail?.mode ?? 'payroll',
+  basis: detail?.basis ?? 'earned_salary',
+  amountPerLeave: detail && detail.basis !== 'earned_salary' ? String(detail.amountPerLeave) : '',
 })
 
 type Mode = 'create' | 'edit' | 'view'
@@ -59,7 +68,7 @@ const TITLES: Record<Mode, string> = {
   view: 'Leave Encashment View',
 }
 
-const FIELDS = ['leaveTypeId', 'employeeIds', 'year', 'basis'] as const
+const FIELDS = ['leaveTypeId', 'employeeIds', 'amountPerLeave'] as const
 
 /** View draws its drop-downs and the year as grey boxes, not faded white ones. */
 const viewFieldsClass = cn(
@@ -69,9 +78,9 @@ const viewFieldsClass = cn(
 )
 
 /**
- * "Leave Encashment Create" / Edit / View: Leave Type, All Employees (or the
- * chosen Employees), Year, and Type Payroll or Manually; Manually adds the
- * "Amount Per Leave" basis.
+ * "Leave Encashment Create" / Edit / View (`/payroll/leave-encashments`): Leave Type, All
+ * Employees (or the chosen Employees), Year, Type Payroll (next monthly run) or Manually, and the
+ * "Amount Per Leave" basis: Earned Salary is a day's salary; other bases need the amount.
  */
 export function LeaveEncashmentDialog({
   id,
@@ -103,18 +112,25 @@ function EncashmentForm({
   onClose: () => void
 }) {
   const formId = useId()
-  const options = usePayrollOptions()
+  const options = usePayrollOptions('payroll.leave_encashment.view')
+  const leaveTypes = useLeaveTypeLookup()
   const settings = usePayrollSettings()
   const save = useSaveLeaveEncashment()
-  // A payroll encashment in a released pay slip can only be looked at.
-  const locked = mode === 'edit' && detail?.paid === true
+  // Paid in a released pay slip: it can only be looked at.
+  const locked = mode === 'edit' && detail?.isPaid === true
   const readOnly = mode === 'view' || locked
   const creating = mode === 'create'
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues(detail) })
-  const [allEmployees, type] = useWatch({ control: form.control, name: ['allEmployees', 'type'] })
-  const leaveTypes = (options.lookups?.accountTypes ?? [])
-    .filter((item) => item.category === 'leave-quotas')
-    .map((item) => ({ value: item.id, label: item.name }))
+  const [allEmployees, basis] = useWatch({ control: form.control, name: ['allEmployees', 'basis'] })
+  const leaveOptions = (leaveTypes.data ?? []).map((item) => ({ value: item.id, label: item.name }))
+  if (detail && !leaveOptions.some((item) => item.value === detail.leaveTypeId)) {
+    leaveOptions.push({ value: detail.leaveTypeId, label: detail.leaveTypeName })
+  }
+  // The encashment's people keep their names until the picker has read them.
+  const knownPeople = (detail?.employees ?? []).map((line) => ({
+    value: line.employeeId,
+    label: line.employeeName,
+  }))
 
   const submit = form.handleSubmit(async (values) => {
     try {
@@ -122,11 +138,16 @@ function EncashmentForm({
         id: detail?.id,
         input: {
           leaveTypeId: values.leaveTypeId,
+          fiscalYear: Number(values.year),
           allEmployees: values.allEmployees,
           employeeIds: values.allEmployees ? [] : values.employeeIds,
-          year: Number(values.year),
-          type: values.type,
-          basis: values.type === 'manual' ? values.basis : null,
+          mode: values.mode,
+          basis: values.basis,
+          amountPerLeave:
+            values.basis === 'earned_salary' && values.amountPerLeave.trim() === ''
+              ? null
+              : Number(values.amountPerLeave.replace(/,/g, '')),
+          ...(detail ? { rowVersion: detail.rowVersion } : {}),
         },
       })
       onClose()
@@ -152,7 +173,7 @@ function EncashmentForm({
       pending={save.isPending}
       error={
         locked
-          ? `This encashment was paid in the ${formatMonth(detail.payMonth)} payroll and cannot be changed.`
+          ? 'This encashment was paid in a released pay slip and cannot be changed.'
           : form.formState.errors.root?.message
       }
       className="max-w-3xl"
@@ -168,7 +189,7 @@ function EncashmentForm({
           name="leaveTypeId"
           label="Leave Type"
           placeholder="Select Leave Type"
-          options={leaveTypes}
+          options={leaveOptions}
           required={creating}
           disabled={readOnly}
         />
@@ -180,12 +201,14 @@ function EncashmentForm({
           disabled={readOnly}
         />
         {!allEmployees && (
-          <MultiSearchSelectField
+          <EmployeeMultiSearchSelectField
             control={form.control}
             name="employeeIds"
             label="Employees"
             placeholder="Select Employees"
-            options={creating ? options.activeEmployees : options.employees}
+            filters={creating ? options.activeEmployeeFilters : options.employeeFilters}
+            known={knownPeople}
+            hint={personHint}
             required={creating}
             disabled={readOnly}
           />
@@ -196,11 +219,11 @@ function EncashmentForm({
           label="Year"
           required={creating}
           disabled={readOnly}
-          max={currentLeaveYear(settings.data?.leave)}
+          max={currentLeaveYear(settings.data)}
         />
         <TwoWaySwitchField
           control={form.control}
-          name="type"
+          name="mode"
           label="Type"
           ariaLabel="Type"
           options={[
@@ -209,17 +232,32 @@ function EncashmentForm({
           ]}
           disabled={readOnly}
         />
-        {type === 'manual' && (
-          <SelectField
+        <SelectField
+          control={form.control}
+          name="basis"
+          label="Amount Per Leave"
+          options={ENCASHMENT_BASES.map((value) => ({
+            value,
+            label: ENCASHMENT_BASIS_LABELS[value],
+          }))}
+          disabled={readOnly}
+        />
+        {basis !== 'earned_salary' && (
+          <RsField
             control={form.control}
-            name="basis"
-            label="Amount Per Leave"
-            options={ENCASHMENT_BASES.map((basis) => ({
-              value: basis,
-              label: ENCASHMENT_BASIS_LABELS[basis],
-            }))}
-            disabled={readOnly}
+            name="amountPerLeave"
+            label="Amount"
+            required
+            readOnly={readOnly}
           />
+        )}
+        {detail && (
+          <p className="text-sm text-muted-foreground">
+            {detail.employees.length === 1
+              ? '1 person'
+              : `${String(detail.employees.length)} people`}
+            , {String(detail.totalDays ?? 0)} days, {formatRs(detail.totalAmount ?? 0)} in all.
+          </p>
         )}
       </form>
     </PayrollDialog>

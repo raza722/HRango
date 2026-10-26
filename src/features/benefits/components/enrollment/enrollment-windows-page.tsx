@@ -4,15 +4,16 @@ import { toast } from 'sonner'
 
 import { DataTable, type DataTableColumn } from '@/components/layout'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import { WINDOW_STATUS } from '../../constants'
+import { BEN_CODES, WINDOW_KIND_LABELS, WINDOW_STATUS } from '../../constants'
 import {
   useBenefitsLookups,
   useDeleteEnrollmentWindow,
   useEnrollmentWindows,
 } from '../../hooks/use-benefits'
-import type { EnrollmentWindowRow } from '../../types/benefits.types'
+import type { EnrollmentWindow } from '../../types/benefits.types'
 import { formatDay } from '../../utils/format'
 import { PlanDeleteIcon } from '../shared/benefit-icons'
 import { ruledRows, tableClass } from '../shared/benefit-styles'
@@ -32,10 +33,11 @@ export function EnrollmentWindowsPage() {
   const list = useEnrollmentWindows({ year })
   const lookups = useBenefitsLookups()
   const remove = useDeleteEnrollmentWindow()
-  const [deleting, setDeleting] = useState<EnrollmentWindowRow | null>(null)
+  const canDelete = useCan(BEN_CODES.windowDelete)
+  const [deleting, setDeleting] = useState<EnrollmentWindow | null>(null)
   const planName = (id: string) => lookups.data?.plans.find((plan) => plan.id === id)?.name ?? id
 
-  const columns: DataTableColumn<EnrollmentWindowRow>[] = [
+  const columns: DataTableColumn<EnrollmentWindow>[] = [
     {
       id: 'name',
       header: 'Enrollment Name',
@@ -43,9 +45,10 @@ export function EnrollmentWindowsPage() {
       className: 'font-medium whitespace-normal',
       cell: (row) => <span className="font-medium">{row.name}</span>,
     },
+    { id: 'kind', header: 'Kind', cell: (row) => WINDOW_KIND_LABELS[row.kind] },
     { id: 'year', header: 'Plan Year', cell: (row) => row.planYearName },
     { id: 'effective', header: 'Effective Date', cell: (row) => formatDay(row.effectiveDate) },
-    { id: 'ends', header: 'Enrollment Ends', cell: (row) => formatDay(row.enrollmentEndDate) },
+    { id: 'ends', header: 'Enrollment Ends', cell: (row) => formatDay(row.closesOn) },
     {
       id: 'plans',
       header: 'Plans',
@@ -56,7 +59,12 @@ export function EnrollmentWindowsPage() {
         </span>
       ),
     },
-    { id: 'employees', header: 'Employees', cell: (row) => row.employeeIds.length },
+    {
+      id: 'employees',
+      header: 'Employees',
+      cell: (row) => (row.employeeIds.length === 0 ? 'Everyone' : row.employeeIds.length),
+    },
+    { id: 'elections', header: 'Elections', cell: (row) => row.electionCount },
     {
       id: 'status',
       header: 'Status',
@@ -92,18 +100,22 @@ export function EnrollmentWindowsPage() {
             </EmptyList>
           }
           rowActionsHeader="Action"
-          rowActions={(row) => (
-            <button
-              type="button"
-              aria-label={`Delete ${row.name}`}
-              onClick={() => {
-                setDeleting(row)
-              }}
-              className="flex size-8 items-center justify-center rounded-md text-[#C2420B] outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-[#7469E8]/35 sm:-my-1"
-            >
-              <PlanDeleteIcon className="h-[1.05rem] w-[0.94rem]" />
-            </button>
-          )}
+          rowActions={
+            canDelete
+              ? (row) => (
+                  <button
+                    type="button"
+                    aria-label={`Delete ${row.name}`}
+                    onClick={() => {
+                      setDeleting(row)
+                    }}
+                    className="flex size-8 items-center justify-center rounded-md text-[#C2420B] outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-[#7469E8]/35 sm:-my-1"
+                  >
+                    <PlanDeleteIcon className="h-[1.05rem] w-[0.94rem]" />
+                  </button>
+                )
+              : undefined
+          }
         />
       )}
       <DeleteConfirm
@@ -119,7 +131,7 @@ export function EnrollmentWindowsPage() {
         }}
         onConfirm={() => {
           if (!deleting) return
-          remove.mutate(deleting.id, {
+          remove.mutate(deleting, {
             onSuccess: () => {
               setDeleting(null)
             },

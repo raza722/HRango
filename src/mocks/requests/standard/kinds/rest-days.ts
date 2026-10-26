@@ -1,13 +1,17 @@
 import { addDays, differenceInCalendarDays, format, parse } from 'date-fns'
+import { HttpResponse } from 'msw'
 import { z } from 'zod'
 
 import type { ScheduleEntry } from '@/features/scheduling'
 
+import { DIRECTORY } from '../../../employees/seed'
 import { enrollments, rosterGroups } from '../../../roster/handlers'
 import { scheduleEntries } from '../../../scheduling/handlers'
 import { slotFor } from '../../../scheduling/seed'
 import { createId } from '../../../utils'
+import { mockDepartmentId, type RequestBodyIn } from '../../backend'
 import { entryOn, rosterTimes } from '../../effects'
+import { fallbackGet } from '../../fallback'
 import { invalid, today } from '../../http'
 import { mustFind } from '../../people'
 import {
@@ -27,11 +31,13 @@ import {
 
 const ymd = /^\d{4}-\d{2}-\d{2}$/
 const schema = z.object({
-  department: z.string().trim().min(1).max(80),
+  /** Empty: the employee's own department. */
+  department: z.string().trim().max(80),
   rosterGroupId: z.string().min(1),
   from: z.string().regex(ymd),
   to: z.string().regex(ymd),
-  reason: z.string().trim().max(500),
+  payable: z.boolean(),
+  reason: z.string().trim().max(4000),
 })
 type Input = z.infer<typeof schema>
 
@@ -48,9 +54,6 @@ export interface RestDayStored {
 
 const day = (date: string) => parse(date, 'yyyy-MM-dd', new Date())
 const iso = (date: Date) => format(date, 'yyyy-MM-dd')
-const clock = (time: string | null) =>
-  time ? format(parse(time, 'HH:mm', new Date()), 'hh:mm aaa') : ''
-
 /** The roster's day: its default times, else its first working day's. */
 function rosterDayTimes(rosterGroupId: string) {
   const group = rosterGroups.find(rosterGroupId)
@@ -59,15 +62,6 @@ function rosterDayTimes(rosterGroupId: string) {
   const clockIn = group.clockIn ?? first?.clockIn ?? null
   const clockOut = group.clockOut ?? first?.clockOut ?? null
   return { group, clockIn, clockOut }
-}
-
-/** "Morning Shift (10:00 am - 05:00 pm)", as the list's Shift column writes it. */
-function shiftLabel(rosterGroupId: string): string {
-  const times = rosterDayTimes(rosterGroupId)
-  if (!times) return '—'
-  return times.clockIn && times.clockOut
-    ? `${times.group.title} (${clock(times.clockIn)} - ${clock(times.clockOut)})`
-    : times.group.title
 }
 
 /** The roster's working days between two dates. */
@@ -91,21 +85,17 @@ function toPayload(
   },
 ): Response | Record<string, unknown> {
   const employee = mustFind(context.employeeId)
-  if (input.department !== employee.department) {
-    return invalid(`${employee.name} works in ${employee.department}.`, {
-      department: `Choose ${employee.department}`,
-    })
-  }
+  const department = input.department || employee.department
   const group = rosterGroups.find(input.rosterGroupId)
   if (!group?.isActive) return invalid('Choose a roster.', { rosterGroupId: 'Choose a roster' })
   if (input.from < today()) {
-    return invalid('Choose today or a later day.', { from: 'Choose today or a later day' })
+    return invalid('Choose today or a later day.', { fromDate: 'Choose today or a later day' })
   }
   if (input.to < input.from) {
-    return invalid('Date (to) comes before Date (from).', { to: 'Choose Date (from) or later' })
+    return invalid('Date (to) comes before Date (from).', { toDate: 'Choose Date (from) or later' })
   }
   if (differenceInCalendarDays(day(input.to), day(input.from)) > 30) {
-    return invalid('Ask for 31 days at most at a time.', { to: 'Ask for 31 days at most' })
+    return invalid('Ask for 31 days at most at a time.', { toDate: 'Ask for 31 days at most' })
   }
   const dates = workingDays(group.id, input.from, input.to)
   if (dates.length === 0) {
@@ -126,13 +116,12 @@ function toPayload(
     })
   }
   return {
-    department: input.department,
+    department,
     rosterGroupId: group.id,
     from: input.from,
     to: input.to,
     dates,
-    // Rest days granted on request are paid (the list's Payable column).
-    payable: true,
+    payable: input.payable,
     reason: input.reason,
   } satisfies RestDayStored
 }
@@ -190,58 +179,85 @@ const rosterOf = (employeeId: string) =>
   enrollments.all().find((item) => item.employeeId === employeeId && item.status === 'active')
     ?.rosterGroupId ?? null
 
+/** A `RequestIn` body → the stored shape's input (the department by its lookup id). */
+function fromBody(body: RequestBodyIn): unknown {
+  const details = body.details
+  const departmentId = typeof details.departmentId === 'string' ? details.departmentId : null
+  const department =
+    DIRECTORY.find((employee) => mockDepartmentId(employee.department) === departmentId)
+      ?.department ?? ''
+  return {
+    department,
+    rosterGroupId: details.rosterGroupId,
+    from: body.fromDate ?? '',
+    to: body.toDate ?? body.fromDate ?? '',
+    payable: details.isPayable === true,
+    reason: body.reason ?? '',
+  }
+}
+
+/**
+ * `GET /scheduling/options/roster-groups` (the Roster drop-down), answered
+ * only when the Scheduling mock does not serve it.
+ */
+const rosterOptionsHandler = fallbackGet('/scheduling/options/roster-groups', () => {
+  const rows = rosterGroups
+    .all()
+    .filter((group) => group.isActive)
+    .sort((a, b) => a.title.localeCompare(b.title))
+    .map((group) => {
+      const times = rosterDayTimes(group.id)
+      return {
+        id: group.id,
+        name: group.title,
+        code: null,
+        startTime: times?.clockIn ? `${times.clockIn}:00` : null,
+        endTime: times?.clockOut ? `${times.clockOut}:00` : null,
+        isOvernight: false,
+        isFlexible: false,
+      }
+    })
+  return HttpResponse.json({ data: rows })
+})
+
 const def: StandardKindServer<Input> = {
   kind: 'rest-days',
-  settingsType: 'rest-day',
+  typeCode: 'rest_day',
+  typeName: 'Rest Day',
+  settingsType: 'rest_day',
   codePrefix: 'RD-',
   codeDigits: 3,
+  fromBody,
   schema,
   toPayload,
   dateOf: (payload) => String(payload.from),
-  present: (payload) => {
+  header: (payload) => {
     const value = payload as unknown as RestDayStored
-    const times = rosterDayTimes(value.rosterGroupId)
-    const upper = (time: string | null) =>
-      time ? format(parse(time, 'HH:mm', new Date()), 'hh:mm a') : ''
-    let minutes = 0
-    if (times?.clockIn && times.clockOut) {
-      const [inH = 0, inM = 0] = times.clockIn.split(':').map(Number)
-      const [outH = 0, outM = 0] = times.clockOut.split(':').map(Number)
-      minutes = (outH * 60 + outM - (inH * 60 + inM) + 1440) % 1440
-    }
     return {
-      ...value,
-      rosterTitle: times?.group.title ?? '—',
-      shift: shiftLabel(value.rosterGroupId),
-      // The Approvals frames' Time and Duration columns: the roster's day.
-      time: times?.clockIn ? `${upper(times.clockIn)} - ${upper(times.clockOut)}` : '—',
-      duration: `${String(Math.floor(minutes / 60))}h : ${String(minutes % 60).padStart(2, '0')}m`,
+      fromDate: value.from,
+      toDate: value.to,
       days: value.dates.length,
+      reason: value.reason || null,
+      description: null,
+      application: null,
     }
   },
-  filters: {
-    rosterGroupId: (record, value) => stored(record).rosterGroupId === value,
+  // `req.fn_request_details` for rest days: department, roster, payable and the days.
+  toDetails: (payload, record) => {
+    const value = payload as unknown as RestDayStored
+    return {
+      departmentId: mockDepartmentId(value.department),
+      departmentName: value.department,
+      rosterGroupId: value.rosterGroupId,
+      rosterGroupName: rosterGroups.find(value.rosterGroupId)?.title ?? null,
+      isPayable: value.payable,
+      days: value.dates.map((date) => ({
+        requestDate: date,
+        scheduleId: entryOn(record.employeeId, date)?.id ?? null,
+      })),
+    }
   },
-  lookups: () => ({
-    rosters: rosterGroups
-      .all()
-      .filter((group) => group.isActive)
-      .map((group) => ({
-        id: group.id,
-        title: group.title,
-        shift: shiftLabel(group.id),
-        workingDays: group.days.filter((item) => !item.isWeekend).map((item) => item.day),
-      }))
-      .sort((a, b) => a.title.localeCompare(b.title)),
-    /** Each person's current roster, so the form can start from it. */
-    rosterOf: Object.fromEntries(
-      [...new Set(enrollments.all().map((item) => item.employeeId))].map((id) => [
-        id,
-        rosterOf(id),
-      ]),
-    ),
-  }),
-  cancellationsView: true,
+  extraHandlers: [rosterOptionsHandler],
   onCompleted: applyRestDays,
   onCancelled: revertRestDays,
   seed: () => {

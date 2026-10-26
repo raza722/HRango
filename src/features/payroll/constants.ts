@@ -1,19 +1,23 @@
+import { useAuthStore } from '@/stores/auth-store'
+
 import type {
   AccountCategory,
   BenefitType,
   CalculationType,
   EncashmentBasis,
+  EncashmentType,
+  FinalSettlementStatus,
+  IncentiveType,
   InfoType,
-  LeaveType,
   PayItemType,
   PaymentMethod,
-  PayrollConfiguration,
+  PayrollSettings,
   PayrollStatus,
   PayslipStatus,
   PayslipTemplate,
-  ProrateOption,
+  ProcessingMode,
+  ReportRounding,
   RoundingOption,
-  SeparationReason,
   SurchargeRate,
   TaxDistribution,
   ValueType,
@@ -21,33 +25,43 @@ import type {
   VoucherStatus,
 } from './types/payroll.types'
 
+// Labels for the API's values (snake_case, as `backend/app/schemas/payroll_*.py` names them).
+
 export const PAY_ITEM_TYPE_LABELS: Record<PayItemType, string> = {
-  deduction: 'Deduction',
   earning: 'Earning',
+  deduction: 'Deduction',
   reimbursement: 'Reimbursement',
-  'employee-data': 'Employee Data',
+  employee_data: 'Employee Data',
   other: 'Other',
 }
 
 export const CALCULATION_TYPE_LABELS: Record<CalculationType, string> = {
   fixed: 'Fixed',
   manual: 'Manual Entry',
+  formula: 'Formula',
 }
 
 export const TAX_DISTRIBUTION_LABELS: Record<TaxDistribution, string> = {
-  'current-month': 'Current Month',
-  'remaining-months': 'Divided in Remaining Month',
+  current_month: 'Current Month',
+  remaining_months: 'Divided in Remaining Month',
 }
 
 export const ACCOUNT_CATEGORY_LABELS: Record<AccountCategory, string> = {
   benefit: 'Benefit',
-  'leave-quotas': 'Leave Quotas',
-  'custom-pay-item': 'Custom Pay Item',
+  leave_quota: 'Leave Quotas',
+  custom_pay_item: 'Custom Pay Item',
 }
 
 export const BENEFIT_TYPE_LABELS: Record<BenefitType, string> = {
+  allowance: 'Allowance',
+  bonus: 'Bonus',
+  reward: 'Reward',
+  other: 'Other',
+}
+
+export const INCENTIVE_TYPE_LABELS: Record<IncentiveType, string> = {
   reimbursement: 'Reimbursement',
-  'part-of-salary': 'Part of Salary',
+  part_of_salary: 'Part of Salary',
 }
 
 export const VALUE_TYPE_LABELS: Record<ValueType, string> = {
@@ -63,44 +77,62 @@ export const SURCHARGE_RATE_LABELS: Record<SurchargeRate, string> = {
 export const INFO_TYPE_LABELS: Record<InfoType, string> = {
   string: 'String',
   number: 'Number',
+  date: 'Date',
   boolean: 'Boolean',
 }
 
-export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
-  casual: 'Casual Leaves',
-  sick: 'Sick Leaves',
+export const ROUNDING_LABELS: Record<RoundingOption, string> = {
+  floor: 'Floor',
+  ceil: 'Ceil',
+  round: 'Round',
+  actual: 'As per Actual',
 }
 
-export const ROUNDING_LABELS: Record<RoundingOption, string> = {
+export const REPORT_ROUNDING_LABELS: Record<ReportRounding, string> = {
   none: 'None',
-  'round-off': 'Round Off',
+  round_off: 'Round Off',
   ceil: 'Ceil',
   floor: 'Floor',
-  round: 'Round',
-  'as-per-actual': 'As per Actual',
 }
 
 export const PAYSLIP_TEMPLATE_LABELS: Record<PayslipTemplate, string> = {
   default: 'Default template',
-  'template-1': 'Template 1',
-  'template-2': 'Template 2',
-  'template-3': 'Template 3',
+  template_1: 'Template 1',
+  template_2: 'Template 2',
+  template_3: 'Template 3',
 }
 
-export const PRORATE_LABELS: Record<ProrateOption, string> = {
-  'calendar-days': 'Calendar Days',
-  'working-days': 'Working Days',
-  'fixed-30': 'Fixed 30 Days',
+export const PROCESSING_MODE_LABELS: Record<ProcessingMode, string> = {
+  from_date: 'From Date',
+  month_end: 'Month End',
 }
 
 type ConfigControl =
   | { kind: 'checkbox' }
   | { kind: 'select'; options: readonly string[]; labels: Record<string, string> }
   | { kind: 'text' }
+  | { kind: 'number'; min: number; max: number }
 
-/** "Payroll Configurations", numbered and worded as in the design. */
+/** Keys of the general settings that are payroll options (the rest is leave configuration). */
+export type PayrollConfigurationKey = Exclude<
+  keyof PayrollSettings,
+  | 'rowVersion'
+  | 'cplLeaveTypeId'
+  | 'maxEarnedCpl'
+  | 'deductCasualLeaves'
+  | 'deductSickLeaves'
+  | 'leaveYearBasis'
+  | 'fiscalYearStartMonth'
+  | 'fiscalYearEndMonth'
+>
+
+/**
+ * "Payroll Configurations", numbered and worded as in the design, one row per API key.
+ * Keys that only make sense with another (the revision date, the cut-off day, the notes) sit
+ * right after it.
+ */
 export const CONFIGURATION_ITEMS: readonly {
-  key: keyof PayrollConfiguration
+  key: PayrollConfigurationKey
   label: string
   control: ConfigControl
 }[] = [
@@ -115,72 +147,89 @@ export const CONFIGURATION_ITEMS: readonly {
     control: { kind: 'checkbox' },
   },
   {
-    key: 'doNotDisplayPayslipAfterRun',
+    key: 'hidePayslipAfterRun',
     label: 'Do Not Display Payslip After Run',
-    control: {
-      kind: 'select',
-      options: ['none', 'round-off', 'ceil', 'floor'],
-      labels: ROUNDING_LABELS,
-    },
-  },
-  {
-    key: 'applySalaryRevisionOnFixedDays',
-    label: 'Apply Salary Revision on Fixed Days',
     control: { kind: 'checkbox' },
   },
   {
-    key: 'applySalaryRevisionOnShiftDays',
+    key: 'salaryReportRounding',
+    label: 'Salary Report Rounding',
+    control: {
+      kind: 'select',
+      options: ['none', 'round_off', 'ceil', 'floor'],
+      labels: REPORT_ROUNDING_LABELS,
+    },
+  },
+  {
+    key: 'revisionOnFixedDays',
+    label: 'Apply Salary Revision on Fixed Days',
+    control: { kind: 'checkbox' },
+  },
+  { key: 'revisionFixedDate', label: 'Fixed Revision Date (MM-DD)', control: { kind: 'text' } },
+  {
+    key: 'revisionOnShiftDays',
     label: 'Apply Salary Revision Based on Shift Days',
     control: { kind: 'checkbox' },
   },
   {
-    key: 'disableSalaryRevisionEmail',
+    key: 'revisionShiftDays',
+    label: 'Shift Days for Revision',
+    control: { kind: 'number', min: 1, max: 3650 },
+  },
+  {
+    key: 'disableRevisionEmail',
     label: 'Disable Email Notification for Salary Revision',
     control: { kind: 'checkbox' },
   },
   {
-    key: 'applyCutOffDatesForProration',
+    key: 'cutoffProration',
     label: 'Apply Cut-Off Dates for Proration',
     control: { kind: 'checkbox' },
   },
+  { key: 'cutoffDay', label: 'Cut-Off Day', control: { kind: 'number', min: 1, max: 28 } },
   {
-    key: 'hideAttendanceSummaryInPayslip',
+    key: 'hideAttendanceSummary',
     label: 'Do Not Display Attendance Summary in Payslip',
     control: { kind: 'checkbox' },
   },
   {
-    key: 'showSalaryBreakdownOnPayslip',
+    key: 'showSalaryBreakdown',
     label: 'Show Salary Breakdown on Pay slip',
     control: { kind: 'checkbox' },
   },
-  { key: 'mainColorForPayslip', label: 'Main Color for Payslip', control: { kind: 'checkbox' } },
+  { key: 'payslipColor', label: 'Main Color for Payslip', control: { kind: 'text' } },
   {
-    key: 'roundOffTaxAmount',
+    key: 'taxRounding',
     label: 'Round Off Tax Amount in Payroll',
     control: {
       kind: 'select',
-      options: ['floor', 'ceil', 'round', 'as-per-actual'],
+      options: ['floor', 'ceil', 'round', 'actual'],
       labels: ROUNDING_LABELS,
     },
   },
   {
-    key: 'displayTaxOnlyForPositive',
+    key: 'taxPositiveOnly',
     label: 'Display Tax Only for Positive Amounts',
     control: { kind: 'checkbox' },
   },
-  { key: 'notesInEnglish', label: 'Display Notes in English', control: { kind: 'text' } },
   {
-    key: 'notesInOtherLanguage',
+    key: 'notesEnglishEnabled',
+    label: 'Display Notes in English',
+    control: { kind: 'checkbox' },
+  },
+  { key: 'notesEnglish', label: 'Notes in English', control: { kind: 'text' } },
+  {
+    key: 'notesOtherLanguage',
     label: 'Display Notes In Other Language',
     control: { kind: 'text' },
   },
   {
-    key: 'printSignatureOnSalarySheet',
+    key: 'printSignature',
     label: 'Print Signature on Salary Sheet',
     control: { kind: 'checkbox' },
   },
   {
-    key: 'sendPayrollCloseEmail',
+    key: 'sendCloseEmail',
     label: 'Send Payroll Close Email to All Employees',
     control: { kind: 'checkbox' },
   },
@@ -189,32 +238,31 @@ export const CONFIGURATION_ITEMS: readonly {
     label: 'Choose Payslip Template',
     control: {
       kind: 'select',
-      options: ['default', 'template-1', 'template-2', 'template-3'],
+      options: ['default', 'template_1', 'template_2', 'template_3'],
       labels: PAYSLIP_TEMPLATE_LABELS,
     },
   },
   {
-    key: 'prorateMonthly',
+    key: 'prorationRounding',
     label: 'How to Prorate Monthly?',
     control: {
       kind: 'select',
-      options: ['calendar-days', 'working-days', 'fixed-30'],
-      labels: PRORATE_LABELS,
+      options: ['floor', 'ceil', 'round', 'actual'],
+      labels: ROUNDING_LABELS,
     },
   },
   {
-    key: 'showOnHoldOnSalarySheet',
+    key: 'showOnHoldAmounts',
     label: 'Show On Hold Amounts on Salary Sheet',
     control: { kind: 'checkbox' },
   },
-  { key: 'prorateMonthlyByShift', label: 'How to Prorate Monthly?', control: { kind: 'checkbox' } },
   {
-    key: 'useShiftHoursForPolicies',
+    key: 'useShiftHours',
     label: 'Use Shift Hours for Policy Calculations',
     control: { kind: 'checkbox' },
   },
   {
-    key: 'displayEmployeePayItemsOnPayslip',
+    key: 'showEmployeePayItems',
     label: 'Display Employee Pay Items on Payslip',
     control: { kind: 'checkbox' },
   },
@@ -222,97 +270,76 @@ export const CONFIGURATION_ITEMS: readonly {
 
 /** Status chips: colour classes as drawn (pale fill, coloured text). */
 export const PAYROLL_STATUS_META: Record<PayrollStatus, { label: string; className: string }> = {
-  pending: { label: 'Pending', className: 'bg-muted text-field-foreground' },
-  run: { label: 'Run', className: 'bg-[#E3F8E8] text-[#51B969]' },
+  open: { label: 'Pending', className: 'bg-muted text-field-foreground' },
+  running: { label: 'Run', className: 'bg-[#E3F8E8] text-[#51B969]' },
   closed: { label: 'Closed', className: 'bg-[#DCE8FF] text-[#2975FB]' },
-  'on-hold': { label: 'On Hold', className: 'bg-[#FFE1E7] text-[#E50141]' },
+  on_hold: { label: 'On Hold', className: 'bg-[#FFE1E7] text-[#E50141]' },
 }
 
 export const PAYSLIP_STATUS_META: Record<PayslipStatus, { label: string; className: string }> = {
   ready: { label: 'Ready to Release', className: 'bg-[#DCE8FF] text-[#2975FB]' },
   released: { label: 'Released', className: 'bg-[#E3F8E8] text-[#51B969]' },
-  'on-hold': { label: 'On Hold', className: 'bg-[#FFE1E7] text-[#E50141]' },
-  'released-fs': { label: 'Released With FS', className: 'bg-[#E0F7F4] text-[#0F9F8F]' },
+  on_hold: { label: 'On Hold', className: 'bg-[#FFE1E7] text-[#E50141]' },
 }
 
-export const FINAL_SETTLEMENT_STATUS_META = {
+/** A released final-settlement slip ("Released With FS" in the design). */
+export const RELEASED_WITH_FS_META = {
+  label: 'Released With FS',
+  className: 'bg-[#E0F7F4] text-[#0F9F8F]',
+}
+
+export const FINAL_SETTLEMENT_STATUS_META: Record<
+  FinalSettlementStatus,
+  { label: string; className: string }
+> = {
   pending: { label: 'Pending', className: 'bg-[#FFF1DE] text-[#FF8A1D]' },
-  completed: { label: 'Completed', className: 'bg-[#E3F8E8] text-[#51B969]' },
-} as const
+  open: { label: 'Calculated', className: 'bg-[#DCE8FF] text-[#2975FB]' },
+  closed: { label: 'Completed', className: 'bg-[#E3F8E8] text-[#51B969]' },
+}
 
 export const VOUCHER_TYPE_LABELS: Record<VoucherLineType, string> = {
-  'expense-reimbursement': 'Expense Reimbursement',
-  'salary-advance': 'Salary Advance',
+  expense_reimbursement: 'Expense Reimbursement',
+  salary_advance: 'Salary Advance',
   bonus: 'Bonus',
-  'travel-allowance': 'Travel Allowance',
-  'daily-wages': 'Daily Wages',
-  'leave-encashment': 'Leave Encashment',
+  travel_allowance: 'Travel Allowance',
+  daily_wage: 'Daily Wages',
+}
+
+export const ENCASHMENT_TYPE_LABELS: Record<EncashmentType, string> = {
+  payroll: 'Payroll',
+  manual: 'Manually',
 }
 
 /** Leave Encashment "Amount Per Leave", as drawn. */
 export const ENCASHMENT_BASIS_LABELS: Record<EncashmentBasis, string> = {
   overtime: 'Overtime',
-  'earned-salary': 'Earned Salary',
-  'per-hour-rate': 'Per Hour Rate',
+  earned_salary: 'Earned Salary',
+  per_hour_rate: 'Per Hour Rate',
   overnight: 'Overnight',
 }
 
-/**
- * What one leave day is paid, as a multiple of the person's hourly rate (a
- * day's gross salary ÷ 8) times their shift hours. The design names the bases
- * but not the rates; these are the defaults (see the README).
- */
-export const ENCASHMENT_BASIS_RATES: Record<
-  EncashmentBasis,
-  { perShiftHour: boolean; times: number }
-> = {
-  'earned-salary': { perShiftHour: false, times: 1 },
-  'per-hour-rate': { perShiftHour: true, times: 1 },
-  overtime: { perShiftHour: true, times: 1.5 },
-  overnight: { perShiftHour: true, times: 2 },
-}
-
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
-  'bank-transfer': 'Bank Transfer',
+  bank_transfer: 'Bank Transfer',
   cash: 'Cash',
   cheque: 'Cheque',
+  pay_order: 'Pay Order',
 }
 
 export const VOUCHER_STATUS_LABELS: Record<VoucherStatus, string> = {
   pending: 'Pending',
   approved: 'Approved',
   rejected: 'Rejected',
-  paid: 'Paid',
+  processed: 'Verified',
 }
 
-export const SEPARATION_REASON_LABELS: Record<SeparationReason, string> = {
+/** Separation reasons as Off-boarding sends them (free text on the API; known ones get a label). */
+export const SEPARATION_REASON_LABELS: Record<string, string> = {
   resignation: 'Resignation',
   retirement: 'Retirement',
   termination: 'Termination',
   transfer: 'Transfer',
   other: 'Other',
 }
-
-/** Variables a pay item, formula or rule expression can use, in `{braces}`. */
-export const FORMULA_VARIABLES = [
-  ['gross_salary', 'Monthly gross salary'],
-  ['applicable_days', 'Days the month is paid on (actual or fixed)'],
-  ['worked_days', 'Days paid: applicable days less absences'],
-  ['absent_days', 'Absent days'],
-  ['leave_days', 'Leave days'],
-  ['half_days', 'Half days'],
-  ['short_days', 'Short days and short leaves'],
-  ['late_days', 'Late arrivals'],
-  ['late_minutes', 'Minutes late, all month'],
-  ['early_left_days', 'Days left early'],
-  ['missing_punch_days', 'Days with a missing punch'],
-  ['overtime_minutes', 'Approved overtime minutes'],
-  ['relaxation_days', 'Days relaxed'],
-  ['penalty_count', 'Late / absent penalties from the warnings'],
-  ['monthly_tax', 'Tax for the month from the tax structure'],
-  ['annual_tax', 'Tax for the year from the tax structure'],
-  ['leave_encashment', 'Leave encashment paid through this month’s payroll'],
-] as const
 
 /** Employment status filter (Active / In Active / All). */
 export const EMPLOYMENT_STATUS_OPTIONS = [
@@ -321,4 +348,29 @@ export const EMPLOYMENT_STATUS_OPTIONS = [
   { value: 'all', label: 'All' },
 ] as const
 
-export const COMPANY_NAME = 'Top Edge Technologies'
+/** The organisation using hRango (the signed-in user's company), for payslip headers. */
+export function companyName(): string {
+  return useAuthStore.getState().user?.companyName ?? ''
+}
+
+/** Permission codes the payroll screens check (`useCan`); the API enforces them anyway. */
+export const PAYROLL_CODES = {
+  dashboard: 'payroll.dashboard',
+  general: 'payroll.settings.general',
+  tax: 'payroll.settings.tax',
+  rewards: 'payroll.settings.rewards',
+  payComponents: 'payroll.settings.pay_components',
+  accountTypes: 'payroll.settings.account_types',
+  banks: 'payroll.settings.disbursement_banks',
+  payrolls: 'payroll.payrolls',
+  dailyWages: 'payroll.daily_wages',
+  salarySheet: 'payroll.salary_sheet',
+  payslips: 'payroll.payslips',
+  vouchers: 'payroll.vouchers',
+  finalSettlement: 'payroll.final_settlement',
+  openingBalances: 'payroll.opening_balances',
+  employeeAccounts: 'payroll.employee_accounts',
+  salaryRevision: 'payroll.salary_revision',
+  leaveEncashment: 'payroll.leave_encashment',
+  reports: 'payroll.reports',
+} as const

@@ -7,19 +7,25 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
+import { PAYSLIP_STATUS_META } from '../../constants'
 import {
-  useEmployments,
+  useAddPayrollEmployees,
+  useOrganisationLookup,
+  usePayrollEmployees,
   usePayrollErrors,
   usePayrollHistory,
-  useSetEmployments,
+  useSetPayrollEmployees,
 } from '../../hooks/use-payroll'
-import type { PayrollRow } from '../../types/payroll.types'
-import { formatJoining, formatMonth, formatStamp } from '../../utils/format'
+import { personHint } from '../../hooks/use-payroll-records'
+import type { PayrollError, PayrollRow } from '../../types/payroll.types'
+import { formatJoining, formatRs, formatStamp } from '../../utils/format'
 import { btn, fieldValueText, footerButton, toolbarButton } from '../../utils/styles'
+import { EmployeeMultiSearchSelect } from '../shared/employee-search-select'
 import { NoRecord } from '../shared/no-record'
-import { SelectEmployeesDialog } from '../shared/select-employees-dialog'
+import { type SearchOption, SearchSelect } from '../shared/search-select'
 
 function CancelOnly({ onClose }: { onClose: () => void }) {
   return (
@@ -29,8 +35,8 @@ function CancelOnly({ onClose }: { onClose: () => void }) {
   )
 }
 
-/** The bordered tables of the run dialogs (Employments, History Error). */
-function BorderedTable({
+/** The bordered tables of the run dialogs (Employments, History, Errors). */
+export function BorderedTable({
   caption,
   head,
   children,
@@ -44,7 +50,7 @@ function BorderedTable({
       <table className="w-full min-w-[30rem] text-left">
         <caption className="sr-only">{caption}</caption>
         <thead>
-          <tr className="border-b border-heading/70 font-inter text-base text-heading sm:text-2xl dark:border-border">
+          <tr className="border-b border-heading/70 font-inter text-base text-heading sm:text-xl dark:border-border">
             {head.map((cell) => (
               <th key={cell} scope="col" className="px-5 py-3.5 font-medium">
                 {cell}
@@ -58,7 +64,14 @@ function BorderedTable({
   )
 }
 
-/** "Payrolls History": the payroll's runs, closings and holds, newest first. */
+const KIND_LABELS: Record<string, string> = {
+  run: 'Run',
+  recalculate: 'Recalculate',
+  close: 'Closed',
+  process: 'Processed',
+}
+
+/** "Payrolls History" (`GET /payrolls/{id}/history`): runs, recalculations and the close. */
 export function PayrollHistoryDialog({
   payroll,
   onClose,
@@ -82,17 +95,18 @@ export function PayrollHistoryDialog({
       ) : (
         <BorderedTable
           caption={`History of ${payroll.name}`}
-          head={['Action', 'Month', 'Performed At', 'Performed By']}
+          head={['Action', 'Performed At', 'Payslips', 'Errors', 'Performed By']}
         >
           {entries.map((entry) => (
             <tr
               key={entry.id}
               className="border-b text-sm font-medium text-person last:border-b-0 sm:text-base"
             >
-              <td className="px-5 py-3">{entry.action}</td>
-              <td className="px-5 py-3">{formatMonth(entry.month)}</td>
-              <td className="px-5 py-3">{formatStamp(entry.performedAt)}</td>
-              <td className="px-5 py-3">{entry.performedBy}</td>
+              <td className="px-5 py-3">{KIND_LABELS[entry.kind] ?? entry.kind}</td>
+              <td className="px-5 py-3">{entry.startedAt ? formatStamp(entry.startedAt) : '—'}</td>
+              <td className="px-5 py-3">{entry.processedCount ?? '—'}</td>
+              <td className="px-5 py-3">{entry.errorCount ?? 0}</td>
+              <td className="px-5 py-3">{entry.runByName ?? '—'}</td>
             </tr>
           ))}
         </BorderedTable>
@@ -101,7 +115,28 @@ export function PayrollHistoryDialog({
   )
 }
 
-/** "Payrolls History Error": who could not be paid in the last run, and why. */
+/** The error table both kinds of run show. */
+export function RunErrorsTable({ caption, entries }: { caption: string; entries: PayrollError[] }) {
+  return (
+    <BorderedTable caption={caption} head={['Employee', 'Error']}>
+      {entries.map((entry) => (
+        <tr key={entry.id} className="border-b last:border-b-0">
+          <td className="px-5 py-4 font-inter text-base text-heading sm:text-lg">
+            {entry.employeeName ?? '—'}
+            {entry.employeeCode && (
+              <span className="block text-xs text-muted-foreground">{entry.employeeCode}</span>
+            )}
+          </td>
+          <td className="px-5 py-4 font-inter text-base text-heading sm:text-lg">
+            {entry.message}
+          </td>
+        </tr>
+      ))}
+    </BorderedTable>
+  )
+}
+
+/** "Payrolls History Error" (`GET /payrolls/{id}/errors`): who could not be paid, and why. */
 export function PayrollErrorsDialog({
   payroll,
   onClose,
@@ -123,27 +158,17 @@ export function PayrollErrorsDialog({
       ) : entries.length === 0 ? (
         <NoRecord />
       ) : (
-        <BorderedTable
-          caption={`Errors in the last run of ${payroll.name}`}
-          head={['Employee', 'Error']}
-        >
-          {entries.map((entry) => (
-            <tr key={entry.employeeId} className="border-b last:border-b-0">
-              <td className="px-5 py-4 font-inter text-base text-heading sm:text-2xl">
-                {entry.employeeName}
-              </td>
-              <td className="px-5 py-4 font-inter text-base text-heading sm:text-2xl">
-                {entry.message}
-              </td>
-            </tr>
-          ))}
-        </BorderedTable>
+        <RunErrorsTable caption={`Errors in the runs of ${payroll.name}`} entries={entries} />
       )}
     </AppDialog>
   )
 }
 
-/** "Employments": the people on the payroll, a search, and Add (Select Employees). */
+/**
+ * "Employments" (`GET /payrolls/{id}/employees`): the people on the payroll with their
+ * payslip, a search; Add opens a picker that saves the whole list (`PUT`), or adds everyone
+ * of a branch / department (`POST …/employees/add`).
+ */
 export function EmploymentsDialog({
   payroll,
   onClose,
@@ -153,10 +178,10 @@ export function EmploymentsDialog({
 }) {
   const [search, setSearch] = useState('')
   const [adding, setAdding] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const debounced = useDebouncedValue(search, 250)
-  const employments = useEmployments(payroll.id, debounced)
-  const save = useSetEmployments()
+  const employments = usePayrollEmployees(payroll.id, debounced)
+  const everyone = usePayrollEmployees(payroll.id, '')
+  const canEdit = useCan('payroll.payrolls.edit') && payroll.status !== 'closed'
   const rows = employments.data ?? []
 
   return (
@@ -168,17 +193,19 @@ export function EmploymentsDialog({
         footer={<CancelOnly onClose={onClose} />}
       >
         <div className="grid gap-5">
-          <div className="flex justify-end">
-            <Button
-              onClick={() => {
-                setError(null)
-                setAdding(true)
-              }}
-              className={cn(toolbarButton, btn.history, 'px-8 text-sm')}
-            >
-              Add
-            </Button>
-          </div>
+          {canEdit && (
+            <div className="flex justify-end">
+              <Button
+                disabled={everyone.isPending}
+                onClick={() => {
+                  setAdding(true)
+                }}
+                className={cn(toolbarButton, btn.history, 'px-8 text-sm')}
+              >
+                Add
+              </Button>
+            </div>
+          )}
           <Input
             type="search"
             aria-label="Search employments"
@@ -196,26 +223,34 @@ export function EmploymentsDialog({
           ) : (
             <BorderedTable
               caption={`Employees on ${payroll.name}`}
-              head={['Employee', 'Joining Date', 'Branch', 'Designation']}
+              head={['Employee', 'Joining Date', 'Branch', 'Department', 'Payslip']}
             >
               {rows.map((row) => (
                 <tr
-                  key={row.employee.id}
+                  key={row.employeeId}
                   className="border-b text-sm font-medium text-person last:border-b-0 sm:text-base"
                 >
                   <td className="px-5 py-3">
                     <span className="flex items-center gap-2.5">
-                      <EmployeeAvatar
-                        name={row.employee.name}
-                        photoUrl={row.employee.photoUrl}
-                        className="size-7"
-                      />
-                      <span>{row.employee.name}</span>
+                      <EmployeeAvatar name={row.employeeName} photoUrl={null} className="size-7" />
+                      <span>
+                        {row.employeeName}
+                        <span className="block text-xs font-normal text-muted-foreground">
+                          {row.employeeCode}
+                        </span>
+                      </span>
                     </span>
                   </td>
-                  <td className="px-5 py-3">{formatJoining(row.joiningDate)}</td>
-                  <td className="px-5 py-3">{row.branch ?? '—'}</td>
-                  <td className="px-5 py-3">{row.employee.designation}</td>
+                  <td className="px-5 py-3">
+                    {row.joiningDate ? formatJoining(row.joiningDate) : '—'}
+                  </td>
+                  <td className="px-5 py-3">{row.branchName ?? '—'}</td>
+                  <td className="px-5 py-3">{row.departmentName ?? '—'}</td>
+                  <td className="px-5 py-3">
+                    {row.payslipStatus
+                      ? `${PAYSLIP_STATUS_META[row.payslipStatus].label}${row.netPayable === null ? '' : ` · ${formatRs(row.netPayable)}`}`
+                      : '—'}
+                  </td>
                 </tr>
               ))}
             </BorderedTable>
@@ -223,33 +258,135 @@ export function EmploymentsDialog({
         </div>
       </AppDialog>
       {adding && (
-        <SelectEmployeesDialog
-          initial={payroll.employeeIds}
-          pending={save.isPending}
-          error={error}
+        <AddEmployeesDialog
+          payroll={payroll}
+          current={(everyone.data ?? []).map((row) => row.employeeId)}
+          known={(everyone.data ?? []).map((row) => ({
+            value: row.employeeId,
+            label: row.employeeName,
+            hint: row.employeeCode,
+          }))}
           onClose={() => {
             setAdding(false)
-          }}
-          onSave={(employeeIds) => {
-            setError(null)
-            save.mutate(
-              { id: payroll.id, employeeIds },
-              {
-                onSuccess: () => {
-                  setAdding(false)
-                },
-                onError: (failure) => {
-                  setError(
-                    failure instanceof ApiError
-                      ? failure.message
-                      : 'The employees could not be saved.',
-                  )
-                },
-              },
-            )
           }}
         />
       )}
     </>
+  )
+}
+
+function AddEmployeesDialog({
+  payroll,
+  current,
+  known,
+  onClose,
+}: {
+  payroll: PayrollRow
+  current: string[]
+  /** Names of the people already on the payroll. */
+  known: readonly SearchOption[]
+  onClose: () => void
+}) {
+  const branches = useOrganisationLookup('branches')
+  const departments = useOrganisationLookup('departments')
+  const setEmployees = useSetPayrollEmployees()
+  const addByFilter = useAddPayrollEmployees()
+  const [ids, setIds] = useState<string[]>(current)
+  const [branchId, setBranchId] = useState<string | null>(null)
+  const [departmentId, setDepartmentId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const pending = setEmployees.isPending || addByFilter.isPending
+  const fail = (failure: unknown) => {
+    setError(failure instanceof ApiError ? failure.message : 'The employees could not be saved.')
+  }
+
+  return (
+    <AppDialog
+      title={<span className="text-xl font-medium sm:text-2xl">Select Employees</span>}
+      onRequestClose={onClose}
+      className="max-w-3xl"
+      footer={
+        <>
+          {error && (
+            <p role="alert" className="mr-auto self-center text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <Button
+            disabled={pending}
+            onClick={() => {
+              setError(null)
+              setEmployees.mutate(
+                { id: payroll.id, employeeIds: ids },
+                { onSuccess: onClose, onError: fail },
+              )
+            }}
+            className={cn(footerButton, btn.green)}
+          >
+            Save
+          </Button>
+          <Button onClick={onClose} className={cn(footerButton, btn.red)}>
+            Cancel
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-6">
+        <div className="grid gap-2">
+          <p className="font-inter text-sm text-heading">Employees on the payroll</p>
+          <EmployeeMultiSearchSelect
+            aria-label="Employees"
+            value={ids}
+            onChange={setIds}
+            filters={{ permission: 'payroll.payrolls.edit' }}
+            known={known}
+            hint={personHint}
+            placeholder="Select Employees"
+          />
+          <p className="text-xs text-muted-foreground">{ids.length} selected</p>
+        </div>
+        <div className="grid gap-2 rounded-lg border p-4">
+          <p className="font-inter text-sm text-heading">
+            Or add everyone of a branch / department
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <SearchSelect
+              aria-label="Branch"
+              value={branchId}
+              onChange={setBranchId}
+              clearable
+              options={(branches.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
+              placeholder="Any branch"
+            />
+            <SearchSelect
+              aria-label="Department"
+              value={departmentId}
+              onChange={setDepartmentId}
+              clearable
+              options={(departments.data ?? []).map((item) => ({
+                value: item.id,
+                label: item.name,
+              }))}
+              placeholder="Any department"
+            />
+          </div>
+          <div className="flex justify-end">
+            <Button
+              disabled={pending || (!branchId && !departmentId)}
+              onClick={() => {
+                setError(null)
+                addByFilter.mutate(
+                  { id: payroll.id, filter: { branchId, departmentId, employeeStatus: 'active' } },
+                  { onSuccess: onClose, onError: fail },
+                )
+              }}
+              className={cn(toolbarButton, btn.navy, 'px-6')}
+            >
+              Add Matching
+            </Button>
+          </div>
+        </div>
+      </div>
+    </AppDialog>
   )
 }

@@ -3,8 +3,15 @@ import { type ReactNode, useState } from 'react'
 import { cn } from '@/lib/utils'
 
 import { PRIORITY_META } from '../../constants'
-import { useCreateTask, usePeople, useTasks, useWorkspaceTree } from '../../hooks/use-pm'
-import type { TaskRow, Workspace } from '../../types/pm.types'
+import {
+  useAddDependency,
+  useCreateTask,
+  usePeople,
+  useRemoveDependency,
+  useTaskDetail,
+  useTasks,
+} from '../../hooks/use-pm'
+import type { TaskDependency, TaskRow, Workspace } from '../../types/pm.types'
 import {
   BackIcon,
   BlockingIcon,
@@ -19,21 +26,18 @@ import {
 import { FieldPopover, PersonAvatar, PopupHeader, SearchField } from './field-popup'
 import { fieldStyles } from './field-styles'
 import {
+  DEPENDENCY_KIND,
   type DependencyRelation,
   formatCellDate,
   formatDuration,
-  linkUpdates,
-  openBlockers,
   PRIORITY_FLAG_COLORS,
   ROLLUP_COLUMNS,
   type RollupColumn,
   trackedMinutes,
-  unlinkUpdates,
 } from './field-utils'
 import { RemoveButton } from './remove-button'
 import { StatusChip } from './status-chip'
 import type { TaskCellProps } from './task-cell-types'
-import { useTaskSave } from './use-task-save'
 
 interface Relation {
   key: DependencyRelation
@@ -70,15 +74,15 @@ function RelationLabel({ relation }: { relation: DependencyRelation }) {
 
 /**
  * Dependencies column (Workspace Page 1:2755): the first link with its "Waiting On" / "Blocking"
- * label and the task's name, a warning while a task it waits on is open.
+ * label, a warning while a task it waits on is open. The row carries the counts (open tasks it
+ * waits on, tasks it blocks); the links themselves are read when the popup opens.
  */
 export function DependenciesCell({ task, workspace, tasks }: TaskCellProps) {
   const [open, setOpen] = useState(false)
-  const count = task.waitingOn.length + task.blocking.length
-  const blocked = openBlockers(task, tasks, workspace).length > 0
-  const firstRelation: DependencyRelation = task.waitingOn.length > 0 ? 'waitingOn' : 'blocking'
-  const firstId = task.waitingOn[0] ?? task.blocking[0]
-  const first = tasks.find((other) => other.id === firstId)
+  const count = task.openDependencyCount + task.blockingCount
+  const blocked = task.openDependencyCount > 0
+  const firstRelation: DependencyRelation = blocked ? 'waitingOn' : 'blocking'
+  const shown = blocked ? task.openDependencyCount : task.blockingCount
 
   return (
     <DependenciesPopover
@@ -100,10 +104,12 @@ export function DependenciesCell({ task, workspace, tasks }: TaskCellProps) {
           {count > 0 ? (
             <span className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md bg-[#F6F4FF] py-[0.15rem] pr-2 pl-[0.2rem]">
               <RelationLabel relation={firstRelation} />
-              <span className="min-w-0 truncate">{first?.name ?? `${count} tasks`}</span>
-              {count > 1 && (
+              <span className="min-w-0 truncate">
+                {shown} {shown === 1 ? 'task' : 'tasks'}
+              </span>
+              {count > shown && (
                 <span className="shrink-0 text-[0.6875rem] font-semibold text-[#7127EA]">
-                  +{count - 1}
+                  +{count - shown}
                 </span>
               )}
             </span>
@@ -190,12 +196,18 @@ function DependenciesPanel({
   const { data } = useTasks(workspace.id, null)
   const all = data ?? fallback
   const task = all.find((other) => other.id === rowTask.id) ?? rowTask
-  const { saveAll } = useTaskSave()
+  const detail = useTaskDetail(rowTask.id)
+  const addDependency = useAddDependency()
+  const removeDependency = useRemoveDependency()
   const [rollups, setRollups] = useState<RollupColumn[]>(() => readRollups(workspace.id))
-  const links = [
-    ...task.waitingOn.map((id) => ({ id, relation: 'waitingOn' as const })),
-    ...task.blocking.map((id) => ({ id, relation: 'blocking' as const })),
-  ]
+  const dependencies = detail.data?.dependencies ?? []
+  const links = dependencies
+    .filter((entry) => entry.kind !== 'linked')
+    .map((entry): { link: TaskDependency; relation: DependencyRelation } => ({
+      link: entry,
+      relation: entry.kind === 'blocking' ? 'blocking' : 'waitingOn',
+    }))
+  const linkedIds = new Set([task.id, ...dependencies.map((entry) => entry.taskId)])
 
   const changeRollups = (next: RollupColumn[]) => {
     setRollups(next)
@@ -206,18 +218,22 @@ function DependenciesPanel({
     }
   }
 
-  const link = async (other: TaskRow, relation: DependencyRelation) =>
-    saveAll(linkUpdates(task, other, relation))
+  /** `POST /tasks/{id}/dependencies`; the API keeps both sides. */
+  const link = async (other: Pick<TaskRow, 'id'>, relation: DependencyRelation) => {
+    try {
+      await addDependency.mutateAsync({
+        taskId: task.id,
+        otherTaskId: other.id,
+        kind: DEPENDENCY_KIND[relation],
+      })
+      return true
+    } catch {
+      return false
+    }
+  }
 
-  const unlink = (otherId: string, relation: DependencyRelation) => {
-    void saveAll(
-      unlinkUpdates(
-        task,
-        all.find((other) => other.id === otherId),
-        relation,
-        otherId,
-      ),
-    )
+  const unlink = (dependencyId: string) => {
+    removeDependency.mutate(dependencyId)
   }
 
   return (
@@ -231,7 +247,11 @@ function DependenciesPanel({
           <div className={cn(fieldStyles.divider, 'my-[0.6rem]')} />
 
           <div className={cn(fieldStyles.scroll, 'overflow-x-auto pb-1')}>
-            {links.length === 0 ? (
+            {detail.isPending ? (
+              <p className="flex h-[2.4rem] items-center px-3 text-[0.8125rem] text-[#909090]">
+                Loading dependencies...
+              </p>
+            ) : links.length === 0 ? (
               <p className="flex h-[2.4rem] items-center rounded-[0.5625rem] border border-[#E9E9E9] px-3 text-[0.8125rem] font-medium text-[#626262]">
                 There are no tasks to link as dependencies
               </p>
@@ -257,15 +277,16 @@ function DependenciesPanel({
                   </thead>
                 )}
                 <tbody>
-                  {links.map(({ id, relation }) => (
+                  {links.map(({ link: entry, relation }) => (
                     <LinkedTaskRow
-                      key={`${relation}-${id}`}
-                      task={all.find((entry) => entry.id === id)}
+                      key={entry.id}
+                      link={entry}
+                      task={all.find((other) => other.id === entry.taskId)}
                       relation={relation}
                       workspace={workspace}
                       rollups={rollups}
                       onRemove={() => {
-                        unlink(id, relation)
+                        unlink(entry.id)
                       }}
                     />
                   ))}
@@ -276,7 +297,13 @@ function DependenciesPanel({
 
           <div className={cn(fieldStyles.divider, 'my-[0.6rem]')} />
           <div>
-            <AddDependency task={task} workspace={workspace} tasks={all} onLink={link} />
+            <AddDependency
+              task={task}
+              workspace={workspace}
+              tasks={all}
+              linkedIds={linkedIds}
+              onLink={link}
+            />
           </div>
         </div>
       </div>
@@ -285,6 +312,8 @@ function DependenciesPanel({
 }
 
 interface LinkedTaskRowProps {
+  /** The link as the API lists it (the other task's code, name and status). */
+  link: TaskDependency
   task: TaskRow | undefined
   relation: DependencyRelation
   workspace: Workspace
@@ -296,16 +325,33 @@ const linkCell =
   'h-11 border-y border-[#E9E9E9] bg-white px-2 text-[0.8125rem] font-medium whitespace-nowrap text-[#626262]'
 
 /** One link: the status, the relation label and the name, then any roll-up columns. */
-function LinkedTaskRow({ task, relation, workspace, rollups, onRemove }: LinkedTaskRowProps) {
+function LinkedTaskRow({ link, task, relation, workspace, rollups, onRemove }: LinkedTaskRowProps) {
   const people = usePeople()
   if (!task) {
+    // A task of another list or workspace view: what the link itself tells.
     return (
       <tr>
-        <td className={cn(linkCell, 'rounded-l-[0.5625rem] border-l')} colSpan={rollups.length + 1}>
-          <span className="text-[#909090]">A task that was deleted</span>
+        <td
+          className={cn(linkCell, 'rounded-l-[0.5625rem] border-l pl-2.5')}
+          colSpan={rollups.length + 1}
+        >
+          <span className="flex items-center gap-2">
+            <StatusChip
+              status={{
+                id: '',
+                name: link.statusName,
+                color: link.statusColor ?? '#979797',
+                group: 'active',
+              }}
+            />
+            <span className="flex min-w-0 items-center gap-2 rounded-md bg-[#F6F4FF] py-[0.15rem] pr-2 pl-[0.2rem]">
+              <RelationLabel relation={relation} />
+              <span className="max-w-[26rem] truncate">{link.name}</span>
+            </span>
+          </span>
         </td>
         <td className={cn(linkCell, 'rounded-r-[0.5625rem] border-r')}>
-          <RemoveButton label="Remove deleted task" onClick={onRemove} />
+          <RemoveButton label={`Unlink ${link.name}`} onClick={onRemove} />
         </td>
       </tr>
     )
@@ -458,14 +504,16 @@ interface AddDependencyProps {
   task: TaskRow
   workspace: Workspace
   tasks: readonly TaskRow[]
-  onLink: (other: TaskRow, relation: DependencyRelation) => Promise<boolean>
+  /** The task and the tasks already linked to it. */
+  linkedIds: ReadonlySet<string>
+  onLink: (other: Pick<TaskRow, 'id'>, relation: DependencyRelation) => Promise<boolean>
 }
 
 /**
  * "+ Add Task" and its Add Link menu (Waiting On, Blocking, Create New Task), then the Add Task
  * popup with Recent Task and Browse Task (the workspace's lists).
  */
-function AddDependency({ task, workspace, tasks, onLink }: AddDependencyProps) {
+function AddDependency({ task, workspace, tasks, linkedIds, onLink }: AddDependencyProps) {
   const [open, setOpen] = useState(false)
   const [relation, setRelation] = useState<DependencyRelation | null>(null)
   const [creating, setCreating] = useState(false)
@@ -489,8 +537,7 @@ function AddDependency({ task, workspace, tasks, onLink }: AddDependencyProps) {
         parentId: null,
         name: trimmed,
       })
-      const row: TaskRow = { ...created, subtaskCount: 0, commentCount: 0, latestComment: null }
-      if (await onLink(row, 'waitingOn')) close()
+      if (await onLink(created, 'waitingOn')) close()
     } catch {
       // The mutation cache shows the server's message.
     }
@@ -517,9 +564,9 @@ function AddDependency({ task, workspace, tasks, onLink }: AddDependencyProps) {
     >
       {relation ? (
         <TaskPicker
-          task={task}
           workspace={workspace}
           tasks={tasks}
+          linkedIds={linkedIds}
           relation={relation}
           onBack={() => {
             setRelation(null)
@@ -595,8 +642,8 @@ function AddDependency({ task, workspace, tasks, onLink }: AddDependencyProps) {
 }
 
 interface TaskPickerProps {
-  task: TaskRow
   workspace: Workspace
+  linkedIds: ReadonlySet<string>
   tasks: readonly TaskRow[]
   relation: DependencyRelation
   onBack: () => void
@@ -604,22 +651,18 @@ interface TaskPickerProps {
 }
 
 /** "Add Task as a Waiting On Dependencies": Recent Task, or Browse Task through the lists. */
-function TaskPicker({ task, workspace, tasks, relation, onBack, onPick }: TaskPickerProps) {
+function TaskPicker({ workspace, linkedIds, tasks, relation, onBack, onPick }: TaskPickerProps) {
   const people = usePeople()
-  const { data: tree } = useWorkspaceTree()
   const [browse, setBrowse] = useState(false)
   const [listId, setListId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const linked = new Set([task.id, ...task.waitingOn, ...task.blocking])
-  const candidates = tasks.filter((other) => !linked.has(other.id))
+  const candidates = tasks.filter((other) => !linkedIds.has(other.id))
   const query = search.trim().toLowerCase()
   const matches = (other: TaskRow) =>
     !query || other.name.toLowerCase().includes(query) || other.code.toLowerCase().includes(query)
-  const lists = (tree?.items ?? []).filter(
-    (item) => item.workspaceId === workspace.id && item.kind === 'list',
-  )
+  const lists = workspace.items.filter((item) => item.kind === 'list')
   const folderName = (parentId: string | null) =>
-    tree?.items.find((item) => item.id === parentId)?.name ?? workspace.name
+    workspace.items.find((item) => item.id === parentId)?.name ?? workspace.name
 
   const recent = candidates
     .filter(matches)

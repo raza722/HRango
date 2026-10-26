@@ -5,29 +5,21 @@ import overtimeIcon from '@/assets/attendance/action-overtime.svg'
 import relaxationActionIcon from '@/assets/attendance/action-relaxation.svg'
 import viewIcon from '@/assets/attendance/action-view.svg'
 import absentIcon from '@/assets/attendance/status-absent.svg'
-import earlyLeftIcon from '@/assets/attendance/status-early-left.svg'
 import halfDayIcon from '@/assets/attendance/status-half-day.svg'
-import halfLeaveIcon from '@/assets/attendance/status-half-leave.svg'
 import holidayIcon from '@/assets/attendance/status-holiday.svg'
-import lateArrivalIcon from '@/assets/attendance/status-late-arrival.svg'
 import leaveIcon from '@/assets/attendance/status-leave.svg'
-import leaveAppliedIcon from '@/assets/attendance/status-leave-applied.svg'
-import officialDutyIcon from '@/assets/attendance/status-official-duty.svg'
 import officialVisitIcon from '@/assets/attendance/status-official-visit.svg'
 import presentIcon from '@/assets/attendance/status-present.svg'
-import relaxationIcon from '@/assets/attendance/status-relaxation.svg'
 import restDayIcon from '@/assets/attendance/status-rest-day.svg'
 import sandwichIcon from '@/assets/attendance/status-sandwich.svg'
 import shortDayIcon from '@/assets/attendance/status-short-day.svg'
-import shortLeaveIcon from '@/assets/attendance/status-short-leave.svg'
 import weekendIcon from '@/assets/attendance/status-weekend.svg'
 import wfhIcon from '@/assets/attendance/status-wfh.svg'
-import workableHoursIcon from '@/assets/attendance/status-workable-hours.svg'
-import workableShiftsIcon from '@/assets/attendance/status-workable-shifts.svg'
 import yetToStartIcon from '@/assets/attendance/status-yet-to-start.svg'
 
 import type {
   AbsenceMark,
+  DayFlag,
   DaysOverview,
   DayStatus,
   PunchSource,
@@ -48,98 +40,124 @@ export const DAY_STATUS_META: Record<DayStatus, DayStatusMeta> = {
   present: { label: 'Present', icon: presentIcon },
   absent: { label: 'Absent', icon: absentIcon },
   holiday: { label: 'Holiday', icon: holidayIcon },
-  'half-day': { label: 'Half day', icon: halfDayIcon },
-  'short-day': { label: 'Short Day', icon: shortDayIcon },
+  half_day: { label: 'Half day', icon: halfDayIcon },
+  short_day: { label: 'Short Day', icon: shortDayIcon },
   leave: { label: 'Leave', icon: leaveIcon },
-  'half-leave': { label: 'Half leave', icon: halfLeaveIcon },
-  'short-leave': { label: 'Short leave', icon: shortLeaveIcon },
   sandwich: { label: 'Sandwich', icon: sandwichIcon },
-  'official-visit': { label: 'Official Visit', icon: officialVisitIcon },
-  'leave-applied': { label: 'Leave Applied', icon: leaveAppliedIcon },
-  'yet-to-start': { label: 'Yet to Start', icon: yetToStartIcon },
+  official_visit: { label: 'Official Visit', icon: officialVisitIcon },
+  yet_to_start: { label: 'Yet to Start', icon: yetToStartIcon },
   weekend: { label: 'Weekend', icon: weekendIcon },
-  'workable-shifts': { label: 'Workable shifts', icon: workableShiftsIcon },
-  'workable-hours': { label: 'Workable hours', icon: workableHoursIcon },
-  'late-arrival': { label: 'Late Arrival', icon: lateArrivalIcon },
-  'early-left': { label: 'Early Left', icon: earlyLeftIcon },
-  'rest-day': { label: 'Rest Day', legendLabel: 'Rest Days', icon: restDayIcon },
-  relaxation: { label: 'Relaxation', icon: relaxationIcon },
-  'official-duty': { label: 'Official Duty', icon: officialDutyIcon },
+  rest_day: { label: 'Rest Day', legendLabel: 'Rest Days', icon: restDayIcon },
   wfh: { label: 'WFH/Remote', icon: wfhIcon },
 }
 
-/** Days that count as "Present" in the overview totals (the person worked). */
+/** The day's flags, shown as small marks beside the state. */
+export const DAY_FLAG_LABELS: Record<DayFlag, string> = {
+  late: 'Late Arrival',
+  early: 'Early Left',
+  grace: 'Grace',
+  overtime: 'Overtime',
+  missing_punch: 'Missing Punch',
+  relaxation: 'Relaxation',
+  official_visit: 'Official Visit',
+  half_leave: 'Half leave',
+  short_leave: 'Short leave',
+}
+
+/** Days that count as "Present" (the person worked). */
 export const PRESENT_STATUSES: ReadonlySet<DayStatus> = new Set<DayStatus>([
   'present',
-  'late-arrival',
-  'early-left',
-  'relaxation',
   'wfh',
-  'workable-shifts',
-  'workable-hours',
-  'half-day',
-  'short-day',
-  'half-leave',
-  'short-leave',
-  'official-visit',
-  'official-duty',
+  'half_day',
+  'short_day',
+  'official_visit',
 ])
 
-/** Days with nothing to clock: no Edit, Missing Punch or Overtime. */
+/** Days with nothing to clock: no Edit. */
 export const OFF_STATUSES: ReadonlySet<DayStatus> = new Set<DayStatus>([
   'holiday',
   'weekend',
-  'rest-day',
+  'rest_day',
   'sandwich',
 ])
 
 /** Clock In / Clock Out status chips, colours sampled from the All Time Sheet frame. */
 export const PUNCH_STATUS_META: Record<PunchStatus, { label: string; className: string }> = {
-  present: { label: 'Present', className: 'bg-[#2CBD4D] text-white' },
-  'late-arrival': { label: 'Late Arrival', className: 'bg-[#DC8F1E] text-white' },
-  'early-left': { label: 'Early Left', className: 'bg-[#5A7FE0] text-white' },
-  'missing-punch': { label: 'Missing Punch', className: 'bg-[#F17D5B] text-white' },
+  on_time: { label: 'Present', className: 'bg-[#2CBD4D] text-white' },
+  grace: { label: 'Grace', className: 'bg-[#7DBE3C] text-white' },
+  late: { label: 'Late Arrival', className: 'bg-[#DC8F1E] text-white' },
+  early: { label: 'Early Left', className: 'bg-[#5A7FE0] text-white' },
+  overtime: { label: 'Overtime', className: 'bg-[#C2338B] text-white' },
+  missing: { label: 'Missing Punch', className: 'bg-[#F17D5B] text-white' },
   absent: { label: 'Absent', className: 'bg-[#E50141] text-white' },
 }
 
-/** "Days Overview This Month" tiles, in the design's order. */
-export const OVERVIEW_TILES: readonly {
-  key: Exclude<keyof DaysOverview, 'month'>
+/** A tile of "Days Overview This Month": a count of the summary, or minutes shown as hours. */
+export interface OverviewTile {
+  key: string
   label: string
   className: string
-}[] = [
-  { key: 'absent', label: 'Absent', className: 'bg-rose-100 text-rose-600 dark:bg-rose-500/15' },
-  { key: 'holiday', label: 'Holiday', className: 'bg-sky-100 text-sky-600 dark:bg-sky-500/15' },
+  value: (summary: DaysOverview) => number
+  /** Minutes: shown as hours. */
+  minutes?: boolean
+}
+
+/** "Days Overview This Month" tiles, in the design's order (Warnings / Penalty: see the docs). */
+export const OVERVIEW_TILES: readonly OverviewTile[] = [
+  {
+    key: 'absent',
+    label: 'Absent',
+    className: 'bg-rose-100 text-rose-600 dark:bg-rose-500/15',
+    value: (summary) => summary.absent,
+  },
+  {
+    key: 'holiday',
+    label: 'Holiday',
+    className: 'bg-sky-100 text-sky-600 dark:bg-sky-500/15',
+    value: (summary) => summary.holiday,
+  },
   {
     key: 'lateArrival',
     label: 'Late Arrival',
     className: 'bg-orange-100 text-orange-600 dark:bg-orange-500/15',
+    value: (summary) => summary.lateArrival,
   },
   {
     key: 'present',
     label: 'Present',
     className: 'bg-green-100 text-green-600 dark:bg-green-500/15',
+    value: (summary) => summary.present,
   },
   {
     key: 'weekend',
     label: 'Weekend',
     className: 'bg-neutral-200 text-neutral-600 dark:bg-neutral-500/20 dark:text-neutral-300',
+    value: (summary) => summary.weekend + summary.restDay,
   },
   {
     key: 'yetToStart',
     label: 'Yet To Start',
     className: 'bg-blue-100 text-blue-600 dark:bg-blue-500/15',
+    value: (summary) => summary.yetToStart,
+  },
+  {
+    key: 'leave',
+    label: 'Leave',
+    className: 'bg-violet-100 text-violet-600 dark:bg-violet-500/15',
+    value: (summary) => summary.leave,
+  },
+  {
+    key: 'missingPunch',
+    label: 'Missing Punch',
+    className: 'bg-red-200 text-red-600 dark:bg-red-500/20',
+    value: (summary) => summary.missingPunch,
   },
   {
     key: 'overtime',
     label: 'Overtime',
     className: 'bg-pink-100 text-pink-500 dark:bg-pink-500/15',
-  },
-  { key: 'warnings', label: 'Warnings', className: 'bg-red-200 text-red-600 dark:bg-red-500/20' },
-  {
-    key: 'penalty',
-    label: 'Penalty',
-    className: 'bg-orange-200 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300',
+    value: (summary) => summary.overtimeMinutes,
+    minutes: true,
   },
 ]
 
@@ -171,26 +189,37 @@ export const ABSENCE_MARK_LABELS: Record<AbsenceMark, string> = {
 }
 
 export const PUNCH_TYPE_LABELS: Record<PunchType, string> = {
-  'check-in': 'Check In',
-  'check-out': 'Check Out',
-  'break-out': 'Break Out',
-  'break-in': 'Break In',
+  check_in: 'Check In',
+  check_out: 'Check Out',
+  break_out: 'Break Out',
+  break_in: 'Break In',
 }
 
 export const PUNCH_SOURCE_LABELS: Record<PunchSource, string> = {
-  machine: 'Import from Machine',
+  biometric: 'Import from Machine',
+  mobile: 'Mobile App',
+  web: 'Dashboard',
   manual: 'Manual',
-  dashboard: 'Dashboard',
-  request: 'Punch Request',
-  import: 'Imported File',
+  import_file: 'Imported File',
+  punch_request: 'Punch Request',
 }
 
-/** A late arrival within this many minutes still counts as on time. */
+/**
+ * Legacy: Grace is a setting now (Settings → Basic → Late Grace Minutes); the API works the
+ * statuses out. Kept so the public names stay.
+ */
 export const GRACE_MINUTES = 5
-/** Overtime starts counting after this many minutes past the clock out. */
+/** Legacy: The API computes overtime (Settings → Overtime). */
 export const OVERTIME_THRESHOLD_MINUTES = 15
-/** Warnings in a month that make one penalty (100% in the Warnings column). */
+/** Legacy: Warnings come from the Warning policies (`warningCount` on each day). */
 export const WARNING_LIMIT = 5
+
+/** "Penalty" column wording of `penaltyType`. */
+export const PENALTY_TYPE_LABELS: Record<string, string> = {
+  half_day: 'Half Day',
+  full_day: 'Full Day',
+  percentage: 'Percentage',
+}
 
 export const EMPLOYEE_STATUS_OPTIONS = [
   { value: 'active', label: 'Active Staff' },

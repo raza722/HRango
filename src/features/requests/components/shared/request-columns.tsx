@@ -19,20 +19,23 @@ const employee = <T extends AnyRequest>(): Column<T> => ({
   cell: (row) => row.employee.name,
   className: 'min-w-28',
 })
+/** The request's day (`fromDate`; the details carry it too). */
 const date = <T extends PunchRequest | ShiftRequest>(): Column<T> => ({
   id: 'date',
   header: 'Date',
-  cell: (row) => <span className="whitespace-nowrap">{listDate(row.payload.date)}</span>,
+  cell: (row) => (
+    <span className="whitespace-nowrap">{row.fromDate ? listDate(row.fromDate) : '—'}</span>
+  ),
 })
 const nextRequestee = <T extends AnyRequest>(): Column<T> => ({
   id: 'next',
   header: 'Next Requestee',
-  cell: (row) => row.currentStep?.approver.name ?? '—',
+  cell: (row) => row.nextApprover?.name ?? '—',
 })
 const authority = <T extends AnyRequest>(): Column<T> => ({
   id: 'authority',
   header: 'Approving Authority',
-  cell: (row) => row.currentStep?.authority ?? row.flow.at(-1)?.authority ?? '—',
+  cell: (row) => row.currentStep?.authority ?? '—',
 })
 const status = <T extends AnyRequest>(): Column<T> => ({
   id: 'status',
@@ -77,24 +80,24 @@ export const punchApprovalColumns: Column<PunchRequest>[] = [
 
 const roster: Column<ShiftRequest> = {
   id: 'roster',
-  header: 'Time Roster',
-  cell: (row) => row.payload.rosterTitle ?? (row.payload.swapWith ? 'Swap' : '—'),
+  header: 'Time Slot',
+  cell: (row) => row.payload.timeSlotName ?? (row.payload.withEmployeeId ? 'Swap' : '—'),
 }
 const swapFrom: Column<ShiftRequest> = {
   id: 'swapFrom',
   header: 'Swap From',
-  cell: (row) => row.payload.swapFrom ?? '—',
+  cell: (row) => row.payload.fromTimeSlotName ?? '—',
   className: 'min-w-32 whitespace-normal',
 }
 const swapTo: Column<ShiftRequest> = {
   id: 'swapTo',
   header: 'Swap To',
-  cell: (row) => row.payload.swapWith?.name ?? '—',
+  cell: (row) => row.payload.withEmployeeName ?? '—',
 }
 const description: Column<ShiftRequest> = {
   id: 'description',
   header: 'Description',
-  cell: (row) => <span className="line-clamp-2">{row.payload.description || '—'}</span>,
+  cell: (row) => <span className="line-clamp-2">{row.description ?? '—'}</span>,
   className: 'max-w-48 whitespace-normal',
 }
 

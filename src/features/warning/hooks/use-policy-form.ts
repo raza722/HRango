@@ -1,27 +1,27 @@
 import { useMemo } from 'react'
-import { useFieldArray, useForm } from 'react-hook-form'
+import { type FieldPath, useFieldArray, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
 import { ApiError } from '@/lib/api-error'
 
 import { policyFormSchema, type PolicyFormValues } from '../schemas/policy-form.schema'
-import type { TimeSpan } from '../types/warning-policy.types'
+import { type AppliesTo, CLOCK_EVENTS_FOR, maxRulesFor } from '../types/warning-policy.types'
 import {
   createDefaultFormValues,
-  createEmptyPeriod,
-  createNextPeriod,
+  createEmptyRule,
+  createNextRule,
   toFormValues,
   toPolicyInput,
 } from '../utils/policy-mappers'
 import { useWarningPolicy } from './use-warning-policies'
 import { useCreateWarningPolicy, useUpdateWarningPolicy } from './use-warning-policy-mutations'
 
-/** Top-level fields the API may return in `fieldErrors`. */
-const SERVER_FIELDS = ['policyName', 'title', 'timeSpan', 'clockEvent'] as const
-type ServerField = (typeof SERVER_FIELDS)[number]
+/** Fields the API may name in `fieldErrors` (`title`, `rules`, `rules.0.clockEvent` …). */
+const SERVER_FIELD =
+  /^(title|appliesTo|period|graceMinutes|weekStartDay|weekEndDay|rules(\.\d+\.(clockEvent|minutes|occurrenceCount))?)$/
 
-function isServerField(key: string): key is ServerField {
-  return SERVER_FIELDS.some((field) => field === key)
+function isServerField(key: string): key is FieldPath<PolicyFormValues> {
+  return SERVER_FIELD.test(key)
 }
 
 interface UsePolicyFormOptions {
@@ -35,11 +35,11 @@ interface UsePolicyFormOptions {
 }
 
 /**
- * Owns the Warning Policy form: schema validation, the periods field array,
+ * Owns the Warning Policy form: schema validation, the rules field array (one per clock event),
  * loading a policy for editing, and the create/update mutations.
  *
- * Flow: Zod schema → RHF → `toPolicyInput` → TanStack mutation → MSW →
- * list invalidation → table refresh.
+ * Flow: Zod schema → RHF → `toPolicyInput` (+ rowVersion) → TanStack mutation → `/api/warning/policies`
+ * → list invalidation → table refresh.
  */
 export function usePolicyForm({ editingId, onSaved }: UsePolicyFormOptions) {
   const editingQuery = useWarningPolicy(editingId)
@@ -60,25 +60,31 @@ export function usePolicyForm({ editingId, onSaved }: UsePolicyFormOptions) {
     mode: 'onTouched',
   })
 
-  const periods = useFieldArray({ control: form.control, name: 'periods', keyName: 'key' })
+  const rules = useFieldArray({ control: form.control, name: 'rules', keyName: 'key' })
 
   /** Clears the form for a brand-new policy. */
   const resetToNew = () => {
     form.reset(createDefaultFormValues())
   }
 
-  /** Switching span swaps the period blocks for one block of the new kind. */
-  const changeTimeSpan = (timeSpan: TimeSpan) => {
-    periods.replace([createEmptyPeriod(timeSpan)])
+  /** A new kind of policy keeps only the rules its clock events allow (at least one). */
+  const changeAppliesTo = (appliesTo: AppliesTo) => {
+    const allowed = CLOCK_EVENTS_FOR[appliesTo]
+    const kept = form
+      .getValues('rules')
+      .filter((rule) => allowed.includes(rule.clockEvent))
+      .slice(0, maxRulesFor(appliesTo))
+    rules.replace(kept.length > 0 ? kept : [createEmptyRule(allowed[0])])
   }
 
-  const addPeriod = () => {
-    const current = form.getValues()
-    periods.append(createNextPeriod(current.timeSpan, current.periods.at(-1)))
+  /** "+ Add Rule": the clock event that has no rule yet. */
+  const addRule = () => {
+    const next = createNextRule(form.getValues('appliesTo'), form.getValues('rules'))
+    if (next) rules.append(next)
   }
 
   const submit = form.handleSubmit(async (values) => {
-    const input = toPolicyInput(values)
+    const input = toPolicyInput(values, editingId ? editingQuery.data?.rowVersion : undefined)
     const mode = editingId ? 'updated' : 'created'
     try {
       if (editingId) await updateMutation.mutateAsync({ id: editingId, input })
@@ -100,11 +106,15 @@ export function usePolicyForm({ editingId, onSaved }: UsePolicyFormOptions) {
 
   return {
     form,
-    periods,
+    rules,
+    /** Legacy (kept for the barrel): Use `rules`. */
+    periods: rules,
     submit,
     resetToNew,
-    changeTimeSpan,
-    addPeriod,
+    changeAppliesTo,
+    addRule,
+    /** Legacy (kept for the barrel): Use `addRule`. */
+    addPeriod: addRule,
     isEditing: editingId !== undefined,
     /** The record being edited, once loaded. */
     editingPolicy: editingQuery.data,

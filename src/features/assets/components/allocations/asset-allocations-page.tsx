@@ -24,35 +24,41 @@ import {
   toolbarButton,
   useFilters,
 } from '@/features/payroll'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { ALLOCATION_STATUS_META, ASSET_PAGE_SIZE } from '../../constants'
-import { useAllocations, useAssetLookups } from '../../hooks/use-assets'
-import type { AllocationRow } from '../../types/assets.types'
+import { useAllocations, useAssetOptions, useAssetTypeOptions } from '../../hooks/use-assets'
+import type { Allocation } from '../../types/assets.types'
 import { AllocationDialog } from './allocation-dialog'
 import { DeallocateDialog } from './deallocate-dialog'
 
 const routeApi = getRouteApi('/_app/assets/allocations')
 
 type Dialog =
-  { type: 'allocate' | 'filters' } | { type: 'view' | 'deallocate'; row: AllocationRow } | null
+  { type: 'allocate' | 'filters' } | { type: 'view' | 'deallocate'; row: Allocation } | null
 
-const columns: DataTableColumn<AllocationRow>[] = [
-  { id: 'company', header: 'Company', cell: (row) => row.company },
+const assetLabel = (row: Pick<Allocation, 'assetName' | 'identificationNo'>) =>
+  row.identificationNo ? `${row.assetName} (${row.identificationNo})` : row.assetName
+
+const columns: DataTableColumn<Allocation>[] = [
+  { id: 'company', header: 'Company', cell: (row) => row.companyName },
   {
     id: 'employee',
     header: 'Employee',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={row.employee} />,
+    cell: (row) => (
+      <PersonCell person={{ name: row.employeeName ?? row.employeeId, photoUrl: null }} />
+    ),
   },
-  { id: 'asset', header: 'Asset', cell: (row) => row.asset },
-  { id: 'number', header: 'Identification Number', cell: (row) => row.identificationNumber },
+  { id: 'asset', header: 'Asset', cell: (row) => row.assetName },
+  { id: 'number', header: 'Identification Number', cell: (row) => row.identificationNo ?? '—' },
   {
     id: 'allocated',
     header: 'Allocation Date',
     align: 'center',
     cell: (row) => (
-      <span className="block max-w-28 whitespace-normal">{formatLong(row.allocationDate)}</span>
+      <span className="block max-w-28 whitespace-normal">{formatLong(row.allocatedOn)}</span>
     ),
   },
   {
@@ -60,8 +66,8 @@ const columns: DataTableColumn<AllocationRow>[] = [
     header: 'Deallocation Date',
     align: 'center',
     cell: (row) =>
-      row.deallocationDate ? (
-        <span className="block max-w-28 whitespace-normal">{formatLong(row.deallocationDate)}</span>
+      row.deallocatedOn ? (
+        <span className="block max-w-28 whitespace-normal">{formatLong(row.deallocatedOn)}</span>
       ) : (
         '—'
       ),
@@ -82,12 +88,15 @@ const columns: DataTableColumn<AllocationRow>[] = [
 export function AssetAllocationsPage() {
   const { page } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
-  const lookups = useAssetLookups()
-  const [filters, setFilters] = useFilters('asset-allocations')
+  const canAssign = useCan('assets.allocations.assign')
+  const [filters, setFilters] = useFilters('asset-allocations-v2')
   const [dialog, setDialog] = useState<Dialog>(null)
+  const types = useAssetTypeOptions()
+  const assets = useAssetOptions({})
   const list = useAllocations({
     page,
     pageSize: ASSET_PAGE_SIZE,
+    q: filters.q,
     employeeId: filters.employeeId,
     assetTypeId: filters.assetTypeId,
     status: filters.status,
@@ -98,17 +107,17 @@ export function AssetAllocationsPage() {
   const goTo = (next: number) => {
     void navigate({ search: (prev) => ({ ...prev, page: next }) })
   }
-  const data = lookups.data
   const fields: FilterField[] = [
     {
-      kind: 'select',
+      kind: 'employee',
       key: 'employeeId',
       label: 'Employees',
       placeholder: 'Select Employee',
-      options: (data?.employees ?? []).map((person) => ({
-        value: person.id,
-        label: person.name,
-        hint: person.code,
+      filters: { permission: 'assets.allocations.view', includeInactive: true },
+      // The listed people, so a saved filter keeps its name before the lookup reads them.
+      known: (list.data?.data ?? []).map((row) => ({
+        value: row.employeeId,
+        label: row.employeeName ?? row.employeeId,
       })),
     },
     {
@@ -116,7 +125,7 @@ export function AssetAllocationsPage() {
       key: 'assetTypeId',
       label: 'Asset Type',
       placeholder: 'Select an Option',
-      options: (data?.assetTypes ?? []).map((type) => ({ value: type.id, label: type.name })),
+      options: (types.data ?? []).map((type) => ({ value: type.id, label: type.name })),
     },
     {
       kind: 'select',
@@ -133,14 +142,15 @@ export function AssetAllocationsPage() {
       key: 'assetId',
       label: 'Assets',
       placeholder: 'Select an Option',
-      options: (data?.assets ?? []).map((asset) => ({
+      options: (assets.data ?? []).map((asset) => ({
         value: asset.id,
-        label: `${asset.name} (${asset.identificationNumber})`,
+        label: assetLabel({ assetName: asset.name, identificationNo: asset.identificationNo }),
         hint: asset.code,
       })),
     },
     { kind: 'date', key: 'from', label: 'From' },
     { kind: 'date', key: 'to', label: 'To' },
+    { kind: 'text', key: 'q', label: 'Search', placeholder: 'Employee or asset' },
   ]
   const close = () => {
     setDialog(null)
@@ -151,14 +161,16 @@ export function AssetAllocationsPage() {
       title="Asset Allocations"
       actions={
         <>
-          <Button
-            onClick={() => {
-              setDialog({ type: 'allocate' })
-            }}
-            className={cn(toolbarButton, btn.blue, 'min-w-24')}
-          >
-            Allocate
-          </Button>
+          {canAssign && (
+            <Button
+              onClick={() => {
+                setDialog({ type: 'allocate' })
+              }}
+              className={cn(toolbarButton, btn.blue, 'min-w-24')}
+            >
+              Allocate
+            </Button>
+          )}
           <FiltersButton
             count={activeCount(filters)}
             onClick={() => {
@@ -180,7 +192,7 @@ export function AssetAllocationsPage() {
         rowActions={(row) => (
           <RowActionsMenu
             itemClassName={rowMenuItemClass.inter}
-            label={`Actions for ${row.asset} (${row.identificationNumber}), ${row.employee.name}`}
+            label={`Actions for ${assetLabel(row)}, ${row.employeeName ?? row.employeeId}`}
             actions={[
               {
                 label: 'View',
@@ -188,7 +200,7 @@ export function AssetAllocationsPage() {
                   setDialog({ type: 'view', row })
                 },
               },
-              ...(row.status === 'allocated'
+              ...(row.status === 'allocated' && canAssign
                 ? [
                     {
                       label: 'Deallocate',
@@ -216,7 +228,7 @@ export function AssetAllocationsPage() {
         <FiltersDialog
           fields={fields}
           value={filters}
-          preset="asset-allocations"
+          preset="asset-allocations-v2"
           onApply={(next) => {
             setFilters(next)
             goTo(1)

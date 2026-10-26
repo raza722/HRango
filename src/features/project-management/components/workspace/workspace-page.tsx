@@ -5,9 +5,17 @@ import { ErrorState } from '@/components/feedback/error-state'
 import { Skeleton } from '@/components/ui/skeleton'
 
 import { VIEW_LABELS } from '../../constants'
-import { usePeople, usePmLookups, useTags, useTasks, useWorkspaceTree } from '../../hooks/use-pm'
+import {
+  usePeople,
+  usePmLookups,
+  useTags,
+  useTaskList,
+  useWorkspace,
+  useWorkspaceTree,
+} from '../../hooks/use-pm'
+import { usePmAccess } from '../../hooks/use-pm-access'
 import type { WorkspaceSearch } from '../../pm-search'
-import type { PmPerson, TaskType, ViewKind } from '../../types/pm.types'
+import type { TaskType, ViewKind } from '../../types/pm.types'
 import type { Workspace, WorkspaceTree } from '../../types/pm.types'
 import {
   EMPTY_FILTERS,
@@ -22,6 +30,7 @@ import { ViewBar } from './view-bar'
 import { VIEW_ICONS } from './view-icons'
 import { WorkspaceBanner } from './workspace-banner'
 import { PlusIcon } from './workspace-icons'
+import { membersOf } from './workspace-members'
 
 export interface WorkspacePageProps {
   workspaceId: string
@@ -31,31 +40,33 @@ export interface WorkspacePageProps {
 
 /** A workspace: cover banner, view bar and the List view of its tasks (Workspace Page 1:2755). */
 export function WorkspacePage({ workspaceId, search, onSearch }: WorkspacePageProps) {
+  const query = useWorkspace(workspaceId)
   const tree = useWorkspaceTree()
-  const workspace = tree.data?.workspaces.find((entry) => entry.id === workspaceId)
-
-  if (tree.isPending) return <PageSkeleton />
-  if (tree.isError) {
-    return (
-      <ErrorState
-        title="Could not load the workspace"
-        message={tree.error.message}
-        onRetry={() => {
-          void tree.refetch()
-        }}
-      />
-    )
-  }
-  if (!workspace) {
-    return (
+  if (query.isPending) return <PageSkeleton />
+  if (query.isError) {
+    return query.error.isNotFound ? (
       <ErrorState
         title="Workspace not found"
         message="It may have been deleted, or you are no longer a member."
       />
+    ) : (
+      <ErrorState
+        title="Could not load the workspace"
+        message={query.error.message}
+        onRetry={() => {
+          void query.refetch()
+        }}
+      />
     )
   }
+  const workspace = query.data
   return (
-    <WorkspaceContent workspace={workspace} tree={tree.data} search={search} onSearch={onSearch} />
+    <WorkspaceContent
+      workspace={workspace}
+      tree={tree.data ?? { workspaces: [] }}
+      search={search}
+      onSearch={onSearch}
+    />
   )
 }
 
@@ -71,9 +82,10 @@ function WorkspaceContent({
   onSearch: (patch: Partial<WorkspaceSearch>) => void
 }) {
   const listId = search.list ?? null
-  const tasks = useTasks(workspace.id, listId)
+  const tasks = useTaskList(workspace.id, listId)
   const lookups = usePmLookups()
   const people = usePeople()
+  const access = usePmAccess(workspace)
   const tags = useTags(workspace.id)
   const { save, saving } = useWorkspacePatch(workspace)
   const hash = useRouterState({ select: (state) => state.location.hash })
@@ -84,15 +96,9 @@ function WorkspaceContent({
   const [composer, setComposer] = useState<Composer | null>(null)
 
   const view: ViewKind = search.view ?? workspace.setup.defaultView
-  const members = useMemo(
-    () =>
-      [...new Set([workspace.ownerId, ...workspace.memberIds])]
-        .map((id) => people.get(id))
-        .filter((person): person is PmPerson => Boolean(person)),
-    [workspace.ownerId, workspace.memberIds, people],
-  )
+  const members = useMemo(() => membersOf(workspace, people), [workspace, people])
 
-  const rows = useMemo(() => tasks.data ?? [], [tasks.data])
+  const rows = useMemo(() => tasks.data?.rows ?? [], [tasks.data])
   const narrowed = useMemo(() => narrowTasks(rows, query, filters), [rows, query, filters])
   const isNarrowed = query.trim() !== '' || filterCount(filters) > 0
 
@@ -100,6 +106,7 @@ function WorkspaceContent({
   const viewParam = (kind: ViewKind) => (kind === workspace.setup.defaultView ? undefined : kind)
   const firstStatus = workspace.setup.statuses[0]
   const addTask = (type: TaskType) => {
+    if (!access.addTasks) return
     if (view !== 'list') onSearch({ view: viewParam('list') })
     if (firstStatus) setComposer({ statusId: firstStatus.id, type })
   }
@@ -126,10 +133,7 @@ function WorkspaceContent({
             onSearch({ view: viewParam(kind) })
           }}
           onAddView={(kind) => {
-            void save(
-              { setup: { views: [...workspace.setup.views, kind] } },
-              `${VIEW_LABELS[kind]} view added`,
-            )
+            void save({ addView: kind }, `${VIEW_LABELS[kind]} view added`)
             onSearch({ view: viewParam(kind) })
           }}
           filters={filters}
@@ -138,7 +142,8 @@ function WorkspaceContent({
           onColumns={(columns) => {
             void save({ columns })
           }}
-          onAddTask={addTask}
+          onAddTask={access.addTasks ? addTask : undefined}
+          canAddView={access.editWorkspace}
         />
 
         <div className="mt-8 min-w-0 pb-4 sm:mt-[3.75rem]">
@@ -162,15 +167,20 @@ function WorkspaceContent({
           ) : rows.length === 0 && !composer ? (
             <EmptyTasks
               inList={listId !== null}
-              onAdd={() => {
-                addTask('task')
-              }}
+              onAdd={
+                access.addTasks
+                  ? () => {
+                      addTask('task')
+                    }
+                  : undefined
+              }
             />
           ) : (
             <ListView
               workspace={workspace}
               tree={tree}
               tasks={rows}
+              hiddenColumns={tasks.data.hiddenColumns}
               visibleTasks={narrowed.tasks}
               searchExpanded={narrowed.expand}
               narrowed={isNarrowed}
@@ -221,7 +231,7 @@ function ViewNotDesigned({ view, onBack }: { view: ViewKind; onBack: () => void 
   )
 }
 
-function EmptyTasks({ inList, onAdd }: { inList: boolean; onAdd: () => void }) {
+function EmptyTasks({ inList, onAdd }: { inList: boolean; onAdd: (() => void) | undefined }) {
   return (
     <div className="flex flex-col items-center gap-3 rounded-[0.875rem] border border-[#ECECEC] bg-white px-6 py-14 text-center">
       <h2 className="text-base font-medium text-[#303030]">No tasks yet</h2>
@@ -230,14 +240,16 @@ function EmptyTasks({ inList, onAdd }: { inList: boolean; onAdd: () => void }) {
           ? 'Add the first task of this list. Tasks are grouped by status, with their subtasks under them.'
           : 'Add the first task of this workspace. Tasks are grouped by status, with their subtasks under them.'}
       </p>
-      <button
-        type="button"
-        onClick={onAdd}
-        className="mt-1 inline-flex h-10 items-center gap-2 rounded-xl bg-[#7127EA] px-5 text-sm font-semibold text-white hover:bg-[#5f1fd0]"
-      >
-        <PlusIcon className="size-4" />
-        Add Task
-      </button>
+      {onAdd && (
+        <button
+          type="button"
+          onClick={onAdd}
+          className="mt-1 inline-flex h-10 items-center gap-2 rounded-xl bg-[#7127EA] px-5 text-sm font-semibold text-white hover:bg-[#5f1fd0]"
+        >
+          <PlusIcon className="size-4" />
+          Add Task
+        </button>
+      )}
     </div>
   )
 }

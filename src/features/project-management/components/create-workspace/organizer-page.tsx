@@ -2,9 +2,10 @@ import { useState } from 'react'
 
 import { cn } from '@/lib/utils'
 
-import { ORGANIZER_LABELS, WORKFLOW_TEMPLATES_BY_ID } from '../../constants'
+import { ORGANIZER_LABELS } from '../../constants'
 import type { OrganizerFeature, WorkflowTemplateId } from '../../types/pm.types'
 import { DetailLayout } from './detail-layout'
+import { useWorkflowTemplate } from './templates-context'
 import { InfoTip, Toggle } from './wizard-controls'
 import { ORGANIZER_HELP, ORGANIZER_ICONS } from './wizard-icon-maps'
 import { listedOrganizer } from './wizard-state'
@@ -30,10 +31,8 @@ export function OrganizerPage({
   onClose,
 }: OrganizerPageProps) {
   const [draft, setDraft] = useState<OrganizerFeature[]>(() => [...organizer])
-  const features = listedOrganizer([
-    ...WORKFLOW_TEMPLATES_BY_ID[template].setup.organizer,
-    ...organizer,
-  ])
+  const workflow = useWorkflowTemplate(template)
+  const features = listedOrganizer([...workflow.setup.organizer, ...organizer])
 
   return (
     <DetailLayout

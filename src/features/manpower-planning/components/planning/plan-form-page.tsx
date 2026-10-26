@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { type FieldPath, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { getRouteApi, Link, useNavigate } from '@tanstack/react-router'
@@ -9,15 +9,18 @@ import { PageSpinner } from '@/components/feedback/spinner'
 import { PageContainer } from '@/components/layout'
 import { downloadText, toCsv } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import { ACCEPTED_FILE_TYPES, uploadFile } from '@/lib/files'
 import { cn } from '@/lib/utils'
 
-import { PLAN_STATUS_META } from '../../constants'
+import { manpowerApi } from '../../api/manpower.api'
+import { MP_CODES, PLAN_STATUS_META } from '../../constants'
 import { useManpowerLookups, usePlan, useSavePlan } from '../../hooks/use-manpower'
 import {
   EMPTY_PLAN,
   type ExistingLineValues,
   makePlanFormSchema,
   type NewLineValues,
+  planErrorPath,
   type PlanFormValues,
   toPlanFormValues,
   toPlanInput,
@@ -27,7 +30,7 @@ import { formatAmount } from '../../utils/format'
 import { amountOr0, existingLineAnnual, planMonthly } from '../../utils/plan-math'
 import { Chip } from '../shared/cells'
 import { MpField, MpSelect } from '../shared/controls'
-import { AddIcon, PublishIcon, RefreshIcon, ShareIcon } from '../shared/mp-icons'
+import { AddIcon, DeleteIcon, PublishIcon, RefreshIcon, ShareIcon } from '../shared/mp-icons'
 import { accent, boxClass, smallButton } from '../shared/mp-styles'
 import { BarTitle, MpCard } from '../shared/page-shell'
 import { ExistingPositionsTable, NewPositionsTable } from './plan-lines'
@@ -43,8 +46,10 @@ const footerButton =
   'inline-flex h-9 w-[6.8125rem] items-center justify-center rounded-[5px] text-xs font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-[#7469E8]/35 disabled:opacity-60'
 const outlineAction = cn(smallButton, accent.outline, 'h-9 gap-2.5 px-2.5')
 
+type Mode = 'create' | 'edit' | 'view'
+
 /** The form page in its three uses: Add Planning, Edit Planning and a plan's Details. */
-function PlanFormPage({ mode, planId }: { mode: 'create' | 'edit' | 'view'; planId?: string }) {
+function PlanFormPage({ mode, planId }: { mode: Mode; planId?: string }) {
   const lookups = useManpowerLookups()
   const plan = usePlan(planId ?? null)
   const title =
@@ -70,10 +75,11 @@ function PlanFormPage({ mode, planId }: { mode: 'create' | 'edit' | 'view'; plan
       <PlanForm
         key={planId ?? 'new'}
         title={title}
+        mode={mode}
         lookups={lookups.data}
         plan={plan.data}
-        readOnly={mode === 'view' || (plan.data?.locked ?? false)}
-        lockedNote={mode === 'edit' && (plan.data?.locked ?? false)}
+        readOnly={mode === 'view' || (plan.data?.isLocked ?? false)}
+        lockedNote={mode === 'edit' && (plan.data?.isLocked ?? false)}
         onRefetchLookups={() => lookups.refetch()}
       />
     )
@@ -84,6 +90,7 @@ function PlanFormPage({ mode, planId }: { mode: 'create' | 'edit' | 'view'; plan
 
 function PlanForm({
   title,
+  mode,
   lookups,
   plan,
   readOnly,
@@ -91,6 +98,7 @@ function PlanForm({
   onRefetchLookups,
 }: {
   title: string
+  mode: Mode
   lookups: ManpowerLookups
   plan: PlanDetail | undefined
   readOnly: boolean
@@ -99,6 +107,10 @@ function PlanForm({
 }) {
   const navigate = useNavigate()
   const save = useSavePlan()
+  const fileInput = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  // The people the existing-position picker offers: those the user reaches with this screen.
+  const permission = mode === 'edit' ? MP_CODES.planningEdit : MP_CODES.planningCreate
   const schema = useMemo(() => makePlanFormSchema(lookups.durations), [lookups.durations])
   const form = useForm<PlanFormValues>({
     resolver: zodResolver(schema),
@@ -107,12 +119,13 @@ function PlanForm({
   const { control, register, setValue, getValues, handleSubmit, formState, setError } = form
   const newLines = useFieldArray({ control, name: 'newPositions', keyName: 'fieldKey' })
   const existingLines = useFieldArray({ control, name: 'existingPositions', keyName: 'fieldKey' })
+  const files = useFieldArray({ control, name: 'files', keyName: 'fieldKey' })
   const watched = useWatch({ control })
-  const [durationId, divisionId, departmentId] = useWatch({
+  const [budgetDurationId, departmentId] = useWatch({
     control,
-    name: ['durationId', 'divisionId', 'departmentId'],
+    name: ['budgetDurationId', 'departmentId'],
   })
-  const duration = lookups.durations.find((item) => item.id === durationId)
+  const duration = lookups.durations.find((item) => item.id === budgetDurationId)
   const firstMonth = duration?.startDate.slice(0, 7) ?? ''
   const lastMonth = duration?.endDate.slice(0, 7) ?? ''
 
@@ -120,6 +133,7 @@ function PlanForm({
     newPositions: (watched.newPositions ?? []).map((line) => ({
       maxSalary: amountOr0(line.maxSalary),
       totalAllowance: amountOr0(line.totalAllowance),
+      headcount: amountOr0(line.headcount),
       fromMonth: line.fromMonth ?? '',
       toMonth: line.toMonth ?? '',
     })),
@@ -130,33 +144,32 @@ function PlanForm({
       endDate: line.endDate ?? '',
     })),
   })
-
-  const departments = lookups.departments.filter(
-    (item) => !divisionId || item.divisionId === divisionId,
+  const salariesLeftToPayroll = (watched.existingPositions ?? []).some(
+    (line) => (line.monthlySalary ?? '').trim() === '',
   )
-  const subDepartments = lookups.subDepartments.filter((item) => item.departmentId === departmentId)
 
-  /** A new line takes the plan's own Division, Station, Department… as its start. */
-  const blankNewLine = (): NewLineValues => {
-    const header = getValues()
-    return {
-      key: newKey('nl'),
-      positionId: '',
-      fromMonth: firstMonth,
-      toMonth: lastMonth,
-      divisionId: header.divisionId,
-      stationId: header.stationId,
-      departmentId: header.departmentId,
-      subDepartmentId: header.subDepartmentId,
-      employeeGroupId: header.employeeGroupId,
-      minSalary: '',
-      maxSalary: '',
-      totalAllowance: '0',
-    }
-  }
+  // A department's sub-departments are the departments under it.
+  const departments = lookups.departments.filter((item) => item.parentId === null)
+  const subDepartments = lookups.departments.filter((item) => item.parentId === departmentId)
+
+  /** A new line covers the whole plan year until changed. */
+  const blankNewLine = (): NewLineValues => ({
+    key: newKey('nl'),
+    positionId: '',
+    headcount: '1',
+    fromMonth: firstMonth,
+    toMonth: lastMonth,
+    minSalary: '',
+    maxSalary: '',
+    totalAllowance: '0',
+  })
   const blankExistingLine = (): ExistingLineValues => ({
     key: newKey('xl'),
     employeeId: '',
+    employeeName: '',
+    jobTitleName: '',
+    departmentName: '',
+    branchName: '',
     startDate: duration?.startDate ?? '',
     endDate: duration?.endDate ?? '',
     monthlySalary: '',
@@ -170,10 +183,10 @@ function PlanForm({
     const fits = (wanted: string, value: string | null) => !wanted || wanted === value
     const found = lookups.positions.filter(
       (position) =>
-        position.active &&
+        position.status === 'active' &&
         !planned.has(position.id) &&
         fits(header.divisionId, position.divisionId) &&
-        fits(header.stationId, position.stationId) &&
+        fits(header.branchId, position.branchId) &&
         fits(header.departmentId, position.departmentId) &&
         fits(header.subDepartmentId, position.subDepartmentId) &&
         fits(header.employeeGroupId, position.employeeGroupId),
@@ -186,13 +199,8 @@ function PlanForm({
       found.map((position) => ({
         ...blankNewLine(),
         positionId: position.id,
-        divisionId: position.divisionId ?? '',
-        stationId: position.stationId ?? '',
-        departmentId: position.departmentId ?? '',
-        subDepartmentId: position.subDepartmentId ?? '',
-        employeeGroupId: position.employeeGroupId,
-        minSalary: String(position.minSalary),
-        maxSalary: String(position.maxSalary),
+        minSalary: position.minSalary === null ? '' : String(position.minSalary),
+        maxSalary: position.maxSalary === null ? '' : String(position.maxSalary),
       })),
     )
     toast.success(
@@ -207,26 +215,39 @@ function PlanForm({
     getValues('newPositions').forEach((line, index) => {
       const position = fresh.positions.find((item) => item.id === line.positionId)
       if (!position) return
-      setValue(`newPositions.${index}.minSalary`, String(position.minSalary))
-      setValue(`newPositions.${index}.maxSalary`, String(position.maxSalary))
+      setValue(
+        `newPositions.${index}.minSalary`,
+        position.minSalary === null ? '' : String(position.minSalary),
+      )
+      setValue(
+        `newPositions.${index}.maxSalary`,
+        position.maxSalary === null ? '' : String(position.maxSalary),
+      )
     })
     toast.success('Positions refreshed')
   }
 
   /** Import Existing Employees: the people of the plan's Department (and Station). */
-  const importEmployees = () => {
+  const importEmployees = async () => {
     const header = getValues()
-    if (!header.departmentId && !header.stationId) {
+    if (!header.departmentId && !header.branchId) {
       toast.error('Choose the plan’s Department or Station to import its employees.')
       return
     }
+    const params = {
+      permission,
+      departmentId: header.departmentId || undefined,
+      branchId: header.branchId || undefined,
+    }
+    let people
+    try {
+      people = await manpowerApi.allEmployees(params)
+    } catch {
+      toast.error('The employees could not be loaded.')
+      return
+    }
     const listed = new Set(header.existingPositions.map((line) => line.employeeId))
-    const found = lookups.employees.filter(
-      (person) =>
-        !listed.has(person.id) &&
-        (!header.departmentId || person.departmentId === header.departmentId) &&
-        (!header.stationId || person.stationId === header.stationId),
-    )
+    const found = people.filter((person) => !listed.has(person.id))
     if (found.length === 0) {
       toast.error('Everyone in that Department and Station is already in the plan.')
       return
@@ -235,7 +256,10 @@ function PlanForm({
       found.map((person) => ({
         ...blankExistingLine(),
         employeeId: person.id,
-        monthlySalary: String(person.salary),
+        employeeName: person.name,
+        jobTitleName: person.jobTitleName ?? '',
+        departmentName: person.departmentName ?? '',
+        branchName: person.branchName,
       })),
     )
     toast.success(
@@ -250,27 +274,24 @@ function PlanForm({
       toast.error('There are no existing positions to export.')
       return
     }
-    const rows = lines.map((line) => {
-      const person = lookups.employees.find((item) => item.id === line.employeeId)
-      return [
-        person?.name ?? '',
-        person?.jobTitle ?? '',
-        line.startDate,
-        line.endDate,
-        lookups.departments.find((item) => item.id === person?.departmentId)?.name ?? '',
-        lookups.stations.find((item) => item.id === person?.stationId)?.name ?? '',
-        amountOr0(line.monthlySalary),
-        line.startDate && line.endDate
-          ? existingLineAnnual({
-              monthlySalary: amountOr0(line.monthlySalary),
-              totalAllowance: amountOr0(line.totalAllowance),
-              startDate: line.startDate,
-              endDate: line.endDate,
-            })
-          : '',
-        amountOr0(line.totalAllowance),
-      ]
-    })
+    const rows = lines.map((line) => [
+      line.employeeName,
+      line.jobTitleName,
+      line.startDate,
+      line.endDate,
+      line.departmentName,
+      line.branchName,
+      line.monthlySalary.trim() === '' ? 'Current' : amountOr0(line.monthlySalary),
+      line.startDate && line.endDate && line.monthlySalary.trim() !== ''
+        ? existingLineAnnual({
+            monthlySalary: amountOr0(line.monthlySalary),
+            totalAllowance: amountOr0(line.totalAllowance),
+            startDate: line.startDate,
+            endDate: line.endDate,
+          })
+        : '',
+      amountOr0(line.totalAllowance),
+    ])
     const name = getValues('title').trim() || 'plan'
     downloadText(
       toCsv(
@@ -291,9 +312,24 @@ function PlanForm({
     )
   }
 
+  /** Attachments: each chosen file is uploaded, then kept by its id until the plan is saved. */
+  const attach = async (chosen: File[]) => {
+    setUploading(true)
+    try {
+      for (const file of chosen) {
+        const uploaded = await uploadFile(file, 'manpower')
+        files.append({ id: uploaded.id, name: uploaded.name, url: uploaded.url })
+      }
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'The file could not be uploaded.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
   const submit = handleSubmit((values) => {
     save.mutate(
-      { id: plan?.id, input: toPlanInput(values) },
+      { id: plan?.id, input: toPlanInput(values, plan?.rowVersion) },
       {
         onSuccess: () => {
           void navigate({ to: '/manpower-planning/planning' })
@@ -302,7 +338,12 @@ function PlanForm({
           const fields = error instanceof ApiError ? Object.entries(error.fieldErrors) : []
           if (fields.length > 0) {
             for (const [path, message] of fields) {
-              setError(path as FieldPath<PlanFormValues>, { message })
+              setError(
+                planErrorPath(path, values.newPositions.length) as FieldPath<PlanFormValues>,
+                {
+                  message,
+                },
+              )
             }
           } else {
             toast.error(error instanceof ApiError ? error.message : 'The plan could not be saved.')
@@ -343,13 +384,13 @@ function PlanForm({
                 <input {...a11y} {...register('title')} className={cn(boxClass, 'w-full')} />
               )}
             </MpField>
-            <MpField label="Plan Year" error={errors.durationId?.message}>
+            <MpField label="Plan Year" error={errors.budgetDurationId?.message}>
               {(a11y) => (
                 <MpSelect
                   {...a11y}
-                  value={durationId}
+                  value={budgetDurationId}
                   onChange={(value) => {
-                    setValue('durationId', value, { shouldValidate: formState.isSubmitted })
+                    setValue('budgetDurationId', value, { shouldValidate: formState.isSubmitted })
                   }}
                   options={lookups.durations.map((item) => ({ value: item.id, label: item.name }))}
                 />
@@ -359,14 +400,9 @@ function PlanForm({
               {(a11y) => (
                 <MpSelect
                   {...a11y}
-                  value={divisionId}
+                  value={watched.divisionId ?? ''}
                   onChange={(value) => {
                     setValue('divisionId', value)
-                    const department = lookups.departments.find((item) => item.id === departmentId)
-                    if (value && department && department.divisionId !== value) {
-                      setValue('departmentId', '')
-                      setValue('subDepartmentId', '')
-                    }
                   }}
                   noneLabel="ALL"
                   options={optionsOf(lookups.divisions)}
@@ -377,9 +413,9 @@ function PlanForm({
               {(a11y) => (
                 <MpSelect
                   {...a11y}
-                  value={watched.stationId ?? ''}
+                  value={watched.branchId ?? ''}
                   onChange={(value) => {
-                    setValue('stationId', value)
+                    setValue('branchId', value)
                   }}
                   noneLabel="ALL"
                   options={optionsOf(lookups.stations)}
@@ -432,9 +468,15 @@ function PlanForm({
                 <output
                   {...a11y}
                   aria-live="polite"
+                  title={
+                    salariesLeftToPayroll
+                      ? 'Blank monthly salaries are taken from Payroll when the plan is saved.'
+                      : undefined
+                  }
                   className={cn(boxClass, 'flex w-full items-center bg-muted/40')}
                 >
                   {formatAmount(monthly)}
+                  {salariesLeftToPayroll && ' + current salaries'}
                 </output>
               )}
             </MpField>
@@ -500,7 +542,6 @@ function PlanForm({
                   <button
                     type="button"
                     onClick={exportExisting}
-                    disabled={false}
                     className={cn(smallButton, accent.bg, 'gap-1.5 px-2.5')}
                   >
                     <ShareIcon aria-hidden="true" className="h-[1.11rem] w-[0.82rem]" />
@@ -508,7 +549,7 @@ function PlanForm({
                   </button>
                   <button
                     type="button"
-                    onClick={importEmployees}
+                    onClick={() => void importEmployees()}
                     className={cn(smallButton, accent.bg, 'gap-1 px-2')}
                   >
                     <PublishIcon aria-hidden="true" className="size-[0.9375rem]" />
@@ -523,7 +564,7 @@ function PlanForm({
               control={control}
               setValue={setValue}
               fields={existingLines.fields}
-              lookups={lookups}
+              employeeFilters={{ permission }}
               range={duration}
               readOnly={readOnly}
               onRemove={existingLines.remove}
@@ -557,6 +598,81 @@ function PlanForm({
               )}
             </div>
           </section>
+
+          <section aria-labelledby="plan-files" className="grid gap-4">
+            <BarTitle
+              id="plan-files"
+              actions={
+                readOnly ? undefined : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={uploading || files.fields.length >= 20}
+                      onClick={() => fileInput.current?.click()}
+                      className={cn(smallButton, accent.bg, 'gap-1 px-2.5')}
+                    >
+                      <AddIcon aria-hidden="true" className="size-[0.8125rem]" />
+                      {uploading ? 'Uploading…' : 'Attach Files'}
+                    </button>
+                    <input
+                      ref={fileInput}
+                      type="file"
+                      multiple
+                      accept={ACCEPTED_FILE_TYPES}
+                      aria-label="Attach files to the plan"
+                      className="sr-only"
+                      tabIndex={-1}
+                      onChange={(event) => {
+                        const chosen = Array.from(event.target.files ?? [])
+                        event.target.value = ''
+                        if (chosen.length > 0) void attach(chosen)
+                      }}
+                    />
+                  </>
+                )
+              }
+            >
+              Attachments
+            </BarTitle>
+            <div className="px-4 sm:px-7">
+              {files.fields.length === 0 ? (
+                <p className="text-sm text-[#707070]">No files attached.</p>
+              ) : (
+                <ul aria-label="Plan files" className="grid gap-2">
+                  {files.fields.map((file, index) => (
+                    <li key={file.fieldKey} className="flex items-center gap-3 text-sm">
+                      <a
+                        href={file.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={cn(
+                          'font-medium underline-offset-4 hover:underline',
+                          accent.text,
+                        )}
+                      >
+                        {file.name}
+                      </a>
+                      {!readOnly && (
+                        <button
+                          type="button"
+                          aria-label={`Remove ${file.name}`}
+                          onClick={() => {
+                            files.remove(index)
+                          }}
+                          className="inline-flex size-7 items-center justify-center rounded-md text-[#C2420B] hover:bg-[#C2420B]/10"
+                        >
+                          <DeleteIcon className="h-[0.95rem] w-[0.85rem]" />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {errors.files?.message && (
+                <p className="mt-1 text-xs text-destructive">{errors.files.message}</p>
+              )}
+            </div>
+          </section>
         </fieldset>
 
         <div className="flex flex-wrap justify-end gap-4 px-4 sm:px-7">
@@ -571,7 +687,7 @@ function PlanForm({
               </Link>
               <button
                 type="submit"
-                disabled={save.isPending}
+                disabled={save.isPending || uploading}
                 className={cn(footerButton, accent.bg)}
               >
                 {save.isPending ? 'Submitting…' : 'Submit'}

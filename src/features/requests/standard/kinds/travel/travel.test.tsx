@@ -1,10 +1,42 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
 import { addDays, differenceInCalendarMonths, format } from 'date-fns'
+import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 
+import { server } from '@/mocks/node'
 import { standardRequests } from '@/mocks/requests/standard'
+import { apiPath } from '@/mocks/utils'
 import { renderApp } from '@/test/test-utils'
+
+/**
+ * `POST /files` for these tests: the shared files mock cannot read jsdom's
+ * multipart bodies, so the upload is answered here, named from the body.
+ */
+function acceptUploads() {
+  server.use(
+    http.post(apiPath('/files'), async ({ request }) => {
+      const body = await request.text()
+      const name = /filename="([^"]+)"/.exec(body)?.[1] ?? 'upload.pdf'
+      const id = `file_${name.replace(/\W/g, '_')}`
+      return HttpResponse.json(
+        {
+          data: {
+            id,
+            name,
+            extension: 'pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 8,
+            module: 'requests',
+            url: apiPath(`/files/${id}/download?token=mock`),
+            createdAt: new Date().toISOString(),
+          },
+        },
+        { status: 201 },
+      )
+    }),
+  )
+}
 
 async function choose(user: UserEvent, label: RegExp, option: string | RegExp) {
   await user.click(await screen.findByRole('combobox', { name: label }))
@@ -55,6 +87,7 @@ describe('Travel (the shared standard request pages)', () => {
     'submits a request with a travel detail, a hotel and a ticket',
     { timeout: 40_000 },
     async () => {
+      acceptUploads()
       const { user } = renderApp('/requests/travel')
 
       await user.click(await screen.findByRole('button', { name: 'Create' }))
@@ -94,6 +127,11 @@ describe('Travel (the shared standard request pages)', () => {
       await user.click(within(leg).getByRole('button', { name: 'Add ticket booking' }))
       await fill(user, within(leg).getByLabelText('Ticket 1 Ticket No'), 'PK-304')
       setTime('Ticket 1 Time', '07:30')
+      // The ticket's file is uploaded at once (POST /files) and sent as its fileId.
+      const picker = leg.querySelector<HTMLInputElement>('input[type="file"]')
+      if (!picker) throw new Error('No file input in the ticket row')
+      await user.upload(picker, new File(['%PDF-1.4'], 'pk304.pdf', { type: 'application/pdf' }))
+      expect(await within(leg).findByRole('link', { name: 'pk304.pdf' })).toBeVisible()
       await user.click(within(leg).getByRole('button', { name: 'Save' }))
 
       await waitFor(() => {
@@ -124,22 +162,29 @@ describe('Travel (the shared standard request pages)', () => {
       const record = standardRequests
         .all()
         .find((item) => item.kind === 'travel' && item.code === 'TR-0010')
+      // Sent as the API's details: legs, stays and tickets of the request.
+      const day = format(from, 'yyyy-MM-dd')
       expect(record?.payload).toMatchObject({
         purpose: 'Client workshop in Karachi.',
         advanceRequired: true,
         advances: [{ amount: 40_000, currency: 'PKR' }],
-        details: [
+        legs: [
           {
-            departureFrom: 'Lahore',
-            arrivalAt: 'Karachi',
+            travelType: 'domestic',
+            fromPlace: 'Lahore',
+            toPlace: 'Karachi',
             travelMode: 'air',
             distanceKm: 1030,
+            departAt: `${day}T09:00:00`,
+            arriveAt: `${format(to, 'yyyy-MM-dd')}T18:00:00`,
             stayRequired: true,
-            hotels: [{ nights: 2, city: 'Karachi', stayType: 'hotel' }],
-            tickets: [{ ticketNo: 'PK-304', time: '07:30', date: format(from, 'yyyy-MM-dd') }],
           },
         ],
+        stays: [{ nights: 2, city: 'Karachi', stayType: 'hotel', fromDate: day }],
+        tickets: [{ ticketNo: 'PK-304', travelAt: `${day}T07:30:00` }],
       })
+      expect(JSON.stringify(record?.payload.tickets)).toMatch(/"fileId":"file_/)
+      expect(record?.payload.application).toMatch(/Subject: Travel Request from Lahore to Karachi/)
     },
   )
 

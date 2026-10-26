@@ -1,8 +1,9 @@
-import { useCallback } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
 
+import { isMockApi } from '@/lib/env'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { authApi } from '../api/auth.api'
@@ -43,4 +44,25 @@ export function useLogout() {
     queryClient.clear()
     await router.navigate({ to: '/login', replace: true })
   }, [clearSession, queryClient, router])
+}
+
+/**
+ * Keeps the stored user (name, role, permissions) in step with the API: reads `GET /auth/me` when
+ * the signed-in shell mounts and every few minutes, so a role change shows without signing out.
+ * Not against the mock API: its /auth/me is always the demo user, which would replace a test's user.
+ */
+export function useSessionRefresh() {
+  const updateUser = useAuthStore((state) => state.updateUser)
+  const signedIn = useAuthStore((state) => state.token !== null)
+  const { data } = useQuery({
+    queryKey: ['auth', 'me'],
+    queryFn: ({ signal }) => authApi.me(signal),
+    enabled: signedIn && !isMockApi,
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+    refetchOnWindowFocus: true,
+  })
+  useEffect(() => {
+    if (data) updateUser(data)
+  }, [data, updateUser])
 }

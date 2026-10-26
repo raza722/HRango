@@ -7,17 +7,21 @@ import { z } from 'zod'
 import { CheckboxField, TextareaField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { btn, footerButton, NoRecord, SearchSelect, SearchSelectField } from '@/features/payroll'
+import { btn, footerButton, NoRecord, SearchSelect } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
+import { type RequestBody, typePermission } from '../../../api/backend'
+import { RequestEmployeeField } from '../../../components/shared/request-employee-field'
 import { ApplicationEditor } from '../../../components/transfer/application-editor'
 import { TransferDialogShell } from '../../../components/transfer/transfer-dialog-shell'
 import { sanitizeApplication } from '../../../utils/transfer-letter'
 import type { StandardFormProps } from '../../standard.types'
 import { standardReadOnlyClass } from '../../standard-styles'
 import { useCreateStandard, useStandardLookups, useUpdateStandard } from '../../use-standard'
-import type { TravelDetailValue, TravelInput, TravelLookups, TravelPayload } from './travel.types'
+import { CURRENCY_OPTIONS, optionLabel, TRAVEL_MODES } from './travel.constants'
+import type { TravelDetailValue, TravelLookups, TravelPayload } from './travel.types'
+import { detailsOf, legsOf, tripDates } from './travel-codec'
 import { TravelDetailDialog } from './travel-detail-dialog'
 import { travelLetter } from './travel-letter'
 import { TravelDetailsTable, TravelSection } from './travel-parts'
@@ -75,15 +79,20 @@ const schema = z
   })
 type Values = z.infer<typeof schema>
 
-const FIELDS = [
-  'employeeId',
-  'purpose',
-  'extensionNo',
-  'alternativePhone',
-  'description',
-  'advances',
-  'details',
-] as const
+/** The API's field names → the form's (legs, stays and tickets all show under Details). */
+const FIELD_OF = {
+  employeeId: 'employeeId',
+  purpose: 'purpose',
+  extensionNo: 'extensionNo',
+  altPhone: 'alternativePhone',
+  description: 'description',
+  advances: 'advances',
+  legs: 'details',
+  stays: 'details',
+  tickets: 'details',
+  fromDate: 'details',
+  toDate: 'details',
+} as const
 
 let advanceCount = 0
 const newAdvanceId = () => {
@@ -97,40 +106,16 @@ function toValues(request: StandardFormProps<TravelPayload>['request']): Values 
     employeeId: request?.employee.id ?? null,
     purpose: payload?.purpose ?? '',
     extensionNo: payload?.extensionNo ?? '',
-    alternativePhone: payload?.alternativePhone ?? '',
-    description: payload?.description ?? '',
+    alternativePhone: payload?.altPhone ?? '',
+    description: request?.description ?? '',
     advanceRequired: payload?.advanceRequired ?? false,
     advances: (payload?.advances ?? []).map((item) => ({
       id: item.id,
       amount: String(item.amount),
       currency: item.currency,
     })),
-    details: (payload?.details ?? []).map((detail) => ({
-      id: detail.id,
-      travelType: detail.travelType,
-      departureFrom: detail.departureFrom,
-      arrivalAt: detail.arrivalAt,
-      travelMode: detail.travelMode,
-      distanceKm: detail.distanceKm,
-      fromDate: detail.fromDate,
-      fromTime: detail.fromTime,
-      toDate: detail.toDate,
-      toTime: detail.toTime,
-      stayRequired: detail.stayRequired,
-      hotels: detail.hotels.map((hotel) => ({
-        id: hotel.id,
-        stayType: hotel.stayType,
-        address: hotel.address,
-        from: hotel.from,
-        to: hotel.to,
-        nights: hotel.nights,
-        city: hotel.city,
-        phone: hotel.phone,
-        email: hotel.email,
-      })),
-      tickets: detail.tickets,
-    })),
-    application: payload?.application ?? '',
+    details: payload ? legsOf(payload) : [],
+    application: request?.application ?? '',
   }
 }
 
@@ -169,8 +154,9 @@ export function TravelForm({ mode, scope, request, onClose }: StandardFormProps<
     name: ['application', 'details', 'advanceRequired'],
   })
   const extra = lookups.data?.extra
-  const people = lookups.data?.employees ?? []
-  const currencies = extra?.currencies ?? []
+  // The picked person's name (All Requests), for the letter.
+  const [pickedName, setPickedName] = useState<string | null>(null)
+  const currencies = extra?.currencies ?? CURRENCY_OPTIONS
 
   const addAdvance = () => {
     form.setValue('advanceRequired', true)
@@ -186,12 +172,9 @@ export function TravelForm({ mode, scope, request, onClose }: StandardFormProps<
     setLetterError(null)
     const person =
       request?.employee.name ??
-      (pickPerson
-        ? people.find((item) => item.id === values.employeeId)?.name
-        : lookups.data?.me.name) ??
+      (pickPerson ? (values.employeeId ? pickedName : null) : lookups.data?.me?.name) ??
       ''
-    const modeLabel = (value: string) =>
-      extra?.travelModes.find((item) => item.value === value)?.label ?? value
+    const modeLabel = (value: string) => optionLabel(extra?.travelModes ?? TRAVEL_MODES, value)
     form.setValue(
       'application',
       travelLetter({
@@ -222,30 +205,40 @@ export function TravelForm({ mode, scope, request, onClose }: StandardFormProps<
       form.setError('employeeId', { message: 'Choose the employee' })
       return
     }
-    const input: TravelInput = {
-      ...(pickPerson && values.employeeId ? { employeeId: values.employeeId } : {}),
+    const trip = tripDates(values.details)
+    const details = detailsOf({
       purpose: values.purpose,
       extensionNo: values.extensionNo,
       alternativePhone: values.alternativePhone,
-      description: values.description,
       advanceRequired: values.advanceRequired,
-      advances: values.advanceRequired
-        ? values.advances.map((item) => ({
-            id: item.id,
-            amount: Number(item.amount.replace(/,/g, '')),
-            currency: item.currency ?? '',
-          }))
-        : [],
+      advances: values.advances.map((item) => ({
+        amount: Number(item.amount.replace(/,/g, '')),
+        currency: item.currency ?? '',
+      })),
       details: values.details,
-      application: sanitizeApplication(values.application),
+    })
+    const body: RequestBody = {
+      ...(pickPerson && values.employeeId ? { employeeId: values.employeeId } : {}),
+      fromDate: trip.from || null,
+      toDate: trip.to || null,
+      description: values.description.trim() || null,
+      application: sanitizeApplication(values.application) || null,
+      details: { ...details },
     }
     try {
-      if (mode === 'edit' && request) await update.mutateAsync({ id: request.id, input })
-      else await create.mutateAsync(input)
+      if (mode === 'edit' && request) {
+        await update.mutateAsync({
+          id: request.id,
+          body: { ...body, rowVersion: request.rowVersion },
+        })
+      } else {
+        await create.mutateAsync(body)
+      }
     } catch (failure) {
       if (failure instanceof ApiError) {
-        const field = FIELDS.find((name) => failure.fieldErrors[name])
-        if (field) form.setError(field, { message: failure.fieldErrors[field] })
+        const key = Object.keys(FIELD_OF).find((name) => failure.fieldErrors[name])
+        const field = key ? FIELD_OF[key as keyof typeof FIELD_OF] : null
+        if (key && field) form.setError(field, { message: failure.fieldErrors[key] })
         else form.setError('root', { message: failure.message })
       } else {
         form.setError('root', { message: 'Could not save the travel request.' })
@@ -306,15 +299,16 @@ export function TravelForm({ mode, scope, request, onClose }: StandardFormProps<
         className={cn('grid gap-6', readOnly && standardReadOnlyClass)}
       >
         {scope === 'all' && (
-          <SearchSelectField
+          <RequestEmployeeField
             control={control}
             name="employeeId"
-            label="Employee"
+            permission={typePermission('travel', 'create')}
+            current={request?.employee}
             placeholder="Select Employee"
             disabled={!pickPerson}
-            options={people
-              .filter((person) => person.active || person.id === request?.employee.id)
-              .map((person) => ({ value: person.id, label: person.name, hint: person.code }))}
+            onPick={(_id, person) => {
+              setPickedName(person?.name ?? null)
+            }}
           />
         )}
         <TextareaField

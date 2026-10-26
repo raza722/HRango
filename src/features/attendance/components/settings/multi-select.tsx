@@ -23,6 +23,10 @@ export function MultiSelect({
   onChange,
   placeholder = 'Enter',
   className,
+  onQueryChange,
+  loading = false,
+  hasMore = false,
+  onLoadMore,
 }: {
   label: string
   options: readonly MultiOption[]
@@ -30,14 +34,20 @@ export function MultiSelect({
   onChange: (value: string[]) => void
   placeholder?: string
   className?: string
+  /** Search on the server: the options are already the matches. */
+  onQueryChange?: (query: string) => void
+  loading?: boolean
+  /** More matches on the server than shown: offers "Load more", which calls `onLoadMore`. */
+  hasMore?: boolean
+  onLoadMore?: () => void
 }) {
   const id = useId()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const chosen = options.filter((option) => value.includes(option.value))
-  const visible = options.filter((option) =>
-    option.label.toLowerCase().includes(query.trim().toLowerCase()),
-  )
+  const visible = onQueryChange
+    ? options
+    : options.filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase()))
   const summary =
     chosen.length === 0
       ? placeholder
@@ -80,6 +90,7 @@ export function MultiSelect({
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value)
+                onQueryChange?.(event.target.value)
               }}
               className="h-8 pl-8 sm:pl-8"
             />
@@ -112,10 +123,20 @@ export function MultiSelect({
             })}
             {visible.length === 0 && (
               <li className="px-2 py-3 text-center text-xs text-muted-foreground">
-                Nothing matches.
+                {loading ? 'Loading…' : 'Nothing matches.'}
               </li>
             )}
           </ul>
+          {hasMore && onLoadMore && (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={onLoadMore}
+              className="mt-1 w-full rounded-sm px-2 py-1.5 text-center text-sm font-medium text-primary hover:bg-muted disabled:opacity-60"
+            >
+              {loading ? 'Loading…' : 'Load more'}
+            </button>
+          )}
         </PopoverContent>
       </Popover>
     </div>

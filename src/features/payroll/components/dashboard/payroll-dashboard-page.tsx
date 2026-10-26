@@ -1,25 +1,23 @@
 import { type ReactNode, useId, useState } from 'react'
-import { format, parse } from 'date-fns'
+import { format } from 'date-fns'
 import { FileWarning } from 'lucide-react'
 
-import { EmployeeAvatar, PageContainer } from '@/components/layout'
+import { PageContainer } from '@/components/layout'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import {
-  useEmployeeEarning,
-  useExpenseReport,
-  usePayrollDashboard,
-  usePayrollLookups,
-} from '../../hooks/use-payroll'
-import type { MonthAmount } from '../../types/payroll.types'
-import { formatRs, formatShort } from '../../utils/format'
+import { PAY_ITEM_TYPE_LABELS } from '../../constants'
+import { usePayrollDashboard } from '../../hooks/use-payroll'
+import type { PayrollDashboard } from '../../types/payroll.types'
+import { formatMonth, formatRs, monthOf, monthStart } from '../../utils/format'
 import { MonthPicker } from '../shared/month-picker'
-import { SearchSelect } from '../shared/search-select'
+import { YearPicker } from '../shared/year-picker'
 import { AreaChart, BarChart } from './charts'
 
-const monthLabel = (month: string) => format(parse(month, 'yyyy-MM', new Date()), 'MMM')
-const monthYear = (month: string) => format(parse(month, 'yyyy-MM', new Date()), 'MMM yyyy')
+const MONTH_LABELS = Array.from({ length: 12 }, (_, index) =>
+  format(new Date(2024, index, 1), 'MMM'),
+)
 
 /** One dashboard card: the title with an optional control on the right, then the content. */
 function Panel({
@@ -63,54 +61,114 @@ function Empty() {
   )
 }
 
-const hasData = (rows: readonly MonthAmount[] | undefined) =>
-  (rows ?? []).some((row) => row.amount > 0)
+function Tiles({ tiles }: { tiles: PayrollDashboard['tiles'] }) {
+  const items: [string, string][] = [
+    ['Payrolls', `${tiles.closedPayrolls} / ${tiles.totalPayrolls} closed`],
+    ['Payslips', String(tiles.totalPayslips)],
+    ['Released', String(tiles.releasedPayslips)],
+    ['Paid', String(tiles.paidPayslips)],
+    ['On Hold', String(tiles.onHoldPayslips)],
+    ['Unpaid', String(tiles.unpaidPayslips)],
+    ['Net Payable', formatRs(tiles.netPayable)],
+    ['Paid Amount', formatRs(tiles.paidAmount)],
+  ]
+  return (
+    <dl className="grid grid-cols-2 gap-3 @2xl/page:grid-cols-4">
+      {items.map(([label, value]) => (
+        <div key={label} className="rounded-lg bg-muted/60 px-4 py-3">
+          <dt className="text-xs text-muted-foreground">{label}</dt>
+          <dd className="text-lg font-semibold text-heading tabular-nums">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
 
 /**
- * Payroll → Dashboard: Payroll Comparison Yearly, Expenses Month Wise, the
- * Expense Report for a month, Month Wise Loan & Advance and one person's
- * Employee Month Wise Earning.
+ * Payroll → Dashboard (`GET /payroll/dashboard?year&month`): the tiles, Salary Statistics (a
+ * year's gross, deductions and net pay per month) and Salary Breakup (pay item totals of one
+ * month; the latest month with payslips when none is chosen).
  */
 export function PayrollDashboardPage() {
-  const dashboard = usePayrollDashboard()
-  const lookups = usePayrollLookups()
-  const [month, setMonth] = useState(() => format(new Date(), 'yyyy-MM'))
-  const [employeeId, setEmployeeId] = useState<string | null>(null)
-  const report = useExpenseReport(month)
-  const people = (lookups.data?.employees ?? []).filter((person) => person.status === 'active')
-  const chosen = employeeId ?? people[0]?.id ?? null
-  const earning = useEmployeeEarning(chosen)
+  const allowed = useCan('payroll.dashboard.view')
+  const [year, setYear] = useState(() => String(new Date().getFullYear()))
+  const [month, setMonth] = useState('')
+  const dashboard = usePayrollDashboard({
+    year: Number(year),
+    ...(month ? { month: monthStart(month) } : {}),
+  })
   const data = dashboard.data
-  const [previous, current] = data?.yearly ?? []
   const thisMonth = format(new Date(), 'yyyy-MM')
+  const byMonth = (pick: (row: PayrollDashboard['salaryStatistics'][number]) => number) =>
+    MONTH_LABELS.map((_, index) => {
+      const key = `${year}-${String(index + 1).padStart(2, '0')}`
+      const row = data?.salaryStatistics.find((item) => item.month.startsWith(key))
+      return row ? pick(row) : key > thisMonth ? null : 0
+    })
+  const breakup = data?.salaryBreakup ?? []
+
+  if (!allowed) {
+    return (
+      <PageContainer>
+        <h1 className="sr-only">Payroll Dashboard</h1>
+        <p className="text-sm text-muted-foreground">
+          You do not have access to the payroll dashboard.
+        </p>
+      </PageContainer>
+    )
+  }
 
   return (
     <PageContainer>
       <h1 className="sr-only">Payroll Dashboard</h1>
-      <Panel title="Payroll Comparison Yearly">
-        {!data || !previous || !current ? (
+      <Panel title="Payroll Overview">
+        {!data ? <Skeleton className="h-24 w-full" /> : <Tiles tiles={data.tiles} />}
+      </Panel>
+
+      <Panel
+        title="Salary Statistics"
+        control={
+          <YearPicker
+            aria-label="Salary statistics year"
+            value={year}
+            onChange={(next) => {
+              setYear(next)
+              setMonth('')
+            }}
+            max={new Date().getFullYear()}
+            className="h-8 w-32 text-xs"
+          />
+        }
+      >
+        {!data ? (
           <Skeleton className="h-60 w-full" />
+        ) : data.salaryStatistics.length === 0 ? (
+          <Empty />
         ) : (
-          <div className="[--series-current:#E0457B] [--series-previous:#D18F00] dark:[--series-previous:#B98000]">
+          <div className="[--series-deductions:#E0457B] [--series-gross:#3B6FF5] [--series-net:#2CBD4D]">
             <AreaChart
-              title="Payroll comparison yearly: net pay per month"
-              labels={previous.months.map((item) => monthLabel(item.month))}
+              title={`Salary statistics ${year}: gross, deductions and net pay per month`}
+              labels={MONTH_LABELS}
               format={formatRs}
               series={[
                 {
-                  key: String(previous.year),
-                  label: String(previous.year),
-                  colour: 'var(--series-previous)',
-                  values: previous.months.map((item) => item.amount),
+                  key: 'gross',
+                  label: 'Gross',
+                  colour: 'var(--series-gross)',
+                  values: byMonth((row) => row.gross),
                   area: true,
                 },
                 {
-                  key: String(current.year),
-                  label: String(current.year),
-                  colour: 'var(--series-current)',
-                  values: current.months.map((item) =>
-                    item.month > thisMonth ? null : item.amount,
-                  ),
+                  key: 'deductions',
+                  label: 'Deductions',
+                  colour: 'var(--series-deductions)',
+                  values: byMonth((row) => row.deductions),
+                },
+                {
+                  key: 'net',
+                  label: 'Net Pay',
+                  colour: 'var(--series-net)',
+                  values: byMonth((row) => row.netPayable),
                   area: true,
                 },
               ]}
@@ -119,119 +177,34 @@ export function PayrollDashboardPage() {
         )}
       </Panel>
 
-      <div className="grid gap-4 sm:gap-5 @4xl/page:grid-cols-2">
-        <Panel title="Expenses Month Wise">
-          {!data ? (
-            <Skeleton className="h-40 w-full" />
-          ) : hasData(data.expensesMonthWise) ? (
-            <BarChart
-              title="Expenses month wise"
-              labels={data.expensesMonthWise.map((item) => monthYear(item.month))}
-              values={data.expensesMonthWise.map((item) => item.amount)}
-              colour="#3B6FF5"
-              format={formatRs}
-            />
-          ) : (
-            <Empty />
-          )}
-        </Panel>
-        <Panel
-          title="Expense Report"
-          control={
-            <MonthPicker
-              aria-label="Expense report month"
-              value={month}
-              onChange={setMonth}
-              max={thisMonth}
-              className="h-8 w-44 text-xs"
-            />
-          }
-        >
-          {report.isPending ? (
-            <Skeleton className="h-24 w-full" />
-          ) : (report.data ?? []).length === 0 ? (
-            <Empty />
-          ) : (
-            <ul className="grid gap-2" aria-label="Expenses this month">
-              {(report.data ?? []).map((row) => (
-                <li
-                  key={row.id}
-                  className="flex items-center justify-between gap-3 rounded-md bg-muted/60 px-3 py-2 text-sm"
-                >
-                  <span className="flex min-w-0 items-center gap-2.5">
-                    <EmployeeAvatar
-                      name={row.employee.name}
-                      photoUrl={row.employee.photoUrl}
-                      className="size-7"
-                    />
-                    <span className="min-w-0">
-                      <span className="block truncate text-heading">{row.employee.name}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {row.type} · {formatShort(row.date)}
-                      </span>
-                    </span>
-                  </span>
-                  <span className="shrink-0 font-medium text-heading tabular-nums">
-                    {formatRs(row.amount)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-      </div>
-
-      <div className="grid gap-4 sm:gap-5 @4xl/page:grid-cols-2">
-        <Panel title="Month Wise Loan & Advance">
-          {!data ? (
-            <Skeleton className="h-40 w-full" />
-          ) : hasData(data.loanAndAdvance) ? (
-            <BarChart
-              title="Loans and advances month wise"
-              labels={data.loanAndAdvance.map((item) => monthYear(item.month))}
-              values={data.loanAndAdvance.map((item) => item.amount)}
-              colour="#8B5CF6"
-              format={formatRs}
-            />
-          ) : (
-            <Empty />
-          )}
-        </Panel>
-        <Panel title="Employee Month Wise Earning">
-          <SearchSelect
-            aria-label="Employee"
-            value={chosen}
-            onChange={setEmployeeId}
-            options={people.map((person) => ({
-              value: person.id,
-              label: person.name,
-              hint: person.code,
-            }))}
-            placeholder="Select Employee"
+      <Panel
+        title={`Salary Breakup${data?.breakupMonth ? ` · ${formatMonth(data.breakupMonth)}` : ''}`}
+        control={
+          <MonthPicker
+            aria-label="Salary breakup month"
+            value={month || monthOf(data?.breakupMonth)}
+            onChange={setMonth}
+            max={thisMonth}
+            className="h-8 w-44 text-xs"
           />
-          {!earning.data ? (
-            <Skeleton className="h-52 w-full" />
-          ) : (
-            <div className="[--series-earning:#2CBD4D] dark:[--series-earning:#2FA84F]">
-              <AreaChart
-                title={`Net pay per month for ${people.find((person) => person.id === chosen)?.name ?? 'the employee'}`}
-                labels={earning.data.map((item) => monthYear(item.month))}
-                format={formatRs}
-                height={220}
-                series={[
-                  {
-                    key: 'earning',
-                    label: 'Net pay',
-                    colour: 'var(--series-earning)',
-                    values: earning.data.map((item) => item.amount),
-                    area: true,
-                  },
-                ]}
-              />
-            </div>
-          )}
-        </Panel>
-      </div>
+        }
+      >
+        {!data ? (
+          <Skeleton className="h-40 w-full" />
+        ) : breakup.length === 0 ? (
+          <Empty />
+        ) : (
+          <BarChart
+            title="Salary breakup by pay item"
+            labels={breakup.map(
+              (item) => `${item.payItemName} (${PAY_ITEM_TYPE_LABELS[item.itemType]})`,
+            )}
+            values={breakup.map((item) => item.amount)}
+            colour="#3B6FF5"
+            format={formatRs}
+          />
+        )}
+      </Panel>
     </PageContainer>
   )
 }

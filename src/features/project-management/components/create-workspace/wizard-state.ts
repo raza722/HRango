@@ -2,24 +2,22 @@ import { z } from 'zod'
 
 import {
   ORGANIZER_LABELS,
-  STATUS_TEMPLATE_LABELS,
-  STATUS_TEMPLATE_STATUSES,
   VIEW_LABELS,
-  WORKFLOW_TEMPLATES_BY_ID,
   WORKSPACE_DESCRIPTION_MAX,
   WORKSPACE_NAME_MAX,
 } from '../../constants'
-import {
-  type OrganizerFeature,
-  type StatusGroup,
-  type StatusTemplateId,
-  type TaskStatus,
-  type ViewKind,
-  type Visibility,
-  WORKFLOW_TEMPLATES,
-  type WorkflowTemplateId,
-  type WorkspaceInput,
-  type WorkspaceSetup,
+import type {
+  OrganizerFeature,
+  StatusGroup,
+  StatusTemplate,
+  StatusTemplateId,
+  TaskStatus,
+  ViewKind,
+  Visibility,
+  WorkflowTemplate,
+  WorkflowTemplateId,
+  WorkspaceInput,
+  WorkspaceSetup,
 } from '../../types/pm.types'
 
 /** The wizard's three steps, in order (the progress header). */
@@ -42,7 +40,7 @@ export interface WizardValues {
   description: string
   visibility: Visibility | null
   memberIds: string[]
-  department: string | null
+  departmentId: string | null
   template: WorkflowTemplateId | null
   setup: WorkspaceSetup | null
 }
@@ -54,7 +52,7 @@ export const WIZARD_FIELDS = [
   'description',
   'visibility',
   'memberIds',
-  'department',
+  'departmentId',
   'template',
   'setup',
 ] as const satisfies readonly (keyof WizardValues)[]
@@ -66,18 +64,19 @@ export const EMPTY_WIZARD: WizardValues = {
   description: '',
   visibility: null,
   memberIds: [],
-  department: null,
+  departmentId: null,
   template: null,
   setup: null,
 }
 
-/** Step 1: name, owner and visibility are required; a private workspace needs its members. */
+/** Step 1: name (3-50, unique), owner and visibility are required; a private workspace needs its members. */
 export const detailsSchema = z
   .object({
     name: z
       .string()
       .trim()
       .min(1, 'Enter the workspace name')
+      .min(3, 'Use at least 3 characters')
       .max(WORKSPACE_NAME_MAX, `Keep the name to ${WORKSPACE_NAME_MAX} characters`),
     ownerId: z.string({ error: 'Add the workspace owner' }).min(1, 'Add the workspace owner'),
     description: z
@@ -96,10 +95,10 @@ export const detailsSchema = z
     path: ['memberIds'],
   })
 
-/** Step 2: a department and one of the four workflows. */
+/** Step 2: a department and one of the workflow templates. */
 export const workflowSchema = z.object({
-  department: z.string({ error: 'Select your department' }).min(1, 'Select your department'),
-  template: z.enum(WORKFLOW_TEMPLATES, { error: 'Choose a workflow' }),
+  departmentId: z.string({ error: 'Select your department' }).min(1, 'Select your department'),
+  template: z.string({ error: 'Choose a workflow' }).min(1, 'Choose a workflow'),
 })
 
 /** Whether Continue is enabled on a step. */
@@ -115,8 +114,8 @@ export function firstIncompleteStep(values: WizardValues): WizardStep | null {
 }
 
 /** A fresh copy of a workflow template's views, statuses and organizer. */
-export const templateSetup = (template: WorkflowTemplateId): WorkspaceSetup =>
-  structuredClone(WORKFLOW_TEMPLATES_BY_ID[template].setup)
+export const templateSetup = (template: WorkflowTemplate | undefined): WorkspaceSetup | null =>
+  template ? structuredClone(template.setup) : null
 
 /** The request body for "Create Workspace", or null while a step is incomplete. */
 export function toWorkspaceInput(values: WizardValues): WorkspaceInput | null {
@@ -129,17 +128,36 @@ export function toWorkspaceInput(values: WizardValues): WorkspaceInput | null {
     description: details.data.description.trim(),
     visibility: details.data.visibility,
     memberIds: details.data.visibility === 'private' ? details.data.memberIds : [],
-    department: workflow.data.department,
+    departmentId: workflow.data.departmentId,
     template: workflow.data.template,
     setup: values.setup,
   }
 }
 
-/** Which step a server field error belongs to, so the wizard can go back to it. */
+/** The API's field names (`POST /projects/workspaces`) as the wizard's. */
+const API_FIELDS: Record<string, WizardField> = {
+  name: 'name',
+  ownerId: 'ownerId',
+  description: 'description',
+  privacy: 'visibility',
+  members: 'memberIds',
+  departmentId: 'departmentId',
+  workflowTemplate: 'template',
+  statuses: 'setup',
+  views: 'setup',
+  features: 'setup',
+  statusTemplate: 'setup',
+}
+
+/** The wizard field a server field error is about (`members.0.employeeId` → memberIds). */
+export const fieldOfApiField = (field: string): WizardField | null =>
+  API_FIELDS[field.split('.')[0] ?? ''] ?? null
+
+/** Which step a field belongs to, so the wizard can go back to it. */
 export function stepOfField(field: string): WizardStep {
   const key = field.split('.')[0] ?? ''
   if (['name', 'ownerId', 'description', 'visibility', 'memberIds'].includes(key)) return 'details'
-  if (key === 'department' || key === 'template') return 'workflow'
+  if (key === 'departmentId' || key === 'template') return 'workflow'
   return 'customize'
 }
 
@@ -337,22 +355,27 @@ export interface StatusTemplateEntry {
   statuses: readonly TaskStatus[]
 }
 
-const isBuiltIn = (id: string): id is StatusTemplateId =>
-  (STATUS_TEMPLATE_ORDER as readonly string[]).includes(id)
+/** Ids made here start with `tpl_`; every other id is one of the API's templates. */
+const isBuiltIn = (id: string): id is StatusTemplateId => !id.startsWith('tpl_')
 
-/** The dropdown's rows; "Custom" carries the workflow's own statuses. */
+/** The dropdown's rows: the API's status templates (in the design's order), then any added here. */
 export function libraryTemplates(
   library: StatusLibrary,
-  workflowStatuses: readonly TaskStatus[],
+  statusTemplates: readonly StatusTemplate[],
 ): StatusTemplateEntry[] {
-  const builtIns = STATUS_TEMPLATE_ORDER.filter((id) => !library.removed.includes(id)).map(
-    (id): StatusTemplateEntry => ({
-      id,
-      name: library.names[id] ?? STATUS_TEMPLATE_LABELS[id],
-      builtIn: id,
-      statuses: id === 'custom' ? workflowStatuses : STATUS_TEMPLATE_STATUSES[id],
-    }),
-  )
+  const rank = (id: string) => {
+    const index = STATUS_TEMPLATE_ORDER.indexOf(id)
+    return index === -1 ? STATUS_TEMPLATE_ORDER.length : index
+  }
+  const builtIns = statusTemplates
+    .filter((entry) => !library.removed.includes(entry.id))
+    .toSorted((a, b) => rank(a.id) - rank(b.id))
+    .map((entry): StatusTemplateEntry => ({
+      id: entry.id,
+      name: library.names[entry.id] ?? entry.name,
+      builtIn: entry.id,
+      statuses: entry.statuses,
+    }))
   return [...builtIns, ...library.added.map((entry) => ({ ...entry, builtIn: null }))]
 }
 
@@ -403,9 +426,9 @@ export function checkTemplateName(
   return { name: trimmed }
 }
 
-/** What the workspace records for the chosen template: a built-in id, else "custom". */
-export function templateIdFor(selectedId: string | null): StatusTemplateId {
-  return selectedId !== null && isBuiltIn(selectedId) ? selectedId : 'custom'
+/** What the workspace records for the chosen template: the API's code, or none for one added here. */
+export function templateIdFor(selectedId: string | null): StatusTemplateId | null {
+  return selectedId !== null && isBuiltIn(selectedId) ? selectedId : null
 }
 
 /** Fresh copies, so editing a template's statuses never touches the template. */

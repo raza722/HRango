@@ -5,14 +5,15 @@ import { toast } from 'sonner'
 import { ErrorState } from '@/components/feedback/error-state'
 import { DataTable, type DataTableColumn } from '@/components/layout'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import { DEFAULT_PAGE_SIZE, PLAN_MODE_LABELS, PLAN_STATUS_META } from '../../constants'
+import { DEFAULT_PAGE_SIZE, MP_CODES, PLAN_MODE_LABELS, PLAN_STATUS_META } from '../../constants'
 import { useDeletePlan, useManpowerLookups, usePlans } from '../../hooks/use-manpower'
-import { PLAN_MODES, PLAN_STATUSES, type PlanRow } from '../../types/manpower.types'
-import { formatAmount } from '../../utils/format'
+import { type Plan, PLAN_MODES, PLAN_STATUSES } from '../../types/manpower.types'
+import { formatAmount, stampOf } from '../../utils/format'
 import { Chip, StampCell } from '../shared/cells'
-import { MpField, MpListFooter, MpSelect, YearBox } from '../shared/controls'
+import { MpField, MpListFooter, MpSelect } from '../shared/controls'
 import {
   AddIcon,
   ApprovalsIcon,
@@ -40,12 +41,12 @@ import { PlanApprovalsDialog } from './plan-approvals-dialog'
 const routeApi = getRouteApi('/_app/manpower-planning/planning/')
 
 interface Filters {
-  title: string
-  year: string
+  q: string
   mode: string
   status: string
+  current: string
 }
-const NO_FILTERS: Filters = { title: '', year: '', mode: '', status: '' }
+const NO_FILTERS: Filters = { q: '', mode: '', status: '', current: '' }
 
 const iconCell =
   'inline-flex size-8 items-center justify-center rounded-md outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-[#7469E8]/35'
@@ -64,16 +65,27 @@ export function PlanningPage() {
   const [applied, setApplied] = useState<Filters>(NO_FILTERS)
   const [durationId, setDurationId] = useState('')
   const [approvalsOf, setApprovalsOf] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState<PlanRow | null>(null)
+  const [deleting, setDeleting] = useState<Plan | null>(null)
   const remove = useDeletePlan()
-  const list = usePlans({ page, pageSize: DEFAULT_PAGE_SIZE, ...applied, durationId })
+  const canCreate = useCan(MP_CODES.planningCreate)
+  const canEdit = useCan(MP_CODES.planningEdit)
+  const canDelete = useCan(MP_CODES.planningDelete)
+  const list = usePlans({
+    page,
+    pageSize: DEFAULT_PAGE_SIZE,
+    q: applied.q,
+    mode: applied.mode,
+    status: applied.status,
+    isCurrent: applied.current === 'yes' ? true : undefined,
+    budgetDurationId: durationId,
+  })
 
   const goTo = (next: number) => {
     void navigate({ search: (prev) => ({ ...prev, page: next }) })
   }
   const offset = (page - 1) * DEFAULT_PAGE_SIZE
 
-  const columns: DataTableColumn<PlanRow>[] = [
+  const columns: DataTableColumn<Plan>[] = [
     { id: 'sr', header: 'Sr#', cell: (_row, index) => offset + index + 1 },
     {
       id: 'title',
@@ -84,7 +96,7 @@ export function PlanningPage() {
     },
     { id: 'monthly', header: 'Monthly Amount', cell: (row) => formatAmount(row.monthlyAmount) },
     { id: 'annual', header: 'Annual Amount', cell: (row) => formatAmount(row.annualAmount) },
-    { id: 'year', header: 'Planning Year', cell: (row) => row.planningYear },
+    { id: 'year', header: 'Planning Year', cell: (row) => row.budgetDurationName },
     {
       id: 'current',
       header: 'Current Planning',
@@ -104,7 +116,11 @@ export function PlanningPage() {
       header: 'Status',
       cell: (row) => <Chip {...PLAN_STATUS_META[row.status]} size="sm" />,
     },
-    { id: 'added', header: 'Added On', cell: (row) => <StampCell stamp={row.added} size="sm" /> },
+    {
+      id: 'added',
+      header: 'Added On',
+      cell: (row) => <StampCell stamp={stampOf(row.createdAt, row.createdByName)} size="sm" />,
+    },
     {
       id: 'details',
       header: 'Details',
@@ -157,10 +173,12 @@ export function PlanningPage() {
         title="Employee Planning"
         actions={
           <>
-            <Link to="/manpower-planning/planning/new" className={cn(headerButton, accent.bg)}>
-              <AddIcon aria-hidden="true" className="size-[0.8125rem]" />
-              Add New Plan
-            </Link>
+            {canCreate && (
+              <Link to="/manpower-planning/planning/new" className={cn(headerButton, accent.bg)}>
+                <AddIcon aria-hidden="true" className="size-[0.8125rem]" />
+                Add New Plan
+              </Link>
+            )}
             <div className="flex items-center gap-1">
               <span className="text-sm text-heading">Showing:</span>
               <MpSelect
@@ -196,16 +214,13 @@ export function PlanningPage() {
               {(a11y) => (
                 <input
                   {...a11y}
-                  value={draft.title}
+                  value={draft.q}
                   onChange={(event) => {
-                    setField('title')(event.target.value)
+                    setField('q')(event.target.value)
                   }}
                   className={cn(boxClass, 'w-full')}
                 />
               )}
-            </MpField>
-            <MpField label="Planning Year">
-              {(a11y) => <YearBox {...a11y} value={draft.year} onChange={setField('year')} />}
             </MpField>
             <MpField label="Planning Mode">
               {(a11y) => (
@@ -234,6 +249,18 @@ export function PlanningPage() {
                     value: status,
                     label: PLAN_STATUS_META[status].label,
                   }))}
+                />
+              )}
+            </MpField>
+            <MpField label="Current Planning">
+              {(a11y) => (
+                <MpSelect
+                  {...a11y}
+                  value={draft.current}
+                  onChange={setField('current')}
+                  noneLabel="Any"
+                  placeholder="Any"
+                  options={[{ value: 'yes', label: 'Current plan year only' }]}
                 />
               )}
             </MpField>
@@ -277,30 +304,43 @@ export function PlanningPage() {
             className={mpTableClass}
             emptyState="No plans match. Add a new plan or change the filters."
             rowActionsHeader="Action"
-            rowActions={(row) => (
-              <RowMenu
-                label={`Actions for ${row.title}`}
-                items={[
-                  {
-                    label: 'Edit',
-                    icon: EditIcon,
-                    onSelect: () => {
-                      void navigate({
-                        to: '/manpower-planning/planning/$planId/edit',
-                        params: { planId: row.id },
-                      })
-                    },
-                  },
-                  {
-                    label: 'Delete',
-                    icon: DeleteIcon,
-                    onSelect: () => {
-                      setDeleting(row)
-                    },
-                  },
-                ]}
-              />
-            )}
+            rowActions={
+              canEdit || canDelete
+                ? (row) => (
+                    <RowMenu
+                      label={`Actions for ${row.title}`}
+                      items={[
+                        ...(canEdit
+                          ? [
+                              {
+                                label: 'Edit',
+                                icon: EditIcon,
+                                onSelect: () => {
+                                  void navigate({
+                                    to: '/manpower-planning/planning/$planId/edit',
+                                    params: { planId: row.id },
+                                  })
+                                },
+                              },
+                            ]
+                          : []),
+                        ...(canDelete
+                          ? [
+                              {
+                                label: 'Delete',
+                                icon: DeleteIcon,
+                                disabled: row.isLocked,
+                                onSelect: () => {
+                                  setDeleting(row)
+                                },
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
+                  )
+                : undefined
+            }
           />
         )}
         <MpListFooter meta={list.data?.meta} disabled={list.isFetching} onPageChange={goTo} />
@@ -325,7 +365,7 @@ export function PlanningPage() {
         confirmLabel="Delete Plan Year"
         onConfirm={() => {
           if (!deleting) return
-          remove.mutate(deleting.id, {
+          remove.mutate(deleting, {
             onError: (error) => {
               toast.error(
                 error instanceof ApiError ? error.message : 'The plan could not be deleted.',

@@ -10,17 +10,24 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { ConfirmAction } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import type { FlowStepStatus, RequestEmployee } from '../types/requests.types'
+import { typePermission } from '../api/backend'
+import type { DetailSource } from '../api/engine.api'
+import { RequestEmployeeSelect } from '../components/shared/request-employee-field'
+import { RequestFileLinks } from '../components/shared/request-files'
+import type { FlowStep, FlowStepStatus, RequestEmployee } from '../types/requests.types'
 import { stamp } from '../utils/request-format'
 import type { StandardKindConfig, StandardRequest } from './standard.types'
 import { StandardPersonCell } from './standard-parts'
 import { standardButton, standardFooterButton } from './standard-styles'
 import {
   useCancelStandard,
+  useConsentStandard,
   useDecideStandard,
   useDeleteStandard,
+  useForwardStandard,
   useStandardDetail,
 } from './use-standard'
 
@@ -63,7 +70,10 @@ export function StandardEmployeeCard({ employee }: { employee: RequestEmployee }
         <Fact label="Employee Code" value={employee.code} />
         <Fact label="Branch" value={employee.branch ?? '—'} />
         <Fact label="Company" value={employee.company ?? '—'} />
-        <Fact label="Joining Date" value={format(day(employee.joiningDate), 'd, MMMM yyyy')} />
+        <Fact
+          label="Joining Date"
+          value={employee.joiningDate ? format(day(employee.joiningDate), 'd, MMMM yyyy') : '—'}
+        />
       </dl>
     </section>
   )
@@ -151,22 +161,33 @@ const STEP_STATUS: Record<FlowStepStatus, { label: string; className: string }> 
   approved: { label: 'Approved', className: 'text-[#51B969]' },
   rejected: { label: 'Rejected', className: 'text-[#D83838]' },
   skipped: { label: 'Skipped', className: 'text-grey' },
+  informed: { label: 'Informed', className: 'text-grey' },
+  forwarded: { label: 'Forwarded', className: 'text-grey' },
+  consented: { label: 'Agreed', className: 'text-[#51B969]' },
+  disagreed: { label: 'Disagreed', className: 'text-[#D83838]' },
 }
 
 /** Popup tables: Poppins Medium 11 #303030 headers, Poppins Regular 12 #707070 cells. */
 const popupTable =
   'w-full text-xs [&_td]:px-4 [&_td]:py-2.5 [&_td]:text-grey [&_th]:bg-sidebar/[0.06] [&_th]:px-4 [&_th]:py-2.5 [&_th]:text-left [&_th]:text-[0.6875rem] [&_th]:font-medium [&_th]:text-title dark:[&_th]:bg-muted'
 
-/** "<Type> Request Flow": each approver, their authority and status; red Cancel. */
+/**
+ * "<Type> Request Flow": each approver the flow has reached, their authority
+ * and status (the API records a step when the flow reaches it); red Cancel.
+ */
 export function StandardFlowDialog<P>({
   config,
-  request,
+  id,
+  via = 'request',
   onClose,
 }: {
   config: StandardKindConfig<P>
-  request: StandardRequest<P>
+  id: string
+  via?: DetailSource
   onClose: () => void
 }) {
+  const detail = useStandardDetail<P>(config.kind, id, via)
+  const steps: FlowStep[] = detail.data?.request.flow ?? []
   return (
     <AppDialog
       title={`${config.noun} Request Flow`}
@@ -192,12 +213,27 @@ export function StandardFlowDialog<P>({
             </tr>
           </thead>
           <tbody>
-            {request.flow.map((step, index) => (
+            {detail.isPending && (
+              <tr>
+                <td colSpan={3}>
+                  <Skeleton className="h-10 w-full" />
+                </td>
+              </tr>
+            )}
+            {!detail.isPending && steps.length === 0 && (
+              <tr>
+                <td colSpan={3}>No approver has been reached yet.</td>
+              </tr>
+            )}
+            {steps.map((step, index) => (
               <tr key={`${step.authority}-${String(index)}`} className="border-b last:border-0">
                 <td>
                   <StandardPersonCell person={step.approver} />
                 </td>
-                <td>{step.authority}</td>
+                <td>
+                  {step.authority}
+                  {step.isConsent && <span className="block text-[0.6875rem]">Consent</span>}
+                </td>
                 <td>
                   <span className={cn('font-medium', STEP_STATUS[step.status].className)}>
                     {STEP_STATUS[step.status].label}
@@ -224,13 +260,15 @@ export function StandardFlowDialog<P>({
 export function StandardHistoryDialog<P>({
   config,
   id,
+  via = 'request',
   onClose,
 }: {
   config: StandardKindConfig<P>
   id: string
+  via?: DetailSource
   onClose: () => void
 }) {
-  const detail = useStandardDetail(config.kind, id)
+  const detail = useStandardDetail(config.kind, id, via)
   const history = detail.data?.history ?? []
   return (
     <AppDialog
@@ -284,7 +322,10 @@ export function StandardHistoryDialog<P>({
   )
 }
 
-/** "<Type> Request Cancel": an approved request goes back for approval, with a reason. */
+/**
+ * "<Type> Request Cancel": a pending request is withdrawn at once; an approved
+ * one goes through the cancellation flow before it takes effect. A reason is required.
+ */
 export function StandardCancelDialog<P>({
   config,
   request,
@@ -303,7 +344,11 @@ export function StandardCancelDialog<P>({
       return
     }
     try {
-      await cancel.mutateAsync({ id: request.id, reason: reason.trim() })
+      await cancel.mutateAsync({
+        id: request.id,
+        reason: reason.trim(),
+        rowVersion: request.rowVersion,
+      })
     } catch (failure) {
       if (failure instanceof ApiError) setError(failure.fieldErrors.reason ?? failure.message)
       return
@@ -313,7 +358,11 @@ export function StandardCancelDialog<P>({
   return (
     <AppDialog
       title={`${config.noun} Request Cancel`}
-      description={`${request.code}: the cancellation goes for approval before it takes effect.`}
+      description={
+        request.status === 'pending'
+          ? `${request.code}: the request is withdrawn at once.`
+          : `${request.code}: the cancellation goes for approval before it takes effect.`
+      }
       onRequestClose={onClose}
       className="max-w-xl"
       footer={
@@ -370,7 +419,7 @@ export function StandardDeleteDialog<P>({
       cancelLabel="No"
       variant="destructive"
       onConfirm={() => {
-        remove.mutate(request.id, { onSettled: onClose })
+        remove.mutate({ id: request.id, rowVersion: request.rowVersion }, { onSettled: onClose })
       }}
     />
   )
@@ -443,15 +492,19 @@ export function StandardDecisionDialog<P>({
   config,
   id,
   mode,
+  via = 'approvals',
   onClose,
 }: {
   config: StandardKindConfig<P>
   id: string
   mode: 'decide' | 'view'
+  via?: DetailSource
   onClose: () => void
 }) {
-  const detail = useStandardDetail<P>(config.kind, id)
-  const decide = useDecideStandard(config.kind)
+  const detail = useStandardDetail<P>(config.kind, id, via)
+  const decide = useDecideStandard()
+  const canApprove = useCan('requests.approvals.approve')
+  const canReject = useCan('requests.approvals.reject')
   const [remarks, setRemarks] = useState('')
   const [extras, setExtras] = useState<Record<string, unknown>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -460,6 +513,8 @@ export function StandardDecisionDialog<P>({
   const [panel, setPanel] = useState<'flow' | 'history' | null>(null)
   const request = detail.data?.request
   const deciding = mode === 'decide' && Boolean(request?.actions.includes('decide'))
+  // Each button only when the API lists it for the caller (the detail's `actions`).
+  const may = (action: 'approve' | 'reject') => request?.decisions?.includes(action) ?? true
   const cancelling = request?.status === 'cancelling'
   const { DetailRows, DecisionFields } = config
 
@@ -479,7 +534,8 @@ export function StandardDecisionDialog<P>({
         input: {
           decision,
           remarks: remarks.trim(),
-          ...(DecisionFields && !cancelling ? { extras } : {}),
+          rowVersion: request.rowVersion,
+          ...(DecisionFields && !cancelling && decision === 'approve' ? { extras } : {}),
         },
       })
     } catch (failure) {
@@ -534,7 +590,7 @@ export function StandardDecisionDialog<P>({
               <>
                 <Button
                   type="button"
-                  disabled={decide.isPending}
+                  disabled={decide.isPending || !canApprove || !may('approve')}
                   onClick={() => {
                     ask('approve')
                   }}
@@ -547,7 +603,7 @@ export function StandardDecisionDialog<P>({
                 </Button>
                 <Button
                   type="button"
-                  disabled={decide.isPending}
+                  disabled={decide.isPending || !canReject || !may('reject')}
                   onClick={() => {
                     ask('reject')
                   }}
@@ -591,6 +647,13 @@ export function StandardDecisionDialog<P>({
               </p>
             )}
             <DetailRows request={request} />
+            {request.attachments.length > 0 && (
+              <StandardReadOnlyRow
+                label="Attachments"
+                multiline
+                value={<RequestFileLinks files={request.attachments} />}
+              />
+            )}
             <StandardReadOnlyRow
               label="Created"
               value={format(parseISO(request.createdAt), 'MMMM d, yyyy hh:mm a')}
@@ -646,7 +709,8 @@ export function StandardDecisionDialog<P>({
       {panel === 'flow' && request && (
         <StandardFlowDialog
           config={config}
-          request={request}
+          id={request.id}
+          via={via}
           onClose={() => {
             setPanel(null)
           }}
@@ -656,11 +720,166 @@ export function StandardDecisionDialog<P>({
         <StandardHistoryDialog
           config={config}
           id={request.id}
+          via={via}
           onClose={() => {
             setPanel(null)
           }}
         />
       )}
     </>
+  )
+}
+
+/**
+ * A Can Disagree step ("Consents"): agree or disagree with remarks; both are
+ * recorded and the flow goes on (the final authority sees a disagreement).
+ */
+export function StandardConsentDialog<P>({
+  config,
+  request,
+  onClose,
+}: {
+  config: StandardKindConfig<P>
+  request: StandardRequest<P>
+  onClose: () => void
+}) {
+  const consent = useConsentStandard()
+  const [remarks, setRemarks] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const submit = async (agree: boolean) => {
+    if (!agree && !remarks.trim()) {
+      setError('Give a reason for disagreeing')
+      return
+    }
+    try {
+      await consent.mutateAsync({
+        id: request.id,
+        agree,
+        remarks: remarks.trim(),
+        rowVersion: request.rowVersion,
+      })
+    } catch (failure) {
+      if (failure instanceof ApiError) setError(failure.fieldErrors.remarks ?? failure.message)
+      return
+    }
+    onClose()
+  }
+  return (
+    <AppDialog
+      title={`${config.noun} Consent`}
+      description={`${request.code} of ${request.employee.name}: your agreement is asked.`}
+      onRequestClose={onClose}
+      className="max-w-xl"
+      footer={
+        <>
+          <Button
+            disabled={consent.isPending || !(request.decisions?.includes('consent') ?? true)}
+            onClick={() => void submit(true)}
+            className={cn(standardFooterButton, standardButton.green)}
+          >
+            Agree
+          </Button>
+          <Button
+            disabled={consent.isPending || !(request.decisions?.includes('disagree') ?? true)}
+            onClick={() => void submit(false)}
+            className={cn(standardFooterButton, standardButton.maroon)}
+          >
+            Disagree
+          </Button>
+          <Button onClick={onClose} className={cn(standardFooterButton, standardButton.red)}>
+            Cancel
+          </Button>
+        </>
+      }
+    >
+      <div className="@container">
+        <RemarksField
+          label="Remarks"
+          value={remarks}
+          onChange={(value) => {
+            setRemarks(value)
+            if (error) setError(null)
+          }}
+          error={error}
+        />
+      </div>
+    </AppDialog>
+  )
+}
+
+/** "Forward": passes the step waiting for you to another employee, with remarks. */
+export function StandardForwardDialog<P>({
+  config,
+  request,
+  onClose,
+}: {
+  config: StandardKindConfig<P>
+  request: StandardRequest<P>
+  onClose: () => void
+}) {
+  const forward = useForwardStandard()
+  const [employeeId, setEmployeeId] = useState<string | null>(null)
+  const [remarks, setRemarks] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const selectId = useId()
+  const submit = async () => {
+    if (!employeeId) {
+      setError('Choose whom to forward it to')
+      return
+    }
+    try {
+      await forward.mutateAsync({
+        id: request.id,
+        employeeId,
+        remarks: remarks.trim(),
+        rowVersion: request.rowVersion,
+      })
+    } catch (failure) {
+      if (failure instanceof ApiError) setError(failure.fieldErrors.employeeId ?? failure.message)
+      return
+    }
+    onClose()
+  }
+  return (
+    <AppDialog
+      title={`${config.noun} Forward`}
+      description={`${request.code}: the step waiting for you passes to the person you choose.`}
+      onRequestClose={onClose}
+      className="max-w-xl"
+      footer={
+        <>
+          <Button
+            disabled={forward.isPending}
+            onClick={() => void submit()}
+            className={cn(standardFooterButton, standardButton.green)}
+          >
+            Forward
+          </Button>
+          <Button onClick={onClose} className={cn(standardFooterButton, standardButton.red)}>
+            Cancel
+          </Button>
+        </>
+      }
+    >
+      <div className="@container grid gap-4">
+        <div className="grid gap-2 @xl:grid-cols-[10rem_minmax(0,1fr)] @xl:items-center">
+          <label htmlFor={selectId} className="font-inter text-sm text-heading @xl:text-base">
+            Forward To
+          </label>
+          <RequestEmployeeSelect
+            id={selectId}
+            permission={typePermission(config.kind, 'create')}
+            exclude={[request.employee.id]}
+            value={employeeId}
+            onChange={(next) => {
+              setEmployeeId(next)
+              setError(null)
+            }}
+            placeholder="Choose an employee"
+          />
+        </div>
+        <RemarksField label="Remarks" value={remarks} onChange={setRemarks} error={error} />
+      </div>
+    </AppDialog>
   )
 }

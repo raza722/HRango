@@ -1,65 +1,31 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
+import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 
-import {
-  warningHistoryApi,
-  warningHistoryKeys,
-  warningHistoryQueryOptions,
-} from '../api/warning-history.api'
+import { warningHistoryQueryOptions } from '../api/warning-history.api'
 import type { WarningHistoryEntry } from '../types/warning-history.types'
 
 /**
- * The Warning module's change log, newest first.
+ * The Warning module's change log, newest first, a page at a time.
  *
  * @param enabled - Fetch only while the History dialog is open.
+ * @param policyId - Only this policy's changes.
  */
-export function useWarningHistory(enabled = true) {
-  return useQuery({ ...warningHistoryQueryOptions(), enabled })
+export function useWarningHistory(enabled = true, policyId?: string) {
+  return useInfiniteQuery({ ...warningHistoryQueryOptions(policyId), enabled })
 }
 
-/** Optimistically replaces the cached log, returning the previous one for rollback. */
-async function replaceLog(
-  queryClient: ReturnType<typeof useQueryClient>,
-  update: (entries: WarningHistoryEntry[]) => WarningHistoryEntry[],
-) {
-  await queryClient.cancelQueries({ queryKey: warningHistoryKeys.all })
-  const previous = queryClient.getQueryData<WarningHistoryEntry[]>(warningHistoryKeys.all)
-  if (previous) queryClient.setQueryData(warningHistoryKeys.all, update(previous))
-  return { previous }
-}
+const NOT_SUPPORTED = 'The history is an audit log and cannot be deleted.'
 
-/** Deletes one log entry (optimistic). */
+/**
+ * Legacy (kept for the barrel): The API keeps the audit log; there is no delete. Kept so the barrel's names stay
+ * stable; the mutation always fails with an explanation and nothing calls it.
+ */
 export function useDeleteHistoryEntry() {
-  const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (entry: WarningHistoryEntry) => warningHistoryApi.remove(entry.id),
-    meta: { errorMessage: 'Could not delete the history entry.' },
-    onMutate: (entry) =>
-      replaceLog(queryClient, (entries) => entries.filter((e) => e.id !== entry.id)),
-    onError: (_error, _entry, onMutateResult) => {
-      if (onMutateResult?.previous) {
-        queryClient.setQueryData(warningHistoryKeys.all, onMutateResult.previous)
-      }
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: warningHistoryKeys.all }),
+    mutationFn: (_entry: WarningHistoryEntry) => Promise.reject(new Error(NOT_SUPPORTED)),
   })
 }
 
-/** Clears the whole log ("Delete All", optimistic). */
+/** Legacy (kept for the barrel): See {@link useDeleteHistoryEntry}: "Delete All" is not built. */
 export function useClearHistory() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: () => warningHistoryApi.clear(),
-    meta: { errorMessage: 'Could not clear the history.' },
-    onMutate: () => replaceLog(queryClient, () => []),
-    onError: (_error, _variables, onMutateResult) => {
-      if (onMutateResult?.previous) {
-        queryClient.setQueryData(warningHistoryKeys.all, onMutateResult.previous)
-      }
-    },
-    onSuccess: () => {
-      toast.success('History cleared')
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: warningHistoryKeys.all }),
-  })
+  return useMutation({ mutationFn: () => Promise.reject(new Error(NOT_SUPPORTED)) })
 }

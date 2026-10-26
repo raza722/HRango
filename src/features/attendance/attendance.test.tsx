@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { format, isWeekend, subDays } from 'date-fns'
 import { describe, expect, it } from 'vitest'
 
-import { holidays } from '@/mocks/attendance/settings-db'
+import { defaultSettings, holidays, settingsStore } from '@/mocks/attendance/settings-db'
 import { seedRestDayBatches } from '@/mocks/scheduling/seed'
 import { renderApp } from '@/test/test-utils'
 
@@ -42,9 +42,10 @@ describe('Attendance Overview', () => {
       await screen.findByRole('heading', { name: 'Attendance Overview', level: 1 }),
     ).toBeVisible()
     const legend = screen.getByRole('list', { name: /^Legend/ })
-    expect(within(legend).getAllByRole('button')).toHaveLength(21)
+    expect(within(legend).getAllByRole('button')).toHaveLength(12)
     expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true')
     expect(await screen.findByRole('rowheader', { name: 'Shelley Kannes' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Export' })).toBeVisible()
     expect(screen.getByRole('link', { name: 'Attendance Overview' })).toHaveAttribute(
       'aria-current',
       'page',
@@ -78,6 +79,13 @@ describe('Attendance Overview', () => {
 
 describe('Time Sheet', () => {
   it('shows my days with the month tiles and View only, and clocks in', async () => {
+    // No picture with the punch (uploads need a browser's FormData; jsdom's does not reach MSW).
+    const settings = defaultSettings()
+    settingsStore.insert({
+      id: 'settings',
+      ...settings,
+      basic: { ...settings.basic, pictureOnDashboardPunch: false },
+    })
     const { user } = renderApp('/attendance/time-sheet')
 
     expect(
@@ -86,13 +94,14 @@ describe('Time Sheet', () => {
     expect(screen.getByRole('heading', { name: /Days Overview This Month/ })).toBeVisible()
     await screen.findAllByRole('button', { name: /^View, / })
     expect(screen.queryByRole('button', { name: /^Edit, / })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Process' })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Clock In' }))
-    expect(await screen.findByText(/^Clocked in at /)).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: 'Clock In' }))
+    expect((await screen.findAllByText(/^Clocked in at /)).length).toBeGreaterThan(0)
     expect(await screen.findByRole('button', { name: 'Clock Out' })).toBeVisible()
   })
 
-  it('opens the History of a day HR changed', async () => {
+  it('shows the comments and the History of a day HR changed', async () => {
     const date = recentWorkday(2)
     const { user } = renderApp(`/attendance/time-sheet?from=${date}&to=${date}`)
 
@@ -102,63 +111,59 @@ describe('Time Sheet', () => {
     const view = await screen.findByRole('dialog', { name: /^Time sheet of Shelley Kannes/ })
     expect(await within(view).findByText(/the guard log/)).toBeVisible()
 
+    await user.click(within(view).getByRole('button', { name: 'Logs' }))
+    const logs = await screen.findByRole('dialog', { name: 'Attendance Log' })
+    expect(within(logs).getAllByRole('row').length).toBeGreaterThan(1)
+    await user.keyboard('{Escape}')
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Attendance Log' })).not.toBeInTheDocument()
+    })
+
     await user.click(within(view).getByRole('button', { name: 'History' }))
     const history = await screen.findByRole('dialog', { name: 'History' })
     expect(await within(history).findByText('Updated Check In Time')).toBeVisible()
     expect(within(history).getByText('Laiba Shah')).toBeVisible()
   })
 
-  it('marks a day absent from Edit, then records the absence as leave', async () => {
+  it('lists everyone on All, and marks a day absent with a comment from Edit', async () => {
     const date = recentWorkday(5, true)
     const label = formatSheetDate(date)
     const { user } = renderApp(
       `/attendance/time-sheet?scope=all&employeeId=em_omar&from=${date}&to=${date}`,
     )
 
+    expect(await screen.findByRole('columnheader', { name: 'Employee' })).toBeVisible()
     await user.click(await screen.findByRole('button', { name: `Edit, ${label}` }))
     const edit = await screen.findByRole('dialog', {
       name: /^Edit the time sheet of Omar Siddiqui/,
     })
     await user.click(await within(edit).findByRole('checkbox', { name: 'Mark Absent' }))
     expect(within(edit).getByText(/An absent day has no check in/)).toBeVisible()
+    await user.type(
+      within(edit).getByRole('textbox', { name: /Comments/ }),
+      'Checked with the team lead',
+    )
     await user.click(within(edit).getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('Time sheet updated')).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
 
-    await user.click(await screen.findByRole('button', { name: `Absent, ${label}` }))
-    const absent = await screen.findByRole('dialog', { name: `Absent, ${label}` })
-    await user.click(within(absent).getByRole('button', { name: 'Save' }))
-    expect(await within(absent).findByText('Give a reason')).toBeVisible()
-    await user.type(
-      within(absent).getByRole('textbox', { name: /Reason/ }),
-      'Approved casual leave',
-    )
-    await user.click(within(absent).getByRole('button', { name: 'Save' }))
-    expect(await screen.findByText('Absence updated')).toBeInTheDocument()
     const row = await screen.findByRole('row', { name: new RegExp(label) })
-    expect(await within(row).findByText('Leave')).toBeVisible()
+    expect(await within(row).findAllByText('Absent')).not.toHaveLength(0)
+    await user.click(within(row).getByRole('button', { name: `View, ${label}` }))
+    const view = await screen.findByRole('dialog', { name: /^Time sheet of Omar Siddiqui/ })
+    expect(await within(view).findByText('Checked with the team lead')).toBeVisible()
+    await user.click(within(view).getByRole('button', { name: 'History' }))
+    const history = await screen.findByRole('dialog', { name: 'History' })
+    expect(await within(history).findByText('Update Mark')).toBeVisible()
   })
 
-  it('posts a comment from Time Sheet Edit', async () => {
-    const date = recentWorkday(4, true)
-    const label = formatSheetDate(date)
-    const { user } = renderApp(
-      `/attendance/time-sheet?scope=all&employeeId=em_bilal&from=${date}&to=${date}`,
-    )
+  it('processes the range on All', async () => {
+    const { user } = renderApp('/attendance/time-sheet?scope=all')
 
-    await user.click(await screen.findByRole('button', { name: `Edit, ${label}` }))
-    const edit = await screen.findByRole('dialog', { name: /^Edit the time sheet of Bilal Ahmed/ })
-    await user.click(await within(edit).findByRole('button', { name: /Comments Details/ }))
-    await user.click(within(edit).getByRole('button', { name: 'Comment' }))
-    expect(await within(edit).findByText('Type a comment first')).toBeVisible()
-    await user.type(
-      within(edit).getByRole('textbox', { name: 'New comment' }),
-      'Checked with the team lead',
-    )
-    await user.click(within(edit).getByRole('button', { name: 'Comment' }))
-    expect(await within(edit).findByText('Checked with the team lead')).toBeVisible()
-    expect(within(edit).getByText(/Shelley Kannes - Id-001/)).toBeVisible()
+    await screen.findAllByRole('button', { name: /^Edit, / })
+    await user.click(screen.getByRole('button', { name: 'Process' }))
+    expect(await screen.findByText(/^Processed \d+ days? for \d+ employees?$/)).toBeInTheDocument()
   })
 })

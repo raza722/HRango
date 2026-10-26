@@ -1,175 +1,221 @@
-import { differenceInCalendarDays, format, intervalToDuration, parseISO, subYears } from 'date-fns'
+import { format } from 'date-fns'
 import { http } from 'msw'
 import { z } from 'zod'
 
 import {
+  type ActiveChecklistField,
   CHECKLIST_FIELD_TYPES,
+  type ChecklistAnswerValue,
   type ChecklistField,
-  type ChecklistValue,
-  type EmployeeCardInfo,
   type EndOfEmployment,
-  type EndOfEmploymentDetail,
-  type EndOfEmploymentInput,
   type EndOfEmploymentRow,
   EOE_REASONS,
   type OffboardingChecklist,
+  type WaitingItem,
 } from '@/features/offboarding'
 
 import { allocations, clearances } from '../assets/db'
-import { DIRECTORY, findEmployee } from '../employees/seed'
-import { finalSettlements } from '../payroll/db'
-import { employeeProfile, employeeRef, isActive } from '../payroll/engine'
 import {
+  authed,
   conflict,
+  created,
   day,
+  fileIdSchema,
+  fileRef,
+  idSchema,
   invalid,
+  matches,
   nextCode,
+  nextVersion,
+  noContent,
   notFound,
+  now,
   ok,
+  optionalId,
+  optionalText,
   page,
   param,
   readBody,
   rejected,
-} from '../payroll/http'
-import { branches, locations } from '../settings/handlers'
-import { apiPath, createId, latency, requireAuth } from '../utils'
-import { activeChecklistFields, checklists, endOfEmployments } from './db'
+} from '../assets/http'
+import { isActive, personOf, sameUnit } from '../assets/people'
+import { finalSettlements } from '../payroll/db'
+import { jobTitles } from '../settings/handlers'
+import { apiPath, createId } from '../utils'
+import {
+  activeChecklistFields,
+  checklists,
+  endOfEmployments,
+  type StoredChecklist,
+  type StoredEndOfEmployment,
+  versionOf,
+} from './db'
+
+/*
+ * The backend's /api/offboarding routes (backend/app/routers/offboarding.py) over the mock tables.
+ */
 
 const base = (path: string) => apiPath(`/offboarding${path}`)
 
-const authed = async (request: Request) => {
-  await latency()
-  return requireAuth(request)
-}
-
 const today = () => format(new Date(), 'yyyy-MM-dd')
-const now = () => new Date().toISOString()
-const nameOf = (id: string) => findEmployee(id)?.name ?? id
 
-const employeeId = z
-  .string()
-  .min(1, 'Choose the employee')
-  .refine((id) => Boolean(findEmployee(id)), { message: 'Choose the employee' })
-
-// --- the person's card ----------------------------------------------------------------------------
-
-/** A steady number per person, for the sample birthday and phone. */
-function hashOf(id: string) {
-  let hash = 0
-  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) % 1_000_003
-  return hash
-}
-
-const plural = (count: number, word: string) => `${String(count)} ${word}`
-
-function cardOf(id: string, until?: string | null): EmployeeCardInfo {
-  const ref = employeeRef(id)
-  const profile = employeeProfile(id)
-  const hash = hashOf(id)
-  const birthday = subYears(new Date(), 24 + (hash % 28))
-  birthday.setDate(birthday.getDate() - (hash % 330))
-  const age = intervalToDuration({ start: birthday, end: new Date() })
-  const end = until ? parseISO(until) : new Date()
-  const worked = profile.joiningDate
-    ? intervalToDuration({ start: parseISO(profile.joiningDate), end })
-    : {}
-  const [first = '', ...rest] = ref.name
-    .replace(/^Dr\s+/, '')
-    .toLowerCase()
-    .split(/\s+/)
-  return {
-    id,
-    name: ref.name,
-    designation: ref.designation,
-    code: ref.code,
-    photoUrl: ref.photoUrl,
-    age: `${plural(age.years ?? 0, 'years')}, ${plural(age.months ?? 0, 'Months')}, ${plural(age.days ?? 0, 'Days')}`,
-    email: `${[first, ...rest].join('.')}@topedge.tech`,
-    phone: `03${String(hash % 10)}${String((hash >> 3) % 10)}-${String(1_000_000 + (hash % 9_000_000)).slice(0, 7)}`,
-    experience: `${plural(worked.years ?? 0, 'Year')} ${plural(worked.months ?? 0, 'Month')} ${plural(worked.days ?? 0, 'Days')}`,
+/** 409 when the client's rowVersion is not the record's current one. */
+function staleRecord(record: StoredEndOfEmployment, sent: string | null | undefined) {
+  if (!sent) {
+    return invalid('rowVersion is required to edit an end of employment.', {
+      rowVersion: 'Required',
+    })
   }
+  if (sent !== versionOf(record)) {
+    return conflict('Someone else changed this end of employment. Reload it and try again')
+  }
+  return null
 }
 
-// --- the record ----------------------------------------------------------------------------------
-
-const missing = (value: ChecklistValue | undefined) =>
+const missing = (value: ChecklistAnswerValue | undefined) =>
   value === null || value === undefined || value === ''
 
-/**
- * What keeps a record pending: the Final Settlement still open, the clearance
- * not approved (when the person holds assets), required checklist answers.
- */
-function waitingFor(record: EndOfEmployment): string[] {
-  const waiting: string[] = []
+/** What keeps a pending record from completing (sep.fn_end_of_employment_waiting). */
+function waitingFor(record: StoredEndOfEmployment): WaitingItem[] {
+  if (record.status !== 'pending') return []
+  const waiting: WaitingItem[] = []
   if (record.finalSettlement) {
     const settlement = record.finalSettlementId
       ? finalSettlements.find(record.finalSettlementId)
       : undefined
-    if (settlement?.status !== 'completed') waiting.push('Final Settlement')
+    if (settlement?.status !== 'completed') {
+      waiting.push({ item: 'final_settlement', label: 'Final settlement to be closed' })
+    }
   }
   if (record.assetClearance) {
-    const form = record.clearanceId ? clearances.find(record.clearanceId) : undefined
+    const approved = clearances
+      .all()
+      .some((form) => form.endOfEmploymentId === record.id && form.status === 'approved')
+    if (!approved) {
+      waiting.push({ item: 'asset_clearance', label: 'Asset clearance to be approved' })
+    }
     const holds = allocations
       .all()
-      .some((item) => item.employeeId === record.employeeId && item.deallocationDate === null)
-    if (form ? form.status !== 'approved' : holds) waiting.push('Asset Clearance')
+      .some((item) => item.employeeId === record.employeeId && item.deallocatedOn === null)
+    if (holds) waiting.push({ item: 'assets', label: 'Assets still allocated to the employee' })
   }
-  const unanswered = activeChecklistFields().filter(
-    (field) => field.required && missing(record.checklist[field.id]),
+  const unanswered = activeChecklistFields().some(
+    (field) => field.isRequired && missing(record.checklist[field.id]),
   )
-  if (unanswered.length > 0) waiting.push('Checklist')
+  if (unanswered) waiting.push({ item: 'checklist', label: 'Required checklist answers' })
+  if ((record.lastWorkingDate ?? today()) > today()) {
+    waiting.push({ item: 'last_working_date', label: 'Last working date not reached' })
+  }
   return waiting
 }
 
-/** Completed once nothing is waiting (stamped the first time); back to pending if that changes. */
-function refreshed(record: EndOfEmployment): EndOfEmployment {
-  const done = waitingFor(record).length === 0
-  const next: EndOfEmployment = done
-    ? { ...record, status: 'completed', completedAt: record.completedAt ?? now() }
-    : record.rehire
-      ? record
-      : { ...record, status: 'pending', completedAt: null }
-  if (next.status !== record.status || next.completedAt !== record.completedAt) {
-    endOfEmployments.update(record.id, next)
+/** Completes a pending record once nothing is waiting (as the backend does after each change). */
+function refreshed(record: StoredEndOfEmployment): StoredEndOfEmployment {
+  if (record.status !== 'pending' || waitingFor(record).length > 0) return record
+  const next: StoredEndOfEmployment = {
+    ...record,
+    status: 'completed',
+    completedAt: now(),
+    rowVersion: nextVersion(),
   }
+  endOfEmployments.update(record.id, next)
   return next
 }
 
-function rowOf(record: EndOfEmployment): EndOfEmploymentRow {
-  const ref = employeeRef(record.employeeId)
-  const profile = employeeProfile(record.employeeId)
+const lastDay = (record: StoredEndOfEmployment) =>
+  record.lastWorkingDate ?? record.createdAt.slice(0, 10)
+
+function rowOf(record: StoredEndOfEmployment): EndOfEmploymentRow {
+  const person = personOf(record.employeeId)
   return {
     id: record.id,
-    employee: ref,
-    branch: profile.branch,
-    location: profile.location,
-    department: ref.department,
-    designation: ref.designation,
-    date: record.lastWorkingDate ?? record.createdAt.slice(0, 10),
-    createdAt: record.createdAt,
-    completedAt: record.completedAt,
+    employeeId: record.employeeId,
+    employeeCode: person?.code ?? null,
+    employeeName: person?.name ?? null,
+    branchName: person?.branchName ?? null,
+    locationName: person?.locationName ?? null,
+    departmentName: person?.departmentName ?? null,
+    designationName: person?.designationName ?? null,
+    reason: record.reason,
+    serveNotice: record.noticePeriod,
+    lastWorkingDate: lastDay(record),
     status: record.status,
-    rehired: record.rehire !== null,
+    completedAt: record.completedAt,
+    isRehired: record.rehire !== null,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt ?? null,
+    rowVersion: versionOf(record),
   }
 }
 
-function detailOf(record: EndOfEmployment): EndOfEmploymentDetail {
+const answerText = (value: ChecklistAnswerValue | undefined) =>
+  value === null || value === undefined || value === '' ? null : String(value)
+
+function detailOf(record: StoredEndOfEmployment): EndOfEmployment {
+  const person = personOf(record.employeeId)
   const settlement = record.finalSettlementId
     ? finalSettlements.find(record.finalSettlementId)
     : undefined
   const form = record.clearanceId ? clearances.find(record.clearanceId) : undefined
+  const fieldsById = new Map<string, ActiveChecklistField>(
+    checklists
+      .all()
+      .flatMap((list) =>
+        list.fields.map((field) => [
+          field.id,
+          { ...field, offboardingChecklistId: list.id, checklistName: list.name },
+        ]),
+      ),
+  )
   return {
-    ...record,
-    card: cardOf(record.employeeId, record.lastWorkingDate),
-    delegatee: record.delegateeId ? employeeRef(record.delegateeId) : null,
-    waitingFor: waitingFor(record),
-    finalSettlementStatus: settlement?.status ?? null,
+    ...rowOf(record),
+    employeeEmail: person?.email ?? null,
+    employeePhone: person?.phone ?? null,
+    dateOfBirth: person?.dateOfBirth ?? null,
+    photoFileId: null,
+    photoUrl: person?.photoUrl ?? null,
+    joiningDate: person?.joiningDate ?? null,
+    resignationRequestId: record.resignationRequestId ?? null,
+    noticePeriodDays: record.noticePeriodDays ?? null,
+    needsFinalSettlement: record.finalSettlement,
+    needsAssetClearance: record.assetClearance,
+    assetClearByDate: record.assetClearByDate ?? null,
+    replacementId: record.replacementId ?? null,
+    replacementName: record.replacementId ? (personOf(record.replacementId)?.name ?? null) : null,
+    delegateeId: record.delegateeId,
+    delegateeName: record.delegateeId ? (personOf(record.delegateeId)?.name ?? null) : null,
+    description: record.description || null,
+    fileId: record.fileId ?? null,
+    file: fileRef(record.fileId ?? null, record.fileId ? null : record.attachmentName),
+    finalSettlementId: record.finalSettlementId,
+    finalSettlementStatus: settlement
+      ? settlement.status === 'completed'
+        ? 'closed'
+        : 'pending'
+      : null,
+    clearanceId: record.clearanceId,
     clearanceStatus: form?.status ?? null,
+    rehireJoiningDate: record.rehire?.joiningDate ?? null,
+    answers: Object.entries(record.checklist).flatMap(([fieldId, value]) => {
+      const field = fieldsById.get(fieldId)
+      if (!field || answerText(value) === null) return []
+      return [
+        {
+          checklistFieldId: fieldId,
+          fieldName: field.name,
+          fieldType: field.fieldType,
+          checklistId: field.offboardingChecklistId,
+          checklistName: field.checklistName,
+          answer: answerText(value),
+        },
+      ]
+    }),
+    waitingFor: waitingFor(record),
   }
 }
 
-/** Ticking Final Settlement makes (or keeps up to date) the person's Payroll Final Settlement. */
-function syncSettlement(record: EndOfEmployment): EndOfEmployment {
+/** Ticking Final Settlement makes (or keeps up to date) the person's pending Payroll settlement. */
+function syncSettlement(record: StoredEndOfEmployment): StoredEndOfEmployment {
   const current = record.finalSettlementId
     ? finalSettlements.find(record.finalSettlementId)
     : undefined
@@ -181,7 +227,7 @@ function syncSettlement(record: EndOfEmployment): EndOfEmployment {
     employeeId: record.employeeId,
     reason: record.reason,
     noticePeriod: record.noticePeriod,
-    lastWorkingDate: record.lastWorkingDate ?? record.createdAt.slice(0, 10),
+    lastWorkingDate: lastDay(record),
     finalSettlement: true,
     attachmentName: record.attachmentName,
     description: record.description,
@@ -209,173 +255,145 @@ function syncSettlement(record: EndOfEmployment): EndOfEmployment {
   return { ...record, finalSettlementId: id }
 }
 
-/** Unticking Asset Clearance drops a form that HR has not approved. */
-function syncClearance(record: EndOfEmployment): EndOfEmployment {
-  if (record.assetClearance || !record.clearanceId) return record
-  const form = clearances.find(record.clearanceId)
-  if (form?.status === 'approved') return record
-  if (form) clearances.remove(form.id)
-  return { ...record, clearanceId: null }
-}
+const recordSchema = z.object({
+  employeeId: idSchema('Employee not found.'),
+  reason: z.enum(EOE_REASONS, {
+    error: 'Reason must be resignation, termination, retirement or other.',
+  }),
+  serveNotice: z.boolean().default(false),
+  noticePeriodDays: z.number().int().min(0, 'Notice period cannot be negative.').nullish(),
+  lastWorkingDate: day.nullish(),
+  needsFinalSettlement: z.boolean().default(false),
+  needsAssetClearance: z.boolean().default(false),
+  assetClearByDate: day.nullish(),
+  replacementId: optionalId,
+  delegateeId: optionalId,
+  description: optionalText(4000),
+  fileId: fileIdSchema,
+  rowVersion: z.string().nullish(),
+})
+type RecordBody = z.infer<typeof recordSchema>
 
-function checklistProblem(values: Record<string, ChecklistValue>) {
-  for (const field of activeChecklistFields()) {
-    const value = values[field.id]
-    const key = `checklist.${field.id}`
-    if (missing(value)) {
-      if (field.required) return invalid(`Enter ${field.name}`, { [key]: `Enter ${field.name}` })
-      continue
+function recordProblem(input: RecordBody, current?: StoredEndOfEmployment) {
+  if (!personOf(input.employeeId)) {
+    return invalid('Employee not found.', { employeeId: 'Employee not found.' })
+  }
+  if (current && current.employeeId !== input.employeeId) {
+    const message = 'The employee of an end of employment cannot be changed.'
+    return invalid(message, { employeeId: message })
+  }
+  if (input.serveNotice && !input.lastWorkingDate) {
+    const message = 'Last working date is required with a notice period.'
+    return invalid(message, { lastWorkingDate: message })
+  }
+  if (!current) {
+    if (!isActive(input.employeeId)) {
+      return conflict('This employee has already left.', 'EMPLOYEE_LEFT', 'employeeId')
     }
-    if (field.type === 'number') {
-      const number = Number(value)
-      if (!Number.isFinite(number))
-        return invalid(`${field.name} must be a number`, { [key]: 'Enter a number' })
-      if (field.min !== null && number < field.min) {
-        return invalid(`${field.name} is at least ${String(field.min)}`, {
-          [key]: `At least ${String(field.min)}`,
-        })
-      }
-      if (field.max !== null && number > field.max) {
-        return invalid(`${field.name} is at most ${String(field.max)}`, {
-          [key]: `At most ${String(field.max)}`,
-        })
-      }
+    const open = endOfEmployments
+      .all()
+      .some((item) => item.employeeId === input.employeeId && item.status === 'pending')
+    if (open) {
+      return conflict(
+        'This employee already has a pending end of employment.',
+        'END_OF_EMPLOYMENT_OPEN',
+        'employeeId',
+      )
     }
-    if (field.type === 'string') {
-      const length = String(value).length
-      if (field.min !== null && length < field.min) {
-        return invalid(`${field.name} needs at least ${String(field.min)} characters`, {
-          [key]: `At least ${String(field.min)} characters`,
-        })
-      }
-      if (field.max !== null && length > field.max) {
-        return invalid(`${field.name} takes at most ${String(field.max)} characters`, {
-          [key]: `At most ${String(field.max)} characters`,
-        })
-      }
-    }
-    if (field.type === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
-      return invalid(`Choose ${field.name}`, { [key]: 'Choose a date' })
+  }
+  for (const key of ['replacementId', 'delegateeId'] as const) {
+    const id = input[key]
+    if (id && (id === input.employeeId || !personOf(id) || !isActive(id))) {
+      const message = 'Choose another employee who is still working here.'
+      return invalid(message, { [key]: message })
     }
   }
   return null
 }
 
-const recordSchema = z
-  .object({
-    employeeId,
-    reason: z.enum(EOE_REASONS, { error: 'Choose the reason' }),
-    noticePeriod: z.boolean(),
-    lastWorkingDate: day.nullable(),
-    finalSettlement: z.boolean(),
-    assetClearance: z.boolean(),
-    attachmentName: z.string().max(200).nullable(),
-    description: z.string().trim().max(1000, 'Keep it under 1000 characters'),
-    delegateeId: z.string().nullable(),
-    checklist: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
-  })
-  .refine((value) => !value.noticePeriod || value.lastWorkingDate !== null, {
-    message: 'Choose the last working date',
-    path: ['lastWorkingDate'],
-  })
-  .refine((value) => value.delegateeId !== value.employeeId, {
-    message: 'Choose someone else as the delegatee',
-    path: ['delegateeId'],
-  })
-
-function recordProblem(input: EndOfEmploymentInput, id?: string) {
-  const open = endOfEmployments
-    .all()
-    .find(
-      (item) => item.id !== id && item.employeeId === input.employeeId && item.status === 'pending',
-    )
-  if (open) {
-    const message = `${nameOf(input.employeeId)} already has an end of employment record pending.`
-    return conflict(message, 'DUPLICATE', { employeeId: message })
-  }
-  if (!id && !isActive(input.employeeId)) {
-    const message = `${nameOf(input.employeeId)} no longer works here.`
-    return invalid(message, { employeeId: message })
-  }
-  if (input.delegateeId && !findEmployee(input.delegateeId)) {
-    return invalid('Choose the delegatee', { delegateeId: 'Choose the delegatee' })
-  }
-  return checklistProblem(input.checklist)
-}
-
-function create(input: EndOfEmploymentInput): EndOfEmployment {
-  const record: EndOfEmployment = {
-    id: createId('eoe'),
-    ...input,
-    lastWorkingDate: input.noticePeriod ? input.lastWorkingDate : today(),
-    status: 'pending',
-    createdAt: now(),
-    completedAt: null,
-    finalSettlementId: null,
-    clearanceId: null,
-    rehire: null,
-  }
-  const synced = syncSettlement(record)
-  endOfEmployments.insert(synced)
-  return refreshed(synced)
-}
-
-const importSchema = z.object({
-  rows: z
-    .array(
-      z.object({
-        employeeCode: z.string(),
-        reason: z.string(),
-        lastWorkingDate: z.string(),
-        noticePeriod: z.boolean(),
-        finalSettlement: z.boolean(),
-        assetClearance: z.boolean(),
-      }),
-    )
-    .min(1, 'The file has no rows')
-    .max(2000),
+const toStored = (input: RecordBody) => ({
+  reason: input.reason,
+  noticePeriod: input.serveNotice,
+  noticePeriodDays: input.serveNotice ? (input.noticePeriodDays ?? null) : null,
+  finalSettlement: input.needsFinalSettlement,
+  assetClearance: input.needsAssetClearance,
+  assetClearByDate: input.needsAssetClearance ? (input.assetClearByDate ?? null) : null,
+  replacementId: input.replacementId,
+  delegateeId: input.delegateeId,
+  description: input.description ?? '',
+  fileId: input.fileId,
 })
 
-const recordHandlers = [
-  http.get(base('/lookups'), async ({ request }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    return ok({
-      employees: DIRECTORY.map((employee) => ({
-        ...employeeRef(employee.id),
-        status: isActive(employee.id) ? ('active' as const) : ('inactive' as const),
-        branchId: employee.branchId,
-        locationId: employee.branchId
-          ? (branches.find(employee.branchId)?.locationId ?? null)
-          : null,
-      })),
-      departments: [...new Set(DIRECTORY.map((employee) => employee.department))].sort(),
-      designations: [...new Set(DIRECTORY.map((employee) => employee.jobTitle))].sort(),
-      branches: branches.all().map((branch) => ({ id: branch.id, name: branch.name })),
-      locations: locations.all().map((location) => ({ id: location.id, name: location.name })),
-      checklistFields: activeChecklistFields(),
+const answersSchema = z.object({
+  answers: z.array(
+    z.object({
+      checklistFieldId: idSchema('Choose the field'),
+      answer: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+    }),
+  ),
+  rowVersion: z.string().nullish(),
+})
+
+/** The backend's answer checks: active field, valid for its type, within its range. */
+function answerProblem(fieldId: string, value: ChecklistAnswerValue) {
+  const field = activeChecklistFields().find((item) => item.id === fieldId)
+  const key = `answers.${fieldId}`
+  if (!field) {
+    return invalid('Answers are not valid.', {
+      [key]: 'This field is not on an active off-boarding checklist.',
     })
-  }),
-  http.get(base('/employees/:id/card'), async ({ request, params }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const id = String(params.id)
-    if (!findEmployee(id)) return notFound('employee')
-    return ok(cardOf(id))
-  }),
+  }
+  if (missing(value)) return null
+  const text = String(value)
+  const bad = () =>
+    invalid('Answers are not valid.', { [key]: `This answer is not a valid ${field.fieldType}.` })
+  if (field.fieldType === 'number') {
+    const number = Number(text)
+    if (!Number.isFinite(number)) return bad()
+    if (
+      (field.minValue !== null && number < field.minValue) ||
+      (field.maxValue !== null && number > field.maxValue)
+    ) {
+      return invalid('Answers are not valid.', {
+        [key]: `The value must be between ${field.minValue === null ? 'any' : String(field.minValue)} and ${field.maxValue === null ? 'any' : String(field.maxValue)}.`,
+      })
+    }
+  }
+  if (field.fieldType === 'string') {
+    if (
+      (field.minLength !== null && text.length < field.minLength) ||
+      (field.maxLength !== null && text.length > field.maxLength)
+    ) {
+      return invalid('Answers are not valid.', {
+        [key]: `The text must be ${String(field.minLength ?? 0)} to ${field.maxLength === null ? 'any' : String(field.maxLength)} characters long.`,
+      })
+    }
+  }
+  if (field.fieldType === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(text)) return bad()
+  if (field.fieldType === 'boolean' && text !== 'true' && text !== 'false') return bad()
+  return null
+}
+
+const completedRefusal = () =>
+  conflict(
+    'A completed end of employment cannot be changed.',
+    'END_OF_EMPLOYMENT_COMPLETED',
+    'status',
+  )
+
+const recordHandlers = [
   http.get(base('/end-of-employment'), async ({ request }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const url = new URL(request.url)
-    const scope = param(url, 'scope') ?? 'all'
     const wanted = {
-      locationId: param(url, 'locationId'),
-      branchId: param(url, 'branchId'),
-      department: param(url, 'department'),
-      employeeId: param(url, 'employeeId'),
-      designation: param(url, 'designation'),
       status: param(url, 'status'),
-      noticePeriod: param(url, 'noticePeriod'),
+      employeeId: param(url, 'employeeId'),
+      departmentId: param(url, 'departmentId'),
+      branchId: param(url, 'branchId'),
+      locationId: param(url, 'locationId'),
+      designationId: param(url, 'designationId'),
+      serveNotice: param(url, 'serveNotice'),
       from: param(url, 'from'),
       to: param(url, 'to'),
     }
@@ -384,30 +402,39 @@ const recordHandlers = [
       .map(refreshed)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .filter((record) => {
-        const employee = findEmployee(record.employeeId)
-        const branch = employee?.branchId ? branches.find(employee.branchId) : undefined
+        const person = personOf(record.employeeId)
         const row = rowOf(record)
+        const designation = wanted.designationId
+          ? (jobTitles.find(wanted.designationId)?.name ?? null)
+          : null
         return (
-          (scope === 'all' || record.status === scope) &&
+          matches(url, row.employeeName, row.employeeCode) &&
           (!wanted.status || record.status === wanted.status) &&
           (!wanted.employeeId || record.employeeId === wanted.employeeId) &&
-          (!wanted.branchId || employee?.branchId === wanted.branchId) &&
-          (!wanted.locationId || branch?.locationId === wanted.locationId) &&
-          (!wanted.department || row.department === wanted.department) &&
-          (!wanted.designation || row.designation === wanted.designation) &&
-          (!wanted.noticePeriod || (wanted.noticePeriod === 'yes') === record.noticePeriod) &&
-          (!wanted.from || row.date >= wanted.from) &&
-          (!wanted.to || row.date <= wanted.to)
+          (!wanted.branchId || person?.branchId === wanted.branchId) &&
+          (!wanted.locationId || person?.locationId === wanted.locationId) &&
+          (!wanted.departmentId || sameUnit(wanted.departmentId, row.departmentName)) &&
+          (!wanted.designationId ||
+            designation === row.designationName ||
+            sameUnit(wanted.designationId, row.designationName)) &&
+          (!wanted.serveNotice || String(record.noticePeriod) === wanted.serveNotice) &&
+          (!wanted.from || row.lastWorkingDate >= wanted.from) &&
+          (!wanted.to || row.lastWorkingDate <= wanted.to)
         )
       })
       .map(rowOf)
     return page(url, list)
   }),
+  http.get(base('/end-of-employment/checklist-fields'), async ({ request }) => {
+    const unauthorized = await authed(request)
+    if (unauthorized) return unauthorized
+    return ok<ActiveChecklistField[]>(activeChecklistFields())
+  }),
   http.get(base('/end-of-employment/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const record = endOfEmployments.find(String(params.id))
-    return record ? ok(detailOf(refreshed(record))) : notFound('end of employment record')
+    return record ? ok(detailOf(refreshed(record))) : notFound('End of employment')
   }),
   http.post(base('/end-of-employment'), async ({ request }) => {
     const unauthorized = await authed(request)
@@ -416,118 +443,165 @@ const recordHandlers = [
     if (!parsed.success) return rejected(parsed.error)
     const problem = recordProblem(parsed.data)
     if (problem) return problem
-    return ok(detailOf(create(parsed.data)))
+    const input = parsed.data
+    const record: StoredEndOfEmployment = {
+      id: createId('eoe'),
+      employeeId: input.employeeId,
+      ...toStored(input),
+      lastWorkingDate: input.serveNotice ? (input.lastWorkingDate ?? today()) : today(),
+      attachmentName: null,
+      checklist: {},
+      status: 'pending',
+      createdAt: now(),
+      completedAt: null,
+      finalSettlementId: null,
+      clearanceId: null,
+      rehire: null,
+      resignationRequestId: null,
+      updatedAt: null,
+      rowVersion: nextVersion(),
+    }
+    const synced = syncSettlement(record)
+    endOfEmployments.insert(synced)
+    return created(detailOf(refreshed(synced)))
   }),
   http.put(base('/end-of-employment/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const existing = endOfEmployments.find(String(params.id))
-    if (!existing) return notFound('end of employment record')
-    if (existing.status === 'completed') {
-      return conflict('A completed end of employment record cannot be changed.')
-    }
+    if (!existing) return notFound('End of employment')
     const parsed = await readBody(request, recordSchema)
     if (!parsed.success) return rejected(parsed.error)
-    const input = { ...parsed.data, employeeId: existing.employeeId }
-    const problem = recordProblem(input, existing.id)
+    const old = staleRecord(existing, parsed.data.rowVersion)
+    if (old) return old
+    if (existing.status === 'completed') return completedRefusal()
+    const problem = recordProblem(parsed.data, existing)
     if (problem) return problem
-    const next = syncClearance(
-      syncSettlement({
-        ...existing,
-        ...input,
-        lastWorkingDate: input.noticePeriod
-          ? input.lastWorkingDate
-          : existing.createdAt.slice(0, 10),
-      }),
-    )
+    const settlement = existing.finalSettlementId
+      ? finalSettlements.find(existing.finalSettlementId)
+      : undefined
+    if (!parsed.data.needsFinalSettlement && settlement?.status === 'completed') {
+      return conflict(
+        'Payroll has started the final settlement; it cannot be dropped.',
+        'CONFLICT',
+        'needsFinalSettlement',
+      )
+    }
+    const next = syncSettlement({
+      ...existing,
+      ...toStored(parsed.data),
+      lastWorkingDate: parsed.data.serveNotice
+        ? (parsed.data.lastWorkingDate ?? lastDay(existing))
+        : existing.createdAt.slice(0, 10),
+      updatedAt: now(),
+      rowVersion: nextVersion(),
+    })
     endOfEmployments.update(existing.id, next)
     return ok(detailOf(refreshed(next)))
+  }),
+  http.put(base('/end-of-employment/:id/checklist'), async ({ request, params }) => {
+    const unauthorized = await authed(request)
+    if (unauthorized) return unauthorized
+    const existing = endOfEmployments.find(String(params.id))
+    if (!existing) return notFound('End of employment')
+    const parsed = await readBody(request, answersSchema)
+    if (!parsed.success) return rejected(parsed.error)
+    const old = staleRecord(existing, parsed.data.rowVersion)
+    if (old) return old
+    if (existing.status === 'completed') return completedRefusal()
+    const checklist = { ...existing.checklist }
+    for (const { checklistFieldId, answer = null } of parsed.data.answers) {
+      const problem = answerProblem(checklistFieldId, answer)
+      if (problem) return problem
+      checklist[checklistFieldId] = missing(answer) ? null : answer
+    }
+    const next = { ...existing, checklist, updatedAt: now(), rowVersion: nextVersion() }
+    endOfEmployments.update(existing.id, next)
+    return ok(detailOf(refreshed(next)))
+  }),
+  http.patch(base('/end-of-employment/:id/complete'), async ({ request, params }) => {
+    const unauthorized = await authed(request)
+    if (unauthorized) return unauthorized
+    const existing = endOfEmployments.find(String(params.id))
+    if (!existing) return notFound('End of employment')
+    const parsed = await readBody(request, z.object({ rowVersion: z.string().nullish() }))
+    if (!parsed.success) return rejected(parsed.error)
+    const old = staleRecord(existing, parsed.data.rowVersion)
+    if (old) return old
+    if (existing.status === 'completed') {
+      return conflict(
+        'This end of employment is already completed.',
+        'END_OF_EMPLOYMENT_COMPLETED',
+        'status',
+      )
+    }
+    const waiting = waitingFor(existing)
+    if (waiting.length > 0) {
+      return conflict(
+        `Waiting for: ${waiting.map((item) => item.label).join(', ')}.`,
+        'END_OF_EMPLOYMENT_WAITING',
+        'status',
+      )
+    }
+    return ok(detailOf(refreshed(existing)))
+  }),
+  http.patch(base('/end-of-employment/:id/rehire'), async ({ request, params }) => {
+    const unauthorized = await authed(request)
+    if (unauthorized) return unauthorized
+    const record = endOfEmployments.find(String(params.id))
+    if (!record) return notFound('End of employment')
+    const parsed = await readBody(
+      request,
+      z.object({ joiningDate: day, rowVersion: z.string().nullish() }),
+    )
+    if (!parsed.success) return rejected(parsed.error)
+    const old = staleRecord(record, parsed.data.rowVersion)
+    if (old) return old
+    if (record.status !== 'completed') {
+      return conflict(
+        'Only a completed end of employment can be rehired.',
+        'END_OF_EMPLOYMENT_PENDING',
+        'status',
+      )
+    }
+    if (record.rehire) {
+      return conflict('This employee has been rehired since.', 'ALREADY_REHIRED', 'employeeId')
+    }
+    if (parsed.data.joiningDate <= lastDay(record)) {
+      const message = 'The joining date must be after the last working date.'
+      return invalid(message, { joiningDate: message })
+    }
+    const next: StoredEndOfEmployment = {
+      ...record,
+      rehire: { joiningDate: parsed.data.joiningDate, at: now() },
+      updatedAt: now(),
+      rowVersion: nextVersion(),
+    }
+    endOfEmployments.update(record.id, next)
+    return ok(detailOf(next))
   }),
   http.delete(base('/end-of-employment/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const record = endOfEmployments.find(String(params.id))
-    if (!record) return notFound('end of employment record')
+    if (!record) return notFound('End of employment')
+    const old = staleRecord(record, new URL(request.url).searchParams.get('rowVersion'))
+    if (old) return old
     if (record.status === 'completed') {
-      return conflict('A completed end of employment record cannot be deleted.')
+      return conflict(
+        'A completed end of employment cannot be deleted.',
+        'END_OF_EMPLOYMENT_COMPLETED',
+        'status',
+      )
     }
-    syncClearance({ ...record, assetClearance: false })
+    const form = record.clearanceId ? clearances.find(record.clearanceId) : undefined
+    if (form?.status === 'approved') {
+      return conflict('Its asset clearance is approved. Unapprove the clearance first.')
+    }
+    if (form) clearances.update(form.id, { ...form, endOfEmploymentId: null })
     syncSettlement({ ...record, finalSettlement: false })
     endOfEmployments.remove(record.id)
-    return ok({ id: record.id })
-  }),
-  http.post(base('/end-of-employment/:id/rehire'), async ({ request, params }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const record = endOfEmployments.find(String(params.id))
-    if (!record) return notFound('end of employment record')
-    if (record.status !== 'completed') {
-      return conflict('Only someone whose end of employment is completed can be rehired.')
-    }
-    if (record.rehire) return conflict(`${nameOf(record.employeeId)} has been rehired already.`)
-    const parsed = await readBody(request, z.object({ joiningDate: day }))
-    if (!parsed.success) return rejected(parsed.error)
-    const last = record.lastWorkingDate ?? record.createdAt.slice(0, 10)
-    if (differenceInCalendarDays(parseISO(parsed.data.joiningDate), parseISO(last)) <= 0) {
-      const message = 'The joining date must be after the last working date'
-      return invalid(message, { joiningDate: message })
-    }
-    const next = { ...record, rehire: { joiningDate: parsed.data.joiningDate, at: now() } }
-    endOfEmployments.update(record.id, next)
-    return ok(detailOf(next))
-  }),
-  http.post(base('/end-of-employment/import'), async ({ request }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(request, importSchema)
-    if (!parsed.success) return rejected(parsed.error)
-    const errors: string[] = []
-    let created = 0
-    parsed.data.rows.forEach((row, index) => {
-      const line = `Line ${String(index + 2)}`
-      const employee = DIRECTORY.find(
-        (person) =>
-          employeeRef(person.id).code.toLowerCase() === row.employeeCode.trim().toLowerCase(),
-      )
-      const reason = EOE_REASONS.find((item) => item === row.reason.trim().toLowerCase())
-      const date = row.lastWorkingDate.trim()
-      if (!employee) {
-        errors.push(`${line}: no employee with code ${row.employeeCode}`)
-        return
-      }
-      if (!reason) {
-        errors.push(`${line}: the reason must be one of ${EOE_REASONS.join(', ')}`)
-        return
-      }
-      if (row.noticePeriod && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        errors.push(`${line}: the last working date must be yyyy-mm-dd`)
-        return
-      }
-      const input: EndOfEmploymentInput = {
-        employeeId: employee.id,
-        reason,
-        noticePeriod: row.noticePeriod,
-        lastWorkingDate: row.noticePeriod ? date : null,
-        finalSettlement: row.finalSettlement,
-        assetClearance: row.assetClearance,
-        attachmentName: null,
-        description: '',
-        delegateeId: null,
-        checklist: {},
-      }
-      const problem = endOfEmployments
-        .all()
-        .some((item) => item.employeeId === employee.id && item.status === 'pending')
-      if (problem) {
-        errors.push(`${line}: ${employee.name} already has a record pending`)
-      } else if (!isActive(employee.id)) {
-        errors.push(`${line}: ${employee.name} no longer works here`)
-      } else {
-        create(input)
-        created += 1
-      }
-    })
-    return ok({ created, errors })
+    return noContent()
   }),
 ]
 
@@ -535,104 +609,171 @@ const recordHandlers = [
 
 const fieldSchema = z
   .object({
-    id: z.string().optional(),
-    name: z.string().trim().min(1, 'Enter the name').max(60, 'Keep it under 60 characters'),
-    type: z.enum(CHECKLIST_FIELD_TYPES, { error: 'Choose the type' }),
-    required: z.boolean(),
-    min: z.number().nullable(),
-    max: z.number().nullable(),
+    id: optionalId,
+    name: z.string().trim().min(1, 'Enter the name').max(200),
+    fieldType: z.enum(CHECKLIST_FIELD_TYPES, { error: 'Choose the type' }),
+    isRequired: z.boolean().default(false),
+    minValue: z.number().nullish(),
+    maxValue: z.number().nullish(),
+    minLength: z.number().int().min(0).nullish(),
+    maxLength: z.number().int().min(0).nullish(),
   })
-  .refine((value) => value.min === null || value.max === null || value.min <= value.max, {
-    message: 'Min cannot be more than Max',
-    path: ['max'],
-  })
+  .refine(
+    (value) =>
+      (value.minValue ?? -Infinity) <= (value.maxValue ?? Infinity) &&
+      (value.minLength ?? 0) <= (value.maxLength ?? Infinity),
+    { message: 'Fields are not valid.', path: ['fields'] },
+  )
 
 const checklistSchema = z
   .object({
-    name: z.string().trim().min(1, 'Enter the name').max(80, 'Keep it under 80 characters'),
-    active: z.boolean(),
-    description: z.string().trim().max(500, 'Keep it under 500 characters'),
-    fields: z.array(fieldSchema).max(50),
+    name: z.string().trim().min(1, 'Checklist name is required.').max(200),
+    description: optionalText(4000),
+    isActive: z.boolean().default(true),
+    fields: z.array(fieldSchema).max(100).default([]),
+    rowVersion: z.string().nullish(),
   })
   .refine(
     (value) =>
       new Set(value.fields.map((field) => field.name.toLowerCase())).size === value.fields.length,
-    { message: 'Each field name can be used once', path: ['fields'] },
+    { message: 'Fields are not valid.', path: ['fields'] },
   )
+type ChecklistBody = z.infer<typeof checklistSchema>
 
-const toFields = (fields: z.infer<typeof checklistSchema>['fields']): ChecklistField[] =>
-  fields.map((field) => ({
-    id: field.id ?? createId('cf'),
+const toFields = (fields: ChecklistBody['fields'], existing: readonly ChecklistField[]) =>
+  fields.map((field, index): ChecklistField => ({
+    id: field.id && existing.some((item) => item.id === field.id) ? field.id : createId('cf'),
     name: field.name,
-    type: field.type,
-    required: field.required,
-    // Only numbers and strings have conditions.
-    min: field.type === 'number' || field.type === 'string' ? field.min : null,
-    max: field.type === 'number' || field.type === 'string' ? field.max : null,
+    fieldType: field.fieldType,
+    isRequired: field.isRequired,
+    // Only numbers have a value range, only strings a length range.
+    minValue: field.fieldType === 'number' ? (field.minValue ?? null) : null,
+    maxValue: field.fieldType === 'number' ? (field.maxValue ?? null) : null,
+    minLength: field.fieldType === 'string' ? (field.minLength ?? null) : null,
+    maxLength: field.fieldType === 'string' ? (field.maxLength ?? null) : null,
+    sortOrder: index,
   }))
+
+const checklistOut = (item: StoredChecklist, withFields: boolean): OffboardingChecklist => ({
+  ...item,
+  fieldCount: item.fields.length,
+  fields: withFields ? item.fields : [],
+})
 
 const nameTaken = (name: string, id?: string) =>
   checklists.all().some((item) => item.id !== id && item.name.toLowerCase() === name.toLowerCase())
 
+const DUPLICATE = 'A checklist with this name already exists.'
+
+/** A field with answers on some end of employment. */
+const answered = (fieldId: string) =>
+  endOfEmployments.all().some((record) => !missing(record.checklist[fieldId]))
+
+function staleChecklist(item: StoredChecklist, sent: string | null | undefined) {
+  if (!sent)
+    return invalid('rowVersion is required to edit a checklist.', { rowVersion: 'Required' })
+  if (sent !== item.rowVersion) {
+    return conflict('Someone else changed this checklist. Reload it and try again')
+  }
+  return null
+}
+
 const checklistHandlers = [
-  http.get(base('/checklists'), async ({ request }) => {
+  http.get(base('/settings/checklists'), async ({ request }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const url = new URL(request.url)
-    const name = (param(url, 'name') ?? '').toLowerCase()
-    const code = (param(url, 'code') ?? '').toLowerCase()
+    const active = param(url, 'isActive')
     const list = checklists
       .all()
       .filter(
-        (item) => item.name.toLowerCase().includes(name) && item.code.toLowerCase().includes(code),
+        (item) =>
+          matches(url, item.name, item.code) &&
+          (active === undefined || String(item.isActive) === active),
       )
       .sort((a, b) => a.code.localeCompare(b.code))
-    return page(url, list)
+    return page(
+      url,
+      list.map((item) => checklistOut(item, false)),
+    )
   }),
-  http.get(base('/checklists/:id'), async ({ request, params }) => {
+  http.get(base('/settings/checklists/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const item = checklists.find(String(params.id))
-    return item ? ok(item) : notFound('checklist')
+    return item ? ok(checklistOut(item, true)) : notFound('Checklist')
   }),
-  http.post(base('/checklists'), async ({ request }) => {
+  http.post(base('/settings/checklists'), async ({ request }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const parsed = await readBody(request, checklistSchema)
     if (!parsed.success) return rejected(parsed.error)
-    if (nameTaken(parsed.data.name)) {
-      return conflict('A checklist with this name already exists', 'DUPLICATE', {
-        name: 'A checklist with this name already exists',
-      })
-    }
-    const item: OffboardingChecklist = {
+    if (nameTaken(parsed.data.name)) return conflict(DUPLICATE, 'CHECKLIST_DUPLICATE', 'name')
+    const item: StoredChecklist = {
       id: createId('ecl'),
       code: nextCode(
         'ECL-',
         checklists.all().map((entry) => entry.code),
       ),
-      ...parsed.data,
-      fields: toFields(parsed.data.fields),
+      name: parsed.data.name,
+      description: parsed.data.description,
+      isActive: parsed.data.isActive,
+      fields: toFields(parsed.data.fields, []),
       createdAt: now(),
+      updatedAt: null,
+      rowVersion: nextVersion(),
     }
     checklists.insert(item)
-    return ok(item)
+    return created(checklistOut(item, true))
   }),
-  http.put(base('/checklists/:id'), async ({ request, params }) => {
+  http.put(base('/settings/checklists/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const existing = checklists.find(String(params.id))
-    if (!existing) return notFound('checklist')
+    if (!existing) return notFound('Checklist')
     const parsed = await readBody(request, checklistSchema)
     if (!parsed.success) return rejected(parsed.error)
+    const old = staleChecklist(existing, parsed.data.rowVersion)
+    if (old) return old
     if (nameTaken(parsed.data.name, existing.id)) {
-      return conflict('A checklist with this name already exists', 'DUPLICATE', {
-        name: 'A checklist with this name already exists',
-      })
+      return conflict(DUPLICATE, 'CHECKLIST_DUPLICATE', 'name')
     }
-    const item = { ...existing, ...parsed.data, fields: toFields(parsed.data.fields) }
+    const fields = toFields(parsed.data.fields, existing.fields)
+    const removed = existing.fields.filter((field) => !fields.some((item) => item.id === field.id))
+    if (removed.some((field) => answered(field.id))) {
+      return conflict(
+        'A removed field has answers on an end of employment. Keep it, or deactivate the checklist.',
+        'CHECKLIST_FIELD_IN_USE',
+        'fields',
+      )
+    }
+    const item: StoredChecklist = {
+      ...existing,
+      name: parsed.data.name,
+      description: parsed.data.description,
+      isActive: parsed.data.isActive,
+      fields,
+      updatedAt: now(),
+      rowVersion: nextVersion(),
+    }
     checklists.update(existing.id, item)
-    return ok(item)
+    return ok(checklistOut(item, true))
+  }),
+  http.delete(base('/settings/checklists/:id'), async ({ request, params }) => {
+    const unauthorized = await authed(request)
+    if (unauthorized) return unauthorized
+    const item = checklists.find(String(params.id))
+    if (!item) return notFound('Checklist')
+    const old = staleChecklist(item, new URL(request.url).searchParams.get('rowVersion'))
+    if (old) return old
+    if (item.fields.some((field) => answered(field.id))) {
+      return conflict(
+        'This checklist has answers on an end of employment. Deactivate it instead.',
+        'CHECKLIST_IN_USE',
+      )
+    }
+    checklists.remove(item.id)
+    return noContent()
   }),
 ]
 

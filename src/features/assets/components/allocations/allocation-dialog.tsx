@@ -1,17 +1,31 @@
-import { type SyntheticEvent, useId } from 'react'
-import { useController, useForm, useWatch } from 'react-hook-form'
+import { type SyntheticEvent, useId, useState } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
 import { SelectField, TextareaField, TextField } from '@/components/form'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AttachmentField, DateField, PayrollDialog, SearchSelectField } from '@/features/payroll'
+import {
+  DateField,
+  EmployeeSearchSelectField,
+  PayrollDialog,
+  SearchSelectField,
+} from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import type { FileRef } from '@/lib/files'
 import { cn } from '@/lib/utils'
 
-import { useAllocate, useAllocation, useAssetLookups } from '../../hooks/use-assets'
-import type { AllocationDetail } from '../../types/assets.types'
+import { personHint } from '../../api/lookups.api'
+import { RETURN_CONDITION_LABELS } from '../../constants'
+import {
+  useAllocate,
+  useAllocation,
+  useAssetOptions,
+  useAssetTypeOptions,
+} from '../../hooks/use-assets'
+import type { Allocation } from '../../types/assets.types'
 import { viewFieldsClass } from '../company-assets/view-fields'
+import { UploadField } from '../shared/upload-field'
 
 const schema = z.object({
   employeeId: z
@@ -23,32 +37,34 @@ const schema = z.object({
     .string()
     .nullable()
     .refine((value) => Boolean(value), { message: 'Choose the asset' }),
-  allocationDate: z.string().min(1, 'Choose the allocation date'),
-  identificationNumber: z.string(),
-  deallocationDate: z.string(),
-  attachmentName: z.string().nullable(),
-  description: z.string().trim().max(500, 'Keep it under 500 characters'),
+  allocatedOn: z.string().min(1, 'Choose the allocation date'),
+  identificationNo: z.string(),
+  deallocatedOn: z.string(),
+  returnCondition: z.string(),
+  deallocationRemarks: z.string(),
+  description: z.string().trim().max(2000, 'Keep it under 2000 characters'),
 })
 type Values = z.infer<typeof schema>
 
-const FIELDS = ['employeeId', 'assetId', 'allocationDate'] as const
+const FIELDS = ['employeeId', 'assetId', 'allocatedOn'] as const
 const DATE = 'MMMM d, yyyy'
 
-const toValues = (row: AllocationDetail | undefined): Values => ({
-  employeeId: row?.employee.id ?? null,
+const toValues = (row: Allocation | undefined): Values => ({
+  employeeId: row?.employeeId ?? null,
   assetTypeId: row?.assetTypeId ?? '',
   assetId: row?.assetId ?? null,
-  allocationDate: row?.allocationDate ?? '',
-  identificationNumber: row?.identificationNumber ?? '',
-  deallocationDate: row?.deallocationDate ?? '',
-  attachmentName: row?.attachmentName ?? null,
+  allocatedOn: row?.allocatedOn ?? '',
+  identificationNo: row?.identificationNo ?? '',
+  deallocatedOn: row?.deallocatedOn ?? '',
+  returnCondition: row?.returnCondition ? RETURN_CONDITION_LABELS[row.returnCondition] : '',
+  deallocationRemarks: row?.deallocationRemarks ?? '',
   description: row?.description ?? '',
 })
 
 /**
  * Allocate ("Asset" as drawn): Employee, Asset Type, the Asset (an available
  * one of that type), Allocation Date, Attachment and Description. View shows
- * the same fields read-only, with the Identification Number.
+ * the same fields read-only, with the Identification Number and how it came back.
  */
 export function AllocationDialog({
   id,
@@ -73,51 +89,62 @@ function AllocationForm({
   allocation,
   onClose,
 }: {
-  allocation: AllocationDetail | undefined
+  allocation: Allocation | undefined
   onClose: () => void
 }) {
   const formId = useId()
-  const lookups = useAssetLookups()
   const allocate = useAllocate()
   const readOnly = allocation !== undefined
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: toValues(allocation),
   })
-  const attachment = useController({ control: form.control, name: 'attachmentName' })
+  const [attachment, setAttachment] = useState<FileRef | null>(allocation?.file ?? null)
   const assetTypeId = useWatch({ control: form.control, name: 'assetTypeId' })
-  const data = lookups.data
-  const employees = (data?.employees ?? [])
-    .filter((person) => readOnly || person.status === 'active')
-    .map((person) => ({
-      value: person.id,
-      label: person.name,
-      hint: `${person.code} · ${person.designation}`,
-    }))
-  const types = (data?.assetTypes ?? [])
-    .filter((type) => readOnly || type.active)
-    .map((type) => ({ value: type.id, label: type.name }))
-  // Only assets of the chosen type that nobody holds (the viewed one is always listed).
-  const assets = (data?.assets ?? [])
-    .filter(
-      (asset) =>
-        asset.assetTypeId === assetTypeId &&
-        (asset.status === 'available' || asset.id === allocation?.assetId),
-    )
-    .map((asset) => ({
-      value: asset.id,
-      label: `${asset.name} (${asset.identificationNumber})`,
-      hint: asset.code,
-    }))
+  const types = useAssetTypeOptions()
+  // Only assets of the chosen type that nobody holds.
+  const free = useAssetOptions(
+    { assetTypeId, availability: 'available' },
+    !readOnly && assetTypeId !== '',
+  )
+
+  // View names the allocation's person without asking the lookup.
+  const known = allocation
+    ? [
+        {
+          value: allocation.employeeId,
+          label: allocation.employeeName ?? allocation.employeeId,
+          hint: allocation.employeeCode ?? '',
+        },
+      ]
+    : undefined
+  const typeOptions = readOnly
+    ? [{ value: allocation.assetTypeId, label: allocation.assetTypeName }]
+    : (types.data ?? [])
+        .filter((type) => type.isActive)
+        .map((type) => ({ value: type.id, label: type.name }))
+  const assets = readOnly
+    ? [
+        {
+          value: allocation.assetId,
+          label: `${allocation.assetName}${allocation.identificationNo ? ` (${allocation.identificationNo})` : ''}`,
+          hint: allocation.assetCode,
+        },
+      ]
+    : (free.data ?? []).map((asset) => ({
+        value: asset.id,
+        label: `${asset.name}${asset.identificationNo ? ` (${asset.identificationNo})` : ''}`,
+        hint: asset.code,
+      }))
 
   const submit = form.handleSubmit(async (values) => {
     try {
       await allocate.mutateAsync({
         employeeId: values.employeeId ?? '',
         assetId: values.assetId ?? '',
-        allocationDate: values.allocationDate,
-        attachmentName: values.attachmentName,
-        description: values.description,
+        allocatedOn: values.allocatedOn,
+        description: values.description.trim() || null,
+        fileId: attachment?.id ?? null,
       })
       onClose()
     } catch (error) {
@@ -149,12 +176,15 @@ function AllocationForm({
         onSubmit={(event: SyntheticEvent) => void submit(event)}
         className={cn('grid gap-5', readOnly && viewFieldsClass)}
       >
-        <SearchSelectField
+        <EmployeeSearchSelectField
           control={form.control}
           name="employeeId"
           label="Employee"
           placeholder="Select Employee"
-          options={employees}
+          filters={{ permission: 'assets.allocations.assign' }}
+          enabled={!readOnly}
+          known={known}
+          hint={personHint}
           required={!readOnly}
           disabled={readOnly}
         />
@@ -163,7 +193,7 @@ function AllocationForm({
           name="assetTypeId"
           label="Asset Type"
           placeholder="Select Asset Type"
-          options={types}
+          options={typeOptions}
           required={!readOnly}
           disabled={readOnly}
           onValueChange={() => {
@@ -182,31 +212,50 @@ function AllocationForm({
         {readOnly && (
           <TextField
             control={form.control}
-            name="identificationNumber"
+            name="identificationNo"
             label="Identification Number"
             disabled
           />
         )}
         <DateField
           control={form.control}
-          name="allocationDate"
+          name="allocatedOn"
           label="Allocation Date"
-          required
+          required={!readOnly}
           disabled={readOnly}
           display={DATE}
         />
-        {readOnly && allocation.deallocationDate && (
-          <DateField
-            control={form.control}
-            name="deallocationDate"
-            label="Deallocation Date"
-            disabled
-            display={DATE}
-          />
+        {readOnly && allocation.deallocatedOn && (
+          <>
+            <DateField
+              control={form.control}
+              name="deallocatedOn"
+              label="Deallocation Date"
+              disabled
+              display={DATE}
+            />
+            {allocation.returnCondition && (
+              <TextField
+                control={form.control}
+                name="returnCondition"
+                label="Return Condition"
+                disabled
+              />
+            )}
+            {allocation.deallocationRemarks && (
+              <TextareaField
+                control={form.control}
+                name="deallocationRemarks"
+                label="Remarks"
+                disabled
+              />
+            )}
+          </>
         )}
-        <AttachmentField
-          value={attachment.field.value}
-          onChange={attachment.field.onChange}
+        <UploadField
+          value={attachment}
+          onChange={setAttachment}
+          module="assets"
           disabled={readOnly}
         />
         <TextareaField
@@ -214,7 +263,7 @@ function AllocationForm({
           name="description"
           label="Description"
           disabled={readOnly}
-          maxLength={500}
+          maxLength={2000}
           rows={6}
         />
       </form>

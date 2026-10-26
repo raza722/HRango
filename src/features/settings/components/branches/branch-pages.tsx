@@ -1,22 +1,23 @@
-import { FormProvider, useWatch } from 'react-hook-form'
+import { type Control, FormProvider, useController, useWatch } from 'react-hook-form'
+import { useQueryClient } from '@tanstack/react-query'
 import { getRouteApi, Link, useNavigate } from '@tanstack/react-router'
 
 import { UnsavedChangesDialog } from '@/components/feedback/unsaved-changes-dialog'
-import { SelectField, TextareaField, TextField } from '@/components/form'
+import { FormField, SelectField, TextareaField, TextField } from '@/components/form'
 import type { DataTableColumn } from '@/components/layout'
+import { EmployeeSearchSelect } from '@/features/payroll'
 
-import { branchResource } from '../../api/org-resource'
+import { branchResource, locationResource } from '../../api/org-resource'
 import {
   useAreaOptions,
   useCityOptions,
-  useCompanyOptions,
   useCountryOptions,
   useLocationOptions,
-  useManagerOptions,
-  useRegionOptions,
+  useStateOptions,
 } from '../../hooks/use-lookups'
+import { useOrgPermissions } from '../../hooks/use-org-permissions'
 import { useOrgRecordForm } from '../../hooks/use-org-record-form'
-import { branchFormSchema } from '../../schemas/org-forms.schema'
+import { branchFormSchema, type BranchFormValues } from '../../schemas/org-forms.schema'
 import { DESCRIPTION_MAX_LENGTH, NAME_MAX_LENGTH, PREFIX_MAX_LENGTH } from '../../schemas/shared'
 import type { BranchRow } from '../../types/settings.types'
 import { branchMapper } from '../../utils/form-mappers'
@@ -30,32 +31,30 @@ const LIST_PATH = '/settings/control-panel/branches'
 
 const dash = (value: string | null) => (value === null || value === '' ? '—' : value)
 
-/** Settings → Control Panel → Organization → Branch (list). */
+/** Settings → Control Panel → Organization → Branch (list), of the active company. */
 export function BranchListPage() {
   const search = listRoute.useSearch()
   const navigate = listRoute.useNavigate()
-  const companies = useCompanyOptions()
+  const locations = useLocationOptions()
+  const { canEdit } = useOrgPermissions(branchResource)
 
   const columns: DataTableColumn<BranchRow>[] = [
     {
       id: 'name',
       header: 'Name',
       mobile: 'heading',
-      cell: (row) => (
-        <Link
-          to="/settings/control-panel/branches/$branchId"
-          params={{ branchId: row.id }}
-          className="text-foreground underline-offset-4 hover:underline"
-        >
-          {row.name}
-        </Link>
-      ),
-    },
-    {
-      id: 'company',
-      header: 'Company',
-      cell: (row) => row.companyName,
-      className: 'hidden @5xl:table-cell',
+      cell: (row) =>
+        canEdit ? (
+          <Link
+            to="/settings/control-panel/branches/$branchId"
+            params={{ branchId: row.id }}
+            className="text-foreground underline-offset-4 hover:underline"
+          >
+            {row.name}
+          </Link>
+        ) : (
+          row.name
+        ),
     },
     { id: 'location', header: 'Location', cell: (row) => row.locationName },
     {
@@ -71,6 +70,12 @@ export function BranchListPage() {
       className: 'hidden @4xl:table-cell',
     },
     { id: 'prefix', header: 'Prefix', cell: (row) => dash(row.employeePrefix) },
+    {
+      id: 'employees',
+      header: 'Employees',
+      cell: (row) => <span className="tabular-nums">{row.employeeCount}</span>,
+      className: 'hidden @5xl:table-cell',
+    },
   ]
 
   return (
@@ -84,15 +89,15 @@ export function BranchListPage() {
           replace: true,
         })
       }}
-      filterParams={{ companyId: search.companyId }}
+      filterParams={{ locationId: search.locationId }}
       filters={
         <FilterSelect
-          label="Filter by company"
-          allLabel="All companies"
-          options={companies.options}
-          value={search.companyId}
-          onChange={(companyId) => {
-            void navigate({ search: (prev) => ({ ...prev, companyId, page: 1 }), replace: true })
+          label="Filter by location"
+          allLabel="All locations"
+          options={locations.options}
+          value={search.locationId}
+          onChange={(locationId) => {
+            void navigate({ search: (prev) => ({ ...prev, locationId, page: 1 }), replace: true })
           }}
         />
       }
@@ -104,13 +109,15 @@ export function BranchListPage() {
           params: { branchId: row.id },
         })
       }}
+      deleteHint="A branch that still has employees cannot be deleted."
     />
   )
 }
 
-/** "Branch Create" / "Branch Edit". */
+/** "Branch Create" / "Branch Edit". The branch belongs to the active company. */
 export function BranchFormPage({ branchId }: { branchId?: string }) {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const goToList = () => navigate({ to: LIST_PATH })
   const branchForm = useOrgRecordForm({
     resource: branchResource,
@@ -119,25 +126,36 @@ export function BranchFormPage({ branchId }: { branchId?: string }) {
     mapper: branchMapper,
     onSaved: goToList,
   })
-  const { form } = branchForm
+  const { form, record } = branchForm
   const { control, setValue, getValues } = form
-  const [companyId, locationId, countryCode, regionCode] = useWatch({
+  const [locationId, countryId, stateId] = useWatch({
     control,
-    name: ['companyId', 'locationId', 'countryCode', 'regionCode'],
+    name: ['locationId', 'countryId', 'stateId'],
   })
 
-  const companies = useCompanyOptions()
-  const locations = useLocationOptions(companyId)
+  const locations = useLocationOptions()
   const areas = useAreaOptions(locationId)
-  const managers = useManagerOptions()
   const countries = useCountryOptions()
-  const regions = useRegionOptions(countryCode)
-  const cities = useCityOptions(regionCode)
+  const states = useStateOptions(countryId)
+  const cities = useCityOptions(stateId)
 
-  const reset = (...fields: ('locationId' | 'areaId' | 'regionCode' | 'cityId')[]) => {
+  const reset = (...fields: ('areaId' | 'stateId' | 'cityId')[]) => {
     fields.forEach((field) => {
       setValue(field, '', { shouldDirty: true })
     })
+  }
+
+  /** A new branch starts at its location's pin until it is placed exactly. */
+  const copyLocationPin = async (id: string) => {
+    const location = await queryClient
+      .query(locationResource.detailQuery(id))
+      .catch(() => undefined)
+    const pinLatitude = location?.latitude ?? null
+    const pinLongitude = location?.longitude ?? null
+    const { latitude, longitude } = getValues()
+    if (pinLatitude === null || pinLongitude === null || latitude || longitude) return
+    setValue('latitude', String(pinLatitude), { shouldDirty: true })
+    setValue('longitude', String(pinLongitude), { shouldDirty: true })
   }
 
   return (
@@ -153,6 +171,7 @@ export function BranchFormPage({ branchId }: { branchId?: string }) {
         isLoading={branchForm.isLoadingRecord}
         loadError={branchForm.loadError}
         onRetry={branchForm.retryLoad}
+        readOnly={branchForm.readOnly}
       >
         <TextField
           control={control}
@@ -174,33 +193,14 @@ export function BranchFormPage({ branchId }: { branchId?: string }) {
         />
         <SelectField
           control={control}
-          name="companyId"
-          label="Company"
-          required
-          placeholder="Select Company"
-          options={companies.options}
-          onValueChange={() => {
-            reset('locationId', 'areaId')
-          }}
-        />
-        <SelectField
-          control={control}
           name="locationId"
           label="Location"
           required
-          placeholder={companyId ? 'Select Location' : 'Select a company first'}
+          placeholder="Select Location"
           options={locations.options}
-          disabled={!companyId}
           onValueChange={(id) => {
             reset('areaId')
-            // A new branch starts at its location's pin until it is placed exactly.
-            const location = locations.locations.find((item) => item.id === id)
-            const pinLatitude = location?.latitude ?? null
-            const pinLongitude = location?.longitude ?? null
-            const { latitude, longitude } = getValues()
-            if (pinLatitude === null || pinLongitude === null || latitude || longitude) return
-            setValue('latitude', String(pinLatitude), { shouldDirty: true })
-            setValue('longitude', String(pinLongitude), { shouldDirty: true })
+            void copyLocationPin(id)
           }}
         />
         <SelectField
@@ -212,13 +212,15 @@ export function BranchFormPage({ branchId }: { branchId?: string }) {
           disabled={!locationId}
           clearable="No area"
         />
-        <SelectField
+        <ManagerField
           control={control}
-          name="managerId"
-          label="Manager"
-          placeholder="Select Manager"
-          options={managers.options}
-          clearable="No manager"
+          // People the user may name as manager, through the code this form needs.
+          permission={branchId ? 'organisation.branches.edit' : 'organisation.branches.create'}
+          current={
+            record?.managerId && record.managerName
+              ? { value: record.managerId, label: record.managerName }
+              : null
+          }
         />
         <TextareaField
           control={control}
@@ -229,22 +231,22 @@ export function BranchFormPage({ branchId }: { branchId?: string }) {
         />
         <SelectField
           control={control}
-          name="countryCode"
+          name="countryId"
           label="Country"
           placeholder="Select Country"
           options={countries.options}
           clearable
           onValueChange={() => {
-            reset('regionCode', 'cityId')
+            reset('stateId', 'cityId')
           }}
         />
         <SelectField
           control={control}
-          name="regionCode"
+          name="stateId"
           label="State"
-          placeholder={countryCode ? 'Select State' : 'Select a country first'}
-          options={regions.options}
-          disabled={!countryCode}
+          placeholder={countryId ? 'Select State' : 'Select a country first'}
+          options={states.options}
+          disabled={!countryId}
           clearable
           onValueChange={() => {
             reset('cityId')
@@ -254,14 +256,48 @@ export function BranchFormPage({ branchId }: { branchId?: string }) {
           control={control}
           name="cityId"
           label="City"
-          placeholder={regionCode ? 'Select City' : 'Select a state first'}
+          placeholder={stateId ? 'Select City' : 'Select a state first'}
           options={cities.options}
-          disabled={!regionCode}
+          disabled={!stateId}
           clearable
         />
         <GeoLocationFields mapLabel="Branch location on the map" disabled={branchForm.isSaving} />
       </SettingsFormCard>
       <UnsavedChangesDialog guard={branchForm.guard} />
     </FormProvider>
+  )
+}
+
+/**
+ * "Manager": anyone `GET /employees/lookup` gives through the form's permission, searched on
+ * the server as you type and paged ("Load more"); "" means no manager.
+ */
+function ManagerField({
+  control,
+  permission,
+  current,
+}: {
+  control: Control<BranchFormValues>
+  permission: string
+  current: { value: string; label: string } | null
+}) {
+  const { field, fieldState } = useController({ control, name: 'managerId' })
+  return (
+    <FormField label="Manager" error={fieldState.error?.message}>
+      {(a11y) => (
+        <EmployeeSearchSelect
+          {...a11y}
+          value={field.value || null}
+          onChange={(id) => {
+            field.onChange(id ?? '')
+          }}
+          filters={{ permission }}
+          known={current ? [current] : undefined}
+          hint={(row) => row.jobTitleName ?? row.designationName ?? row.code}
+          placeholder="Select Manager"
+          clearable
+        />
+      )}
+    </FormField>
   )
 }

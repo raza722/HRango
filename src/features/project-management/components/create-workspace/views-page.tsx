@@ -8,9 +8,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
-import { VIEW_LABELS, WORKFLOW_TEMPLATES_BY_ID } from '../../constants'
+import { VIEW_LABELS } from '../../constants'
 import type { WorkflowTemplateId, WorkspaceSetup } from '../../types/pm.types'
 import { DetailLayout } from './detail-layout'
+import { useWorkflowTemplate } from './templates-context'
 import { Toggle } from './wizard-controls'
 import { VIEW_ICONS } from './wizard-icon-maps'
 import { DotsIcon } from './wizard-icons'
@@ -33,7 +34,8 @@ export function ViewsPage({ template, setup, onSave, onDiscard, onClose }: Views
     views: [...setup.views],
     defaultView: setup.defaultView,
   }))
-  const views = listedViews([...WORKFLOW_TEMPLATES_BY_ID[template].setup.views, ...setup.views])
+  const workflow = useWorkflowTemplate(template)
+  const views = listedViews([...workflow.setup.views, ...setup.views])
 
   return (
     <DetailLayout

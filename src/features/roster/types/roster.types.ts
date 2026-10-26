@@ -1,6 +1,7 @@
 /**
- * Roster groups: a named weekly shift pattern (clock in / clock out per day,
- * some days marked as weekend) that employees are enrolled in for a period.
+ * Roster groups (`/api/roster/...`): a named weekly pattern (a time slot or a day off per
+ * weekday) that employees are enrolled in for a period. Shapes follow the backend
+ * (`backend/app/schemas/roster.py`); ids are strings, dates `yyyy-MM-dd`, times `HH:mm:ss`.
  */
 
 export const ROSTER_DAYS = [
@@ -14,97 +15,127 @@ export const ROSTER_DAYS = [
 ] as const
 export type RosterDay = (typeof ROSTER_DAYS)[number]
 
-export interface RosterDaySchedule {
-  day: RosterDay
-  /** A day off: no clock in / clock out. */
-  isWeekend: boolean
-  /** `HH:mm` (24h); `null` on a weekend day. */
-  clockIn: string | null
-  /** `HH:mm`; earlier than `clockIn` means the shift ends the next day. */
-  clockOut: string | null
+/** The API numbers weekdays 1 (Monday) … 7 (Sunday). */
+export const weekdayNumber = (day: RosterDay): number => ROSTER_DAYS.indexOf(day) + 1
+export const rosterDayOf = (weekday: number): RosterDay => ROSTER_DAYS[weekday - 1] ?? 'monday'
+
+/** One weekday of a group, with the time slot it follows (null on a day off). */
+export interface RosterGroupDay {
+  /** 1 = Monday … 7 = Sunday. */
+  weekday: number
+  isDayOff: boolean
+  timeSlotId: string | null
+  timeSlotCode: string | null
+  timeSlotName: string | null
+  /** `HH:mm:ss`. */
+  startTime: string | null
+  endTime: string | null
+  isOvernight: boolean | null
+  durationMinutes: number | null
+  workableMinutes: number | null
 }
 
-interface Timestamps {
-  createdAt: string
-  updatedAt: string
-}
-
-export interface RosterGroup extends Timestamps {
+/** `GET /roster/groups/{id}`: always seven days, Monday first. */
+export interface RosterGroupDetail {
   id: string
   title: string
+  fromDate: string
+  /** `null` = open-ended. */
+  toDate: string | null
+  description: string | null
   isActive: boolean
-  /** Default times shown above the week (used by "Apply For All"). */
-  clockIn: string | null
-  clockOut: string | null
-  /** The week follows the default times on every working day. */
-  applyToAll: boolean
-  /** Always seven entries, Monday first. */
-  days: RosterDaySchedule[]
-}
-
-/** List row: the group plus how many employees are actively enrolled. */
-export interface RosterGroupRow extends RosterGroup {
+  /** Employees enrolled now or later (not discontinued). */
   enrolledCount: number
+  /** On the list only. */
+  workingDays: number | null
+  /** On the single item only (empty on the list). */
+  days: RosterGroupDay[]
+  createdAt: string
+  updatedAt: string | null
+  rowVersion: string
 }
 
-export type RosterGroupInput = Omit<RosterGroup, 'id' | 'createdAt' | 'updatedAt'>
+/** A row of `GET /roster/groups` (same shape; `days` is empty, `workingDays` is set). */
+export type RosterGroupRow = RosterGroupDetail
+
+/** `POST` / `PUT /roster/groups`: a weekday left out of `days` is a day off. */
+export interface RosterGroupInput {
+  title: string
+  fromDate: string
+  toDate: string | null
+  description: string | null
+  isActive: boolean
+  days: { weekday: number; isDayOff: boolean; timeSlotId: string | null }[]
+  /** Edits send the version last read. */
+  rowVersion?: string
+}
 
 export const ENROLLMENT_STATUSES = ['active', 'discontinued'] as const
 export type EnrollmentStatus = (typeof ENROLLMENT_STATUSES)[number]
 
-export interface RosterEnrollment extends Timestamps {
+/** One enrolment (`EnrolmentOut`). */
+export interface RosterEnrollment {
   id: string
   rosterGroupId: string
+  rosterGroupTitle: string
   employeeId: string
+  employeeCode: string
+  employeeName: string
+  departmentName: string | null
+  designationName: string | null
+  branchName: string | null
   /** `yyyy-MM-dd`. */
   startDate: string
   /** `yyyy-MM-dd`; `null` = open-ended. */
   endDate: string | null
-  branchId: string | null
   status: EnrollmentStatus
+  createdAt: string
+  updatedAt: string | null
+  rowVersion: string
 }
 
-/** Enrollment list row with the names the API joins in. */
-export interface RosterEnrollmentRow extends RosterEnrollment {
-  employeeName: string
-  department: string
-  designation: string
-  branchName: string | null
-  locationName: string | null
-}
-
-export const ENROLLMENT_SORT_KEYS = [
-  'employeeName',
-  'department',
-  'designation',
-  'startDate',
-  'endDate',
-] as const
-export type EnrollmentSortKey = (typeof ENROLLMENT_SORT_KEYS)[number]
-
-export type SortDirection = 'asc' | 'desc'
+/** Enrolment list row: the API joins the names in already. */
+export type RosterEnrollmentRow = RosterEnrollment
 
 export interface EnrollmentListParams {
   status: EnrollmentStatus
   page: number
   pageSize: number
   search?: string
-  sort?: EnrollmentSortKey
-  order?: SortDirection
 }
 
-/** Someone who could be enrolled, with the roster they are on now (if any). */
+/** Someone who could be enrolled (`GET /employees/lookup`). */
 export interface EnrollmentCandidate {
   id: string
+  code: string
   name: string
-  department: string
-  designation: string
-  currentRoster: { id: string; title: string } | null
+  departmentName: string | null
+  designationName: string | null
+  branchName: string | null
+  status: string
 }
 
+/** `POST /roster/groups/{id}/enrolments`. */
 export interface EnrollmentInput {
   employeeIds: string[]
   startDate: string
+  /** `null` = the group's end (or open-ended). */
   endDate: string | null
-  branchId: string | null
 }
+
+/**
+ * A time slot to pick (`GET /scheduling/options/time-slots`). Lives here so Roster and
+ * Scheduling share it without importing each other both ways.
+ */
+export interface TimeSlotOption {
+  id: string
+  name: string
+  code: string | null
+  /** `HH:mm:ss`. */
+  startTime: string | null
+  endTime: string | null
+  isOvernight: boolean | null
+  isFlexible: boolean | null
+}
+
+export * from './mock-store.types'

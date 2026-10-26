@@ -13,7 +13,7 @@ const INFO: Record<SettingsTab, string> = {
   'budget-duration':
     'Budget durations are the plan years. Mark one as the current budget period; plans for it show a tick under Current Planning.',
   'position-title':
-    'Position titles name the jobs that employee positions, plans and budgets are made for.',
+    'Position titles are Organisation’s job titles, listed with how many employee positions and open positions use them. Add or rename them on Settings → Job Titles.',
   'employee-position':
     'Employee positions set where a job sits (division, station, department, group, grade) and its salary range. Add New Positions in Planning starts from them.',
 }

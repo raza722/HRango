@@ -4,16 +4,17 @@ import { toast } from 'sonner'
 
 import { DataTable, type DataTableColumn } from '@/components/layout'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import { categoryMeta } from '../../constants'
+import { BEN_CODES, categoryMeta, PLAN_STATUS } from '../../constants'
 import { useDeletePlan, useDuplicatePlan, usePlans } from '../../hooks/use-benefits'
-import type { PlanRow } from '../../types/benefits.types'
+import type { BenefitPlan } from '../../types/benefits.types'
 import { formatLongDay } from '../../utils/format'
 import { PlanCopyIcon, PlanDeleteIcon } from '../shared/benefit-icons'
 import { ruledRows, tableClass } from '../shared/benefit-styles'
 import { DeleteConfirm } from '../shared/dialogs'
-import { EmptyList, ListError } from '../shared/list-parts'
+import { Chip, EmptyList, ListError } from '../shared/list-parts'
 import { BenefitsPage } from '../shared/page-frame'
 import { AddPlanMenu } from './add-plan-menu'
 
@@ -22,7 +23,7 @@ const routeApi = getRouteApi('/_app/benefits/plans/')
 const iconButton =
   'flex size-8 items-center justify-center rounded-md outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-[#7469E8]/35 disabled:opacity-50'
 
-const columns: DataTableColumn<PlanRow>[] = [
+const columns: DataTableColumn<BenefitPlan>[] = [
   {
     id: 'category',
     header: 'Category',
@@ -30,12 +31,20 @@ const columns: DataTableColumn<PlanRow>[] = [
   },
   { id: 'name', header: 'Plan Name', mobile: 'heading', cell: (row) => row.name },
   { id: 'end', header: 'End Date', cell: (row) => formatLongDay(row.endDate) },
-  { id: 'eligible', header: 'Eligible', cell: (row) => row.eligibility },
+  {
+    id: 'carrier',
+    header: 'Carrier',
+    cell: (row) => [row.carrier, row.planType].filter(Boolean).join(' · ') || '—',
+  },
   {
     id: 'status',
     header: 'Status',
-    cell: (row) =>
-      `${String(row.enrolled)} enrolled, ${String(row.notEnrolled)} not enrolled/waived`,
+    cell: (row) => <Chip meta={PLAN_STATUS[row.status]} className="-my-1" />,
+  },
+  {
+    id: 'elections',
+    header: 'Elections',
+    cell: (row) => `${String(row.enrolled)} enrolled, ${String(row.pending)} pending`,
   },
 ]
 
@@ -49,7 +58,9 @@ export function PlansPage() {
   const list = usePlans({ year })
   const duplicate = useDuplicatePlan()
   const remove = useDeletePlan()
-  const [deleting, setDeleting] = useState<PlanRow | null>(null)
+  const canCreate = useCan(BEN_CODES.planCreate)
+  const canDelete = useCan(BEN_CODES.planDelete)
+  const [deleting, setDeleting] = useState<BenefitPlan | null>(null)
   const fail = (fallback: string) => (error: Error) => {
     toast.error(error instanceof ApiError ? error.message : fallback)
   }
@@ -62,7 +73,7 @@ export function PlansPage() {
       onYearChange={(next) => {
         void navigate({ search: { year: next } })
       }}
-      actions={<AddPlanMenu />}
+      actions={canCreate ? <AddPlanMenu /> : undefined}
     >
       {list.isError ? (
         <ListError error={list.error} onRetry={() => void list.refetch()} />
@@ -84,31 +95,39 @@ export function PlansPage() {
             </EmptyList>
           }
           rowActionsHeader="Action"
-          rowActions={(row) => (
-            <div className="-my-1 flex items-center gap-3">
-              <button
-                type="button"
-                aria-label={`Duplicate ${row.name}`}
-                disabled={duplicate.isPending}
-                onClick={() => {
-                  duplicate.mutate(row.id, { onError: fail('Could not copy the plan.') })
-                }}
-                className={cn(iconButton, 'text-[#FD9317]')}
-              >
-                <PlanCopyIcon className="h-[1.3125rem] w-[1.125rem]" />
-              </button>
-              <button
-                type="button"
-                aria-label={`Delete ${row.name}`}
-                onClick={() => {
-                  setDeleting(row)
-                }}
-                className={cn(iconButton, 'text-[#C2420B]')}
-              >
-                <PlanDeleteIcon className="h-[1.055rem] w-[0.9375rem]" />
-              </button>
-            </div>
-          )}
+          rowActions={
+            canCreate || canDelete
+              ? (row) => (
+                  <div className="-my-1 flex items-center gap-3">
+                    {canCreate && (
+                      <button
+                        type="button"
+                        aria-label={`Duplicate ${row.name}`}
+                        disabled={duplicate.isPending}
+                        onClick={() => {
+                          duplicate.mutate(row.id, { onError: fail('Could not copy the plan.') })
+                        }}
+                        className={cn(iconButton, 'text-[#FD9317]')}
+                      >
+                        <PlanCopyIcon className="h-[1.3125rem] w-[1.125rem]" />
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        type="button"
+                        aria-label={`Delete ${row.name}`}
+                        onClick={() => {
+                          setDeleting(row)
+                        }}
+                        className={cn(iconButton, 'text-[#C2420B]')}
+                      >
+                        <PlanDeleteIcon className="h-[1.055rem] w-[0.9375rem]" />
+                      </button>
+                    )}
+                  </div>
+                )
+              : undefined
+          }
         />
       )}
       <DeleteConfirm
@@ -122,7 +141,7 @@ export function PlansPage() {
         }}
         onConfirm={() => {
           if (!deleting) return
-          remove.mutate(deleting.id, {
+          remove.mutate(deleting, {
             onSuccess: () => {
               setDeleting(null)
             },

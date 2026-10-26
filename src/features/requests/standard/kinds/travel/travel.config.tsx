@@ -1,5 +1,7 @@
 import type { FilterField } from '@/features/payroll'
 
+import { typePermission } from '../../../api/backend'
+import { employeeFilterField } from '../../../components/shared/request-employee'
 import { REQUEST_STATUSES } from '../../../types/requests.types'
 import type { StandardFilterContext, StandardKindConfig } from '../../standard.types'
 import { standardColumns as col } from '../../standard-columns'
@@ -9,25 +11,22 @@ import { TravelDetail } from './travel-detail'
 import { TravelForm } from './travel-form'
 
 /**
- * The Filters popups as drawn: My Request (4179:65008) Status, Code, Next
- * Requestee, From, To; All Requests (4179:71526, 4189:52596) and Approvals
- * (4182:74488) add Location, Branch, Department and Employees; Delegates
- * (4182:76042) adds Employment Status and Delegator.
+ * The Filters popups as drawn, with what the API filters on: My Request
+ * (4179:65008) Status, Code, From, To; All Requests (4179:71526, 4189:52596)
+ * and Approvals (4182:74488) add Location, Branch, Department and Employees;
+ * Delegates (4182:76042) adds the Delegator. The drawn Next Requestee and
+ * Employment Status filters are left out: the API has no such filters.
  */
 function filterFields({
+  kind,
   tab,
   scope,
   view,
   lookups,
 }: StandardFilterContext): readonly FilterField[] {
   const extra = lookups?.extra as TravelLookups | undefined
-  const people = (lookups?.employees ?? []).map((person) => ({
-    value: person.id,
-    label: person.name,
-    hint: person.code,
-  }))
-  const names = (list: readonly string[] | undefined) =>
-    (list ?? []).map((name) => ({ value: name, label: name }))
+  const named = (list: readonly { id: string; name: string }[] | undefined) =>
+    (list ?? []).map((item) => ({ value: item.id, label: item.name }))
   const status: FilterField = {
     kind: 'select',
     key: 'status',
@@ -35,64 +34,42 @@ function filterFields({
     placeholder: 'Select Status Option',
     options: REQUEST_STATUSES.map((value) => ({ value, label: STANDARD_STATUS_META[value].label })),
   }
-  const code: FilterField = { kind: 'text', key: 'code', label: 'Code', placeholder: 'Code' }
-  const next = (label: string): FilterField => ({
-    kind: 'select',
-    key: 'nextRequesteeId',
-    label,
-    placeholder: 'Select Next Requestee',
-    options: people,
-  })
+  // The API searches the code (and the employee's name) with `q`.
+  const code: FilterField = { kind: 'text', key: 'q', label: 'Code', placeholder: 'Code' }
   const dates: FilterField[] = [
     { kind: 'date', key: 'from', label: 'From' },
     { kind: 'date', key: 'to', label: 'To' },
   ]
-  if (tab === 'request' && scope === 'my') return [status, code, next('Next Requestee'), ...dates]
+  if (tab === 'request' && scope === 'my') return [status, code, ...dates]
 
   const where: FilterField[] = [
     {
       kind: 'select',
-      key: 'location',
+      key: 'locationId',
       label: 'Location',
       placeholder: 'Select Location',
-      options: names(extra?.locations),
+      options: named(extra?.locations),
     },
     {
       kind: 'select',
-      key: 'branch',
+      key: 'branchId',
       label: 'Branch',
       placeholder: 'Select Branch',
-      options: names(extra?.branches),
+      options: named(extra?.branches),
     },
     {
       kind: 'select',
-      key: 'department',
+      key: 'departmentId',
       label: 'Department',
       placeholder: 'Select Department',
-      options: names(lookups?.departments),
+      options: named(lookups?.departments),
     },
-    {
-      kind: 'select',
-      key: 'employeeId',
-      label: 'Employees',
-      placeholder: 'Select Employee',
-      options: people,
-    },
+    employeeFilterField(typePermission(kind, 'create'), { label: 'Employees' }),
   ]
-  if (tab === 'request') return [...where, status, code, next('Next Requestee'), ...dates]
-  if (view !== 'delegates') return [...where, status, next('Request Flow'), ...dates]
+  if (tab === 'request') return [...where, status, code, ...dates]
+  if (view !== 'delegates') return [...where, status, code, ...dates]
   return [
     ...where,
-    {
-      kind: 'select',
-      key: 'employmentStatus',
-      label: 'Employment Status',
-      placeholder: 'Select Employment Status',
-      options: [
-        { value: 'active', label: 'Active' },
-        { value: 'inactive', label: 'Inactive' },
-      ],
-    },
     status,
     {
       kind: 'select',
@@ -102,10 +79,8 @@ function filterFields({
       options: (lookups?.delegators ?? []).map((person) => ({
         value: person.id,
         label: person.name,
-        hint: person.code,
       })),
     },
-    next('Next Requestee'),
     ...dates,
   ]
 }
@@ -113,8 +88,8 @@ function filterFields({
 /**
  * Travel (frames 4163:54986 … 4189:52596 in section 2697:5532): "Travel
  * Request" with My Request / All Requests, the status tabs and Approved /
- * Unapproved; Approvals with Requested and Delegates (the Consents tab is drawn
- * with no content and is left out).
+ * Unapproved; Approvals with Requested, Cancellations and Delegates (the
+ * Consents tab is drawn with no content and is left out).
  */
 export const travelConfig: StandardKindConfig<TravelPayload> = {
   kind: 'travel',
@@ -123,7 +98,8 @@ export const travelConfig: StandardKindConfig<TravelPayload> = {
   requestsTitle: 'Travel Request',
   approvalsTitle: 'Travel Request',
   scopeLabels: { my: 'My Request', all: 'All Requests' },
-  approvalViews: ['requested', 'delegates'],
+  // Cancellations: an approved request's cancellation waits there for its approver.
+  approvalViews: ['requested', 'cancellations', 'delegates'],
   statusTabs: true,
   bulk: true,
   requestColumns: () => [

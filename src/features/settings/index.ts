@@ -1,11 +1,18 @@
 // Public API of the settings feature. Import from '@/features/settings', not from deep paths.
 export {
+  citiesQueryOptions,
   companiesQueryOptions,
+  countriesQueryOptions,
+  type EmployeeLookupParams,
+  employeesQueryOptions,
   generalSettingsApi,
   generalSettingsKeys,
   generalSettingsQueryOptions,
   lookupKeys,
+  type LookupKind,
+  orgLookupQueryOptions,
   placesQueryOptions,
+  statesQueryOptions,
 } from './api/lookups.api'
 export {
   areaResource,
@@ -36,7 +43,6 @@ export {
   useSaveOrgRecord,
 } from './hooks/use-org-records'
 export {
-  companyFilteredSearchSchema,
   locationFilteredSearchSchema,
   ORG_LIST_SEARCH_DEFAULTS,
   orgListSearchSchema,

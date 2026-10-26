@@ -34,19 +34,21 @@ export function LoanAmountRow({ label, amount }: { label: string; amount: number
 /**
  * The request's fields in the View and Approve/Reject popups, in the drawn
  * order: Required Date, Required Loan & Advances Amount, Type, Category,
- * Attachment, Extension No. and Reason.
+ * Extension No. and Reason (the files follow, from the shared popup).
  */
 export function LoanAdvancesDetail({ request }: { request: StandardRequest<LoanAdvancePayload> }) {
   const { payload } = request
   return (
     <>
       <StandardReadOnlyRow label="Required Date" value={viewDay(payload.requiredDate)} />
-      <LoanAmountRow label="Required Loan & Advances Amount" amount={payload.requiredAmount} />
-      <StandardReadOnlyRow label="Loan & Advances Type" value={payload.typeName} />
-      <StandardReadOnlyRow label="Loan & Advances Category" value={payload.categoryName} />
-      <StandardReadOnlyRow label="Attachment" value={payload.attachment ?? '—'} />
-      <StandardReadOnlyRow label="Extension No." value={payload.extensionNo || '—'} />
-      <StandardReadOnlyRow label="Reason" value={payload.reason || '—'} multiline />
+      <LoanAmountRow label="Required Loan & Advances Amount" amount={payload.amountRequested} />
+      <StandardReadOnlyRow label="Loan & Advances Type" value={payload.loanTypeName ?? '—'} />
+      <StandardReadOnlyRow
+        label="Loan & Advances Category"
+        value={payload.loanCategoryName ?? '—'}
+      />
+      <StandardReadOnlyRow label="Extension No." value={payload.extensionNo ?? '—'} />
+      <StandardReadOnlyRow label="Reason" value={request.reason ?? '—'} multiline />
     </>
   )
 }

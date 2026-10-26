@@ -2,18 +2,27 @@ import { format, subDays } from 'date-fns'
 
 import type {
   AttendanceSettings,
-  AudienceCriteria,
+  AudienceTarget,
   BreakTypeRecord,
   Holiday,
   HolidayRule,
   IpRestriction,
   LocalDateTime,
+  RestDayRule,
 } from '@/features/attendance'
 
 import { createMockCollection } from '../collection'
-import type { DirectoryEmployee } from '../employees/seed'
+import { type DirectoryEmployee, findEmployee } from '../employees/seed'
+import { profileOf } from '../scheduling/seed'
 
 const stamp = (days: number) => subDays(new Date(), days).toISOString()
+
+let versionCounter = 0
+/** A new opaque rowVersion, as the API hands back after every write. */
+export function nextRowVersion(): string {
+  versionCounter += 1
+  return `0x${Date.now().toString(16).padStart(12, '0')}${versionCounter.toString(16).padStart(4, '0')}`
+}
 
 // --- people: the extra facts criteria and holiday rules match on -----------------------
 
@@ -81,9 +90,11 @@ export function defaultSettings(): AttendanceSettings {
       useCheckInOutForBreaks: true,
       shortDurationOnNonFlexible: true,
       dashboardPunch: true,
-      multiShiftPerDay: true,
+      allowMultiShift: true,
       pictureOnDashboardPunch: true,
-      minimumWorkableMinutes: null,
+      minimumWorkableMinutes: 0,
+      lateGraceMinutes: 5,
+      rowVersion: '0x0000000000000001',
     },
     scheduling: { geoFenceRequiredOnShift: true, ignoreRestDaysForLeaves: true },
   }
@@ -96,6 +107,7 @@ const breakType = (id: string, label: string, days: number): BreakTypeRecord => 
   endIdentifier: `${label} Break In`,
   createdAt: stamp(days),
   updatedAt: stamp(days),
+  rowVersion: `0x${String(days).padStart(16, '0')}`,
 })
 
 /** The list of the Break Types frame, plus Personal (used by Scheduling). */
@@ -113,81 +125,73 @@ function seedBreakTypes(): BreakTypeRecord[] {
   ]
 }
 
-export const emptyCriteria = (id: string): AudienceCriteria => ({
-  id,
-  target: 'organization',
-  departments: [],
-  locations: [],
-  designations: [],
-  grades: [],
-  religions: [],
-  jobTitles: [],
-  nationalities: [],
-  areas: [],
-  branches: [],
-  joiningFrom: null,
-  joiningTo: null,
-  employeeIds: [],
+const branchTarget = (id: string): AudienceTarget => ({
+  targetType: 'branch',
+  targetId: id,
+  targetValue: null,
 })
 
 function ip(
   number: number,
-  name: string,
-  ipv4: string,
-  extra: Partial<IpRestriction> = {},
+  extra: Partial<IpRestriction> & Pick<IpRestriction, 'ipv4'>,
 ): IpRestriction {
+  const targets = extra.targets ?? []
   return {
     id: `ipr_${number}`,
     code: `IPR-${String(number).padStart(5, '0')}`,
-    name,
-    mode: 'netmask',
-    ipv4,
     ipv6: null,
-    subnetMask: null,
+    netmask: null,
     rangeStart: null,
     rangeEnd: null,
-    count: null,
-    allEmployees: true,
-    criteria: [],
-    active: true,
+    appliesToAll: targets.length === 0,
+    isActive: true,
+    addressCount: null,
+    targetCount: targets.length,
     createdAt: stamp(60 - number),
     updatedAt: stamp(30 - number),
+    rowVersion: `0x${String(number).padStart(16, '0')}`,
     ...extra,
+    targets,
   }
 }
 
 function seedIpRestrictions(): IpRestriction[] {
   return [
-    ip(1, 'Head Office Wi-Fi', '192.168.2.38/31', { subnetMask: '255.255.255.254' }),
-    ip(2, 'Head Office LAN', '192.168.10.0/24', { subnetMask: '255.255.255.0' }),
-    ip(3, 'Johar Town Delivery Centre', '10.20.0.0/16', {
-      allEmployees: false,
-      criteria: [{ ...emptyCriteria('crit_ipr3'), branches: ['br_lhr_jt'] }],
-    }),
-    ip(4, 'Islamabad Office', '172.16.5.0/24', { subnetMask: '255.255.255.0' }),
-    ip(5, 'Karachi Showroom', '192.168.50.0/24', {
-      mode: 'range',
+    ip(1, { ipv4: '192.168.2.38/31', addressCount: 2 }),
+    ip(2, { ipv4: '192.168.10.0', netmask: '255.255.255.0', addressCount: 256 }),
+    ip(3, { ipv4: '10.20.0.0/16', addressCount: 65536, targets: [branchTarget('br_lhr_jt')] }),
+    ip(4, { ipv4: '172.16.5.0/24', addressCount: 256 }),
+    ip(5, {
+      ipv4: null,
       rangeStart: '192.168.50.10',
       rangeEnd: '192.168.50.60',
-      count: 51,
+      addressCount: 51,
     }),
-    ip(6, 'Dubai Office', '10.50.1.0/24', {
+    ip(6, {
+      ipv4: '10.50.1.0/24',
       ipv6: '2001:0db8:85a3::/64',
-      allEmployees: false,
-      criteria: [{ ...emptyCriteria('crit_ipr6'), locations: ['lc_dxb'] }],
+      addressCount: null,
+      targets: [{ targetType: 'location', targetId: 'lc_dxb', targetValue: null }],
     }),
-    ip(7, 'Remote VPN Gateway', '10.8.0.0/24', { active: false }),
+    ip(7, { ipv4: '10.8.0.0/24', addressCount: 256, isActive: false }),
   ]
 }
 
-/** Settings → Geo Fencing details of the fences Scheduling picks from. */
+/**
+ * Settings → Geo Fencing details of the fences Scheduling picks from (the name and the drawing
+ * live in Scheduling's `geoFences`). Scheduling reads `id` and `active`.
+ */
 export interface GeoFenceSettings {
   id: string
   code: string
   forShift: boolean
   allEmployees: boolean
-  criteria: AudienceCriteria[]
+  targets: AudienceTarget[]
+  joiningFromDate: string | null
+  joiningToDate: string | null
   active: boolean
+  updatedAt: string | null
+  rowVersion: string
 }
 
 function seedGeoFenceSettings(): GeoFenceSettings[] {
@@ -196,37 +200,40 @@ function seedGeoFenceSettings(): GeoFenceSettings[] {
     code: `GF-${String(number).padStart(5, '0')}`,
     forShift: true,
     allEmployees: true,
-    criteria: [],
+    targets: [],
+    joiningFromDate: null,
+    joiningToDate: null,
     active: true,
+    updatedAt: null,
+    rowVersion: `0x${String(number).padStart(16, '0')}`,
     ...extra,
   })
   return [
     fence('gf_001', 1),
     fence('gf_002', 2, { forShift: false }),
-    fence('gf_003', 3, {
-      allEmployees: false,
-      criteria: [{ ...emptyCriteria('crit_gf3'), branches: ['br_lhr_ho'] }],
-    }),
+    fence('gf_003', 3, { allEmployees: false, targets: [branchTarget('br_lhr_ho')] }),
     fence('gf_004', 4, { forShift: false }),
-    fence('gf_005', 5, {
-      allEmployees: false,
-      criteria: [{ ...emptyCriteria('crit_gf5'), branches: ['br_lhr_jt'] }],
-    }),
+    fence('gf_005', 5, { allEmployees: false, targets: [branchTarget('br_lhr_jt')] }),
     fence('gf_006', 6),
   ]
 }
 
-const rule = (id: string, name: string, extra: Partial<HolidayRule>): HolidayRule => ({
+const rule = (id: string, extra: Partial<HolidayRule>): HolidayRule => ({
   id,
-  name,
-  type: 'organization',
-  religion: null,
-  countryCode: null,
-  regionCode: null,
-  cityId: null,
+  ruleType: 'org_structure',
+  employeeId: null,
+  employeeName: null,
   locationId: null,
+  locationName: null,
   branchId: null,
-  employeeIds: [],
+  branchName: null,
+  countryId: null,
+  countryName: null,
+  stateId: null,
+  stateName: null,
+  cityId: null,
+  cityName: null,
+  religion: null,
   ...extra,
 })
 
@@ -237,7 +244,7 @@ const HOLIDAY_DAYS: { day: string; name: string; description: string; rules?: Ho
     day: '03-21',
     name: 'Nowruz',
     description: 'Persian New Year.',
-    rules: [rule('hr_nowruz', 'Parsi staff', { type: 'religion', religion: 'Parsi' })],
+    rules: [rule('hr_nowruz', { ruleType: 'religion', religion: 'Parsi' })],
   },
   { day: '03-23', name: 'Pakistan Day', description: 'Public holiday.' },
   { day: '05-01', name: 'Labour Day', description: 'Public holiday.' },
@@ -252,7 +259,15 @@ const HOLIDAY_DAYS: { day: string; name: string; description: string; rules?: Ho
     day: '12-02',
     name: 'UAE National Day',
     description: 'Public holiday in the United Arab Emirates.',
-    rules: [rule('hr_uae', 'Dubai office', { type: 'organization', locationId: 'lc_dxb' })],
+    rules: [
+      rule('hr_uae', {
+        ruleType: 'org_structure',
+        locationId: 'lc_dxb',
+        locationName: 'Dubai',
+        branchId: 'br_dxb',
+        branchName: 'Dubai Office',
+      }),
+    ],
   },
   { day: '12-25', name: 'Quaid-e-Azam Day', description: 'Public holiday; also Christmas Day.' },
 ]
@@ -262,42 +277,95 @@ function seedHolidays(): Holiday[] {
   return [year - 1, year, year + 1].flatMap((value) =>
     HOLIDAY_DAYS.map((item) => {
       const date = `${value}-${item.day}`
+      const rules = (item.rules ?? []).map((entry) => ({ ...entry, id: `${entry.id}_${value}` }))
       return {
         id: `hol_${value}_${item.day}`,
         name: item.name,
+        holidayType: rules.length > 0 ? ('local' as const) : ('public' as const),
         startDate: date,
         endDate: date,
         description: item.description,
         attendanceExempt: true,
-        rules: item.rules ?? [],
+        dayCount: 1,
+        ruleCount: rules.length,
+        rules,
         createdAt: stamp(120),
         updatedAt: stamp(120),
+        rowVersion: `0x${String(value).padStart(12, '0')}${item.day.replace('-', '')}`,
       }
     }),
   )
 }
 
+/** A rule's people as the API lists them. */
+export function ruleEmployees(ids: readonly string[]): RestDayRule['employees'] {
+  return ids.flatMap((id) => {
+    const employee = findEmployee(id)
+    return employee
+      ? [
+          {
+            employeeId: id,
+            employeeCode: profileOf(employee).code,
+            employeeName: employee.name,
+            departmentName: employee.department,
+            designationName: employee.jobTitle,
+          },
+        ]
+      : []
+  })
+}
+
+/** One seeded rule: two people rest on Saturdays this month. */
+function seedRestDayRules(): RestDayRule[] {
+  const now = new Date()
+  const first = format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd')
+  const last = format(new Date(now.getFullYear(), now.getMonth() + 1, 0), 'yyyy-MM-dd')
+  const employees = ruleEmployees(['em_kamal', 'em_rabia'])
+  return [
+    {
+      id: 'rdr_1',
+      fromDate: first,
+      toDate: last,
+      weekdays: [6],
+      repeatEveryWeeks: 0,
+      step: 1,
+      isPayable: true,
+      employeeCount: employees.length,
+      restDayCount: employees.length * 4,
+      employees,
+      createdAt: stamp(10),
+      updatedAt: null,
+      rowVersion: '0x0000000000000101',
+    },
+  ]
+}
+
 // --- collections -------------------------------------------------------------------------------
 
+// Keys end in "-api": records saved in the old (pre-API) shape are not read back.
 export const settingsStore = createMockCollection<AttendanceSettings & { id: string }>({
-  storageKey: 'hrms-mock-attendance-settings',
+  storageKey: 'hrms-mock-attendance-settings-api',
   seed: () => [{ id: 'settings', ...defaultSettings() }],
 })
 export const breakTypes = createMockCollection<BreakTypeRecord>({
-  storageKey: 'hrms-mock-break-types',
+  storageKey: 'hrms-mock-break-types-api',
   seed: seedBreakTypes,
 })
 export const ipRestrictions = createMockCollection<IpRestriction>({
-  storageKey: 'hrms-mock-ip-restrictions',
+  storageKey: 'hrms-mock-ip-restrictions-api',
   seed: seedIpRestrictions,
 })
 export const geoFenceSettings = createMockCollection<GeoFenceSettings>({
-  storageKey: 'hrms-mock-geo-fence-settings',
+  storageKey: 'hrms-mock-geo-fence-settings-api',
   seed: seedGeoFenceSettings,
 })
 export const holidays = createMockCollection<Holiday>({
-  storageKey: 'hrms-mock-holidays',
+  storageKey: 'hrms-mock-holidays-api',
   seed: seedHolidays,
+})
+export const restDayRules = createMockCollection<RestDayRule>({
+  storageKey: 'hrms-mock-rest-day-rules-api',
+  seed: seedRestDayRules,
 })
 export const machineSync = createMockCollection<MachineSync>({
   storageKey: 'hrms-mock-machine-sync',
@@ -315,5 +383,6 @@ export function resetAttendanceSettingsDb(): void {
   ipRestrictions.reset()
   geoFenceSettings.reset()
   holidays.reset()
+  restDayRules.reset()
   machineSync.reset()
 }

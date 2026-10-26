@@ -1,25 +1,11 @@
 import { endOfMonth, format, startOfMonth } from 'date-fns'
 
 import {
-  type AttendanceBreak,
-  type DaysOverview,
-  type DayStatus,
   formatLocal,
-  GRACE_MINUTES,
   type Holiday,
-  type LocalDateTime,
   minutesBetween,
-  OFF_STATUSES,
-  OVERTIME_THRESHOLD_MINUTES,
-  PRESENT_STATUSES,
-  type PunchLog,
-  type PunchSource,
-  type PunchStatus,
-  type PunchType,
   shiftLocal,
-  type TimeSheetDay,
   toLocal,
-  WARNING_LIMIT,
 } from '@/features/attendance'
 import type { RosterGroup } from '@/features/roster'
 import {
@@ -36,8 +22,31 @@ import { rosterGroups } from '../roster/handlers'
 import { scheduleEntries } from '../scheduling/handlers'
 import { CURRENT_EMPLOYEE_ID } from '../scheduling/seed'
 import { holidayFor } from './audience'
-import { attendanceEdits, attendancePunches, type DayEdit, dayId, type StoredPunch } from './db'
+import {
+  attendanceEdits,
+  attendanceIgnored,
+  attendancePunches,
+  type DayEdit,
+  dayId,
+  type StoredPunch,
+} from './db'
 import { currentSettings, holidays, machineFor, machineSync } from './settings-db'
+import {
+  type AttendanceBreak,
+  type DaysOverview,
+  type DayStatus,
+  GRACE_MINUTES,
+  type LocalDateTime,
+  OFF_STATUSES,
+  OVERTIME_THRESHOLD_MINUTES,
+  PRESENT_STATUSES,
+  type PunchLog,
+  type PunchSource,
+  type PunchStatus,
+  type PunchType,
+  type TimeSheetDay,
+  WARNING_LIMIT,
+} from './types'
 
 /**
  * Builds attendance from the Scheduling data: each scheduled shift gets
@@ -60,6 +69,8 @@ export interface Snapshot {
   machineSync: Map<string, LocalDateTime>
   holidays: Holiday[]
   minimumWorkableMinutes: number | null
+  /** Punches HR ignored: still in the log, not counted. */
+  ignored: Set<string>
 }
 
 export function takeSnapshot(now = new Date()): Snapshot {
@@ -81,6 +92,7 @@ export function takeSnapshot(now = new Date()): Snapshot {
     machineSync: new Map(machineSync.all().map((machine) => [machine.id, machine.lastSyncedAt])),
     holidays: holidays.all(),
     minimumWorkableMinutes: currentSettings().basic.minimumWorkableMinutes,
+    ignored: new Set(attendanceIgnored.all().map((item) => item.id)),
   }
 }
 
@@ -289,9 +301,10 @@ export function computeDay(snap: Snapshot, employeeId: string, date: string): Co
     machineId: punch.machineId ?? null,
   }))
   const machineLogs = [...(generated?.punches ?? []), ...stored]
-  const firstIn = machineLogs.filter((log) => log.type === 'check-in').sort(byTime)[0]?.at ?? null
+  const counted = machineLogs.filter((log) => !snap.ignored.has(log.id))
+  const firstIn = counted.filter((log) => log.type === 'check-in').sort(byTime)[0]?.at ?? null
   const lastOut =
-    machineLogs
+    counted
       .filter((log) => log.type === 'check-out')
       .sort(byTime)
       .at(-1)?.at ?? null

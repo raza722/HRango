@@ -7,7 +7,7 @@ import { FormField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ApiError } from '@/lib/api-error'
-import { isMockApi } from '@/lib/env'
+import { env, isMockApi } from '@/lib/env'
 
 import { DEMO_ACCOUNT } from '../constants'
 import { useLogin } from '../hooks/use-auth'
@@ -96,10 +96,11 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
         Sign in
       </Button>
 
-      {isMockApi && (
+      {/* Development builds against the local API have the same demo account (backend dev database). */}
+      {(isMockApi || env.DEV) && (
         <div className="rounded-md border border-dashed border-input px-4 py-3 text-sm text-muted-foreground">
           <p>
-            Mock API is on. Demo account:{' '}
+            {isMockApi ? 'Mock API is on.' : 'Development API.'} Demo account:{' '}
             <span className="font-medium break-all text-field-foreground">
               {DEMO_ACCOUNT.email}
             </span>

@@ -1,34 +1,29 @@
 import { useEffect, useId, useRef } from 'react'
-import {
-  type Control,
-  type FieldPathByValue,
-  useController,
-  useForm,
-  useWatch,
-} from 'react-hook-form'
+import { type Control, useController, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { addMinutes, format, parse } from 'date-fns'
+import { addDays, addMinutes, format, parse, startOfToday } from 'date-fns'
 import { Clock } from 'lucide-react'
 import { z } from 'zod'
 
 import { CheckboxField, FormField, TextareaField } from '@/components/form'
 import { Input } from '@/components/ui/input'
-import {
-  AttachmentField,
-  DateField,
-  DateInput,
-  PayrollDialog,
-  SearchSelectField,
-} from '@/features/payroll'
+import { DateField, PayrollDialog, SearchSelectField } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import type { FileRef } from '@/lib/files'
 import { cn } from '@/lib/utils'
 
+import { type RequestBody, typePermission } from '../../../api/backend'
+import { useRequestPerson } from '../../../components/shared/request-employee'
+import { RequestEmployeeField } from '../../../components/shared/request-employee-field'
+import { RequestFileField } from '../../../components/shared/request-files'
+import { attachmentRef, syncAttachments } from '../../../utils/request-files'
 import type { StandardFormProps } from '../../standard.types'
 import { standardReadOnlyClass } from '../../standard-styles'
 import { useCreateStandard, useStandardLookups, useUpdateStandard } from '../../use-standard'
 import { useScheduleDays } from '../work-from-home/schedule-days'
 import { ShiftStrip } from '../work-from-home/shift-strip'
-import type { LeaveInput, LeaveLookups, LeavePayload, ShortLeaveType } from './leave.types'
+import { SHORT_TYPES, useLeaveTypeOptions } from './leave.lookups'
+import type { LeaveDetailsIn, LeavePayload, ShortLeaveType } from './leave.types'
 
 const chosen = (message: string) =>
   z
@@ -45,12 +40,9 @@ const schema = z
     from: z.string(),
     to: z.string(),
     requestDate: z.string(),
-    startDate: z.string(),
     startTime: z.string(),
-    endDate: z.string(),
     endTime: z.string(),
-    attachment: z.string().nullable(),
-    reason: z.string().trim().min(1, 'Give the reason').max(500, 'Keep it under 500 characters'),
+    reason: z.string().trim().min(1, 'Give the reason').max(4000, 'Keep it shorter'),
   })
   .superRefine((values, context) => {
     const need = (path: keyof typeof values, message: string) => {
@@ -66,22 +58,33 @@ const schema = z
     }
     if (!values.shortType) need('shortType', 'Choose the short leave type')
     if (!values.requestDate) need('requestDate', 'Choose the request date')
-    if (!values.startDate || !values.startTime) need('startTime', 'Choose the start time')
-    if (!values.endDate || !values.endTime) need('endTime', 'Choose the end time')
-    else if (
-      values.startDate &&
-      values.startTime &&
-      `${values.endDate} ${values.endTime}` <= `${values.startDate} ${values.startTime}`
-    ) {
+    if (!values.startTime) need('startTime', 'Choose the start time')
+    if (!values.endTime) need('endTime', 'Choose the end time')
+    else if (values.startTime && values.endTime <= values.startTime) {
       need('endTime', 'Choose a time after the start time')
     }
   })
 type Values = z.infer<typeof schema>
+type Field = keyof Values | 'attachment'
 
 const day = (date: string) => parse(date, 'yyyy-MM-dd', new Date())
-const iso = (date: Date) => format(date, 'yyyy-MM-dd')
 /** 8, 14.5. */
 const days = (value: number) => String(Math.round(value * 100) / 100)
+/** "09:00:00" → "09:00". */
+const hhmm = (time: string | null | undefined) => (time ? time.slice(0, 5) : '')
+
+/** API field → form field, for the server's field errors. */
+const FIELDS: Record<string, Field> = {
+  employeeId: 'employeeId',
+  leaveTypeId: 'leaveTypeId',
+  isShort: 'short',
+  shortLeaveType: 'shortType',
+  startTime: 'startTime',
+  endTime: 'endTime',
+  toDate: 'to',
+  reason: 'reason',
+  attachments: 'attachment',
+}
 
 const TITLES = {
   create: 'Leave Request Create',
@@ -89,135 +92,104 @@ const TITLES = {
   view: 'Leave Request View',
 } as const
 
-/** "Start Time *": the day and the time side by side, as drawn. */
-function DateTimeField({
-  control,
-  dateName,
-  timeName,
-  label,
-  disabled,
-}: {
-  control: Control<Values>
-  dateName: FieldPathByValue<Values, string>
-  timeName: FieldPathByValue<Values, string>
-  label: string
-  disabled: boolean
-}) {
-  const date = useController({ control, name: dateName })
-  const time = useController({ control, name: timeName })
-  const error = time.fieldState.error?.message ?? date.fieldState.error?.message
-  return (
-    <FormField label={label} required error={error}>
-      {(a11y) => (
-        <div className="grid gap-3 @md:grid-cols-2 @md:gap-6">
-          <DateInput
-            {...a11y}
-            aria-label={`${label} date`}
-            value={date.field.value}
-            onChange={date.field.onChange}
-            disabled={disabled}
-            display="MMMM d, yyyy"
-          />
-          <div className="relative">
-            <Input
-              type="time"
-              aria-label={`${label} time`}
-              aria-invalid={Boolean(error)}
-              ref={time.field.ref}
-              name={time.field.name}
-              value={time.field.value}
-              onChange={time.field.onChange}
-              onBlur={time.field.onBlur}
-              disabled={disabled}
-              className="pr-11 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-y-0 [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:w-11 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
-            />
-            <Clock
-              aria-hidden="true"
-              strokeWidth={1.5}
-              className="pointer-events-none absolute top-1/2 right-3 size-6 -translate-y-1/2 text-chip"
-            />
-          </div>
-        </div>
-      )}
-    </FormField>
-  )
-}
-
 /**
  * "Leave Request Create" (frames 4189:59340, 4189:61223, 4191:58946; All:
  * 4194:67969): Employee Name (All only), Leave Type, Short, Available Leaves,
  * Start / End Date, Attachment, Reason and Selected Days. "Short" swaps the
  * dates for Short Leave Type, Request Date with the day's shift, Start Time
- * and End Time. Only shift days count; the balance is checked before saving.
+ * and End Time (times on that day). Sends `POST /requests/leave`; the API
+ * counts the shift days and checks the balance and the leave type's rules.
  */
 export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<LeavePayload>) {
   const formId = useId()
-  const lookups = useStandardLookups<LeaveLookups>('leave')
+  const lookups = useStandardLookups('leave')
   const create = useCreateStandard('leave')
   const update = useUpdateStandard('leave')
   const readOnly = mode === 'view'
   const pickPerson = scope === 'all' && mode === 'create'
-  const people = lookups.data?.employees ?? []
-  const extra = lookups.data?.extra
+  const permission = typePermission('leave', 'create')
   const payload = request?.payload
+  const short0 = payload?.isShort ?? false
 
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
       employeeId: request?.employee.id ?? null,
       leaveTypeId: payload?.leaveTypeId ?? null,
-      short: payload?.short ?? false,
-      shortType: payload?.shortType ?? null,
-      from: payload && !payload.short ? payload.from : '',
-      to: payload && !payload.short ? payload.to : '',
-      requestDate: payload?.short ? payload.from : '',
-      startDate: payload?.startDate ?? '',
-      startTime: payload?.startTime ?? '',
-      endDate: payload?.endDate ?? '',
-      endTime: payload?.endTime ?? '',
-      attachment: payload?.attachment ?? null,
-      reason: payload?.reason ?? '',
+      short: short0,
+      shortType: payload?.shortLeaveType ?? null,
+      from: request && !short0 ? (request.fromDate ?? '') : '',
+      to: request && !short0 ? (request.toDate ?? '') : '',
+      requestDate: short0 ? (request?.fromDate ?? '') : '',
+      startTime: hhmm(payload?.startTime),
+      endTime: hhmm(payload?.endTime),
+      reason: request?.reason ?? '',
     },
   })
-  const [employeeId, leaveTypeId, short, shortType, from, to, requestDate, attachment] = useWatch({
+  const firstFile = request?.attachments[0]
+  const attachmentForm = useForm<{ attachment: FileRef | null }>({
+    defaultValues: { attachment: firstFile ? attachmentRef(firstFile) : null },
+  })
+  const attachment = useWatch({ control: attachmentForm.control, name: 'attachment' })
+  const [employeeId, leaveTypeId, short, shortType, from, to, requestDate] = useWatch({
     control: form.control,
-    name: [
-      'employeeId',
-      'leaveTypeId',
-      'short',
-      'shortType',
-      'from',
-      'to',
-      'requestDate',
-      'attachment',
-    ],
+    name: ['employeeId', 'leaveTypeId', 'short', 'shortType', 'from', 'to', 'requestDate'],
   })
 
-  const personId = request?.employee.id ?? (pickPerson ? employeeId : lookups.data?.me.id)
-  const listed = people.find((item) => item.id === personId)
-  const person =
-    request?.employee ?? (listed && { ...listed, photoUrl: extra?.photos[listed.id] ?? null })
+  // My Requests: the signed-in person (their own board and balances without an id here).
+  const mine = !pickPerson && !request
+  const personId = request?.employee.id ?? (pickPerson ? employeeId : lookups.data?.me?.id)
   const range = useScheduleDays(
     'leave',
     personId,
     short ? requestDate : from,
     short ? requestDate : to,
+    { mine },
   )
-  const shift = short ? range.data?.find((item) => item.date === requestDate) : undefined
-  const fraction = extra?.shortTypes.find((item) => item.value === shortType)?.fraction ?? 0
+  const picked = useRequestPerson(permission, pickPerson ? employeeId : null)
+  const person = request?.employee ?? picked ?? range.data?.person
+  const strip = range.data?.days
+  const shift = short ? strip?.find((item) => item.date === requestDate) : undefined
+  const fraction = SHORT_TYPES.find((item) => item.value === shortType)?.fraction ?? 0
+  // The API counts shift days, or every day when the person has no schedule in the range.
+  const shiftDays = strip?.filter((item) => item.status === 'shift').length ?? 0
   const selectedDays = short
     ? shift?.status === 'shift'
       ? fraction
       : 0
-    : (range.data?.filter((item) => item.status === 'shift').length ?? 0)
+    : shiftDays > 0
+      ? shiftDays
+      : (strip?.length ?? 0)
 
+  // The person's leave types with balance and rules (`GET /requests/options/leave-types`).
+  const typeOptions = useLeaveTypeOptions(personId, mine)
+  const leaveType = typeOptions.data?.find((item) => item.id === leaveTypeId)
   // Available Leaves: this request's own pending days are given back while it is edited.
-  const balance = personId && leaveTypeId ? extra?.balances[personId]?.[leaveTypeId] : undefined
   const ownDays =
-    payload && request.status === 'pending' && payload.leaveTypeId === leaveTypeId
-      ? payload.count
+    request?.status === 'pending' && payload?.leaveTypeId === leaveTypeId
+      ? (request.days ?? payload.days ?? 0)
       : 0
-  const available = balance ? balance.available + ownDays : undefined
+  const available = leaveType ? leaveType.available + ownDays : undefined
+  // The type's rules: which parts of a day, how far back or ahead, whether a file is needed.
+  const shortTypes = SHORT_TYPES.filter(
+    (item) =>
+      !leaveType ||
+      (item.value === 'half_day' ? leaveType.allowHalfDay : leaveType.allowShortLeave),
+  )
+  const shortAllowed = !leaveType || shortTypes.length > 0
+  const today = startOfToday()
+  const minDate =
+    leaveType && !leaveType.allowBackDate
+      ? today
+      : leaveType?.backDateLimitDays
+        ? addDays(today, -leaveType.backDateLimitDays)
+        : undefined
+  const maxDate =
+    leaveType && leaveType.futureLimitDays !== null
+      ? addDays(today, leaveType.futureLimitDays)
+      : undefined
+  const attachmentNeeded = Boolean(leaveType?.attachmentRequired)
+  const attachmentRefused = attachmentNeeded && leaveType?.attachmentRule !== 'note'
 
   // A short leave starts with the shift and lasts its share of it, until changed.
   const filled = useRef(mode === 'create' ? '' : `${requestDate}|${shortType ?? ''}`)
@@ -235,19 +207,43 @@ export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<L
       start,
       Math.round(((end.getTime() - start.getTime()) / 60_000) * fraction),
     )
-    form.setValue('startDate', requestDate)
     form.setValue('startTime', shift.clockIn)
-    form.setValue('endDate', iso(until))
     form.setValue('endTime', format(until, 'HH:mm'))
   }, [form, readOnly, short, requestDate, shortType, shift?.clockIn, shift?.clockOut, fraction])
+
+  const setError = (field: Field, message: string) => {
+    if (field === 'attachment') attachmentForm.setError('attachment', { message })
+    else form.setError(field, { message })
+  }
 
   const submit = form.handleSubmit(async (values) => {
     if (pickPerson && !values.employeeId) {
       form.setError('employeeId', { message: 'Choose the employee' })
       return
     }
-    if (!values.short && selectedDays === 0 && !range.isPending) {
-      form.setError('from', { message: 'Choose dates with working days' })
+    if (values.short && leaveType && !shortAllowed) {
+      form.setError('shortType', { message: `${leaveType.name} cannot be taken as a short leave` })
+      return
+    }
+    if (values.short && leaveType && !shortTypes.some((item) => item.value === values.shortType)) {
+      const label = SHORT_TYPES.find((item) => item.value === values.shortType)?.label ?? 'This'
+      form.setError('shortType', { message: `${label} is not allowed for ${leaveType.name}` })
+      return
+    }
+    const first = values.short ? values.requestDate : values.from
+    const last = values.short ? values.requestDate : values.to
+    if (leaveType && first && minDate && day(first) < minDate) {
+      form.setError(values.short ? 'requestDate' : 'from', {
+        message: leaveType.allowBackDate
+          ? `${leaveType.name} goes back ${String(leaveType.backDateLimitDays)} days at most`
+          : `${leaveType.name} cannot start before today`,
+      })
+      return
+    }
+    if (leaveType && last && maxDate && day(last) > maxDate) {
+      form.setError(values.short ? 'requestDate' : 'to', {
+        message: `Choose a day within ${String(leaveType.futureLimitDays)} days from today`,
+      })
       return
     }
     if (values.short && shift && shift.status !== 'shift') {
@@ -260,29 +256,41 @@ export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<L
       })
       return
     }
-    const input: LeaveInput = {
+    if (attachmentRefused && !attachment) {
+      attachmentForm.setError('attachment', { message: 'Attach the supporting document' })
+      return
+    }
+    const date = values.short ? values.requestDate : values.from
+    const body: RequestBody = {
       ...(pickPerson && values.employeeId ? { employeeId: values.employeeId } : {}),
-      leaveTypeId: values.leaveTypeId ?? '',
-      short: values.short,
-      shortType: values.short ? ((values.shortType ?? null) as ShortLeaveType | null) : null,
-      from: values.short ? values.requestDate : values.from,
-      to: values.short ? values.requestDate : values.to,
-      startDate: values.short ? values.startDate : null,
-      startTime: values.short ? values.startTime : null,
-      endDate: values.short ? values.endDate : null,
-      endTime: values.short ? values.endTime : null,
-      attachment: values.attachment,
+      fromDate: date,
+      toDate: values.short ? values.requestDate : values.to,
       reason: values.reason,
+      attachments: attachment ? [attachment.id] : [],
+      details: {
+        leaveTypeId: values.leaveTypeId ?? '',
+        isShort: values.short,
+        shortLeaveType: values.short ? (values.shortType as ShortLeaveType | null) : null,
+        startTime: values.short ? values.startTime : null,
+        endTime: values.short ? values.endTime : null,
+      } satisfies LeaveDetailsIn,
     }
     try {
-      if (mode === 'edit' && request) await update.mutateAsync({ id: request.id, input })
-      else await create.mutateAsync(input)
+      if (mode === 'edit' && request) {
+        await update.mutateAsync({
+          id: request.id,
+          body: { ...body, rowVersion: request.rowVersion },
+        })
+        await syncAttachments('leave', request.id, request.attachments, [attachment])
+      } else await create.mutateAsync(body)
     } catch (failure) {
       if (failure instanceof ApiError) {
         let placed = false
         for (const [field, message] of Object.entries(failure.fieldErrors)) {
-          if (field in values) {
-            form.setError(field as keyof Values, { message })
+          const name =
+            field === 'fromDate' ? (values.short ? 'requestDate' : 'from') : FIELDS[field]
+          if (name) {
+            setError(name, message)
             placed = true
           }
         }
@@ -310,16 +318,19 @@ export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<L
         className={cn('grid gap-5', readOnly && standardReadOnlyClass)}
       >
         {scope === 'all' && (
-          <SearchSelectField
+          <RequestEmployeeField
             control={form.control}
             name="employeeId"
             label="Employee Name"
             required
             placeholder="Select Employee Name"
             disabled={!pickPerson}
-            options={people
-              .filter((item) => item.active || item.id === request?.employee.id)
-              .map((item) => ({ value: item.id, label: item.name, hint: item.code }))}
+            enabled={pickPerson}
+            permission={permission}
+            current={request?.employee}
+            onPick={() => {
+              form.setValue('leaveTypeId', null)
+            }}
           />
         )}
         <SearchSelectField
@@ -329,9 +340,23 @@ export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<L
           required
           placeholder="Select Leave Type"
           disabled={readOnly}
-          options={(extra?.leaveTypes ?? []).map((item) => ({ value: item.id, label: item.name }))}
+          options={[
+            ...(payload && !typeOptions.data?.some((item) => item.id === payload.leaveTypeId)
+              ? [{ value: payload.leaveTypeId, label: payload.leaveTypeName ?? '—' }]
+              : []),
+            ...(typeOptions.data ?? []).map((item) => ({
+              value: item.id,
+              label: item.name,
+              hint: `${days(item.available)} available`,
+            })),
+          ]}
         />
-        <CheckboxField control={form.control} name="short" label="Short" disabled={readOnly} />
+        <CheckboxField
+          control={form.control}
+          name="short"
+          label="Short"
+          disabled={readOnly || (!short && !shortAllowed)}
+        />
         {short && (
           <SearchSelectField
             control={form.control}
@@ -340,7 +365,7 @@ export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<L
             required
             placeholder="Select Short Leave Type"
             disabled={readOnly}
-            options={(extra?.shortTypes ?? []).map((item) => ({
+            options={(readOnly ? SHORT_TYPES : shortTypes).map((item) => ({
               value: item.value,
               label: item.label,
             }))}
@@ -366,30 +391,25 @@ export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<L
               required
               disabled={readOnly}
               display="MMMM d, yyyy"
+              minDate={readOnly ? undefined : minDate}
+              maxDate={readOnly ? undefined : maxDate}
             />
             {requestDate && person && (
               <ShiftStrip
                 label="The day’s shift"
                 person={person}
-                days={range.data}
+                days={strip}
                 loading={range.isPending}
                 selected={new Set(shift?.status === 'shift' ? [requestDate] : [])}
               />
             )}
-            <DateTimeField
+            <TimeField
               control={form.control}
-              dateName="startDate"
-              timeName="startTime"
+              name="startTime"
               label="Start Time"
               disabled={readOnly}
             />
-            <DateTimeField
-              control={form.control}
-              dateName="endDate"
-              timeName="endTime"
-              label="End Time"
-              disabled={readOnly}
-            />
+            <TimeField control={form.control} name="endTime" label="End Time" disabled={readOnly} />
           </>
         ) : (
           <>
@@ -400,6 +420,8 @@ export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<L
               required
               disabled={readOnly}
               display="MMMM d, yyyy"
+              minDate={readOnly ? undefined : minDate}
+              maxDate={readOnly ? undefined : maxDate}
             />
             <DateField
               control={form.control}
@@ -408,16 +430,25 @@ export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<L
               required
               disabled={readOnly}
               display="MMMM d, yyyy"
-              minDate={from ? day(from) : undefined}
+              minDate={from ? day(from) : readOnly ? undefined : minDate}
+              maxDate={readOnly ? undefined : maxDate}
             />
           </>
         )}
-        <AttachmentField
+        <RequestFileField
           value={attachment}
-          onChange={(name) => {
-            form.setValue('attachment', name, { shouldDirty: true })
+          onChange={(file) => {
+            attachmentForm.setValue('attachment', file, { shouldDirty: true })
+            attachmentForm.clearErrors('attachment')
           }}
           disabled={readOnly}
+          required={attachmentRefused}
+          description={
+            attachmentNeeded && !attachmentRefused && !readOnly
+              ? `${leaveType?.name ?? 'This leave'} expects a supporting document`
+              : undefined
+          }
+          error={attachmentForm.formState.errors.attachment?.message}
         />
         <TextareaField
           control={form.control}
@@ -425,7 +456,7 @@ export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<L
           label="Reason"
           required
           rows={4}
-          maxLength={500}
+          maxLength={4000}
           disabled={readOnly}
         />
         <div className="grid gap-2 @xl:grid-cols-[10rem_minmax(0,1fr)] @xl:items-center @3xl:grid-cols-[11rem_minmax(0,1fr)]">
@@ -434,10 +465,51 @@ export function LeaveForm({ mode, scope, request, onClose }: StandardFormProps<L
             aria-live="polite"
             className="w-fit min-w-8 rounded-[5px] bg-[#FFE3E3] px-1.5 py-1 text-center font-inter text-sm font-semibold text-[#333C48] dark:bg-red-500/15 dark:text-heading"
           >
-            {days(selectedDays)}
+            {days(readOnly && request ? (request.days ?? selectedDays) : selectedDays)}
           </span>
         </div>
       </form>
     </PayrollDialog>
+  )
+}
+
+/** "Start Time *": a time on the request's day, with the clock drawn on the right. */
+function TimeField({
+  control,
+  name,
+  label,
+  disabled,
+}: {
+  control: Control<Values>
+  name: 'startTime' | 'endTime'
+  label: string
+  disabled: boolean
+}) {
+  const { field, fieldState } = useController({ control, name })
+  const error = fieldState.error?.message
+  return (
+    <FormField label={label} required error={error}>
+      {(a11y) => (
+        <div className="relative">
+          <Input
+            {...a11y}
+            type="time"
+            aria-invalid={Boolean(error)}
+            ref={field.ref}
+            name={field.name}
+            value={field.value}
+            onChange={field.onChange}
+            onBlur={field.onBlur}
+            disabled={disabled}
+            className="pr-11 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-y-0 [&::-webkit-calendar-picker-indicator]:right-0 [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:w-11 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
+          />
+          <Clock
+            aria-hidden="true"
+            strokeWidth={1.5}
+            className="pointer-events-none absolute top-1/2 right-3 size-6 -translate-y-1/2 text-chip"
+          />
+        </div>
+      )}
+    </FormField>
   )
 }

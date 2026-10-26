@@ -1,6 +1,20 @@
 export {
+  type AnyDashboard,
+  type CeoDashboard,
+  type DashboardAttendance,
+  type DashboardByKind,
   dashboardKeys,
+  type DashboardKind,
+  dashboardKindFor,
+  type DashboardParams,
+  dashboardQueryOptions,
   type DashboardSummary,
   dashboardSummaryQueryOptions,
+  type HrDashboard,
+  type LeaveApplication,
+  type MyDashboard,
+  type Notice,
+  toDashboardSummary,
+  type Workforce,
 } from './api/dashboard.api'
 export { DashboardPage } from './components/dashboard-page'

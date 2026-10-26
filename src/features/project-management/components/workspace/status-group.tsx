@@ -146,12 +146,14 @@ export function StatusGroup({
             </PmMenuItem>
           </PmMenuContent>
         </PmMenu>
-        <AddTaskMenu
-          label={`Add Task to ${status.name}`}
-          onPick={(type) => {
-            view.onCompose(status.id, type)
-          }}
-        />
+        {view.access.addTasks && (
+          <AddTaskMenu
+            label={`Add Task to ${status.name}`}
+            onPick={(type) => {
+              view.onCompose(status.id, type)
+            }}
+          />
+        )}
       </div>
 
       {!collapsed && (

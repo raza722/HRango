@@ -2,19 +2,19 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
-import { ACTION_META } from '../../constants'
+import { ACTION_META, DAY_FLAG_LABELS, PENALTY_TYPE_LABELS } from '../../constants'
 import type {
   DayStatus,
   TimeSheetAction,
   TimeSheetDay,
   TimeSheetScope,
-  WarningMark,
 } from '../../types/attendance.types'
 import {
   formatClockTime,
   formatDuration,
   formatExpected,
   formatSheetDate,
+  minutesBetween,
   weekdayName,
 } from '../../utils/local-time'
 import { rowActions } from '../../utils/row-actions'
@@ -22,12 +22,16 @@ import { PunchChip, StatusPill } from '../shared/status-badges'
 
 const EMPTY = '-- -- --'
 
-/** Day states the clock chips already say; any other worked day shows its state under the date. */
-const CHIP_STATUSES: ReadonlySet<DayStatus> = new Set<DayStatus>([
-  'present',
-  'late-arrival',
-  'early-left',
-  'absent',
+/** Day states the clock chips already say; any other day with chips shows its state under the date. */
+const CHIP_STATUSES: ReadonlySet<DayStatus> = new Set<DayStatus>(['present', 'absent'])
+
+/** Flags the chips already show. */
+const CHIP_FLAGS: ReadonlySet<string> = new Set([
+  'late',
+  'early',
+  'grace',
+  'overtime',
+  'missing_punch',
 ])
 
 interface TimeSheetTableProps {
@@ -36,11 +40,14 @@ interface TimeSheetTableProps {
   today: string
   isLoading: boolean
   isFetching: boolean
+  /** May the user edit days (attendance.time_sheet.edit)? */
+  canEdit: boolean
   onAction: (action: TimeSheetAction, day: TimeSheetDay) => void
 }
 
 const COLUMNS = [
   'Date',
+  'Employee',
   'Time Slot / Roster',
   'Day',
   'Clock In',
@@ -63,31 +70,32 @@ const stickyDate = 'sticky left-0 z-20 shadow-[2px_0_0_0_var(--color-border)]'
 
 const hours = (minutes: number | null) => (minutes === null ? EMPTY : formatDuration(minutes))
 
-/** Orange progress of the monthly warning rule, with the penalty when reached. */
-function WarningCell({ warning }: { warning: WarningMark | null }) {
-  if (!warning) return null
+/** Check in to check out. */
+const duration = (day: TimeSheetDay) =>
+  day.firstIn && day.lastOut ? Math.max(0, minutesBetween(day.firstIn, day.lastOut)) : null
+
+/** Overtime worked (before the start and after the end). */
+const overtime = (day: TimeSheetDay) =>
+  (day.overtimeBeforeMinutes ?? 0) + (day.overtimeAfterMinutes ?? 0)
+
+/** Warnings raised on the day by the Warning policies, with the heaviest penalty. */
+function WarningCell({ day }: { day: TimeSheetDay }) {
+  if (day.warningCount === 0) return null
+  const penalty =
+    day.penaltyType === 'percentage' && day.penaltyPercentage !== null
+      ? `${day.penaltyPercentage}% Penalty`
+      : day.penaltyType
+        ? `${PENALTY_TYPE_LABELS[day.penaltyType] ?? day.penaltyType} Penalty`
+        : null
   return (
-    <div className="mx-auto grid w-24 gap-1">
+    <div className="mx-auto grid w-28 gap-1">
       <span className="font-sans text-xs font-medium text-[#FF5329] uppercase">
-        {warning.percent}%
+        {day.warningCount} warning{day.warningCount === 1 ? '' : 's'}
       </span>
-      <span
-        role="meter"
-        aria-label="Warnings this month"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={warning.percent}
-        className="h-1 overflow-hidden rounded-full bg-orange-100 dark:bg-orange-500/20"
-      >
-        <span
-          className="block h-full rounded-full bg-gradient-to-b from-[#FF4B1E] to-[#F4650D]"
-          style={{ width: `${warning.percent}%` }}
-        />
-      </span>
-      {warning.penalty && (
+      {penalty && (
         <span className="mt-1 flex items-center justify-center gap-1.5 text-sm font-medium text-[#E4393C]">
           <span aria-hidden="true" className="size-3 rounded-full bg-[#E50141]" />
-          {warning.penalty}
+          {penalty}
         </span>
       )}
     </div>
@@ -104,7 +112,7 @@ function ActionButton({
   onAction: TimeSheetTableProps['onAction']
 }) {
   const meta = ACTION_META[action]
-  const label = `${meta.label}, ${formatSheetDate(day.date)}`
+  const label = `${meta.label}, ${formatSheetDate(day.workDate)}`
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -134,9 +142,10 @@ function ActionButton({
 }
 
 /**
- * The time sheet as drawn: one row per day with the expected and actual
- * clock in / out, their status chips, the minutes and hours, the warning
- * progress and the row actions. Wide columns scroll under the sticky date.
+ * The time sheet as drawn: one row per person and day with the expected and
+ * actual clock in / out, their status chips, the minutes and hours, the
+ * warnings and the row actions. Wide columns scroll under the sticky date.
+ * "My" has no Employee column.
  */
 export function TimeSheetTable({
   rows,
@@ -144,8 +153,10 @@ export function TimeSheetTable({
   today,
   isLoading,
   isFetching,
+  canEdit,
   onAction,
 }: TimeSheetTableProps) {
+  const columns = scope === 'my' ? COLUMNS.filter((column) => column !== 'Employee') : COLUMNS
   return (
     <div className="scrollbar-brand overflow-x-auto overscroll-x-contain">
       <table
@@ -158,7 +169,7 @@ export function TimeSheetTable({
         <caption className="sr-only">Time sheet</caption>
         <thead>
           <tr className="[&>th]:bg-primary [&>th]:text-primary-foreground">
-            {COLUMNS.map((column) => (
+            {columns.map((column) => (
               <th
                 key={column}
                 scope="col"
@@ -178,16 +189,18 @@ export function TimeSheetTable({
           {isLoading
             ? Array.from({ length: 5 }, (_, index) => (
                 <tr key={index}>
-                  <td colSpan={COLUMNS.length} className="border-b p-3">
+                  <td colSpan={columns.length} className="border-b p-3">
                     <Skeleton className="h-10 w-full" />
                   </td>
                 </tr>
               ))
             : rows.map((day, index) => {
                 const zebra = index % 2 === 0 ? 'bg-[#F5F5F5] dark:bg-muted/40' : 'bg-card'
-                const actions = rowActions(day, scope, today)
+                const actions = rowActions(day, scope, today, canEdit)
+                const extra = day.flags.filter((flag) => !CHIP_FLAGS.has(flag))
+                const worked = overtime(day)
                 return (
-                  <tr key={day.date} className={zebra}>
+                  <tr key={day.id} className={zebra}>
                     <th
                       scope="row"
                       className={cn(
@@ -197,23 +210,36 @@ export function TimeSheetTable({
                         'text-left text-sm font-medium whitespace-nowrap',
                       )}
                     >
-                      {formatSheetDate(day.date)}
-                      {day.clockInStatus && day.status && !CHIP_STATUSES.has(day.status) && (
-                        <StatusPill status={day.status} className="mt-1 flex w-fit" />
+                      {formatSheetDate(day.workDate)}
+                      {day.clockInStatus && !CHIP_STATUSES.has(day.dayStatus) && (
+                        <StatusPill status={day.dayStatus} className="mt-1 flex w-fit" />
                       )}
-                      {day.manuallyUpdated && (
+                      {extra.length > 0 && (
+                        <span className="block text-[0.6875rem] font-normal text-muted-foreground">
+                          {extra.map((flag) => DAY_FLAG_LABELS[flag]).join(', ')}
+                        </span>
+                      )}
+                      {day.isManuallyUpdated && (
                         <span className="block text-[0.6875rem] font-normal text-muted-foreground">
                           Manually updated
                         </span>
                       )}
                     </th>
-                    <td className={cn(cell, 'max-w-28')}>{day.slotName ?? '—'}</td>
+                    {scope !== 'my' && (
+                      <td className={cn(cell, 'min-w-40 text-left text-sm')}>
+                        <span className="block font-medium">{day.employeeName}</span>
+                        <span className="block text-[0.6875rem] font-normal text-muted-foreground">
+                          {day.employeeCode}
+                        </span>
+                      </td>
+                    )}
+                    <td className={cn(cell, 'max-w-28')}>{day.timeSlotName ?? '—'}</td>
                     <td className={cn(cell, 'text-sm whitespace-nowrap')}>
-                      {weekdayName(day.date)}
+                      {weekdayName(day.workDate)}
                     </td>
                     <td className={cn(cell, 'min-w-28 whitespace-nowrap')}>
-                      {day.checkIn && (
-                        <span className="block font-medium">{formatClockTime(day.checkIn)}</span>
+                      {day.firstIn && (
+                        <span className="block font-medium">{formatClockTime(day.firstIn)}</span>
                       )}
                       {day.expectedIn && (
                         <span className="block text-[0.6875rem] font-light italic">
@@ -224,13 +250,13 @@ export function TimeSheetTable({
                     <td className={cell}>
                       {day.clockInStatus ? (
                         <PunchChip status={day.clockInStatus} />
-                      ) : day.status ? (
-                        <StatusPill status={day.status} />
-                      ) : null}
+                      ) : (
+                        <StatusPill status={day.dayStatus} />
+                      )}
                     </td>
                     <td className={cn(cell, 'min-w-28 whitespace-nowrap')}>
-                      {day.checkOut && (
-                        <span className="block font-medium">{formatClockTime(day.checkOut)}</span>
+                      {day.lastOut && (
+                        <span className="block font-medium">{formatClockTime(day.lastOut)}</span>
                       )}
                       {day.expectedOut && (
                         <span className="block text-[0.6875rem] font-light italic">
@@ -242,10 +268,10 @@ export function TimeSheetTable({
                       {day.clockOutStatus && <PunchChip status={day.clockOutStatus} />}
                     </td>
                     <td className={cn(cell, 'tabular-nums')}>
-                      {day.checkIn ? day.lateMinutes : EMPTY}
+                      {day.firstIn ? (day.lateMinutes ?? 0) : EMPTY}
                     </td>
                     <td className={cn(cell, 'whitespace-nowrap tabular-nums')}>
-                      {hours(day.durationMinutes)}
+                      {hours(duration(day))}
                     </td>
                     <td className={cn(cell, 'whitespace-nowrap tabular-nums')}>
                       {hours(day.expectedMinutes)}
@@ -254,11 +280,11 @@ export function TimeSheetTable({
                       {hours(day.workedMinutes)}
                     </td>
                     <td className={cn(cell, 'whitespace-nowrap tabular-nums')}>
-                      {day.approvedOvertimeMinutes !== null ? (
+                      {day.approvedOvertimeMinutes ? (
                         formatDuration(day.approvedOvertimeMinutes)
-                      ) : day.overtimeMinutes > 0 ? (
+                      ) : worked > 0 ? (
                         <span title="Overtime worked, not approved yet" className="text-primary">
-                          {formatDuration(day.overtimeMinutes)} pending
+                          {formatDuration(worked)} pending
                         </span>
                       ) : (
                         EMPTY
@@ -271,7 +297,7 @@ export function TimeSheetTable({
                       {hours(day.shiftWorkedMinutes)}
                     </td>
                     <td className={cn(cell, 'min-w-32')}>
-                      <WarningCell warning={day.warning} />
+                      <WarningCell day={day} />
                     </td>
                     <td className={cn(cell, 'border-r-0')}>
                       <div className="flex items-center justify-center gap-1.5">
@@ -291,7 +317,7 @@ export function TimeSheetTable({
           {!isLoading && rows.length === 0 && (
             <tr>
               <td
-                colSpan={COLUMNS.length}
+                colSpan={columns.length}
                 className="h-32 text-center text-sm font-normal text-muted-foreground"
               >
                 No days match. Try another date range or search.

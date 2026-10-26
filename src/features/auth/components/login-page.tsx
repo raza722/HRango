@@ -1,7 +1,6 @@
 import { getRouteApi, useRouter } from '@tanstack/react-router'
 
-import logoUrl from '@/assets/brand/logo-top-edge.svg'
-import { APP_NAME, COMPANY_NAME } from '@/lib/constants'
+import { MAKER_NAME, PRODUCT_LOGO, PRODUCT_NAME } from '@/lib/brand'
 import { toSafeRedirect } from '@/lib/utils'
 
 import { LoginForm } from './login-form'
@@ -17,16 +16,21 @@ export function LoginPage() {
     // minmax(0,1fr): the column may not grow past the screen to fit long text.
     <div className="grid min-h-dvh grid-cols-[minmax(0,1fr)] bg-background lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
       <aside className="relative hidden flex-col justify-between overflow-hidden bg-sidebar p-12 text-sidebar-foreground lg:flex">
-        <img src={logoUrl} alt={COMPANY_NAME} className="h-12 w-auto self-start" />
+        <img
+          src={PRODUCT_LOGO.fullWhite}
+          alt={PRODUCT_NAME}
+          className="h-9 w-auto self-start"
+          width={110}
+          height={36}
+        />
         <div className="max-w-md">
           <h1 className="text-3xl leading-snug font-medium">People operations, in one place.</h1>
           <p className="mt-4 text-sidebar-subtle">
-            Recruitment, attendance, payroll, performance and warnings for every Top Edge
-            Technologies team.
+            Recruitment, attendance, payroll, performance and warnings for every team.
           </p>
         </div>
         <p className="text-xs text-sidebar-muted">
-          © {new Date().getFullYear()} {COMPANY_NAME}
+          © {new Date().getFullYear()} {PRODUCT_NAME} · Powered by {MAKER_NAME}
         </p>
         <div
           aria-hidden="true"
@@ -35,18 +39,25 @@ export function LoginPage() {
       </aside>
 
       <main className="flex min-w-0 flex-col items-center justify-center gap-6 px-4 py-10 sm:px-6">
-        <div className="flex w-full max-w-md justify-center rounded-md bg-sidebar py-4 lg:hidden">
-          <img src={logoUrl} alt={COMPANY_NAME} className="h-10 w-auto" />
+        <div className="flex w-full max-w-md justify-center lg:hidden">
+          <img
+            src={PRODUCT_LOGO.fullColor}
+            alt={PRODUCT_NAME}
+            className="h-10 w-auto"
+            width={121}
+            height={40}
+          />
         </div>
         <div className="w-full max-w-md rounded-md bg-card p-6 shadow-sm sm:p-8">
           <h2 className="text-2xl text-heading">Sign in</h2>
-          <p className="mt-1 mb-6 text-sm text-muted-foreground">to {APP_NAME}</p>
+          <p className="mt-1 mb-6 text-sm text-muted-foreground">to {PRODUCT_NAME}</p>
           <LoginForm
             onSuccess={() => {
               router.history.push(toSafeRedirect(redirect))
             }}
           />
         </div>
+        <p className="text-xs text-muted-foreground lg:hidden">Powered by {MAKER_NAME}</p>
       </main>
     </div>
   )

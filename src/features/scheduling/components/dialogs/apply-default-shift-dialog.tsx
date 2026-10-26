@@ -1,17 +1,18 @@
 import { useState } from 'react'
-import { useController, useForm } from 'react-hook-form'
+import { useController, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { addDays } from 'date-fns'
 import { Loader2 } from 'lucide-react'
 import { z } from 'zod'
 
 import { dialogButtonClass } from '@/components/feedback/app-dialog'
-import { DatePickerField, FieldLayoutContext, SelectField } from '@/components/form'
+import { CheckboxField, DatePickerField, FieldLayoutContext } from '@/components/form'
 import { Button } from '@/components/ui/button'
+import { ApiError } from '@/lib/api-error'
 import { parseDateValue, toDateValue } from '@/lib/date'
 import { cn } from '@/lib/utils'
 
-import { useRosterTones } from '../../hooks/use-roster-tones'
+import { SCHEDULING_PERMISSIONS } from '../../constants'
 import { useApplyDefaultShift } from '../../hooks/use-scheduling'
 import { applyDefaultSchema, type ApplyDefaultValues } from '../../schemas/schedule-forms.schema'
 import { toDate } from '../../utils/schedule-dates'
@@ -23,7 +24,6 @@ const stepOneSchema = z
   .object({
     startDate: z.string().min(1, 'Pick the start date'),
     endDate: z.string().min(1, 'Pick the end date'),
-    rosterGroupId: z.string().min(1, 'Select a roster group'),
   })
   .refine((values) => values.endDate >= values.startDate, {
     path: ['endDate'],
@@ -31,13 +31,13 @@ const stepOneSchema = z
   })
 
 /**
- * Apply Default Shift: Start Date, End Date and Roster Group, then Select
- * Employees. Every day in the range follows the roster (weekends become rest
- * days) and replaces what was scheduled.
+ * Apply Default Shift (`POST /scheduling/schedules/default-shift`): Start Date and End
+ * Date, then Select Employees. Each day every person gets the roster they are enrolled in,
+ * or else their default time slot (Employee profile). The API picks the shift; there is no
+ * roster to choose here.
  */
 export function ApplyDefaultShiftDialog({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<1 | 2>(1)
-  const tones = useRosterTones()
   const apply = useApplyDefaultShift()
   const [today] = useState(() => toDateValue(new Date()))
   const form = useForm<ApplyDefaultValues>({
@@ -45,21 +45,25 @@ export function ApplyDefaultShiftDialog({ onClose }: { onClose: () => void }) {
     defaultValues: {
       startDate: today,
       endDate: toDateValue(addDays(toDate(today), 6)),
-      rosterGroupId: '',
+      replaceExisting: false,
       employeeIds: [],
     },
     mode: 'onTouched',
   })
+  const startDate = useWatch({ control: form.control, name: 'startDate' })
   const { field, fieldState } = useController({ control: form.control, name: 'employeeIds' })
 
   const submit = form.handleSubmit(async (values) => {
+    form.clearErrors('root')
     try {
       await apply.mutateAsync(values)
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError) form.setError('root', { message: error.message })
       return
     }
     onClose()
   })
+  const rootError = form.formState.errors.root?.message
 
   return (
     <SchedulingDialog
@@ -127,24 +131,32 @@ export function ApplyDefaultShiftDialog({ onClose }: { onClose: () => void }) {
                 name="endDate"
                 label="End Date"
                 required
-                minDate={parseDateValue(form.getValues('startDate'))}
+                minDate={parseDateValue(startDate)}
               />
-              <SelectField
-                control={form.control}
-                name="rosterGroupId"
-                label="Roster Group"
-                required
-                placeholder="Select Roster Group"
-                options={tones.groups.map((group) => ({ value: group.id, label: group.title }))}
-              />
+              <FieldLayoutContext value="vertical">
+                <CheckboxField
+                  control={form.control}
+                  name="replaceExisting"
+                  label="Replace shifts already planned"
+                  description="Each day follows the person's roster, or else their default time slot."
+                />
+              </FieldLayoutContext>
             </div>
           </FieldLayoutContext>
         ) : (
-          <EmployeeSelector
-            value={field.value}
-            onChange={field.onChange}
-            error={fieldState.error?.message}
-          />
+          <div className="grid gap-4">
+            <EmployeeSelector
+              permission={SCHEDULING_PERMISSIONS.create}
+              value={field.value}
+              onChange={field.onChange}
+              error={fieldState.error?.message}
+            />
+            {rootError && (
+              <p role="alert" className="text-sm text-destructive">
+                {rootError}
+              </p>
+            )}
+          </div>
         )}
       </form>
     </SchedulingDialog>

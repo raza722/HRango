@@ -7,10 +7,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
 import type { ShiftTone } from '../constants'
-import type { BoardRow, ScheduleEntry } from '../types/scheduling.types'
+import type { BoardRestDay, BoardRow, BoardShift, DayTotal } from '../types/scheduling.types'
 import { toDate, weekBands } from '../utils/schedule-dates'
 import { formatHours } from '../utils/shift-hours'
-import { type CellAction, DayCell } from './day-cell'
+import { type CellAction, type CellPermissions, DayCell } from './day-cell'
 import { schedulingType } from './type-styles'
 
 export interface ScheduleBoardProps {
@@ -20,17 +20,20 @@ export interface ScheduleBoardProps {
   rangeLabel: string
   onPrevious: () => void
   onNext: () => void
-  dayTotals: Record<string, number>
+  dayTotals: readonly DayTotal[]
   isLoading: boolean
   isFetching: boolean
   multiselect: boolean
   selectedIds: ReadonlySet<string>
-  canCreate: boolean
-  toneFor: (rosterGroupId: string | null) => ShiftTone
-  onToggleSelect: (entry: ScheduleEntry) => void
-  onAction: (action: CellAction, entry: ScheduleEntry) => void
-  onMove: (entryId: string, employeeId: string, date: string) => void
-  onNudge: (entry: ScheduleEntry, days: -1 | 1) => void
+  /** Empty cells offer to create (All / Subordinates tabs). */
+  canCreateHere: boolean
+  can: CellPermissions
+  toneFor: (timeSlotId: string | null) => ShiftTone
+  onToggleSelect: (shift: BoardShift) => void
+  onAction: (action: CellAction, shift: BoardShift, row: BoardRow) => void
+  onRestDayAction: (action: 'view' | 'delete', restDay: BoardRestDay, row: BoardRow) => void
+  onMove: (shiftId: string, employeeId: string, date: string) => void
+  onNudge: (shift: BoardShift, days: -1 | 1) => void
   onCreateAt: (employeeId: string, date: string, kind: 'shift' | 'rest') => void
 }
 
@@ -72,9 +75,11 @@ export function PeriodNav({
   )
 }
 
-/** Name, id, usual slot, planned hours and status of one person (left column). */
-function EmployeeCell({ row }: { row: BoardRow }) {
+/** Name, code, usual slot, planned hours and status of one person (left column). */
+function EmployeeCell({ row, today }: { row: BoardRow; today: string }) {
   const { employee } = row
+  const onShiftToday = row.shifts.some((shift) => shift.workDate === today)
+  const isActive = employee.status === 'active'
   return (
     <div className="flex items-center gap-2.5 px-2.5 py-2 sm:px-3">
       <EmployeeAvatar name={employee.name} className="hidden size-9 @sm/board:flex" />
@@ -88,12 +93,13 @@ function EmployeeCell({ row }: { row: BoardRow }) {
         <span
           className={cn(
             'mt-1 inline-block rounded-sm px-1.5 py-0.5 text-xs leading-none',
-            row.onShiftToday
+            onShiftToday
               ? 'bg-green-400 text-green-950'
               : cn('bg-chip dark:bg-input', schedulingType.grey),
           )}
+          title={onShiftToday ? 'On shift today' : 'Default time slot'}
         >
-          {employee.defaultSlot}
+          {employee.defaultTimeSlotName ?? 'No default slot'}
         </span>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1 text-right">
@@ -104,19 +110,16 @@ function EmployeeCell({ row }: { row: BoardRow }) {
           )}
           title="Planned hours in this period"
         >
-          {formatHours(row.plannedMinutes)}
+          {formatHours(employee.plannedMinutes)}
         </span>
         <span
           className={cn('flex items-center gap-1 text-xs @md/board:text-sm', schedulingType.grey)}
         >
           <span
             aria-hidden="true"
-            className={cn(
-              'size-1.5 rounded-full',
-              employee.status === 'active' ? 'bg-green-500' : 'bg-label',
-            )}
+            className={cn('size-1.5 rounded-full', isActive ? 'bg-green-500' : 'bg-label')}
           />
-          {employee.status === 'active' ? 'Active' : 'Inactive'}
+          <span className="capitalize">{employee.status}</span>
         </span>
       </div>
     </div>
@@ -143,15 +146,18 @@ export function ScheduleBoard({
   isFetching,
   multiselect,
   selectedIds,
-  canCreate,
+  canCreateHere,
+  can,
   toneFor,
   onToggleSelect,
   onAction,
+  onRestDayAction,
   onMove,
   onNudge,
   onCreateAt,
 }: ScheduleBoardProps) {
   const bands = weekBands(days)
+  const totals = new Map(dayTotals.map((total) => [total.workDate, total.plannedMinutes]))
 
   return (
     <div className="@container/board min-w-0">
@@ -222,32 +228,45 @@ export function ScheduleBoard({
                   </tr>
                 ))
               : rows.map((row) => {
-                  const byDate = new Map(row.entries.map((entry) => [entry.date, entry]))
+                  const shiftsOn = new Map<string, BoardShift[]>()
+                  for (const shift of row.shifts) {
+                    shiftsOn.set(shift.workDate, [...(shiftsOn.get(shift.workDate) ?? []), shift])
+                  }
+                  const restOn = new Map(row.restDays.map((rest) => [rest.restDate, rest]))
+                  const holidayOn = new Map(row.holidays.map((day) => [day.holidayDate, day]))
                   return (
                     <tr key={row.employee.id} className="[&>td]:border-b [&>td]:border-l">
                       <th
                         scope="row"
                         className={cn(stickyFirst, 'border-b bg-card text-left font-normal')}
                       >
-                        <EmployeeCell row={row} />
+                        <EmployeeCell row={row} today={today} />
                       </th>
                       {days.map((day) => {
-                        const entry = byDate.get(day)
+                        const shifts = shiftsOn.get(day) ?? []
                         return (
                           <Fragment key={day}>
                             <DayCell
-                              entry={entry}
+                              shifts={shifts}
+                              restDay={restOn.get(day)}
+                              holiday={holidayOn.get(day)}
                               employeeName={row.employee.name}
                               date={day}
-                              tone={toneFor(entry?.rosterGroupId ?? null)}
+                              toneFor={toneFor}
                               isToday={day === today}
                               multiselect={multiselect}
-                              selected={entry !== undefined && selectedIds.has(entry.id)}
-                              canCreate={canCreate}
+                              selected={shifts[0] !== undefined && selectedIds.has(shifts[0].id)}
+                              canCreateHere={canCreateHere}
+                              can={can}
                               onToggleSelect={onToggleSelect}
-                              onAction={onAction}
-                              onDropEntry={(entryId) => {
-                                onMove(entryId, row.employee.id, day)
+                              onAction={(action, shift) => {
+                                onAction(action, shift, row)
+                              }}
+                              onRestDayAction={(action, rest) => {
+                                onRestDayAction(action, rest, row)
+                              }}
+                              onDropShift={(shiftId) => {
+                                onMove(shiftId, row.employee.id, day)
                               }}
                               onNudge={onNudge}
                               onCreate={(kind) => {
@@ -289,7 +308,7 @@ export function ScheduleBoard({
                     day === today && 'bg-violet-100/70 dark:bg-violet-500/10',
                   )}
                 >
-                  {formatHours(dayTotals[day] ?? 0)}
+                  {formatHours(totals.get(day) ?? 0)}
                 </td>
               ))}
             </tr>

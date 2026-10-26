@@ -4,12 +4,7 @@ import { createEmptyRule, toPenaltyInput } from '../utils/penalty-mappers'
 import { penaltyFormSchema, type PenaltyFormValues } from './penalty-form.schema'
 
 function validPenalty(): PenaltyFormValues {
-  return {
-    policyName: 'late-arrival',
-    title: 'Late arrival penalty',
-    scaleType: 'number',
-    rules: [{ ...createEmptyRule('weekly'), count: '2', from: '09:00', to: '09:30', points: '5' }],
-  }
+  return { policyId: '1', rules: [createEmptyRule('month', 1)] }
 }
 
 function issuePaths(values: PenaltyFormValues): string[] {
@@ -18,44 +13,63 @@ function issuePaths(values: PenaltyFormValues): string[] {
 }
 
 describe('penaltyFormSchema', () => {
-  it('accepts a complete weekly penalty', () => {
+  it('accepts a half-day payroll penalty', () => {
     expect(issuePaths(validPenalty())).toEqual([])
   })
 
-  it('requires To to be later than From', () => {
-    const values = validPenalty()
-    values.rules[0] = { ...values.rules[0]!, from: '10:00', to: '09:00' }
-    expect(issuePaths(values)).toContain('rules.0.to')
+  it('needs a policy', () => {
+    expect(issuePaths({ ...validPenalty(), policyId: '' })).toContain('policyId')
   })
 
-  it('caps percentages at 100 but allows bigger point counts', () => {
+  it('needs a percentage between 0 and 100 for percentage penalties', () => {
     const values = validPenalty()
-    values.rules[0] = { ...values.rules[0]!, points: '150' }
+    values.rules[0] = { ...values.rules[0]!, penaltyType: 'percentage', percentage: '150' }
+    expect(issuePaths(values)).toContain('rules.0.percentage')
+    values.rules[0] = { ...values.rules[0], percentage: '25' }
     expect(issuePaths(values)).toEqual([])
-    expect(issuePaths({ ...values, scaleType: 'percentage' })).toContain('rules.0.points')
   })
 
-  it('checks the date range of monthly rules', () => {
+  it('needs a leave type when the deduction touches leave', () => {
     const values = validPenalty()
-    values.rules[0] = {
-      ...values.rules[0]!,
-      timeSpan: 'monthly',
-      startDay: '2026-05-10',
-      endDay: '2026-05-01',
-      weekdays: [],
-    }
-    expect(issuePaths(values)).toContain('rules.0.endDay')
+    values.rules[0] = { ...values.rules[0]!, deduction: 'both' }
+    expect(issuePaths(values)).toContain('rules.0.leaveTypeId')
   })
 
-  it('maps form strings to API numbers and drops weekdays for non-weekly rules', () => {
+  it('refuses two penalties with the same count and time span', () => {
     const values = validPenalty()
-    values.rules.push({ ...createEmptyRule('monthly'), from: '09:00', to: '10:00', points: '3' })
-    const [weekly, monthly] = toPenaltyInput(values).rules
-    expect(weekly).toMatchObject({
-      count: 2,
-      points: 5,
-      weekdays: ['mon', 'tue', 'wed', 'thu', 'fri'],
+    values.rules.push(createEmptyRule('month', 1))
+    expect(issuePaths(values)).toContain('rules.1.afterCount')
+  })
+
+  it('maps form strings to the API body', () => {
+    const values = validPenalty()
+    values.rules.push({
+      ...createEmptyRule('year', 2),
+      penaltyType: 'percentage',
+      percentage: '25',
+      deduction: 'leave',
+      leaveTypeId: 'lt_casual',
     })
-    expect(monthly).toMatchObject({ count: 1, points: 3, weekdays: [] })
+    expect(toPenaltyInput(values, 'rv1')).toEqual({
+      rowVersion: 'rv1',
+      penalties: [
+        {
+          afterCount: 1,
+          period: 'month',
+          penaltyType: 'half_day',
+          percentage: null,
+          deduction: 'payroll',
+          leaveTypeId: null,
+        },
+        {
+          afterCount: 2,
+          period: 'year',
+          penaltyType: 'percentage',
+          percentage: 25,
+          deduction: 'leave',
+          leaveTypeId: 'lt_casual',
+        },
+      ],
+    })
   })
 })

@@ -1,116 +1,26 @@
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
+import { Link } from '@tanstack/react-router'
 
 import { ErrorState } from '@/components/feedback/error-state'
 import { DataTable, type DataTableColumn } from '@/components/layout'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { cn } from '@/lib/utils'
 
-import { ACTIVE_META, DEFAULT_PAGE_SIZE } from '../../constants'
-import {
-  useDeletePositionTitle,
-  usePositionTitles,
-  useSavePositionTitle,
-  useSetPositionTitleActive,
-} from '../../hooks/use-manpower'
-import {
-  positionTitleFormSchema,
-  type PositionTitleFormValues,
-} from '../../schemas/dialog-forms.schema'
+import { DEFAULT_PAGE_SIZE } from '../../constants'
+import { usePositionTitles } from '../../hooks/use-manpower'
 import type { PositionTitle } from '../../types/manpower.types'
-import { showSaveError, toastError } from '../../utils/errors'
-import { Chip, StampCell } from '../shared/cells'
-import { MpField, MpListFooter, MpSelect, SearchBox, ShowEntries } from '../shared/controls'
-import {
-  AddIcon,
-  CheckIcon,
-  CloseIcon,
-  DeleteIcon,
-  EditIcon,
-  RefreshIcon,
-  SearchIcon,
-} from '../shared/mp-icons'
-import {
-  accent,
-  boxClass,
-  dialogBoxClass,
-  dialogButton,
-  headerButton,
-  mpTableClass,
-  smallButton,
-} from '../shared/mp-styles'
+import { stampOf } from '../../utils/format'
+import { OptionalStampCell, StampCell } from '../shared/cells'
+import { MpListFooter, SearchBox, ShowEntries } from '../shared/controls'
+import { accent, headerButton, mpTableClass } from '../shared/mp-styles'
 import { CardBody, MpCard } from '../shared/page-shell'
-import { ConfirmPopup, MpDialog } from '../shared/popups'
-import { RowMenu } from '../shared/row-menu'
 import { SettingsTabs } from './settings-tabs'
 
-/** Add Position Title (and Edit, laid out the same). */
-function PositionTitleDialog({
-  title,
-  onClose,
-}: {
-  title: PositionTitle | null
-  onClose: () => void
-}) {
-  const save = useSavePositionTitle()
-  const form = useForm<PositionTitleFormValues>({
-    resolver: zodResolver(positionTitleFormSchema),
-    defaultValues: { title: title?.title ?? '' },
-  })
-  const { register, handleSubmit, formState, setError } = form
-  const submit = handleSubmit((values) => {
-    save.mutate(
-      { id: title?.id, input: { title: values.title.trim() } },
-      {
-        onSuccess: onClose,
-        onError: (error) => {
-          showSaveError(error, setError, ['title'], 'The position title could not be saved.')
-        },
-      },
-    )
-  })
-  return (
-    <MpDialog
-      title={title ? 'Edit Position Title' : 'Add Position Title'}
-      onClose={onClose}
-      className="max-w-[25.5625rem]"
-    >
-      <form noValidate onSubmit={(event) => void submit(event)} className="grid gap-8">
-        <MpField
-          label="Position Title"
-          required
-          error={formState.errors.title?.message}
-          className="@xs:grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)] @xs:items-center @xs:gap-x-4"
-        >
-          {(a11y) => (
-            <input
-              {...a11y}
-              {...register('title')}
-              placeholder="Marketing"
-              className={cn(dialogBoxClass, 'w-full')}
-            />
-          )}
-        </MpField>
-        <button
-          type="submit"
-          disabled={save.isPending}
-          className={cn(dialogButton, accent.bg, 'w-[11.5625rem] justify-self-center')}
-        >
-          {title ? 'Save Position' : 'Add Position'}
-        </button>
-      </form>
-    </MpDialog>
-  )
-}
-
-interface Filters {
-  title: string
-  status: string
-}
-const NO_FILTERS: Filters = { title: '', status: '' }
-
-/** E-Budget Settings → Position Title: the job titles, with their filter row. */
+/**
+ * E-Budget Settings → Position Title: Organisation's job titles with how many employee
+ * positions (active ones) and open positions use each. They are added, renamed and removed on
+ * Settings → Job Titles, so this tab only lists them.
+ */
 export function PositionTitlesTab({
   page,
   goTo,
@@ -123,13 +33,7 @@ export function PositionTitlesTab({
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [search, setSearch] = useState('')
   const debounced = useDebouncedValue(search.trim())
-  const [draft, setDraft] = useState<Filters>(NO_FILTERS)
-  const [applied, setApplied] = useState<Filters>(NO_FILTERS)
-  const [dialog, setDialog] = useState<{ title: PositionTitle | null } | null>(null)
-  const [deleting, setDeleting] = useState<PositionTitle | null>(null)
-  const remove = useDeletePositionTitle()
-  const setActive = useSetPositionTitleActive()
-  const list = usePositionTitles({ page, pageSize, search: debounced, ...applied })
+  const list = usePositionTitles({ page, pageSize, q: debounced })
   const offset = (page - 1) * pageSize
 
   const columns: DataTableColumn<PositionTitle>[] = [
@@ -139,115 +43,64 @@ export function PositionTitlesTab({
       header: 'Position Title',
       mobile: 'heading',
       className: 'min-w-[11rem]',
-      cell: (row) => row.title,
+      cell: (row) => row.name,
     },
-    { id: 'added', header: 'Added On', cell: (row) => <StampCell stamp={row.added} /> },
-    { id: 'modified', header: 'Modified On', cell: (row) => <StampCell stamp={row.modified} /> },
     {
-      id: 'status',
-      header: <span className="sr-only">Status</span>,
-      align: 'right',
-      cell: (row) => <Chip {...ACTIVE_META[row.active ? 'true' : 'false']} />,
+      id: 'positions',
+      header: 'Employee Positions',
+      align: 'center',
+      cell: (row) => `${String(row.activePositionCount)} of ${String(row.positionCount)} active`,
+    },
+    {
+      id: 'open',
+      header: 'Open Positions',
+      align: 'center',
+      cell: (row) => row.openPositionCount,
+    },
+    {
+      id: 'added',
+      header: 'Added On',
+      cell: (row) => <StampCell stamp={stampOf(row.createdAt, row.createdByName)} />,
+    },
+    {
+      id: 'modified',
+      header: 'Modified On',
+      cell: (row) => <OptionalStampCell at={row.updatedAt} byName={null} />,
     },
   ]
 
-  const addButton = (
-    <button
-      type="button"
-      onClick={() => {
-        setDialog({ title: null })
-      }}
+  const manageLink = (
+    <Link
+      to="/settings/control-panel/job-titles"
       className={cn(headerButton, accent.bg, 'min-w-[12.75rem]')}
     >
-      <AddIcon aria-hidden="true" className="size-[0.8125rem]" />
-      Add New Position Title
-    </button>
+      Manage Job Titles
+    </Link>
   )
 
   return (
-    <MpCard title="Employee Budget Settings" actions={filtersOpen ? undefined : addButton}>
+    <MpCard title="Employee Budget Settings" actions={filtersOpen ? undefined : manageLink}>
       {filtersOpen && (
-        <>
-          <CardBody className="flex flex-wrap items-center justify-between gap-3">
-            <ShowEntries
-              value={pageSize}
-              onChange={(size) => {
-                setPageSize(size)
+        <CardBody className="flex flex-wrap items-center justify-between gap-3">
+          <ShowEntries
+            value={pageSize}
+            onChange={(size) => {
+              setPageSize(size)
+              goTo(1)
+            }}
+          />
+          <div className="flex flex-wrap items-center gap-3.5">
+            {manageLink}
+            <SearchBox
+              label="Search position titles"
+              value={search}
+              onChange={(value) => {
+                setSearch(value)
                 goTo(1)
               }}
             />
-            <div className="flex flex-wrap items-center gap-3.5">
-              {addButton}
-              <SearchBox
-                label="Search position titles"
-                value={search}
-                onChange={(value) => {
-                  setSearch(value)
-                  goTo(1)
-                }}
-              />
-            </div>
-          </CardBody>
-          <form
-            aria-label="Position title filters"
-            className="grid grid-cols-1 gap-3 px-4 sm:px-6 @md:grid-cols-2 @3xl:grid-cols-[repeat(2,minmax(0,11.875rem))_auto] @3xl:items-end"
-            onSubmit={(event) => {
-              event.preventDefault()
-              setApplied(draft)
-              goTo(1)
-            }}
-          >
-            <MpField label="Position Title">
-              {(a11y) => (
-                <input
-                  {...a11y}
-                  value={draft.title}
-                  onChange={(event) => {
-                    setDraft((current) => ({ ...current, title: event.target.value }))
-                  }}
-                  className={cn(boxClass, 'w-full')}
-                />
-              )}
-            </MpField>
-            <MpField label="Status">
-              {(a11y) => (
-                <MpSelect
-                  {...a11y}
-                  value={draft.status}
-                  onChange={(value) => {
-                    setDraft((current) => ({ ...current, status: value }))
-                  }}
-                  noneLabel="Any"
-                  placeholder=""
-                  options={[
-                    { value: 'active', label: 'Active' },
-                    { value: 'inactive', label: 'Inactive' },
-                  ]}
-                />
-              )}
-            </MpField>
-            <div className="flex gap-3 @md:col-span-2 @3xl:col-span-1">
-              <button type="submit" className={cn(smallButton, accent.bg, 'w-[7.4375rem]')}>
-                <SearchIcon aria-hidden="true" className="size-[1.055rem]" />
-                Search
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDraft(NO_FILTERS)
-                  setApplied(NO_FILTERS)
-                  setSearch('')
-                  goTo(1)
-                  void list.refetch()
-                }}
-                className={cn(smallButton, accent.bg, 'w-[7.4375rem]')}
-              >
-                <RefreshIcon aria-hidden="true" className="h-[1.13rem] w-[0.85rem]" />
-                Refresh
-              </button>
-            </div>
-          </form>
-        </>
+          </div>
+        </CardBody>
       )}
       <div>
         <SettingsTabs current="position-title" />
@@ -266,69 +119,15 @@ export function PositionTitlesTab({
             isLoading={list.isPending}
             isFetching={list.isFetching}
             className={mpTableClass}
-            emptyState="No position titles match."
-            rowActionsHeader="Action"
-            rowActions={(row) => (
-              <RowMenu
-                label={`Actions for ${row.title}`}
-                items={[
-                  {
-                    label: 'Edit',
-                    icon: EditIcon,
-                    onSelect: () => {
-                      setDialog({ title: row })
-                    },
-                  },
-                  {
-                    label: row.active ? 'Deactivate' : 'Activate',
-                    icon: row.active ? CloseIcon : CheckIcon,
-                    onSelect: () => {
-                      setActive.mutate(
-                        { id: row.id, active: !row.active },
-                        { onError: toastError('The position title could not be changed.') },
-                      )
-                    },
-                  },
-                  {
-                    label: 'Delete',
-                    icon: DeleteIcon,
-                    onSelect: () => {
-                      setDeleting(row)
-                    },
-                  },
-                ]}
-              />
-            )}
+            emptyState={
+              debounced
+                ? 'No position title matches your search.'
+                : 'No job titles yet. Add them on Settings → Job Titles.'
+            }
           />
         )}
       </div>
       <MpListFooter meta={list.data?.meta} disabled={list.isFetching} onPageChange={goTo} />
-
-      {dialog && (
-        <PositionTitleDialog
-          title={dialog.title}
-          onClose={() => {
-            setDialog(null)
-          }}
-        />
-      )}
-      <ConfirmPopup
-        open={deleting !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleting(null)
-        }}
-        title="Delete Position Title"
-        icon={DeleteIcon}
-        message="Are you sure you want to Delete this position title?"
-        confirmLabel="Delete"
-        onConfirm={() => {
-          if (deleting) {
-            remove.mutate(deleting.id, {
-              onError: toastError('The position title could not be deleted.'),
-            })
-          }
-        }}
-      />
     </MpCard>
   )
 }

@@ -1,3 +1,4 @@
+import { useRouter } from '@tanstack/react-router'
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { Bell, Mail } from 'lucide-react'
 
@@ -13,21 +14,44 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
-import { useInboxSummary, useMarkAllRead } from '../hooks/use-inbox'
-import type { InboxKind } from '../types/inbox.types'
+import { useCanSeeInbox, useInboxSummary, useMarkAllRead, useMarkRead } from '../hooks/use-inbox'
+import type { InboxItem, InboxKind } from '../types/inbox.types'
 
 const COPY: Record<InboxKind, { title: string; empty: string; icon: typeof Mail }> = {
+  // Chat is out of the first release: the API has no messages, so this menu stays empty.
   messages: { title: 'Messages', empty: 'No messages', icon: Mail },
   notifications: { title: 'Notifications', empty: 'You are all caught up', icon: Bell },
 }
 
-/** Mail or bell button in the top bar, with an unread dot and a dropdown list. */
+const NO_ITEMS: readonly InboxItem[] = []
+
+/** The API sends UTC times without a zone (`2026-10-26T05:14:37`); read them as UTC. */
+const parseUtc = (iso: string) => parseISO(/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`)
+
+/**
+ * Mail or bell button in the top bar, with an unread dot and a dropdown list. Notifications
+ * come from `GET /inbox` (unread count and the latest five); clicking one marks it read and
+ * opens its link. Hidden without `inbox.notifications.view`.
+ */
 export function InboxMenu({ kind }: { kind: InboxKind }) {
-  const { data, isPending } = useInboxSummary()
+  const canSee = useCanSeeInbox()
+  const isNotifications = kind === 'notifications'
+  const { data, isPending } = useInboxSummary({ enabled: canSee && isNotifications })
   const markAllRead = useMarkAllRead()
+  const markRead = useMarkRead()
+  const router = useRouter()
   const { title, empty, icon: Icon } = COPY[kind]
-  const items = data?.[kind] ?? []
-  const unread = items.filter((item) => !item.read).length
+
+  if (isNotifications && !canSee) return null
+
+  const items = isNotifications ? (data?.latest ?? NO_ITEMS) : NO_ITEMS
+  const unread = isNotifications ? (data?.unread ?? 0) : 0
+  const loading = isNotifications && isPending
+
+  const open = (item: InboxItem) => {
+    if (!item.read) markRead.mutate(item.id)
+    if (item.link?.startsWith('/')) router.history.push(item.link)
+  }
 
   return (
     <DropdownMenu>
@@ -43,27 +67,35 @@ export function InboxMenu({ kind }: { kind: InboxKind }) {
       <DropdownMenuContent align="end" className="w-80 max-w-[calc(100vw-2rem)] p-0">
         <div className="flex items-center justify-between px-4 py-3">
           <DropdownMenuLabel className="p-0 text-sm text-heading">{title}</DropdownMenuLabel>
-          <Button
-            variant="link"
-            size="sm"
-            className="h-auto p-0"
-            disabled={unread === 0 || markAllRead.isPending}
-            onClick={() => {
-              markAllRead.mutate(kind)
-            }}
-          >
-            Mark all as read
-          </Button>
+          {isNotifications && (
+            <Button
+              variant="link"
+              size="sm"
+              className="h-auto p-0"
+              disabled={unread === 0 || markAllRead.isPending}
+              onClick={() => {
+                markAllRead.mutate(kind)
+              }}
+            >
+              Mark all as read
+            </Button>
+          )}
         </div>
         <DropdownMenuSeparator className="m-0" />
         <div className="max-h-80 overflow-y-auto p-1">
-          {isPending ? (
+          {loading ? (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">Loading…</p>
           ) : items.length === 0 ? (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">{empty}</p>
           ) : (
             items.map((item) => (
-              <DropdownMenuItem key={item.id} className="flex-col items-start gap-0.5 px-3 py-2.5">
+              <DropdownMenuItem
+                key={item.id}
+                className="flex-col items-start gap-0.5 px-3 py-2.5"
+                onSelect={() => {
+                  open(item)
+                }}
+              >
                 <span className="flex w-full items-center gap-2">
                   <span
                     aria-hidden="true"
@@ -76,10 +108,14 @@ export function InboxMenu({ kind }: { kind: InboxKind }) {
                     {item.title}
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {formatDistanceToNow(parseISO(item.createdAt), { addSuffix: true })}
+                    {formatDistanceToNow(parseUtc(item.createdAt), { addSuffix: true })}
                   </span>
                 </span>
-                <span className="line-clamp-2 pl-4 text-xs text-muted-foreground">{item.body}</span>
+                {item.body && (
+                  <span className="line-clamp-2 pl-4 text-xs text-muted-foreground">
+                    {item.body}
+                  </span>
+                )}
                 {!item.read && <span className="sr-only">Unread</span>}
               </DropdownMenuItem>
             ))

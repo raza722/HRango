@@ -6,11 +6,9 @@ import {
   citiesQueryOptions,
   companiesQueryOptions,
   countriesQueryOptions,
-  employeesQueryOptions,
-  regionsQueryOptions,
+  orgLookupQueryOptions,
+  statesQueryOptions,
 } from '../api/lookups.api'
-import { areaResource, locationResource, OPTION_LIST_SIZE } from '../api/org-resource'
-import type { LocationRow } from '../types/settings.types'
 
 interface OptionsResult {
   options: SelectOption[]
@@ -25,6 +23,7 @@ function toOptions<T>(
   return (items ?? []).map((item) => ({ value: value(item), label: label(item) }))
 }
 
+/** Companies the user may switch to. */
 export function useCompanyOptions(): OptionsResult {
   const query = useQuery(companiesQueryOptions())
   return {
@@ -37,85 +36,65 @@ export function useCompanyOptions(): OptionsResult {
   }
 }
 
-/** Managers: name with job title, e.g. "Omar Siddiqui · Branch Manager". */
-export function useManagerOptions(): OptionsResult {
-  const query = useQuery(employeesQueryOptions())
-  return {
-    options: toOptions(
-      query.data,
-      (e) => e.id,
-      (e) => `${e.name} · ${e.jobTitle}`,
-    ),
-    isLoading: query.isPending,
-  }
-}
-
 export function useCountryOptions(): OptionsResult {
   const query = useQuery(countriesQueryOptions())
-  return {
-    options: toOptions(
-      query.data,
-      (c) => c.code,
-      (c) => c.name,
-    ),
-    isLoading: query.isPending,
-  }
-}
-
-export function useRegionOptions(country: string): OptionsResult {
-  const query = useQuery(regionsQueryOptions(country))
-  return {
-    options: toOptions(
-      query.data,
-      (r) => r.code,
-      (r) => r.name,
-    ),
-    isLoading: country !== '' && query.isPending,
-  }
-}
-
-export function useCityOptions(region: string): OptionsResult {
-  const query = useQuery(citiesQueryOptions(region))
   return {
     options: toOptions(
       query.data,
       (c) => c.id,
       (c) => c.name,
     ),
-    isLoading: region !== '' && query.isPending,
+    isLoading: query.isPending,
   }
 }
 
-/** Locations of one company (all locations when `companyId` is empty and `all` is set). */
-export function useLocationOptions(
-  companyId: string,
-  { all = false } = {},
-): OptionsResult & { locations: LocationRow[] } {
-  const enabled = all || companyId !== ''
-  const query = useQuery({
-    ...locationResource.listQuery({ page: 1, pageSize: OPTION_LIST_SIZE, companyId }),
-    enabled,
-  })
+export function useStateOptions(countryId: string): OptionsResult {
+  const query = useQuery(statesQueryOptions(countryId))
   return {
     options: toOptions(
-      query.data?.data,
-      (l) => l.id,
-      (l) => (all && companyId === '' ? `${l.name} · ${l.companyName}` : l.name),
+      query.data,
+      (s) => s.id,
+      (s) => s.name,
     ),
-    isLoading: enabled && query.isPending,
-    locations: query.data?.data ?? [],
+    isLoading: countryId !== '' && query.isPending,
   }
 }
 
+/** Kept for older imports. */
+export const useRegionOptions = useStateOptions
+
+export function useCityOptions(stateId: string): OptionsResult {
+  const query = useQuery(citiesQueryOptions(stateId))
+  return {
+    options: toOptions(
+      query.data,
+      (c) => c.id,
+      (c) => c.name,
+    ),
+    isLoading: stateId !== '' && query.isPending,
+  }
+}
+
+/** Locations of the active company (`GET /organisation/lookups/locations`). */
+export function useLocationOptions(): OptionsResult {
+  const query = useQuery(orgLookupQueryOptions('locations'))
+  return {
+    options: toOptions(
+      query.data,
+      (l) => l.id,
+      (l) => l.name,
+    ),
+    isLoading: query.isPending,
+  }
+}
+
+/** Areas of one location; idle until a location is chosen. */
 export function useAreaOptions(locationId: string): OptionsResult {
   const enabled = locationId !== ''
-  const query = useQuery({
-    ...areaResource.listQuery({ page: 1, pageSize: OPTION_LIST_SIZE, locationId }),
-    enabled,
-  })
+  const query = useQuery({ ...orgLookupQueryOptions('areas', locationId), enabled })
   return {
     options: toOptions(
-      query.data?.data,
+      query.data,
       (a) => a.id,
       (a) => a.name,
     ),

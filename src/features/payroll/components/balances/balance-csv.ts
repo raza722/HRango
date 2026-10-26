@@ -1,98 +1,44 @@
 import { format, subMonths } from 'date-fns'
 
-import type { BalanceImportRow } from '../../api/payroll.api'
-import { downloadText, parseCsv, toBoolean, toCsv, toNumber } from '../../utils/csv'
+import { downloadText, toCsv } from '../../utils/csv'
 
-/** A number for the API: an unreadable amount becomes 0, which the import reports by line. */
-const amountOf = (cell: string | undefined) => {
-  const value = toNumber(cell)
-  return Number.isFinite(value) ? value : 0
-}
+// "Sample Import": the CSV layouts the API's imports read (`POST …/import` with `{fileId}` of the
+// uploaded file). The first line names the columns; months are `yyyy-MM`, dates `yyyy-MM-dd`.
 
-export type BalanceKind = 'opening-balance' | 'provident-fund'
-
-export const BALANCE_KINDS = [
-  { key: 'opening-balance', label: 'Opening Balance' },
-  { key: 'provident-fund', label: 'Provident Fund' },
-] as const satisfies readonly { key: BalanceKind; label: string }[]
+export type ImportKind = 'opening-balance' | 'employee-account' | 'salary-revision'
 
 const sampleMonth = () => format(subMonths(new Date(), 1), 'yyyy-MM')
 
-/** "Sample Import": the columns each import expects, with a sample line. */
-export function downloadBalanceTemplate(kind: BalanceKind, sampleCode: string) {
-  if (kind === 'opening-balance') {
-    downloadText(
-      toCsv(
-        ['Employee Code', 'Pay Item', 'Month', 'Amount', 'Taxable', 'Description'],
-        [
-          [
-            sampleCode,
-            'Travel Self Allowance',
-            sampleMonth(),
-            5000,
-            'No',
-            'Detail Data about allowance',
-          ],
-        ],
-      ),
-      'opening-balance-sample.csv',
-    )
-  } else {
-    downloadText(
-      toCsv(
-        ['Employee Code', 'Month', 'Amount', 'Description'],
-        [[sampleCode, sampleMonth(), 12500, 'Opening provident fund']],
-      ),
-      'provident-fund-sample.csv',
-    )
-  }
+const TEMPLATES: Record<
+  ImportKind,
+  { file: string; header: string[]; sample: (code: string) => (string | number)[] }
+> = {
+  'opening-balance': {
+    file: 'opening-balance-sample.csv',
+    header: ['Employee Code', 'Pay Item', 'Month', 'Amount', 'Taxable', 'Description'],
+    sample: (code) => [
+      code,
+      'Travel Allowance',
+      sampleMonth(),
+      5000,
+      'No',
+      'Carried from the old system',
+    ],
+  },
+  'employee-account': {
+    file: 'employee-account-sample.csv',
+    header: ['Employee Code', 'Account', 'Month', 'Credit', 'Debit', 'Description'],
+    sample: (code) => [code, 'Provident Fund', sampleMonth(), 12500, 0, 'Opening provident fund'],
+  },
+  'salary-revision': {
+    file: 'salary-revision-sample.csv',
+    header: ['Employee Code', 'Effective Date', 'Salary'],
+    sample: (code) => [code, `${sampleMonth()}-01`, 150000],
+  },
 }
 
-/** Reads an Opening Balance or Provident Fund file into import rows. */
-export function parseBalanceFile(kind: BalanceKind, text: string): BalanceImportRow[] {
-  return parseCsv(text, 'employee').map((cells) =>
-    kind === 'opening-balance'
-      ? {
-          employeeCode: cells[0] ?? '',
-          payItem: cells[1] ?? '',
-          month: cells[2] ?? '',
-          amount: amountOf(cells[3]),
-          taxable: toBoolean(cells[4]),
-          description: cells[5] ?? '',
-        }
-      : {
-          employeeCode: cells[0] ?? '',
-          payItem: 'Provident Fund Deduction',
-          month: cells[1] ?? '',
-          amount: amountOf(cells[2]),
-          taxable: false,
-          description: cells[3] ?? '',
-        },
-  )
-}
-
-/**
- * Employee Accounts import: Opening Balance files name the account and carry
- * a signed amount (credit +, debit −); Provident Fund files credit the fund.
- */
-export function parseAccountFile(kind: BalanceKind, text: string): BalanceImportRow[] {
-  return parseCsv(text, 'employee').map((cells) =>
-    kind === 'opening-balance'
-      ? {
-          employeeCode: cells[0] ?? '',
-          payItem: cells[1] ?? '',
-          month: cells[2] ?? '',
-          amount: amountOf(cells[3]),
-          taxable: false,
-          description: '',
-        }
-      : {
-          employeeCode: cells[0] ?? '',
-          payItem: 'Provident Fund',
-          month: cells[1] ?? '',
-          amount: amountOf(cells[2]),
-          taxable: false,
-          description: '',
-        },
-  )
+/** Downloads the import's CSV layout with one sample line. */
+export function downloadImportTemplate(kind: ImportKind, sampleCode: string) {
+  const template = TEMPLATES[kind]
+  downloadText(toCsv(template.header, [template.sample(sampleCode)]), template.file)
 }

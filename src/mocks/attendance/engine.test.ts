@@ -63,16 +63,21 @@ function snapshot(
       {
         id: 'hol_test',
         name: 'Pakistan Day',
+        holidayType: 'public',
         startDate: '2026-03-23',
         endDate: '2026-03-23',
         description: '',
         attendanceExempt: true,
+        dayCount: 1,
+        ruleCount: 0,
         rules: [],
         createdAt: '',
         updatedAt: '',
+        rowVersion: 'v1',
       },
     ],
     minimumWorkableMinutes: null,
+    ignored: new Set(),
     ...overrides,
   }
 }

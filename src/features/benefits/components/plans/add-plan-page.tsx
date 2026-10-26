@@ -58,10 +58,11 @@ function AddPlanForm({ category }: { category: PlanCategory }) {
       category,
       name: '',
       planType: '',
-      planTypeId: '',
+      planTypeRef: '',
       carrier: '',
       startDate: '',
       endDate: '',
+      description: '',
       attachment: null,
     },
   })
@@ -72,15 +73,18 @@ function AddPlanForm({ category }: { category: PlanCategory }) {
   const submit = form.handleSubmit(async (values) => {
     try {
       await create.mutateAsync({
-        category: values.category,
-        name: values.name.trim(),
-        planType: values.planType,
-        planTypeId: values.planTypeId.trim(),
-        carrier: values.carrier,
-        startDate: values.startDate,
-        endDate: values.endDate,
-        attachmentName: values.attachment?.name ?? '',
-        attachmentSize: values.attachment?.size ?? 0,
+        input: {
+          category: values.category,
+          name: values.name.trim(),
+          planType: values.planType,
+          planTypeRef: values.planTypeRef.trim(),
+          carrier: values.carrier,
+          startDate: values.startDate,
+          endDate: values.endDate,
+          description: values.description.trim() || null,
+          status: 'active',
+        },
+        attachment: values.attachment,
       })
       guard.allowNextNavigation()
       await navigate({ to: '/benefits/plans' })
@@ -176,12 +180,12 @@ function AddPlanForm({ category }: { category: PlanCategory }) {
                 label="Plan Type ID"
                 required
                 columns={COLUMNS}
-                error={errors.planTypeId?.message}
+                error={errors.planTypeRef?.message}
               >
                 {(a11y) => (
                   <input
                     {...a11y}
-                    {...form.register('planTypeId')}
+                    {...form.register('planTypeRef')}
                     placeholder="Enter Plan Type ID"
                     autoComplete="off"
                     className={boxClass}
@@ -229,7 +233,6 @@ function AddPlanForm({ category }: { category: PlanCategory }) {
                 render={({ field, fieldState }) => (
                   <FieldRow
                     label="Attachment"
-                    required
                     columns="@lg:grid-cols-[7.9375rem_minmax(0,23.1875rem)]"
                     error={fieldState.error?.message}
                     className="@3xl:col-span-2 @3xl:mt-1.5"
@@ -242,7 +245,7 @@ function AddPlanForm({ category }: { category: PlanCategory }) {
                           accept={ATTACHMENT_ACCEPT}
                           onChange={(event) => {
                             const file = event.target.files?.[0]
-                            field.onChange(file ? { name: file.name, size: file.size } : null)
+                            field.onChange(file ?? null)
                             void form.trigger('attachment')
                           }}
                           className="peer sr-only"
@@ -271,6 +274,22 @@ function AddPlanForm({ category }: { category: PlanCategory }) {
                   </FieldRow>
                 )}
               />
+              <FieldRow
+                label="Description"
+                columns="@lg:grid-cols-[7.9375rem_minmax(0,23.1875rem)]"
+                error={errors.description?.message}
+                className="@3xl:col-span-2"
+              >
+                {(a11y) => (
+                  <textarea
+                    {...a11y}
+                    {...form.register('description')}
+                    rows={4}
+                    placeholder="How will you explain this plan to your employees?"
+                    className={cn(boxClass, 'h-auto min-h-[6rem] resize-y py-2')}
+                  />
+                )}
+              </FieldRow>
             </div>
             {errors.root?.message && (
               <p role="alert" className="mt-4 text-sm text-destructive">

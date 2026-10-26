@@ -1,5 +1,6 @@
 import type {
   BreakType,
+  EmployeeStatusFilter,
   EmploymentType,
   Gender,
   ScheduleScope,
@@ -45,7 +46,30 @@ export const EMPLOYMENT_TYPE_LABELS: Record<EmploymentType, string> = {
 
 export const GENDER_LABELS: Record<Gender, string> = { female: 'Female', male: 'Male' }
 
-/** "Repeat" options, as drawn: None, Every Week, Every 2 Week … Every 8 Week. */
+/** The board's status filter (`hr.employee.status`). */
+export const EMPLOYEE_STATUS_LABELS: Record<EmployeeStatusFilter, string> = {
+  active: 'Active',
+  probation: 'Probation',
+  notice: 'Notice Period',
+  inactive: 'In Active',
+  left: 'Left',
+}
+
+/** Permission codes (`backend/app/catalogue/scheduling.py`). */
+export const SCHEDULING_PERMISSIONS = {
+  view: 'scheduling.schedules.view',
+  create: 'scheduling.schedules.create',
+  edit: 'scheduling.schedules.edit',
+  delete: 'scheduling.schedules.delete',
+  export: 'scheduling.schedules.export',
+  restDaysCreate: 'scheduling.settings.rest_days.create',
+  restDaysDelete: 'scheduling.settings.rest_days.delete',
+} as const
+
+/**
+ * "Repeat" options, as drawn: None, Every Week, Every 2 Week … Every 8 Week. The value is
+ * the API's `repeatEveryWeeks` (0 = every week of the range).
+ */
 export const REPEAT_OPTIONS = [
   { value: '0', label: 'None' },
   { value: '1', label: 'Every Week' },
@@ -60,10 +84,12 @@ export const LEGEND = {
   workFromHome: { label: 'Work from Home', dot: 'bg-indigo-500' },
   restDay: { label: 'Rest Day', dot: 'bg-blue-500' },
   geoFence: { label: 'Geo Fence', dot: 'bg-green-400' },
+  holiday: { label: 'Holiday', dot: 'bg-amber-500' },
 } as const
 
 /**
- * Shift cell colours, one per time roster (pastel cell, stronger side bars),
+ * Shift cell colours, one per time slot (pastel cell, stronger side bars) when the slot
+ * has no colour of its own,
  * taken from the board frames: pink, peach, lime, taupe, lilac, then sky and mint.
  */
 export interface ShiftTone {
@@ -81,7 +107,7 @@ export const SHIFT_TONES: readonly ShiftTone[] = [
   { cell: 'bg-emerald-100 dark:bg-emerald-400/20', bar: 'bg-emerald-300 dark:bg-emerald-400/60' },
 ]
 
-/** Imported shifts and anything without a time roster. */
+/** Shifts whose time slot has no colour of its own and is not otherwise known. */
 export const NEUTRAL_TONE: ShiftTone = {
   cell: 'bg-slate-100 dark:bg-slate-400/20',
   bar: 'bg-slate-300 dark:bg-slate-400/50',

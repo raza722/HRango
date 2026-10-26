@@ -1,31 +1,35 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { addDays, format } from 'date-fns'
+import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { tags, tasks } from '@/mocks/project-management/db'
+import { mockFileUrl } from '@/mocks/files/handlers'
+import { server } from '@/mocks/node'
+import { attachments, dependencies, tags, tasks, timeEntries } from '@/mocks/project-management/db'
+import { rememberUpload } from '@/mocks/project-management/handlers'
+import { apiPath } from '@/mocks/utils'
+import { useAuthStore } from '@/stores/auth-store'
 import { renderWithQueryClient, signIn } from '@/test/test-utils'
 
 import { CommentsProvider } from './components/comments/comments-panel'
 import {
   averageStoryPoints,
   formatDuration,
-  linkUpdates,
   parseDuration,
   quickPicks,
   taskLink,
 } from './components/task-fields/field-utils'
 import { TASK_CELLS, TaskNameAdornments } from './components/task-fields/task-cells'
-import { useTasks, useWorkspaceTree } from './hooks/use-pm'
+import { useTasks, useWorkspace } from './hooks/use-pm'
 import type { TaskColumnKey } from './types/pm.types'
 
 const day = (offset: number) => format(addDays(new Date(), offset), 'yyyy-MM-dd')
 
 /** Draws one task's cell the way the List view does, from the mock API. */
 function Cell({ taskId, column }: { taskId: string; column: TaskColumnKey | 'adornments' }) {
-  const { data: tree } = useWorkspaceTree()
+  const { data: workspace } = useWorkspace('ws_uxui')
   const { data: rows } = useTasks('ws_uxui', null)
-  const workspace = tree?.workspaces.find((entry) => entry.id === 'ws_uxui')
   const task = rows?.find((entry) => entry.id === taskId)
   if (!workspace || !task || !rows) return <p>Loading</p>
   if (column === 'adornments') {
@@ -45,14 +49,21 @@ function renderCell(taskId: string, column: TaskColumnKey | 'adornments') {
   )
 }
 
+/** The task as the mock API keeps it (backend `pm.task` with its assignees, tags and values). */
 const stored = (id: string) => {
   const task = tasks.find(id)
   if (!task) throw new Error(`No task ${id}`)
   return task
 }
+const assigneeIds = (id: string) => stored(id).assignees.map((entry) => entry.employeeId)
+const entriesOf = (id: string) => timeEntries.all().filter((entry) => entry.taskId === id)
 
 beforeEach(() => {
   signIn()
+  // The signed-in person is Shelley Kannes's employee, as `GET /auth/me` gives it.
+  const { token, user } = useAuthStore.getState()
+  if (token && user)
+    useAuthStore.getState().setSession({ token, user: { ...user, employeeId: 'em_shelley' } })
 })
 
 describe('field helpers', () => {
@@ -82,7 +93,7 @@ describe('field helpers', () => {
     expect(hint('four-weeks')).toBe('30 May')
   })
 
-  it('averages story points over the tasks that have them, and links both sides', () => {
+  it('averages story points over the tasks that have them', () => {
     expect(
       averageStoryPoints([
         { storyPoints: [{ employeeId: 'a', points: 5 }] },
@@ -96,21 +107,11 @@ describe('field helpers', () => {
       ]),
     ).toBe(4.5)
     expect(averageStoryPoints([{ storyPoints: [] }])).toBeNull()
-    expect(
-      linkUpdates(
-        { id: 'a', waitingOn: [], blocking: [] },
-        { id: 'b', waitingOn: [], blocking: ['c'] },
-        'waitingOn',
-      ),
-    ).toEqual([
-      { id: 'a', patch: { waitingOn: ['b'] } },
-      { id: 'b', patch: { blocking: ['c', 'a'] } },
-    ])
   })
 })
 
 describe('Add Assignee', () => {
-  it('adds and removes assignees and invites by email', async () => {
+  it('adds and removes assignees from the workspace members', async () => {
     const { user } = renderCell('tk_wire', 'assignees')
     await user.click(await screen.findByRole('button', { name: /^Assignees: / }))
     const popup = await screen.findByRole('dialog', { name: 'Add Assignee' })
@@ -119,26 +120,23 @@ describe('Add Assignee', () => {
     await user.type(within(popup).getByRole('textbox', { name: 'Search employee' }), 'Bilal')
     await user.click(within(popup).getByRole('button', { name: 'Add Bilal Ahmed' }))
     await waitFor(() => {
-      expect(stored('tk_wire').assigneeIds).toContain('em_bilal')
+      expect(assigneeIds('tk_wire')).toContain('em_bilal')
     })
 
     await user.clear(within(popup).getByRole('textbox', { name: 'Search employee' }))
     await user.click(await within(popup).findByRole('button', { name: 'Remove Rehan Ahmad' }))
     await waitFor(() => {
-      expect(stored('tk_wire').assigneeIds).not.toContain('em_rehan')
+      expect(assigneeIds('tk_wire')).not.toContain('em_rehan')
     })
 
-    const email = within(popup).getByRole('textbox', { name: 'Invite from email' })
-    await user.type(email, 'not-an-email')
-    await user.click(within(popup).getByRole('button', { name: 'Invite' }))
-    expect(await within(popup).findByText('Enter a valid email address')).toBeVisible()
-    await user.clear(email)
-    await user.type(email, 'guest@example.com')
-    await user.click(within(popup).getByRole('button', { name: 'Invite' }))
-    await waitFor(() => {
-      expect(stored('tk_wire').invitedEmails).toEqual(['guest@example.com'])
-    })
-    expect(await within(popup).findByText('guest@example.com')).toBeVisible()
+    // Only workspace members can be assigned; invites by email are not in the API.
+    await user.type(within(popup).getByRole('textbox', { name: 'Search employee' }), 'Daniel')
+    expect(
+      within(popup).queryByRole('button', { name: 'Add Daniel Brooks' }),
+    ).not.toBeInTheDocument()
+    expect(
+      within(popup).queryByRole('textbox', { name: 'Invite from email' }),
+    ).not.toBeInTheDocument()
   })
 
   it('lists the assignees beyond the stacked avatars in "+n Members"', async () => {
@@ -147,7 +145,7 @@ describe('Add Assignee', () => {
     const members = await screen.findByRole('dialog', { name: '+1 Members' })
     await user.click(within(members).getByRole('button', { name: 'Remove Saad Hadier' }))
     await waitFor(() => {
-      expect(stored('tk_quali').assigneeIds).not.toContain('em_saad')
+      expect(assigneeIds('tk_quali')).not.toContain('em_saad')
     })
   })
 })
@@ -178,8 +176,11 @@ describe('Start Date and Due Date', () => {
     await waitFor(() => {
       expect(stored('tk_quali_a').startDate).toBe(day(0))
     })
-    expect(stored('tk_quali_a').startTime).toBe('09:30')
+    expect(stored('tk_quali_a').startTime).toBe('09:30:00')
     expect(stored('tk_quali_a').dueDate).toBe(day(2))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Calendar' })).not.toBeInTheDocument()
+    })
     expect(await screen.findByRole('button', { name: /^Start Date: / })).toHaveTextContent('Today')
   })
 
@@ -207,7 +208,7 @@ describe('Start Date and Due Date', () => {
     expect(recurrence?.every).toBe(2)
     expect(recurrence?.unit).toBe('week')
     expect(recurrence?.weekdays).toContain(1)
-    expect(recurrence?.ends).toEqual({ kind: 'after', count: 5 })
+    expect(recurrence).toMatchObject({ ends: 'after', count: 5 })
   })
 })
 
@@ -248,7 +249,7 @@ describe('Tags and Labels', () => {
     )
     await waitFor(() => {
       const created = tags.all().find((tag) => tag.name === 'Research')
-      expect(created?.kind).toBe('tag')
+      expect(created).toBeDefined()
       expect(stored('tk_flow').tagIds).toEqual([created?.id])
     })
 
@@ -269,24 +270,29 @@ describe('Tags and Labels', () => {
     expect(stored('tk_persona').tagIds).not.toContain('tg_revamp')
   })
 
-  it('picks a label from the workspace labels', async () => {
+  it('picks a label from the workspace Labels field', async () => {
     const { user } = renderCell('tk_quali', 'labels')
     await user.click(await screen.findByRole('button', { name: /^Label for this task: / }))
     const popup = await screen.findByRole('dialog', { name: 'Labels' })
     expect(within(popup).queryByRole('button', { name: 'Active' })).not.toBeInTheDocument()
     await user.click(within(popup).getByRole('button', { name: 'Ready for QA' }))
     await waitFor(() => {
-      expect(stored('tk_quali').labelIds).toEqual(['lb_ready_qa'])
+      // A custom field of type labels: PUT /tasks/{id}/fields/{fieldId} with the option names.
+      expect(stored('tk_quali').fieldValues).toEqual([
+        { customFieldId: 'fld_labels', fieldValue: '["Ready for QA"]' },
+      ])
     })
   })
 })
 
 describe('Dependencies', () => {
-  it('links a task as Waiting On on both sides and unlinks it', async () => {
+  it('links a task as Waiting On and unlinks it', async () => {
     const { user } = renderCell('tk_wire', 'dependencies')
     await user.click(await screen.findByRole('button', { name: /^Add dependencies to / }))
     const popup = await screen.findByRole('dialog', { name: 'Dependencies' })
-    expect(within(popup).getByText('There are no tasks to link as dependencies')).toBeVisible()
+    expect(
+      await within(popup).findByText('There are no tasks to link as dependencies'),
+    ).toBeVisible()
 
     await user.click(within(popup).getByRole('button', { name: 'Add Task' }))
     const menu = await screen.findByRole('dialog', { name: 'Add Link' })
@@ -294,16 +300,19 @@ describe('Dependencies', () => {
     const picker = await screen.findByRole('dialog', { name: 'Add Task' })
     await user.click(within(picker).getByRole('button', { name: 'Link Iteration List' }))
 
+    // Stored once, as "Low fidelity wire-frames waits on Iteration List".
+    const link = () =>
+      dependencies
+        .all()
+        .find((entry) => entry.taskId === 'tk_wire' && entry.otherTaskId === 'tk_flow')
     await waitFor(() => {
-      expect(stored('tk_wire').waitingOn).toEqual(['tk_flow'])
+      expect(link()).toMatchObject({ kind: 'waiting_on' })
     })
-    expect(stored('tk_flow').blocking).toEqual(['tk_wire'])
 
     await user.click(await within(popup).findByRole('button', { name: 'Unlink Iteration List' }))
     await waitFor(() => {
-      expect(stored('tk_wire').waitingOn).toEqual([])
+      expect(link()).toBeUndefined()
     })
-    expect(stored('tk_flow').blocking).toEqual([])
   })
 
   it('adds roll-up columns to the links', async () => {
@@ -317,7 +326,7 @@ describe('Dependencies', () => {
       }),
     )
     expect(within(popup).getByRole('columnheader', { name: 'Task ID' })).toBeVisible()
-    expect(within(popup).getByRole('cell', { name: '#HR000000001' })).toBeVisible()
+    expect(await within(popup).findByRole('cell', { name: 'HR000000001' })).toBeVisible()
   })
 })
 
@@ -340,7 +349,7 @@ describe('Status and Task Type', () => {
     await user.click(within(again).getByRole('tab', { name: 'Task Type' }))
     await user.click(within(again).getByRole('button', { name: 'Milestone' }))
     await waitFor(() => {
-      expect(stored('tk_quali').type).toBe('milestone')
+      expect(stored('tk_quali').taskType).toBe('milestone')
     })
   })
 })
@@ -355,18 +364,18 @@ describe('Story Points', () => {
       within(popup).getByRole('button', { name: 'Allocate story points to Haroon Jalani' }),
     )
     await waitFor(() => {
-      expect(stored('tk_quali').storyPoints).toContainEqual({
+      expect(stored('tk_quali').assignees).toContainEqual({
         employeeId: 'em_haroon',
-        points: 1,
+        storyPoints: 1,
       })
     })
     await user.click(
       await within(popup).findByRole('button', { name: 'More story points for Haroon Jalani' }),
     )
     await waitFor(() => {
-      expect(stored('tk_quali').storyPoints).toContainEqual({
+      expect(stored('tk_quali').assignees).toContainEqual({
         employeeId: 'em_haroon',
-        points: 2,
+        storyPoints: 2,
       })
     })
 
@@ -374,10 +383,12 @@ describe('Story Points', () => {
       within(popup).getByRole('button', { name: "Options for Bilal Ahmed's story points" }),
     )
     await user.click(await screen.findByRole('menuitem', { name: 'Delete Story Points' }))
+    // Bilal stays assigned, without points.
     await waitFor(() => {
-      expect(stored('tk_quali').storyPoints.some((entry) => entry.employeeId === 'em_bilal')).toBe(
-        false,
-      )
+      expect(stored('tk_quali').assignees).toContainEqual({
+        employeeId: 'em_bilal',
+        storyPoints: null,
+      })
     })
 
     await user.click(within(popup).getByRole('button', { name: 'Excellent Results' }))
@@ -405,16 +416,17 @@ describe('Time Estimate and Time Tracked', () => {
     await user.click(await screen.findByRole('button', { name: /^Track time on / }))
     const popup = await screen.findByRole('dialog', { name: 'Time Tracked' })
     await user.click(within(popup).getByRole('button', { name: 'Start timer' }))
+    // POST /tasks/{id}/timer/start, then POST /timer/stop.
     await waitFor(() => {
-      expect(stored('tk_wire').timerStartedAt).not.toBeNull()
+      expect(entriesOf('tk_wire').some((entry) => entry.isRunning)).toBe(true)
     })
     expect(await within(popup).findByRole('timer', { name: 'Timer running' })).toBeVisible()
 
     await user.click(within(popup).getByRole('button', { name: 'Pause timer' }))
     await waitFor(() => {
-      expect(stored('tk_wire').timerStartedAt).toBeNull()
+      expect(entriesOf('tk_wire').some((entry) => entry.isRunning)).toBe(false)
     })
-    const [entry] = stored('tk_wire').timeEntries
+    const [entry] = entriesOf('tk_wire')
     expect(entry?.employeeId).toBe('em_shelley')
     expect(entry?.minutes).toBe(1)
     expect(await within(popup).findByRole('timer', { name: 'Time recorded' })).toBeVisible()
@@ -431,7 +443,7 @@ describe('Time Estimate and Time Tracked', () => {
     await user.clear(field)
     await user.type(field, '1h 15min{Enter}')
     await waitFor(() => {
-      expect(stored('tk_wire').timeEntries.map((entry) => entry.minutes)).toEqual([75])
+      expect(entriesOf('tk_wire').map((entry) => entry.minutes)).toEqual([75])
     })
 
     const form = within(popup).getByRole('form', { name: 'Add time entry' })
@@ -444,21 +456,45 @@ describe('Time Estimate and Time Tracked', () => {
     await user.type(within(form).getByRole('textbox', { name: 'Notes' }), 'Persona workshop')
     await user.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => {
-      expect(stored('tk_wire').timeEntries).toHaveLength(2)
+      expect(entriesOf('tk_wire')).toHaveLength(2)
     })
-    expect(stored('tk_wire').timeEntries[1]).toMatchObject({
-      date: day(0),
-      start: '09:00',
-      end: '10:15',
-      minutes: 75,
-      notes: 'Persona workshop',
-    })
+    const made = entriesOf('tk_wire').find((entry) => entry.notes === 'Persona workshop')
+    expect(made?.minutes).toBe(75)
+    // Sent as instants: today 09:00 local.
+    expect(new Date(`${made?.startAt ?? ''}Z`).getHours()).toBe(9)
     expect(await within(popup).findByText('Persona workshop')).toBeVisible()
   })
 })
 
 describe('Files, Latest Comment and the name icons', () => {
-  it('uploads a file from the device', async () => {
+  it('uploads a file and attaches it', async () => {
+    // The files mock keeps its uploads to itself: this one tells the PM mock the file's name.
+    server.use(
+      http.post(apiPath('/files'), async ({ request }) => {
+        // undici cannot parse jsdom's multipart body; read the part's headers from the text.
+        const text = await request.text()
+        const name = /filename="([^"]+)"/.exec(text)?.[1] ?? 'file'
+        const type = /Content-Type: (\S+)/i.exec(text)?.[1] ?? 'application/octet-stream'
+        const file = { name, type, size: text.length }
+        const id = `file_${file.name}`
+        rememberUpload(id, { name: file.name, mimeType: file.type, size: file.size })
+        return HttpResponse.json(
+          {
+            data: {
+              id,
+              name: file.name,
+              extension: 'pdf',
+              mimeType: file.type,
+              sizeBytes: file.size,
+              module: 'projects',
+              url: mockFileUrl(id),
+              createdAt: new Date().toISOString(),
+            },
+          },
+          { status: 201 },
+        )
+      }),
+    )
     const { user } = renderCell('tk_quali', 'files')
     await user.click(await screen.findByRole('button', { name: /^Attach files to / }))
     const popup = await screen.findByRole('dialog', { name: 'Attach Files' })
@@ -467,11 +503,21 @@ describe('Files, Latest Comment and the name icons', () => {
       within(popup).getByLabelText('Upload File From This Device'),
       new File(['%PDF-1.4 brief'], 'brief.pdf', { type: 'application/pdf' }),
     )
+    // POST /files (module projects), then POST /tasks/{id}/attachments with the file id.
     await waitFor(() => {
-      expect(stored('tk_quali').attachments.map((file) => file.name)).toEqual(['brief.pdf'])
+      expect(
+        attachments
+          .all()
+          .filter((entry) => entry.taskId === 'tk_quali')
+          .map((entry) => [entry.fileId, entry.name]),
+      ).toEqual([['file_brief.pdf', 'brief.pdf']])
     })
-    expect(stored('tk_quali').attachments[0]?.source).toBe('device')
     expect(await screen.findByRole('button', { name: 'Files: brief.pdf' })).toBeVisible()
+    // The name links to the signed download.
+    expect(await within(popup).findByRole('link', { name: 'brief.pdf' })).toHaveAttribute(
+      'href',
+      mockFileUrl('file_brief.pdf'),
+    )
   })
 
   it('opens the comments from the Latest Comment cell', async () => {
@@ -501,7 +547,10 @@ describe('Files, Latest Comment and the name icons', () => {
 
     await user.click(screen.getByRole('button', { name: 'Copy link to User Persona List' }))
     expect(await navigator.clipboard.readText()).toBe(
-      taskLink(stored('tk_persona'), window.location.origin),
+      taskLink(
+        { id: 'tk_persona', workspaceId: 'ws_uxui', listId: 'it_user_research' },
+        window.location.origin,
+      ),
     )
   })
 })

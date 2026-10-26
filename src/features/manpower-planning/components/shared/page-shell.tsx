@@ -4,22 +4,26 @@ import { PageContainer } from '@/components/layout'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 
-import { useManpowerLookups } from '../../hooks/use-manpower'
+import { useEmployeeOptions, useManpowerLookups } from '../../hooks/use-manpower'
 import { FilterIcon, InfoIcon, MailIcon, PhoneIcon } from './mp-icons'
 import { accent, cardTitleText, pageTitleText } from './mp-styles'
 
 const iconButton =
   'flex size-8 items-center justify-center rounded-[6px] bg-card text-[#516284] outline-none hover:bg-card/70 focus-visible:ring-[3px] focus-visible:ring-[#7469E8]/35 aria-pressed:bg-[#7469E8]/10 dark:text-[#A9B6CF] [&_svg]:size-[1.1rem]'
 
-/** The HR team, for the phone button: people of Human Resource Management. */
+/** The HR team, for the phone button: people of Human Resource Management (read on open). */
 function HrContacts() {
   const lookups = useManpowerLookups()
   const hr = lookups.data?.departments.find((item) => item.name === 'Human Resource Management')
-  const people = (lookups.data?.employees ?? []).filter((person) => person.departmentId === hr?.id)
+  const employees = useEmployeeOptions(
+    { permission: 'manpower.planning.view', departmentId: hr?.id },
+    hr !== undefined,
+  )
+  const people = hr ? (employees.data ?? []) : []
   return (
     <div className="grid gap-2">
       <p className="text-sm font-medium text-heading">HR contacts</p>
-      {lookups.isPending ? (
+      {lookups.isPending || (hr !== undefined && employees.isPending) ? (
         <p className="text-xs text-muted-foreground">Loading…</p>
       ) : people.length === 0 ? (
         <p className="text-xs text-muted-foreground">Nobody is listed in HR.</p>
@@ -29,7 +33,7 @@ function HrContacts() {
             <li key={person.id} className="text-xs leading-snug">
               <span className={cn('font-medium', accent.text)}>{person.name}</span>
               <span className="block text-[#707070] dark:text-muted-foreground">
-                {person.jobTitle}
+                {person.jobTitleName}
               </span>
             </li>
           ))}

@@ -12,13 +12,19 @@ import {
   type StandardKindServer,
   type StoredStandardRequest,
 } from '../engine'
+import {
+  scheduleBoardFallback,
+  timeWindowDetails,
+  timeWindowFromBody,
+  timeWindowHeader,
+} from './time-window'
 
 /*
- * Relaxation: time off inside the person's shift on one day ("Create
- * Relaxation Request": Employee Name on All, Date, Start Time, End Time,
- * Reason). The times must fall inside that day's shift on the schedule; the
- * shift is kept with the request for the Time Slot column. Approving needs a
- * reason. Approval relaxes the day in Attendance (late arrival and early
+ * Relaxation: time off inside the person's shift on one day, on the API's
+ * `time_window` kind (./time-window.ts): `details: {windowDate, startTime,
+ * endTime}`, the reason in the header. The times must fall inside that day's
+ * shift on the schedule; the shift is kept with the request for the Time Slot
+ * column. Approving needs remarks. Approval relaxes the day in Attendance (late arrival and early
  * leave are not flagged, the day shows "Relaxation"); an approved
  * cancellation takes the relaxation off again.
  */
@@ -26,10 +32,10 @@ import {
 const ymd = /^\d{4}-\d{2}-\d{2}$/
 const hm = /^([01]\d|2[0-3]):[0-5]\d$/
 const schema = z.object({
-  date: z.string().regex(ymd),
-  startTime: z.string().regex(hm),
-  endTime: z.string().regex(hm),
-  reason: z.string().trim().min(1).max(500),
+  date: z.string().regex(ymd, 'Date is required.'),
+  startTime: z.string().regex(hm, 'Start time is required.'),
+  endTime: z.string().regex(hm, 'End time is required.'),
+  reason: z.string().trim().min(1, 'Reason is required.').max(4000),
 })
 type Input = z.infer<typeof schema>
 
@@ -76,14 +82,6 @@ function onShift(shiftIn: string, shiftOut: string) {
   return { start, end, place }
 }
 
-/** "4h", "1h 30m", "45m". */
-function durationText(minutes: number): string {
-  const hours = Math.floor(minutes / 60)
-  const rest = minutes % 60
-  if (hours === 0) return `${String(rest)}m`
-  return rest === 0 ? `${String(hours)}h` : `${String(hours)}h ${String(rest)}m`
-}
-
 function span(payload: RelaxationStored) {
   const shift = onShift(payload.shiftIn, payload.shiftOut)
   return { from: shift.place(payload.startTime), to: shift.place(payload.endTime) }
@@ -99,8 +97,8 @@ function toPayload(
 ): Response | Record<string, unknown> {
   const entry = entryOn(context.employeeId, input.date)
   if (entry?.kind !== 'shift' || !entry.clockIn || !entry.clockOut) {
-    return invalid('No shift is scheduled on this day.', {
-      date: 'No shift is scheduled on this day',
+    return invalid('There is no shift on this date to relax.', {
+      windowDate: 'There is no shift on this date to relax.',
     })
   }
   const shiftIn: string = entry.clockIn
@@ -144,7 +142,7 @@ function toPayload(
   })
   if (clash) {
     return invalid(`${clash.code} already asks for relaxation at these times.`, {
-      startTime: 'These times are already asked for',
+      startTime: 'Another request on this date overlaps these times.',
     })
   }
   return { ...payload }
@@ -218,26 +216,20 @@ function revertRelaxation(record: StoredStandardRequest): void {
 
 const def: StandardKindServer<Input> = {
   kind: 'relaxation',
+  typeCode: 'relaxation',
+  typeName: 'Relaxation',
+  backendKind: 'time_window',
   settingsType: 'relaxation',
   codePrefix: 'RLX-',
   codeDigits: 4,
+  fromBody: timeWindowFromBody,
   schema,
   toPayload,
   dateOf: (payload) => String(payload.date),
-  present: (payload) => {
-    const value = payload as unknown as RelaxationStored
-    const { from, to } = span(value)
-    return {
-      ...value,
-      // "Default Time Slot (10:00 AM - 05:00 PM)" in the frames: the day's slot on the schedule.
-      timeSlot: `${value.slotName} (${clock(value.shiftIn)} - ${clock(value.shiftOut)})`,
-      time: `${clock(value.startTime)} - ${clock(value.endTime)}`,
-      minutes: to - from,
-      duration: durationText(to - from),
-    }
-  },
+  header: (payload) => timeWindowHeader(payload as unknown as RelaxationStored),
+  toDetails: (payload) => timeWindowDetails('relaxation', payload as unknown as RelaxationStored),
   approveNeedsRemarks: true,
-  cancellationsView: true,
+  extraHandlers: [scheduleBoardFallback],
   onCompleted: applyRelaxation,
   onCancelled: revertRelaxation,
   seed: () => {

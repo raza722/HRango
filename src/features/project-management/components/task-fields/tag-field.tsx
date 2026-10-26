@@ -143,7 +143,10 @@ function TagPicker({ task, workspaceId, kind, tags }: TagPickerProps) {
   const own = tags.filter((tag) => tag.kind === kind)
   const query = search.trim().toLowerCase()
   const listed = own.filter((tag) => !query || tag.name.toLowerCase().includes(query))
-  const selectedIds = task[copy.key]
+  // Labels: only options of the workspace's Labels field (other list fields are not labels).
+  const selectedIds = task[copy.key].filter(
+    (id) => kind === 'tag' || own.some((tag) => tag.id === id),
+  )
 
   const toggle = (id: string) => {
     const next = selectedIds.includes(id)
@@ -238,7 +241,7 @@ function TagRow({ tag, selected, onToggle }: TagRowProps) {
       return
     }
     try {
-      await updateTag.mutateAsync({ id: tag.id, patch: { name: next } })
+      await updateTag.mutateAsync({ tag, patch: { name: next } })
       setRenaming(false)
     } catch {
       // Toasted by the mutation cache; keep the field open to fix the name.
@@ -275,7 +278,7 @@ function TagRow({ tag, selected, onToggle }: TagRowProps) {
             onBlur={() => {
               void rename()
             }}
-            maxLength={40}
+            maxLength={tag.kind === 'tag' ? 25 : 200}
             className="h-7 w-full rounded-md border border-[#A181FF] bg-white px-2 text-[0.8125rem] outline-none"
           />
         </label>
@@ -323,32 +326,37 @@ function TagRow({ tag, selected, onToggle }: TagRowProps) {
             variant="destructive"
             className={cn(menuItem, 'mt-1.5')}
             onSelect={() => {
-              deleteTag.mutate(tag.id)
+              deleteTag.mutate(tag)
             }}
           >
             Delete
           </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel className="px-1 pt-1 pb-1.5 text-xs font-medium text-[#909090]">
-            {kindName === 'tag' ? 'Tag Colors' : 'Label Colors'}
-          </DropdownMenuLabel>
-          <div className="grid grid-cols-6 gap-1.5 px-2 pb-2">
-            {PM_SWATCHES.map((color) => (
-              <DropdownMenuItem
-                key={color}
-                aria-label={`Colour ${color}`}
-                onSelect={() => {
-                  updateTag.mutate({ id: tag.id, patch: { color } })
-                }}
-                className={cn(
-                  'size-5 justify-center rounded-full p-0',
-                  tag.color.toLowerCase() === color.toLowerCase() &&
-                    'ring-2 ring-[#303030] ring-offset-1',
-                )}
-                style={{ backgroundColor: color }}
-              />
-            ))}
-          </div>
+          {/* Labels are options of a custom field, which keeps no colours. */}
+          {kindName === 'tag' && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="px-1 pt-1 pb-1.5 text-xs font-medium text-[#909090]">
+                Tag Colors
+              </DropdownMenuLabel>
+              <div className="grid grid-cols-6 gap-1.5 px-2 pb-2">
+                {PM_SWATCHES.map((color) => (
+                  <DropdownMenuItem
+                    key={color}
+                    aria-label={`Colour ${color}`}
+                    onSelect={() => {
+                      updateTag.mutate({ tag, patch: { color } })
+                    }}
+                    className={cn(
+                      'size-5 justify-center rounded-full p-0',
+                      tag.color.toLowerCase() === color.toLowerCase() &&
+                        'ring-2 ring-[#303030] ring-offset-1',
+                    )}
+                    style={{ backgroundColor: color }}
+                  />
+                ))}
+              </div>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </li>

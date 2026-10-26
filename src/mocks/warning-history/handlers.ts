@@ -1,102 +1,118 @@
-import { addMinutes, startOfToday, startOfYesterday } from 'date-fns'
 import { http, HttpResponse } from 'msw'
 
-import type { HistoryAction, HistoryEntity, WarningHistoryEntry } from '@/features/warning'
-import type { ApiItem } from '@/types/api'
+import type { WarningHistoryEntry } from '@/features/warning'
+import type { Paginated } from '@/types/api'
 
 import { DEMO_USER } from '../auth/handlers'
 import { createMockCollection } from '../collection'
-import { apiPath, createId, errorResponse, latency, requireAuth } from '../utils'
+import { apiPath, latency, paginate, readPageParams, requireAuth } from '../utils'
 
-/** Today's entries spread over the part of today that has passed; yesterday's at fixed times. */
+/** UTC without a zone, as the API writes `performedAt`. */
+function at(minutesAgo: number): string {
+  return new Date(Date.now() - minutesAgo * 60_000).toISOString().slice(0, 19)
+}
+
+/** Seven lines over today and yesterday, newest first by id. */
 function seedHistory(): WarningHistoryEntry[] {
-  const today = startOfToday()
-  const elapsedMinutes = Math.max(10, Math.floor((Date.now() - today.getTime()) / 60_000))
-  const at = (fraction: number) =>
-    addMinutes(today, Math.floor(elapsedMinutes * fraction)).toISOString()
-  const yesterday = (hour: number, minute: number) =>
-    addMinutes(startOfYesterday(), hour * 60 + minute).toISOString()
+  const now = new Date()
+  const minutesToday = Math.max(10, now.getHours() * 60 + now.getMinutes())
+  const today = (fraction: number) => at(Math.floor(minutesToday * fraction))
+  const yesterday = (fraction: number) => at(minutesToday + Math.floor(600 * fraction) + 60)
 
   const entry = (
     id: string,
-    occurredAt: string,
-    entity: HistoryEntity,
-    action: HistoryAction,
-    recordId: string,
-    recordTitle: string,
+    performedAt: string,
+    actionName: string,
+    policyId: string,
+    policyTitle: string | null,
+    fieldName: string,
+    oldValue: string | null,
+    newValue: string | null,
   ): WarningHistoryEntry => ({
     id,
-    occurredAt,
-    entity,
-    action,
-    recordId,
-    recordTitle,
-    actor: DEMO_USER.name,
+    performedAt,
+    actionName,
+    policyId,
+    policyTitle,
+    fieldName,
+    oldValue,
+    newValue,
+    performedByUserId: DEMO_USER.id,
+    performedByName: DEMO_USER.name,
   })
 
   return [
-    entry('wh_01', at(0.92), 'policy', 'updated', 'wp_grace01', 'Grace'),
-    entry('wh_02', at(0.75), 'penalty', 'created', 'pn_late02', 'Late arrival penalty'),
-    entry('wh_03', at(0.5), 'policy', 'updated', 'wp_late01', 'Late'),
-    entry('wh_04', at(0.25), 'penalty', 'updated', 'pn_grace01', 'Grace penalty'),
-    entry('wh_05', yesterday(17, 40), 'policy', 'created', 'wp_ot01', 'Overtime Cap'),
-    entry('wh_06', yesterday(15, 54), 'policy', 'deleted', 'wp_old01', 'Probation grace'),
-    entry('wh_07', yesterday(10, 12), 'penalty', 'updated', 'pn_late01', 'Late arrival full day'),
+    entry('7', today(0.1), 'update', '5', 'Grace', 'grace_minutes', '480', '600'),
+    entry('6', today(0.4), 'update', '1', 'Late', 'penalties', '[{}]', '[{},{}]'),
+    entry('5', today(0.7), 'update', '1', 'Late', 'title', 'Late arrival', 'Late'),
+    entry('4', today(0.9), 'create', '5', 'Grace', 'title', null, 'Grace'),
+    entry(
+      '3',
+      yesterday(0.2),
+      'create',
+      '6',
+      'Late Night Shift',
+      'title',
+      null,
+      'Late Night Shift',
+    ),
+    entry('2', yesterday(0.5), 'delete', '99', 'Probation grace', 'title', 'Probation grace', null),
+    entry('1', yesterday(0.8), 'update', '3', 'Overtime Cap', 'period', 'week', 'day'),
   ]
 }
 
 export const warningHistory = createMockCollection<WarningHistoryEntry>({
-  storageKey: 'hrms-mock-warning-history',
+  storageKey: 'hrms-mock-warning-history-v2',
   seed: seedHistory,
 })
 
-/** Appends an audit entry; called by the policy and penalty handlers after each change. */
+/** Appends an audit line, as the procedures do (one per changed field on an update). */
 export function recordHistory(
-  entity: HistoryEntity,
-  action: HistoryAction,
-  record: { id: string; title: string },
+  actionName: 'create' | 'update' | 'delete',
+  policy: { id: string; title: string },
+  fieldName: string,
+  oldValue: string | null,
+  newValue: string | null,
 ): void {
+  const id = String(
+    warningHistory.all().reduce((max, e) => Math.max(max, Number(e.id) || 0), 0) + 1,
+  )
   warningHistory.insert({
-    id: createId('wh'),
-    occurredAt: new Date().toISOString(),
-    entity,
-    action,
-    recordId: record.id,
-    recordTitle: record.title,
-    actor: DEMO_USER.name,
+    id,
+    performedAt: new Date().toISOString().slice(0, 19),
+    actionName,
+    policyId: policy.id,
+    policyTitle: policy.title,
+    fieldName,
+    oldValue,
+    newValue,
+    performedByUserId: DEMO_USER.id,
+    performedByName: DEMO_USER.name,
   })
 }
 
-const BASE = apiPath('/warning-history')
+/** After a rename the log shows the policy's current title, as the API's join does. */
+export function renameInHistory(policyId: string, title: string): void {
+  warningHistory
+    .all()
+    .filter((entry) => entry.policyId === policyId)
+    .forEach((entry) => warningHistory.update(entry.id, { ...entry, policyTitle: title }))
+}
 
 export const warningHistoryHandlers = [
-  http.get(BASE, async ({ request }) => {
+  // GET /warning/history?policyId=&page=&pageSize= — newest first.
+  http.get(apiPath('/warning/history'), async ({ request }) => {
     await latency()
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
 
+    const url = new URL(request.url)
+    const policyId = url.searchParams.get('policyId')
+    const { page, pageSize } = readPageParams(url)
     const entries = warningHistory
       .all()
-      .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
-      .slice(0, 200)
-    return HttpResponse.json<ApiItem<WarningHistoryEntry[]>>({ data: entries })
-  }),
-
-  http.delete<{ id: string }>(`${BASE}/:id`, async ({ request, params }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    if (!warningHistory.remove(params.id)) {
-      return errorResponse(404, 'History entry not found.', { code: 'NOT_FOUND' })
-    }
-    return new HttpResponse(null, { status: 204 })
-  }),
-
-  http.delete(BASE, async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    warningHistory.all().forEach((entry) => warningHistory.remove(entry.id))
-    return new HttpResponse(null, { status: 204 })
+      .filter((entry) => !policyId || entry.policyId === policyId)
+      .sort((a, b) => Number(b.id) - Number(a.id))
+    return HttpResponse.json<Paginated<WarningHistoryEntry>>(paginate(entries, page, pageSize))
   }),
 ]

@@ -4,14 +4,13 @@ import type { ScheduleEntry } from '@/features/scheduling'
 import { weekdayOf } from '@/features/scheduling'
 
 import { attendancePunches } from '../attendance/db'
-import { computeRange, takeSnapshot } from '../attendance/engine'
 import { rosterGroups } from '../roster/handlers'
 import { scheduleEntries } from '../scheduling/handlers'
 import { slotFor } from '../scheduling/seed'
 import { createId } from '../utils'
 import { employeeTransfers, transferLogOf } from './db'
-import type { AppliedEffect, StoredPunchRequest, StoredRequest, StoredShiftRequest } from './flow'
-import type { StoredTransferRequest } from './transfer-flow'
+import type { AppliedEffect } from './flow'
+import type { StoredCorePunch, StoredCoreShift, StoredTransferRequest } from './transfer-flow'
 
 const ROSTER_DAY_INDEX = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 } as const
 
@@ -27,19 +26,22 @@ export function rosterTimes(rosterGroupId: string, date: string) {
   return { group, clockIn: day.clockIn, clockOut: day.clockOut }
 }
 
+/** The API's punch type → Attendance's (`check_in` → `check-in`). */
+const PUNCH_TYPE = {
+  check_in: 'check-in',
+  check_out: 'check-out',
+  break_out: 'break-out',
+  break_in: 'break-in',
+} as const
+
 /**
- * An approved punch request becomes a punch in Attendance. "Missing Punch"
- * fills whichever punch the day lacks, check in first.
+ * An approved punch request becomes a punch in Attendance (the API's
+ * `att.usp_request_apply_punch`).
  */
-function applyPunch(record: StoredPunchRequest): AppliedEffect {
+function applyPunch(record: StoredCorePunch): AppliedEffect {
   const { date, punchTime } = record.payload
-  let type: 'check-in' | 'check-out' =
-    record.payload.punchType === 'check-out' ? 'check-out' : 'check-in'
+  const type = PUNCH_TYPE[record.payload.punchType]
   const entry = entryOn(record.employeeId, date)
-  if (record.payload.punchType === 'missing-punch') {
-    const day = computeRange(takeSnapshot(), record.employeeId, date, date)[0]?.day
-    type = day?.checkIn ? 'check-out' : 'check-in'
-  }
   // An overnight shift's check out is the next morning.
   const overnight =
     type === 'check-out' && entry?.clockIn && entry.clockOut
@@ -54,7 +56,7 @@ function applyPunch(record: StoredPunchRequest): AppliedEffect {
     employeeId: record.employeeId,
     date,
     type,
-    at: `${punchDate}T${punchTime}`,
+    at: `${punchDate}T${punchTime.slice(0, 5)}`,
     description: `Punch request ${record.code}${record.payload.description ? `: ${record.payload.description}` : ''}`,
     source: 'request',
     machineId: null,
@@ -74,9 +76,9 @@ function writeEntry(
   else scheduleEntries.insert({ ...next, id: createId('se'), createdAt: now, updatedAt: now })
 }
 
-/** An approved shift request changes the schedule: a new roster, or a swap. */
-function applyShift(record: StoredShiftRequest): AppliedEffect {
-  const { date, rosterGroupId, swapWithId } = record.payload
+/** An approved shift request changes the schedule: a new time slot, or a swap. */
+function applyShift(record: StoredCoreShift): AppliedEffect {
+  const { date, timeSlotId: rosterGroupId, swapWithId } = record.payload
   const mine = entryOn(record.employeeId, date) ?? null
   if (swapWithId) {
     const theirs = entryOn(swapWithId, date) ?? null
@@ -117,7 +119,7 @@ function applyShift(record: StoredShiftRequest): AppliedEffect {
   return { type: 'schedule', before: [{ employeeId: record.employeeId, entry: mine }] }
 }
 
-export function applyEffect(record: StoredRequest): AppliedEffect {
+export function applyEffect(record: StoredCorePunch | StoredCoreShift): AppliedEffect {
   return record.kind === 'punch' ? applyPunch(record) : applyShift(record)
 }
 

@@ -2,7 +2,7 @@ import { useId, useState } from 'react'
 import { type Control, useController } from 'react-hook-form'
 import { Search } from 'lucide-react'
 
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -15,41 +15,35 @@ import type { EnrollmentCandidate } from '../types/roster.types'
 
 interface EmployeePickerProps {
   control: Control<EnrollmentFormValues>
-  groupId: string
 }
 
-/** Why a person cannot be picked, if they cannot. */
-function blockedReason(candidate: EnrollmentCandidate, groupId: string): string | null {
-  if (!candidate.currentRoster) return null
-  return candidate.currentRoster.id === groupId
-    ? 'Already on this roster'
-    : `On ${candidate.currentRoster.title}`
+/** "Designation · Department · Code", leaving out what the record lacks. */
+function describe(candidate: EnrollmentCandidate): string {
+  return [candidate.designationName, candidate.departmentName, candidate.code]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 /**
- * Searchable checklist of employees for "Enroll New Employee". People already
- * on a roster are shown but cannot be ticked (one roster per person at a time).
+ * Searchable checklist of employees for "Enroll New Employee" (`GET /employees/lookup`,
+ * the people the user may enrol). Typing searches the server (`q`); the list shows a page
+ * at a time and "Load more" reads the next, so any number of people can be reached. One
+ * roster per person at a time is checked by the API on save; the lookup does not say who
+ * is on a roster already.
  */
-export function EmployeePicker({ control, groupId }: EmployeePickerProps) {
+export function EmployeePicker({ control }: EmployeePickerProps) {
   const labelId = useId()
   const errorId = useId()
   const [text, setText] = useState('')
   const search = useDebouncedValue(text.trim(), 250)
-  const candidates = useEnrollmentCandidates(groupId, search)
+  const candidates = useEnrollmentCandidates(search)
   const {
     field: { value, onChange },
     fieldState,
   } = useController({ control, name: 'employeeIds' })
   const selected = new Set(value)
 
-  const available = (candidates.data ?? []).filter(
-    (candidate) => blockedReason(candidate, groupId) === null,
-  )
-  // People who can be picked first; those already on a roster after them.
-  const ordered = [
-    ...available,
-    ...(candidates.data ?? []).filter((candidate) => blockedReason(candidate, groupId) !== null),
-  ]
+  const available = candidates.rows
   const allShownSelected = available.length > 0 && available.every((c) => selected.has(c.id))
 
   const toggle = (id: string, checked: boolean) => {
@@ -81,7 +75,7 @@ export function EmployeePicker({ control, groupId }: EmployeePickerProps) {
         <Input
           type="search"
           aria-label="Search employees"
-          placeholder="Search name, department or designation"
+          placeholder="Search name or code"
           value={text}
           onChange={(event) => {
             setText(event.target.value)
@@ -120,46 +114,52 @@ export function EmployeePicker({ control, groupId }: EmployeePickerProps) {
                   }}
                 />
                 <label htmlFor={`${labelId}-all`} className="cursor-pointer text-sm text-heading">
-                  Select all {available.length} available
+                  Select all {available.length} {candidates.hasMore ? 'shown' : 'available'}
                 </label>
               </li>
             )}
-            {ordered.map((candidate) => {
-              const reason = blockedReason(candidate, groupId)
+            {available.map((candidate) => {
               const id = `${labelId}-${candidate.id}`
               return (
-                <li
-                  key={candidate.id}
-                  className={cn('flex items-center gap-3 px-3 py-2.5', reason && 'opacity-60')}
-                >
+                <li key={candidate.id} className="flex items-center gap-3 px-3 py-2.5">
                   <Checkbox
                     id={id}
                     checked={selected.has(candidate.id)}
-                    disabled={reason !== null}
                     onCheckedChange={(checked) => {
                       toggle(candidate.id, checked === true)
                     }}
                   />
-                  <label
-                    htmlFor={id}
-                    className={cn('min-w-0 flex-1', reason === null && 'cursor-pointer')}
-                  >
+                  <label htmlFor={id} className="min-w-0 flex-1 cursor-pointer">
                     <span className="block truncate text-sm text-heading">{candidate.name}</span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {candidate.designation} · {candidate.department}
+                      {describe(candidate)}
                     </span>
                   </label>
-                  {reason && (
-                    <Badge variant="secondary" className="shrink-0 font-normal">
-                      {reason}
-                    </Badge>
-                  )}
                 </li>
               )
             })}
-            {candidates.data?.length === 0 && (
+            {available.length === 0 && (
               <li className="px-3 py-6 text-center text-sm text-muted-foreground">
-                No employees match that search.
+                {candidates.isError
+                  ? 'Employees could not be loaded.'
+                  : 'No employees match that search.'}
+              </li>
+            )}
+            {candidates.hasMore && (
+              <li className="flex items-center justify-between gap-3 px-3 py-2">
+                <span className="text-xs text-muted-foreground">
+                  Showing {available.length} of {candidates.total}
+                </span>
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  disabled={candidates.isFetchingMore}
+                  onClick={candidates.loadMore}
+                  className="h-auto p-0"
+                >
+                  {candidates.isFetchingMore ? 'Loading…' : 'Load more'}
+                </Button>
               </li>
             )}
           </ul>

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import type { Workspace } from '../../types/pm.types'
+import type { WorkspaceSummary } from '../../types/pm.types'
 import { CommentsProvider } from '../comments/comments-panel'
 import { CreateWorkspaceWizard } from '../create-workspace/create-workspace-wizard'
 import { WorkspacesPanel } from './workspaces-panel'
@@ -11,7 +11,7 @@ interface WorkspacesLayoutProps {
   listId: string | null
   createOpen: boolean
   onCreateOpenChange: (open: boolean) => void
-  onCreated: (workspace: Workspace) => void
+  onCreated: (workspace: WorkspaceSummary) => void
   children: ReactNode
 }
 

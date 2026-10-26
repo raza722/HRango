@@ -1,31 +1,31 @@
 import { addDays, format, subDays } from 'date-fns'
 
-import { transferLetter } from '@/features/requests'
+import { type PunchRequestType, transferLetter } from '@/features/requests'
 
 import { createMockCollection } from '../collection'
-import { rosterGroups } from '../roster/handlers'
+import { DIRECTORY } from '../employees/seed'
 import { scheduleEntries } from '../scheduling/handlers'
 import { branches, locations } from '../settings/handlers'
-import {
-  applyCancelRequest,
-  applyConsent,
-  applyDecision,
-  newRecord,
-  type StoredPunchRequest,
-  type StoredShiftRequest,
-} from './flow'
+import { mockDepartmentId } from './backend'
+import { applyConsent, applyDecision } from './flow'
 import { ME, mustFind, ref } from './people'
-import { decideTransfer, newTransferRecord, type StoredTransferRequest } from './transfer-flow'
+import {
+  newCoreRecord,
+  releaseFlow,
+  requestCoreCancel,
+  type StoredCorePunch,
+  type StoredCoreShift,
+  type StoredTransferRequest,
+} from './transfer-flow'
 
-/** The shift a person has on a date, as "Morning Work (09:00 AM – 05:00 PM)". */
-export function shiftText(employeeId: string, date: string): string | null {
+/** The name of the shift a person has on a date ("Morning Work"), or "Rest Day". */
+export function slotNameOn(employeeId: string, date: string): string | null {
   const entry = scheduleEntries
     .all()
     .find((item) => item.employeeId === employeeId && item.date === date)
   if (!entry) return null
   if (entry.kind === 'rest' || !entry.clockIn || !entry.clockOut) return 'Rest Day'
-  const clock = (time: string) => format(new Date(`2000-01-01T${time}`), 'hh:mm a')
-  return `${entry.slot.name} (${clock(entry.clockIn)} – ${clock(entry.clockOut)})`
+  return entry.slot.name
 }
 
 function shiftDay(employeeId: string, step: -1 | 1, skip: number, weekdaysOnly = false) {
@@ -66,85 +66,78 @@ const plus = (time: string, minutes: number) => {
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
 }
 
+const code = (prefix: string, number: number) => `${prefix}-${String(number).padStart(4, '0')}`
+
 function punch(
   number: number,
   employeeId: string,
-  type: StoredPunchRequest['payload']['punchType'],
+  type: PunchRequestType,
   day: { date: string; clockIn: string; clockOut: string },
   description: string,
   createdDaysAgo: number,
-  consents: string[] = [],
-): StoredPunchRequest {
-  const punchTime = type === 'check-out' ? plus(day.clockOut, 6) : plus(day.clockIn, 4)
-  return newRecord<StoredPunchRequest>(
+): StoredCorePunch {
+  const punchTime =
+    type === 'check_out' || type === 'break_in' ? plus(day.clockOut, -6) : plus(day.clockIn, 4)
+  return newCoreRecord<StoredCorePunch>(
     {
-      id: `prq_${number}`,
-      code: `RQ-ATT-${String(880 + number).padStart(4, '0')}`,
+      id: `prq_${String(number)}`,
+      code: code('RQ-PCH', number),
       kind: 'punch',
       employeeId,
       createdById: employeeId,
-      consents: consents.map((personId) => ({ personId, status: 'pending', remarks: null })),
-      payload: { date: day.date, punchType: type, punchTime, description },
+      payload: { date: day.date, punchType: type, punchTime, reason: null, description },
     },
+    { punchType: type },
     daysAgo(createdDaysAgo),
   )
 }
 
-function seedPunchRequests(): StoredPunchRequest[] {
+function seedPunchRequests(): StoredCorePunch[] {
   const at = (days: number, hour: number) => daysAgo(days, hour)
   const approve = (
-    record: StoredPunchRequest,
+    record: StoredCorePunch,
     by: string,
     days: number,
     remarks: string | null = null,
   ) => applyDecision(record, 'approve', by, remarks, at(days, 15)).record
-  const reject = (record: StoredPunchRequest, by: string, days: number, remarks: string) =>
+  const reject = (record: StoredCorePunch, by: string, days: number, remarks: string) =>
     applyDecision(record, 'reject', by, remarks, at(days, 15)).record
 
-  const jack = approve(
-    approve(
-      punch(
-        10,
-        'em_jack',
-        'check-in',
-        pastShift('em_jack', 4),
-        'Card reader at the gate failed.',
-        9,
-      ),
-      'em_daniel',
-      8,
-    ),
-    ME,
-    7,
-    'Checked against the guard log.',
+  const completed = (record: StoredCorePunch, steps: [string, number, string | null][]) =>
+    steps.reduce((current, [by, days, remarks]) => approve(current, by, days, remarks), record)
+
+  const jack = completed(
+    punch(10, 'em_jack', 'check_in', pastShift('em_jack', 4), 'Card reader at the gate failed.', 9),
+    [
+      ['em_daniel', 8, null],
+      [ME, 7, 'Checked against the guard log.'],
+    ],
   )
   return [
     punch(
       1,
       ME,
-      'check-in',
+      'check_in',
       pastShift(ME, 0),
       'Came in early for the payroll review; the device was offline.',
       1,
     ),
-    approve(
-      approve(
-        punch(
-          2,
-          ME,
-          'check-out',
-          pastShift(ME, 3),
-          'Left after the board meeting, forgot to punch.',
-          5,
-        ),
-        'em_daniel',
-        4,
+    completed(
+      punch(
+        2,
+        ME,
+        'check_out',
+        pastShift(ME, 3),
+        'Left after the board meeting, forgot to punch.',
+        5,
       ),
-      'em_kaleem',
-      3,
+      [
+        ['em_daniel', 4, null],
+        ['em_kaleem', 3, null],
+      ],
     ),
     reject(
-      punch(3, ME, 'missing-punch', pastShift(ME, 6), 'Badge was not working all day.', 9),
+      punch(3, ME, 'break_out', pastShift(ME, 6), 'Badge was not working all day.', 9),
       'em_daniel',
       8,
       'The device log shows a punch at 09:02; no correction needed.',
@@ -152,7 +145,7 @@ function seedPunchRequests(): StoredPunchRequest[] {
     punch(
       4,
       'em_laiba',
-      'check-in',
+      'check_in',
       pastShift('em_laiba', 1),
       'Interview panel started at the client site.',
       2,
@@ -161,7 +154,7 @@ function seedPunchRequests(): StoredPunchRequest[] {
       punch(
         5,
         'em_ayesha',
-        'check-out',
+        'check_out',
         pastShift('em_ayesha', 2),
         'Stayed for the vendor call.',
         4,
@@ -173,7 +166,7 @@ function seedPunchRequests(): StoredPunchRequest[] {
     punch(
       6,
       'em_haroon',
-      'check-in',
+      'check_in',
       pastShift('em_haroon', 1),
       'Worked from the client office in the morning.',
       2,
@@ -181,7 +174,7 @@ function seedPunchRequests(): StoredPunchRequest[] {
     punch(
       7,
       'em_mahnoor',
-      'check-out',
+      'check_out',
       pastShift('em_mahnoor', 0),
       'Release went late; left after the gate closed.',
       1,
@@ -190,7 +183,7 @@ function seedPunchRequests(): StoredPunchRequest[] {
       punch(
         8,
         'em_omar',
-        'check-in',
+        'check_in',
         pastShift('em_omar', 2),
         'Branch opened by the manager on duty, punch missed.',
         3,
@@ -202,21 +195,19 @@ function seedPunchRequests(): StoredPunchRequest[] {
     punch(
       9,
       'em_sara',
-      'check-out',
+      'check_out',
       pastShift('em_sara', 1),
       'Closing at the Karachi showroom.',
       2,
-      [ME],
     ),
-    applyCancelRequest(jack, 'em_jack', 'The machine record was restored by IT.', at(2, 11)),
+    requestCoreCancel(jack, 'em_jack', 'The machine record was restored by IT.', at(2, 11)),
     punch(
       11,
       'em_kashif',
-      'missing-punch',
+      'break_in',
       pastShift('em_kashif', 1),
       'Visited the Rawalpindi office for the audit.',
       1,
-      [ME],
     ),
   ]
 }
@@ -225,38 +216,38 @@ function shift(
   number: number,
   employeeId: string,
   day: { date: string },
-  change: { rosterGroupId: string } | { swapWithId: string },
+  change: { timeSlotId: string } | { swapWithId: string },
   description: string,
   createdDaysAgo: number,
-): StoredShiftRequest {
-  const roster = 'rosterGroupId' in change ? rosterGroups.find(change.rosterGroupId) : undefined
+): StoredCoreShift {
   const swapWithId = 'swapWithId' in change ? change.swapWithId : null
-  return newRecord<StoredShiftRequest>(
+  return newCoreRecord<StoredCoreShift>(
     {
-      id: `srq_${number}`,
-      code: `RQ-SFT-${String(140 + number).padStart(4, '0')}`,
+      id: `srq_${String(number)}`,
+      code: code('RQ-SFT', number),
       kind: 'shift',
       employeeId,
       createdById: employeeId,
-      consents: swapWithId ? [{ personId: swapWithId, status: 'pending', remarks: null }] : [],
+      consentIds: swapWithId ? [swapWithId] : [],
       payload: {
         date: day.date,
-        rosterGroupId: roster?.id ?? null,
-        rosterTitle: roster?.title ?? null,
-        swapFrom: shiftText(employeeId, day.date),
+        timeSlotId: 'timeSlotId' in change ? change.timeSlotId : null,
         swapWithId,
-        swapToShift: swapWithId ? shiftText(swapWithId, day.date) : null,
+        fromSlotName: slotNameOn(employeeId, day.date),
+        toSlotName: swapWithId ? slotNameOn(swapWithId, day.date) : null,
+        reason: null,
         description,
       },
     },
+    {},
     daysAgo(createdDaysAgo),
   )
 }
 
-function seedShiftRequests(): StoredShiftRequest[] {
+function seedShiftRequests(): StoredCoreShift[] {
   const at = (days: number) => daysAgo(days, 16)
   const approve = (
-    record: StoredShiftRequest,
+    record: StoredCoreShift,
     by: string,
     days: number,
     remarks: string | null = null,
@@ -283,7 +274,7 @@ function seedShiftRequests(): StoredShiftRequest[] {
       1,
       ME,
       nextWeekdayShift(ME, 2),
-      { rosterGroupId: 'rg_flexible' },
+      { timeSlotId: 'rg_flexible' },
       'Training session in the morning.',
       1,
     ),
@@ -293,7 +284,7 @@ function seedShiftRequests(): StoredShiftRequest[] {
         3,
         'em_omer',
         shiftDay('em_omer', -1, 2, true),
-        { rosterGroupId: 'rg_flexible' },
+        { timeSlotId: 'rg_flexible' },
         'Quarter-end close.',
         6,
       ),
@@ -301,13 +292,13 @@ function seedShiftRequests(): StoredShiftRequest[] {
       5,
       'Approved for the close.',
     ),
-    applyConsent(rehan, 'em_haroon', 'approve', 'Fine with me.', at(1)),
+    releaseFlow(applyConsent(rehan, 'em_haroon', 'approve', 'Fine with me.', at(1))),
     approve(
       shift(
         5,
         'em_hamza',
         nextWeekdayShift('em_hamza', 3),
-        { rosterGroupId: 'rg_morning' },
+        { timeSlotId: 'rg_morning' },
         'Pairing with the Lahore team that week.',
         3,
       ),
@@ -320,7 +311,7 @@ function seedShiftRequests(): StoredShiftRequest[] {
         6,
         'em_daniyal',
         nextWeekdayShift('em_daniyal', 1),
-        { rosterGroupId: 'rg_morning' },
+        { timeSlotId: 'rg_morning' },
         'Prefer the morning slot.',
         4,
       ),
@@ -333,7 +324,7 @@ function seedShiftRequests(): StoredShiftRequest[] {
       7,
       'em_kaleem',
       nextWeekdayShift('em_kaleem', 0),
-      { rosterGroupId: 'rg_morning' },
+      { timeSlotId: 'rg_morning' },
       'Covering the Islamabad onboarding.',
       0,
     ),
@@ -342,10 +333,18 @@ function seedShiftRequests(): StoredShiftRequest[] {
 
 type TransferPayload = StoredTransferRequest['payload']
 
+const locationName = (id: string | null) => (id ? (locations.find(id)?.name ?? null) : null)
+const branchName = (id: string | null) => (id ? (branches.find(id)?.name ?? null) : null)
+
+/** Departments as the mock's `/organisation/lookups/departments` gives them (the directory's). */
+export function mockDepartments(): { id: string; name: string }[] {
+  return [...new Set(DIRECTORY.map((employee) => employee.department))]
+    .sort()
+    .map((name) => ({ id: mockDepartmentId(name), name }))
+}
+
 /** The application letter for a stored transfer, as "Regenerate" writes it. */
 export function transferLetterFor(employeeId: string, payload: TransferPayload): string {
-  const locationName = (id: string | null) => (id ? (locations.find(id)?.name ?? null) : null)
-  const branchName = (id: string | null) => (id ? (branches.find(id)?.name ?? null) : null)
   return transferLetter({
     employee: ref(employeeId).name,
     finalAuthority: ref(payload.finalAuthorityId).name,
@@ -361,7 +360,7 @@ export function transferLetterFor(employeeId: string, payload: TransferPayload):
       department: payload.department,
     },
     lineManager: ref(payload.lineManagerId).name,
-    description: payload.description,
+    description: payload.description ?? '',
   })
 }
 
@@ -387,21 +386,24 @@ function transfer(
   const payload: TransferPayload = {
     ...currentPlace(employeeId),
     ...to,
+    departmentId: mockDepartmentId(to.department),
     finalAuthorityId: ME,
     effectiveDate: format(addDays(new Date(), effectiveInDays), 'yyyy-MM-dd'),
-    attachmentName: null,
+    reason: null,
     description,
-    application: '',
+    application: null,
   }
   payload.application = transferLetterFor(employeeId, payload)
-  return newTransferRecord(
+  return newCoreRecord<StoredTransferRequest>(
     {
-      id: `trq_${number}`,
-      code: `RQ-TRF-${String(number).padStart(4, '0')}`,
+      id: `trq_${String(number)}`,
+      code: code('RQ-TRF', number),
+      kind: 'transfer',
       employeeId,
       createdById: employeeId,
       payload,
     },
+    { departmentId: payload.departmentId, branchId: payload.branchId },
     daysAgo(createdDaysAgo),
   )
 }
@@ -417,7 +419,7 @@ function seedTransferRequests(): StoredTransferRequest[] {
     by: string,
     days: number,
     remarks: string | null = null,
-  ) => decideTransfer(record, 'approve', by, remarks, daysAgo(days, 14)).record
+  ) => applyDecision(record, 'approve', by, remarks, daysAgo(days, 14)).record
   return [
     transfer(
       1,
@@ -502,16 +504,17 @@ export function transferLogOf(record: StoredTransferRequest, at: string): Stored
   }
 }
 
-export const punchRequests = createMockCollection<StoredPunchRequest>({
-  storageKey: 'hrms-mock-punch-requests',
+// Storage keys carry a version: records saved in the old (pre-API) shape are not read back.
+export const punchRequests = createMockCollection<StoredCorePunch>({
+  storageKey: 'hrms-mock-punch-requests-v2',
   seed: seedPunchRequests,
 })
-export const shiftRequests = createMockCollection<StoredShiftRequest>({
-  storageKey: 'hrms-mock-shift-requests',
+export const shiftRequests = createMockCollection<StoredCoreShift>({
+  storageKey: 'hrms-mock-shift-requests-v2',
   seed: seedShiftRequests,
 })
 export const transferRequests = createMockCollection<StoredTransferRequest>({
-  storageKey: 'hrms-mock-transfer-requests',
+  storageKey: 'hrms-mock-transfer-requests-v2',
   seed: seedTransferRequests,
 })
 /** Approved transfers. The directory is left as it is; the log is what an approval changes. */

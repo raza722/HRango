@@ -12,12 +12,19 @@ import {
   useFilters,
 } from '@/features/payroll'
 
-import { ACTION_LABELS, PUNCH_TYPE_LABELS, REQUEST_PAGE_SIZE, STATUS_META } from '../../constants'
+import { typePermission } from '../../api/backend'
 import {
+  ACTION_LABELS,
+  APPROVAL_VIEW_LABELS,
+  REQUEST_PAGE_SIZE,
+  STATUS_META,
+} from '../../constants'
+import {
+  permits,
   useApprovalList,
   useBulkDecide,
   useRequestList,
-  useRequestLookups,
+  useRequestPermissions,
   useTransferLookups,
 } from '../../hooks/use-requests'
 import type { RequestSearch } from '../../routing'
@@ -31,14 +38,10 @@ import {
   StandardPill,
   StandardStatusTabs,
 } from '../../standard/standard-parts'
-import {
-  APPROVAL_VIEWS,
-  PUNCH_REQUEST_TYPES,
-  REQUEST_STATUSES,
-  type RequestAction,
-} from '../../types/requests.types'
+import { APPROVAL_VIEWS, REQUEST_STATUSES, type RequestAction } from '../../types/requests.types'
 import { punchApprovalColumns, punchRequestColumns } from '../shared/request-columns'
 import { RequestDialogHost, type RequestDialogState } from '../shared/request-dialog-host'
+import { employeeFilterField } from '../shared/request-employee'
 import { requestTableClass, requestTitleClass } from '../shared/request-styles'
 
 const routeApi = getRouteApi('/_app/requests/punch')
@@ -54,22 +57,14 @@ const REQUEST_ACTIONS: readonly RequestAction[] = [
   'history',
   'cancel',
 ]
-const APPROVAL_ACTIONS: readonly RequestAction[] = ['decide', 'consent', 'flow', 'view', 'history']
-
-const VIEW_LABELS = {
-  requested: 'Requested',
-  delegates: 'Delegates',
-  consents: 'Consents',
-} as const
-
-/** Half-hour steps for the Punch Start / End Time filters. */
-const TIMES = Array.from({ length: 48 }, (_, index) => {
-  const hours = Math.floor(index / 2)
-  const minutes = index % 2 === 0 ? '00' : '30'
-  const value = `${String(hours).padStart(2, '0')}:${minutes}`
-  const label = `${String(((hours + 11) % 12) + 1).padStart(2, '0')}:${minutes} ${hours < 12 ? 'AM' : 'PM'}`
-  return { value, label }
-})
+const APPROVAL_ACTIONS: readonly RequestAction[] = [
+  'decide',
+  'consent',
+  'forward',
+  'flow',
+  'view',
+  'history',
+]
 
 const statusOf = (value: string | undefined) => REQUEST_STATUSES.find((status) => status === value)
 
@@ -82,9 +77,9 @@ const statusOf = (value: string | undefined) => REQUEST_STATUSES.find((status) =
 export function PunchRequestsPage() {
   const search = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
-  const people = useRequestLookups()
+  const can = useRequestPermissions('punch')
   const places = useTransferLookups()
-  const bulk = useBulkDecide('punch')
+  const bulk = useBulkDecide()
   const [dialog, setDialog] = useState<RequestDialogState>(null)
   const [confirming, setConfirming] = useState<'approve' | 'unapprove' | null>(null)
   const [filtering, setFiltering] = useState(false)
@@ -92,7 +87,7 @@ export function PunchRequestsPage() {
   const [requestFilters, setRequestFilters] = useFilters('punch-requests')
   const [approvalFilters, setApprovalFilters] = useFilters('punch-approvals')
 
-  const isRequest = search.tab === 'request'
+  const isRequest = search.tab === 'request' || !can.approvals
   const status = search.status
   const update = (patch: Partial<RequestSearch>) => {
     setSelected(new Set())
@@ -118,41 +113,9 @@ export function PunchRequestsPage() {
   const rows = page?.data ?? []
   const filters = isRequest ? requestFilters : approvalFilters
 
-  const personOptions = (people.data?.employees ?? []).map((person) => ({
-    value: person.id,
-    label: person.name,
-    hint: person.code,
-  }))
+  /** The filters the API reads: employee, place, status and dates (Delegates: the delegator). */
   const fields = (): FilterField[] => {
     const own: FilterField[] = [
-      {
-        kind: 'select',
-        key: 'startTime',
-        label: 'Punch Start Time',
-        placeholder: 'Select',
-        options: TIMES,
-      },
-      {
-        kind: 'select',
-        key: 'endTime',
-        label: 'Punch End Time',
-        placeholder: 'Select',
-        options: TIMES,
-      },
-      {
-        kind: 'select',
-        key: 'punchType',
-        label: 'Method',
-        placeholder: 'Select Method',
-        options: PUNCH_REQUEST_TYPES.map((value) => ({ value, label: PUNCH_TYPE_LABELS[value] })),
-      },
-      {
-        kind: 'select',
-        key: 'nextRequesteeId',
-        label: 'Next Requestee',
-        placeholder: 'Select Next Requestee',
-        options: personOptions,
-      },
       {
         kind: 'select',
         key: 'status',
@@ -165,6 +128,8 @@ export function PunchRequestsPage() {
     ]
     if (isRequest && search.scope === 'my') return own
     const place: FilterField[] = [
+      { kind: 'text', key: 'q', label: 'Search', placeholder: 'Code or employee' },
+      employeeFilterField(typePermission('punch', 'create')),
       {
         kind: 'select',
         key: 'locationId',
@@ -187,33 +152,23 @@ export function PunchRequestsPage() {
       },
       {
         kind: 'select',
-        key: 'department',
+        key: 'departmentId',
         label: 'Department',
         placeholder: 'Select Department',
-        options: (places.data?.departments ?? []).map((name) => ({ value: name, label: name })),
-      },
-      {
-        kind: 'select',
-        key: 'employmentStatus',
-        label: 'Employment Status',
-        placeholder: 'Select Employment Status',
-        options: [
-          { value: 'active', label: 'Active' },
-          { value: 'inactive', label: 'Inactive' },
-          { value: 'all', label: 'All' },
-        ],
+        options: (places.data?.departments ?? []).map((item) => ({
+          value: item.id,
+          label: item.name,
+        })),
       },
     ]
     const delegator: FilterField[] =
       !isRequest && search.view === 'delegates'
         ? [
-            {
-              kind: 'select',
+            employeeFilterField(typePermission('punch', 'create'), {
               key: 'delegatorId',
               label: 'Delegator',
               placeholder: 'Select Delegator',
-              options: personOptions,
-            },
+            }),
           ]
         : []
     return [...delegator, ...own, ...place]
@@ -229,7 +184,11 @@ export function PunchRequestsPage() {
   }
   const runBulk = (decision: 'approve' | 'reject', remarks: string) => {
     bulk.mutate(
-      { ids: decidable.map((row) => row.id), input: { decision, remarks } },
+      {
+        items: decidable.map((row) => ({ id: row.id, rowVersion: row.rowVersion })),
+        decision,
+        remarks,
+      },
       {
         onSuccess: ({ done, failed }) => {
           const verb = decision === 'approve' ? 'approved' : 'rejected'
@@ -239,8 +198,8 @@ export function PunchRequestsPage() {
           setSelected(new Set())
           setConfirming(null)
         },
-        onError: () => {
-          toast.error('The requests could not be updated.')
+        onError: (failure) => {
+          toast.error(failure.message || 'The requests could not be updated.')
         },
       },
     )
@@ -257,9 +216,9 @@ export function PunchRequestsPage() {
       <StandardPageTabs
         tabs={[
           { value: 'request' as const, label: 'Requests' },
-          { value: 'approvals' as const, label: 'Approvals' },
+          ...(can.approvals ? [{ value: 'approvals' as const, label: 'Approvals' }] : []),
         ]}
-        value={search.tab}
+        value={isRequest ? 'request' : 'approvals'}
         onChange={(tab) => {
           update({ tab, page: 1, status: undefined })
         }}
@@ -276,7 +235,7 @@ export function PunchRequestsPage() {
                 setFiltering(true)
               }}
             />
-            {isRequest && (
+            {isRequest && can.create && (
               <StandardCreateButton
                 onClick={() => {
                   setDialog({ action: 'create' })
@@ -301,22 +260,24 @@ export function PunchRequestsPage() {
           ) : (
             <StandardPill
               label="Approvals"
-              items={APPROVAL_VIEWS.map((value) => ({ value, label: VIEW_LABELS[value] }))}
+              items={APPROVAL_VIEWS.map((value) => ({ value, label: APPROVAL_VIEW_LABELS[value] }))}
               value={search.view}
               onChange={(view) => {
                 update({ view, page: 1 })
               }}
             />
           )}
-          <StandardBulkButtons
-            disabled={bulk.isPending}
-            onApprove={() => {
-              askBulk('approve')
-            }}
-            onUnapprove={() => {
-              askBulk('unapprove')
-            }}
-          />
+          {!isRequest && (can.approve || can.reject) && (
+            <StandardBulkButtons
+              disabled={bulk.isPending}
+              onApprove={() => {
+                askBulk('approve')
+              }}
+              onUnapprove={() => {
+                askBulk('unapprove')
+              }}
+            />
+          )}
         </div>
         <StandardStatusTabs
           config={STATUS_WORDS}
@@ -350,12 +311,14 @@ export function PunchRequestsPage() {
               itemClassName={rowMenuItemClass.poppins}
               label={`Actions for ${row.code}`}
               actions={allowed
-                .filter((action) => row.actions.includes(action))
+                .filter((action) => row.actions.includes(action) && permits(action, can))
                 .map((action) => ({
                   label:
                     action === 'decide' && row.status === 'cancelling'
                       ? 'Approve/Reject Cancellation'
-                      : ACTION_LABELS[action],
+                      : action === 'cancel' && row.status === 'pending'
+                        ? 'Withdraw'
+                        : ACTION_LABELS[action],
                   variant: action === 'delete' ? 'destructive' : 'default',
                   onSelect: () => {
                     setDialog({ action, request: row })
@@ -380,6 +343,7 @@ export function PunchRequestsPage() {
         kind="punch"
         dialog={dialog}
         forOthers={search.scope === 'all'}
+        fromApprovals={!isRequest}
         onClose={() => {
           setDialog(null)
         }}

@@ -13,12 +13,14 @@ export const WARNING_TABLE_COLUMNS = {
     { id: 'policyName', label: 'Policy Name' },
     { id: 'timeSpan', label: 'Time Span' },
     { id: 'title', label: 'Title of Warning Policy' },
+    { id: 'status', label: 'Status' },
   ],
   penalty: [
     { id: 'sr', label: 'Sr #' },
     { id: 'policyName', label: 'Policy Name' },
-    { id: 'scaleType', label: 'Type of Scale' },
+    { id: 'rule', label: 'Warning Count' },
     { id: 'penaltyType', label: 'Penalty Type' },
+    { id: 'deduction', label: 'Deduction' },
   ],
 } as const satisfies Record<WarningTableId, readonly { id: string; label: string }[]>
 
@@ -70,7 +72,9 @@ export const useWarningViewPrefs = create<WarningViewPrefsState & WarningViewPre
     })),
     {
       name: 'hrms-warning-view',
-      version: 1,
+      // 2: columns follow the API's shapes (Status; Warning Count and Deduction for penalties).
+      version: 2,
+      migrate: () => initialState,
       storage: createJSONStorage(() => localStorage),
       partialize: ({ hiddenColumns, collapsed }) => ({ hiddenColumns, collapsed }),
     },

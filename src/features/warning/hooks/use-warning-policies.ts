@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 
-import type { PageParams } from '@/types/api'
-
+import type { PolicyListParams } from '../api/warning-policy.api'
 import {
   warningPoliciesQueryOptions,
   warningPolicyQueryOptions,
@@ -11,9 +10,9 @@ import {
  * Fetches one page of warning policies.
  * While a new page loads, the previous page stays visible (`isPlaceholderData`).
  *
- * @param params - 1-based page number and page size.
+ * @param params - 1-based page number and page size, optional search and kind.
  */
-export function useWarningPolicies(params: PageParams) {
+export function useWarningPolicies(params: PolicyListParams) {
   return useQuery(warningPoliciesQueryOptions(params))
 }
 

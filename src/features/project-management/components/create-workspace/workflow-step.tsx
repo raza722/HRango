@@ -4,9 +4,9 @@ import { useFormContext, useWatch } from 'react-hook-form'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 
-import { WORKFLOW_TEMPLATE_LIST } from '../../constants'
-import type { WorkflowTemplateId } from '../../types/pm.types'
+import type { PmDepartment, WorkflowTemplateId } from '../../types/pm.types'
 import { handleListKeys } from './list-keys'
+import { useWizardTemplates } from './templates-context'
 import { useFocusOnMount } from './use-focus-on-mount'
 import { FormError, IconTile, RadioMark } from './wizard-controls'
 import {
@@ -21,17 +21,19 @@ import {
 import { templateSetup, type WizardValues } from './wizard-state'
 import { wz } from './wizard-styles'
 
+/** The design's card icons by template code; another template takes Work Starter's. */
 const CARD_ICONS: Record<WorkflowTemplateId, ComponentType<SVGProps<SVGSVGElement>>> = {
-  'work-starter': WorkStarterIcon,
-  'project-management': ProjectManagementIcon,
-  'marketing-team': MarketingTeamIcon,
-  'product-engineering': ProductEngineeringIcon,
+  work_starter: WorkStarterIcon,
+  project_management: ProjectManagementIcon,
+  marketing_team: MarketingTeamIcon,
+  product_engineering: ProductEngineeringIcon,
 }
 
 /** Step 2 "Define Workflow" (540:183144, 3061:738595, 576:187796). */
-export function WorkflowStep({ departments }: { departments: readonly string[] }) {
+export function WorkflowStep({ departments }: { departments: readonly PmDepartment[] }) {
   const { control, setValue, getValues, clearErrors, formState } = useFormContext<WizardValues>()
-  const [department, template] = useWatch({ control, name: ['department', 'template'] })
+  const [departmentId, template] = useWatch({ control, name: ['departmentId', 'template'] })
+  const { workflows } = useWizardTemplates()
   const headingRef = useFocusOnMount<HTMLHeadingElement>(true)
   const workflowHeadingId = useId()
   const { errors } = formState
@@ -40,7 +42,9 @@ export function WorkflowStep({ departments }: { departments: readonly string[] }
     if (getValues('template') === id) return
     setValue('template', id, { shouldDirty: true })
     // A new workflow starts from its own views, statuses and organizer.
-    setValue('setup', templateSetup(id), { shouldDirty: true })
+    setValue('setup', templateSetup(workflows.find((entry) => entry.id === id)), {
+      shouldDirty: true,
+    })
     clearErrors('template')
   }
 
@@ -49,11 +53,11 @@ export function WorkflowStep({ departments }: { departments: readonly string[] }
       <DepartmentField
         headingRef={headingRef}
         departments={departments}
-        value={department}
-        error={errors.department?.message}
+        value={departmentId}
+        error={errors.departmentId?.message}
         onChange={(next) => {
-          setValue('department', next, { shouldDirty: true })
-          clearErrors('department')
+          setValue('departmentId', next, { shouldDirty: true })
+          clearErrors('departmentId')
         }}
       />
 
@@ -71,8 +75,8 @@ export function WorkflowStep({ departments }: { departments: readonly string[] }
         onKeyDown={handleListKeys}
         className="mt-[1.875rem] grid gap-5 sm:grid-cols-2 sm:gap-x-[1.1875rem] sm:gap-y-6"
       >
-        {WORKFLOW_TEMPLATE_LIST.map((entry) => {
-          const Icon = CARD_ICONS[entry.id]
+        {workflows.map((entry, index) => {
+          const Icon = CARD_ICONS[entry.id] ?? WorkStarterIcon
           const checked = template === entry.id
           return (
             <button
@@ -81,7 +85,7 @@ export function WorkflowStep({ departments }: { departments: readonly string[] }
               role="radio"
               aria-checked={checked}
               data-list-item
-              tabIndex={checked || (template === null && entry.id === 'work-starter') ? 0 : -1}
+              tabIndex={checked || (template === null && index === 0) ? 0 : -1}
               onClick={() => {
                 chooseTemplate(entry.id)
               }}
@@ -116,10 +120,10 @@ function DepartmentField({
   onChange,
 }: {
   headingRef: RefObject<HTMLHeadingElement | null>
-  departments: readonly string[]
+  departments: readonly PmDepartment[]
   value: string | null
   error: string | undefined
-  onChange: (department: string) => void
+  onChange: (departmentId: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -129,8 +133,9 @@ function DepartmentField({
   const errorId = useId()
   const query = search.trim().toLowerCase()
   const shown = query
-    ? departments.filter((entry) => entry.toLowerCase().includes(query))
+    ? departments.filter((entry) => entry.name.toLowerCase().includes(query))
     : departments
+  const chosen = departments.find((entry) => entry.id === value)
 
   return (
     <div>
@@ -157,7 +162,7 @@ function DepartmentField({
                 <DepartmentIcon className={cn('size-[1.125rem]', wz.iconPurple)} />
               </IconTile>
               <span id={valueId} className={cn(wz.value, 'min-w-0 flex-1 truncate text-[#3D3D3D]')}>
-                {value ?? 'Select Your Department'}
+                {chosen?.name ?? 'Select Your Department'}
               </span>
               <DropdownChevronIcon
                 className={cn(
@@ -206,16 +211,16 @@ function DepartmentField({
             )}
           >
             {shown.map((entry) => {
-              const selected = entry === value
+              const selected = entry.id === value
               return (
                 <button
-                  key={entry}
+                  key={entry.id}
                   type="button"
                   role="option"
                   aria-selected={selected}
                   data-list-item
                   onClick={() => {
-                    onChange(entry)
+                    onChange(entry.id)
                     setOpen(false)
                     setSearch('')
                   }}
@@ -224,7 +229,7 @@ function DepartmentField({
                     selected && 'border-[#7127EA] bg-[#EEE7FF]',
                   )}
                 >
-                  {entry}
+                  {entry.name}
                 </button>
               )
             })}

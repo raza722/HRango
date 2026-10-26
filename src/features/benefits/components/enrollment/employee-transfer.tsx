@@ -1,8 +1,10 @@
 import { type KeyboardEvent, type ReactNode, useId, useState } from 'react'
 
+import { useEmployeeLookupSearch } from '@/hooks/use-employee-lookup'
 import { cn } from '@/lib/utils'
 
-import type { LookupEmployee } from '../../types/benefits.types'
+import { PEOPLE_PERMISSION, toLookupEmployee } from '../../api/benefits.api'
+import type { LookupDepartment, LookupEmployee } from '../../types/benefits.types'
 import {
   MoveAllLeftIcon,
   MoveAllRightIcon,
@@ -39,6 +41,7 @@ function PeopleList({
   onPick,
   onMove,
   header,
+  footer,
   emptyText,
   className,
 }: {
@@ -48,6 +51,8 @@ function PeopleList({
   onPick: (id: string) => void
   onMove: (id: string) => void
   header?: ReactNode
+  /** Under the list (Load more). */
+  footer?: ReactNode
   emptyText: string
   className?: string
 }) {
@@ -101,6 +106,7 @@ function PeopleList({
           })}
         </ul>
       )}
+      {footer}
     </div>
   )
 }
@@ -110,7 +116,8 @@ const moveButton =
 
 /**
  * "Who can enroll during this plan year window?": Available Employees (filtered by department
- * with "All Employees", and searched) and Selected Employees (n), with the four move buttons.
+ * with "All Employees", and searched on the server: `GET /employees/lookup?q`, paged with
+ * "Load more") and Selected Employees (n), with the four move buttons.
  */
 export function EmployeeTransfer({
   employees,
@@ -119,8 +126,9 @@ export function EmployeeTransfer({
   onChange,
   invalid,
 }: {
+  /** People already known by id (names the selected ones). */
   employees: readonly LookupEmployee[]
-  departments: readonly string[]
+  departments: readonly LookupDepartment[]
   value: readonly string[]
   onChange: (ids: string[]) => void
   invalid?: boolean
@@ -131,16 +139,23 @@ export function EmployeeTransfer({
   const [pickedRight, setPickedRight] = useState<Set<string>>(new Set())
   const searchId = useId()
   const departmentId = useId()
+  const lookup = useEmployeeLookupSearch(
+    { permission: PEOPLE_PERMISSION, departmentId: department || undefined },
+    { search },
+  )
 
   const chosen = new Set(value)
-  const query = search.trim().toLowerCase()
-  const available = employees.filter(
-    (person) =>
-      !chosen.has(person.id) &&
-      (!department || person.department === department) &&
-      (!query || person.name.toLowerCase().includes(query)),
-  )
-  const selected = employees.filter((person) => chosen.has(person.id))
+  const query = search.trim()
+  const available = lookup.rows.map(toLookupEmployee).filter((person) => !chosen.has(person.id))
+  const selected = value.map((id): LookupEmployee => {
+    const row = lookup.find(id)
+    return (
+      employees.find((person) => person.id === id) ??
+      (row
+        ? toLookupEmployee(row)
+        : { id, name: id, jobTitle: '', departmentId: null, department: '' })
+    )
+  })
 
   const toggle = (set: Set<string>, id: string) => {
     const next = new Set(set)
@@ -170,7 +185,7 @@ export function EmployeeTransfer({
           value={department}
           onChange={setDepartment}
           noneLabel="All Employees"
-          options={departments.map((name) => ({ value: name, label: name }))}
+          options={departments.map((item) => ({ value: item.id, label: item.name }))}
           className="h-[3.25rem] rounded-[6px] border-2"
         />
         <PeopleList
@@ -183,7 +198,29 @@ export function EmployeeTransfer({
           onMove={(id) => {
             add([id])
           }}
-          emptyText={query || department ? 'Nobody matches.' : 'Everyone is selected.'}
+          emptyText={
+            lookup.isPending
+              ? 'Loading…'
+              : query || department
+                ? 'Nobody matches.'
+                : 'Everyone is selected.'
+          }
+          footer={
+            lookup.hasMore && (
+              <button
+                type="button"
+                disabled={lookup.isFetching}
+                onClick={lookup.loadMore}
+                className={cn(
+                  smallText,
+                  'h-8 shrink-0 font-medium outline-none hover:bg-[#EBEFF8]/60 focus-visible:ring-2 focus-visible:ring-[#7469E8]/50 focus-visible:ring-inset disabled:opacity-60',
+                  accent.text,
+                )}
+              >
+                {lookup.isFetching ? 'Loading…' : 'Load more'}
+              </button>
+            )
+          }
           header={
             <label
               htmlFor={searchId}
@@ -222,7 +259,7 @@ export function EmployeeTransfer({
         <button
           type="button"
           aria-label="Add everyone listed"
-          disabled={available.length === 0}
+          disabled={available.length === 0 || lookup.isFetching}
           onClick={() => {
             add(available.map((person) => person.id))
           }}

@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils'
 
 import { CHIP_TONE, type ChipTone } from '../../constants'
 import type { Stamp } from '../../types/manpower.types'
-import { formatStampTime } from '../../utils/format'
+import { formatStampTime, stampOf } from '../../utils/format'
 import { accent } from './mp-styles'
 
 /**
@@ -34,7 +34,8 @@ export function Chip({
 }
 
 /**
- * "16 Jan 2024 12:30 PM" over "by Hamza Ashraf HR Manager" (the name in purple).
+ * "16 Jan 2024 12:30 PM" over "by Hamza Ashraf" (the name in purple). The API gives
+ * the person's name only, so the role the designs draw after it is not shown.
  * `sm` is the plan list's 12px version.
  */
 export function StampCell({ stamp, size = 'md' }: { stamp: Stamp; size?: 'sm' | 'md' }) {
@@ -42,13 +43,28 @@ export function StampCell({ stamp, size = 'md' }: { stamp: Stamp; size?: 'sm' | 
   return (
     <span className={cn('flex flex-col', small ? 'text-xs' : 'min-w-[11rem] text-sm')}>
       <span className="whitespace-nowrap text-heading">{formatStampTime(stamp.at)}</span>
-      <span className="text-xs text-heading">
-        by{' '}
-        <span className={cn('font-medium', small ? 'text-xs' : 'text-sm', accent.text)}>
-          {stamp.byName}
+      {stamp.byName && (
+        <span className="text-xs text-heading">
+          by{' '}
+          <span className={cn('font-medium', small ? 'text-xs' : 'text-sm', accent.text)}>
+            {stamp.byName}
+          </span>
         </span>
-        {small ? <span className="block">{stamp.byRole}</span> : <> {stamp.byRole}</>}
-      </span>
+      )}
     </span>
   )
+}
+
+/** A stamp that may be missing (Modified On before any change): "—". */
+export function OptionalStampCell({
+  at,
+  byName,
+  size,
+}: {
+  at: string | null
+  byName: string | null
+  size?: 'sm' | 'md'
+}) {
+  if (!at) return <span className="text-sm text-[#707070]">—</span>
+  return <StampCell stamp={stampOf(at, byName)} {...(size ? { size } : {})} />
 }

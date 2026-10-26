@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { payrolls, payslips, taxStructures } from './db'
-import { annualTax, ensurePayrollRuns, withTotals } from './engine'
+import { payrolls, taxStructures } from './db'
+import { annualTax, computePayslip } from './engine'
 import { evaluate, ExpressionError, expressionProblem } from './expression'
-import { lastMonth, thisMonth } from './seed'
 
 describe('pay item expressions', () => {
   it('works out arithmetic with variables and brackets', () => {
@@ -24,41 +23,39 @@ describe('pay item expressions', () => {
 })
 
 describe('tax slabs', () => {
-  it('charges the slab’s fixed amount plus its rate on the excess', () => {
-    const current = taxStructures.find('ts_current')
-    expect(annualTax(500_000, current)).toBe(0)
-    // 600,001–1,200,000: 1% of the amount over 600,000.
-    expect(annualTax(1_200_000, current)).toBe(6_000)
-    // 1,200,001–2,200,000: 6,000 + 11% over 1,200,000.
-    expect(annualTax(2_000_000, current)).toBe(94_000)
+  it('charges the slab’s fixed amount plus its rate on the excess, then the surcharge', () => {
+    const base = taxStructures.find('tx_current')
+    if (!base) throw new Error('no tax structure')
+    const structure = {
+      ...base,
+      surchargeType: null,
+      surchargeValue: null,
+      slabs: [
+        { minAmount: 0, maxAmount: 600_000, fixedAmount: 0, percentage: 0 },
+        { minAmount: 600_000, maxAmount: 1_200_000, fixedAmount: 0, percentage: 1 },
+        { minAmount: 1_200_000, maxAmount: null, fixedAmount: 6_000, percentage: 11 },
+      ],
+    }
+    expect(annualTax(500_000, structure)).toBe(0)
+    expect(annualTax(1_200_000, structure)).toBe(6_000)
+    expect(annualTax(2_000_000, structure)).toBe(94_000)
+    const surcharged = { ...structure, surchargeType: 'percentage' as const, surchargeValue: 10 }
+    expect(annualTax(2_000_000, surcharged)).toBe(103_400)
   })
 })
 
 describe('seeded runs', () => {
-  it('works out pay slips for every payroll and month', () => {
-    ensurePayrollRuns()
+  it('works out a payslip: salary, tax from the structure, and the totals', () => {
     const headOffice = payrolls.find('pr_6')
-    expect(headOffice?.employeeIds.length).toBeGreaterThan(3)
-    const current = payslips
-      .all()
-      .filter((slip) => slip.payrollId === 'pr_6' && slip.month === thisMonth())
-    const previous = payslips
-      .all()
-      .filter((slip) => slip.payrollId === 'pr_6' && slip.month === lastMonth())
-    expect(current).toHaveLength(headOffice?.employeeIds.length ?? 0)
-    expect(previous.every((slip) => slip.status === 'released')).toBe(true)
-    expect(current.some((slip) => slip.status === 'on-hold')).toBe(true)
-
-    const slip = current[0]
-    if (!slip) throw new Error('no pay slip')
-    const gross = slip.items.find((item) => item.payItemId === 'pi_gross_salary')?.value ?? 0
-    expect(gross).toBe(slip.salary)
-    expect(slip.items.find((item) => item.payItemId === 'pi_pf')?.employerContribution).toBe(
-      Math.round(gross * 0.05),
-    )
-    expect(withTotals(slip).netPayable).toBe(slip.earnings - slip.deductions + slip.reimbursements)
-    expect(payrolls.find('pr_8')?.errors[0]?.message).toBe(
-      'Unsupported Operand Types String * Float',
-    )
+    if (!headOffice) throw new Error('no payroll')
+    expect(headOffice.employeeIds.length).toBeGreaterThan(3)
+    const employeeId = headOffice.employeeIds[0] ?? ''
+    const slip = computePayslip(headOffice, employeeId)
+    const salary = slip.lines.find((line) => line.systemCode === 'salary')?.amount ?? 0
+    const tax = slip.lines.find((line) => line.systemCode === 'tax')?.amount ?? 0
+    expect(salary).toBeGreaterThan(0)
+    expect(tax).toBeCloseTo(annualTax(salary * 12, taxStructures.find('tx_current')) / 12, 1)
+    expect(slip.netPayable).toBeCloseTo(salary - tax, 2)
+    expect(slip.status).toBe('ready')
   })
 })

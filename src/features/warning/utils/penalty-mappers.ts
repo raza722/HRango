@@ -1,100 +1,62 @@
-import {
-  addYears,
-  endOfMonth,
-  endOfYear,
-  getDaysInMonth,
-  startOfMonth,
-  startOfYear,
-  subDays,
-} from 'date-fns'
-
-import { parseDateValue, toDateValue } from '@/lib/date'
-
 import type { PenaltyFormRule, PenaltyFormValues } from '../schemas/penalty-form.schema'
 import type {
+  PenaltyPeriod,
   PenaltyRule,
-  WarningPenalty,
+  PenaltyRuleInput,
   WarningPenaltyInput,
 } from '../types/warning-penalty.types'
-import type { TimeSpan } from '../types/warning-policy.types'
-
-/** Start/end defaults for a span: Mon–Sun, this month, or this calendar year. */
-export function defaultRange(timeSpan: TimeSpan, now: Date = new Date()) {
-  if (timeSpan === 'weekly') return { startDay: 'mon', endDay: 'sun' }
-  const start = timeSpan === 'monthly' ? startOfMonth(now) : startOfYear(now)
-  const end = timeSpan === 'monthly' ? endOfMonth(now) : endOfYear(now)
-  return { startDay: toDateValue(start), endDay: toDateValue(end) }
-}
-
-/** End of a period that starts on `start`: end of that month, or one year later minus a day. */
-export function rangeEndFor(timeSpan: Exclude<TimeSpan, 'weekly'>, start: Date): Date {
-  return timeSpan === 'monthly' ? endOfMonth(start) : subDays(addYears(start, 1), 1)
-}
+import type { WarningPolicy } from '../types/warning-policy.types'
 
 /** A fresh "+ Add Penalty" block. */
-export function createEmptyRule(timeSpan: TimeSpan = 'weekly'): PenaltyFormRule {
+export function createEmptyRule(period: PenaltyPeriod = 'month', afterCount = 1): PenaltyFormRule {
   return {
-    count: '1',
-    timeSpan,
-    ...defaultRange(timeSpan),
-    day: 1,
-    weekdays: timeSpan === 'weekly' ? ['mon', 'tue', 'wed', 'thu', 'fri'] : [],
-    from: '',
-    to: '',
-    points: '',
-    penaltyType: 'half-day',
+    afterCount: String(afterCount),
+    period,
+    penaltyType: 'half_day',
+    percentage: '',
     deduction: 'payroll',
-    badgeColor: 'red',
+    leaveTypeId: '',
   }
 }
 
-export function createDefaultPenaltyValues(): PenaltyFormValues {
+export function createDefaultPenaltyValues(policyId = ''): PenaltyFormValues {
+  return { policyId, rules: [] }
+}
+
+/** A saved rule back as a form block. */
+export function toPenaltyFormRule(rule: PenaltyRule): PenaltyFormRule {
   return {
-    policyName: 'grace-minutes',
-    title: '',
-    scaleType: 'number',
-    rules: [createEmptyRule()],
+    afterCount: String(rule.afterCount),
+    period: rule.period,
+    penaltyType: rule.penaltyType,
+    percentage: rule.penaltyType === 'percentage' ? String(rule.percentage) : '',
+    deduction: rule.deduction,
+    leaveTypeId: rule.leaveTypeId ?? '',
   }
 }
 
-/** "Day N" chips: 7 for a week, else the days in the start date's month. */
-export function getRuleDayCount(rule: Pick<PenaltyFormRule, 'timeSpan' | 'startDay'>): number {
-  if (rule.timeSpan === 'weekly') return 7
-  return getDaysInMonth(parseDateValue(rule.startDay) ?? new Date())
+/** A policy's penalty rules as form values. */
+export function toPenaltyFormValues(policy: WarningPolicy): PenaltyFormValues {
+  return { policyId: policy.id, rules: policy.penalties.map(toPenaltyFormRule) }
 }
 
-export function toPenaltyInput(values: PenaltyFormValues): WarningPenaltyInput {
+function toRuleInput(rule: PenaltyFormRule): PenaltyRuleInput {
   return {
-    policyName: values.policyName,
-    title: values.title.trim(),
-    scaleType: values.scaleType,
-    rules: values.rules.map((rule): PenaltyRule => ({
-      count: Number(rule.count),
-      timeSpan: rule.timeSpan,
-      startDay: rule.startDay,
-      endDay: rule.endDay,
-      day: rule.day,
-      weekdays: rule.timeSpan === 'weekly' ? rule.weekdays : [],
-      from: rule.from,
-      to: rule.to,
-      points: Number(rule.points),
-      penaltyType: rule.penaltyType,
-      deduction: rule.deduction,
-      badgeColor: rule.badgeColor,
-    })),
+    afterCount: Number(rule.afterCount),
+    period: rule.period,
+    penaltyType: rule.penaltyType,
+    percentage: rule.penaltyType === 'percentage' ? Number(rule.percentage) : null,
+    deduction: rule.deduction,
+    leaveTypeId: rule.deduction === 'payroll' || rule.leaveTypeId === '' ? null : rule.leaveTypeId,
   }
 }
 
-export function toPenaltyFormValues(penalty: WarningPenalty): PenaltyFormValues {
-  return {
-    policyName: penalty.policyName,
-    title: penalty.title,
-    scaleType: penalty.scaleType,
-    rules: penalty.rules.map((rule) => ({
-      ...rule,
-      count: String(rule.count),
-      weekdays: [...rule.weekdays],
-      points: String(rule.points),
-    })),
-  }
+/** Form values -> `PenaltiesIn` (replaces every penalty rule of the policy). */
+export function toPenaltyInput(values: PenaltyFormValues, rowVersion: string): WarningPenaltyInput {
+  return { penalties: values.rules.map(toRuleInput), rowVersion }
+}
+
+/** A saved rule as it must be sent again (used when one rule is removed from the list). */
+export function penaltyRuleToInput(rule: PenaltyRule): PenaltyRuleInput {
+  return toRuleInput(toPenaltyFormRule(rule))
 }

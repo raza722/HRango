@@ -109,3 +109,30 @@ export function weekBands(days: readonly string[]): { label: string; span: numbe
 }
 
 export const nextDay = (day: string, amount = 1) => toDay(addDays(toDate(day), amount))
+
+/** The API numbers weekdays 1 (Monday) … 7 (Sunday). */
+export const weekdayNumber = (day: Weekday): number =>
+  ({ mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 7 })[day]
+
+/**
+ * Dates a batch or rest-day rule covers, as the API counts them: the chosen weekdays (all
+ * when none) between the dates; with `everyWeeks` > 0, cycles of that many weeks counted
+ * from the Monday of the start date, of which the first `step` weeks are on.
+ */
+export function patternDates(
+  startDate: string,
+  endDate: string,
+  weekdays: readonly Weekday[],
+  everyWeeks: number,
+  step: number,
+): string[] {
+  if (!isDay(startDate)) return []
+  const firstWeek = startOfWeek(toDate(startDate), { weekStartsOn: 1 })
+  const on = Math.min(Math.max(1, step), Math.max(1, everyWeeks))
+  return eachDay(startDate, endDate).filter((day) => {
+    if (weekdays.length > 0 && !weekdays.includes(weekdayOf(day))) return false
+    if (everyWeeks <= 0) return true
+    const week = differenceInCalendarWeeks(toDate(day), firstWeek, { weekStartsOn: 1 })
+    return week % everyWeeks < on
+  })
+}

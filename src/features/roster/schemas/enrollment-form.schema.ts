@@ -1,12 +1,12 @@
 import { z } from 'zod'
 
-/** "Enroll New Employee": who, from when, until when, and (optionally) at which branch. */
+/** "Enroll New Employee": who, from when and until when (inside the group's period). */
 export const enrollmentFormSchema = z
   .object({
     employeeIds: z.array(z.string()).min(1, 'Select at least one employee'),
     startDate: z.string().min(1, 'Pick the start date'),
+    /** '' = until the group ends (or open-ended). */
     endDate: z.string(),
-    branchId: z.string(),
   })
   .superRefine((values, ctx) => {
     // Both are `yyyy-MM-dd`, so they compare as text.

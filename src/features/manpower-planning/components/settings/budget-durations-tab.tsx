@@ -6,14 +6,15 @@ import { ErrorState } from '@/components/feedback/error-state'
 import { DataTable, type DataTableColumn } from '@/components/layout'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import { DEFAULT_PAGE_SIZE } from '../../constants'
+import { DEFAULT_PAGE_SIZE, MP_CODES } from '../../constants'
 import { useBudgetDurations, useDeleteDuration, useSaveDuration } from '../../hooks/use-manpower'
 import { durationFormSchema, type DurationFormValues } from '../../schemas/dialog-forms.schema'
 import type { BudgetDuration } from '../../types/manpower.types'
 import { showSaveError, toastError } from '../../utils/errors'
-import { formatDay } from '../../utils/format'
+import { formatDay, stampOf } from '../../utils/format'
 import { StampCell } from '../shared/cells'
 import { DateBox, MpField, MpListFooter, SearchBox, ShowEntries } from '../shared/controls'
 import {
@@ -63,7 +64,10 @@ function DurationDialog({
   const { control, register, handleSubmit, formState, setError } = form
   const submit = handleSubmit((values) => {
     save.mutate(
-      { id: duration?.id, input: { ...values, name: values.name.trim() } },
+      {
+        id: duration?.id,
+        input: { ...values, name: values.name.trim(), rowVersion: duration?.rowVersion },
+      },
       {
         onSuccess: onClose,
         onError: (error) => {
@@ -173,7 +177,10 @@ export function BudgetDurationsTab({
   const [dialog, setDialog] = useState<{ duration: BudgetDuration | null } | null>(null)
   const [deleting, setDeleting] = useState<BudgetDuration | null>(null)
   const remove = useDeleteDuration()
-  const list = useBudgetDurations({ page, pageSize, search: debounced })
+  const canCreate = useCan(MP_CODES.durationCreate)
+  const canEdit = useCan(MP_CODES.durationEdit)
+  const canDelete = useCan(MP_CODES.durationDelete)
+  const list = useBudgetDurations({ page, pageSize, q: debounced })
   const offset = (page - 1) * pageSize
 
   const columns: DataTableColumn<BudgetDuration>[] = [
@@ -181,7 +188,11 @@ export function BudgetDurationsTab({
     { id: 'name', header: 'Budget Duration', mobile: 'heading', cell: (row) => row.name },
     { id: 'start', header: 'Start Date', cell: (row) => formatDay(row.startDate) },
     { id: 'end', header: 'End Date', cell: (row) => formatDay(row.endDate) },
-    { id: 'added', header: 'Added On', cell: (row) => <StampCell stamp={row.added} /> },
+    {
+      id: 'added',
+      header: 'Added On',
+      cell: (row) => <StampCell stamp={stampOf(row.createdAt, row.createdByName)} />,
+    },
     {
       id: 'current',
       header: CURRENT_LABEL,
@@ -202,7 +213,7 @@ export function BudgetDurationsTab({
     <MpCard
       title="Employee Budget Settings"
       actions={
-        filtersOpen ? undefined : (
+        filtersOpen || !canCreate ? undefined : (
           <button
             type="button"
             onClick={() => {
@@ -226,16 +237,18 @@ export function BudgetDurationsTab({
             }}
           />
           <div className="flex flex-wrap items-center gap-3.5">
-            <button
-              type="button"
-              onClick={() => {
-                setDialog({ duration: null })
-              }}
-              className={cn(headerButton, accent.bg, 'min-w-[12.75rem]')}
-            >
-              <AddIcon aria-hidden="true" className="size-[0.8125rem]" />
-              Add Budget Duration
-            </button>
+            {canCreate && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDialog({ duration: null })
+                }}
+                className={cn(headerButton, accent.bg, 'min-w-[12.75rem]')}
+              >
+                <AddIcon aria-hidden="true" className="size-[0.8125rem]" />
+                Add Budget Duration
+              </button>
+            )}
             <SearchBox
               label="Search budget durations"
               value={search}
@@ -268,30 +281,38 @@ export function BudgetDurationsTab({
               debounced ? 'No budget duration matches your search.' : 'No budget durations yet.'
             }
             rowActionsHeader="Action"
-            rowActions={(row) => (
-              <span className="inline-flex gap-3">
-                <button
-                  type="button"
-                  aria-label={`Edit ${row.name}`}
-                  onClick={() => {
-                    setDialog({ duration: row })
-                  }}
-                  className={cn(iconButton, 'text-[#0081F9]')}
-                >
-                  <EditUnderlineIcon className="h-[1.32rem] w-[1.25rem]" />
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Delete ${row.name}`}
-                  onClick={() => {
-                    setDeleting(row)
-                  }}
-                  className={cn(iconButton, 'text-[#C2420B]')}
-                >
-                  <DeleteIcon className="h-[1.055rem] w-[0.9375rem]" />
-                </button>
-              </span>
-            )}
+            rowActions={
+              canEdit || canDelete
+                ? (row) => (
+                    <span className="inline-flex gap-3">
+                      {canEdit && (
+                        <button
+                          type="button"
+                          aria-label={`Edit ${row.name}`}
+                          onClick={() => {
+                            setDialog({ duration: row })
+                          }}
+                          className={cn(iconButton, 'text-[#0081F9]')}
+                        >
+                          <EditUnderlineIcon className="h-[1.32rem] w-[1.25rem]" />
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          type="button"
+                          aria-label={`Delete ${row.name}`}
+                          onClick={() => {
+                            setDeleting(row)
+                          }}
+                          className={cn(iconButton, 'text-[#C2420B]')}
+                        >
+                          <DeleteIcon className="h-[1.055rem] w-[0.9375rem]" />
+                        </button>
+                      )}
+                    </span>
+                  )
+                : undefined
+            }
           />
         )}
       </div>
@@ -316,7 +337,7 @@ export function BudgetDurationsTab({
         confirmLabel="Delete"
         onConfirm={() => {
           if (deleting) {
-            remove.mutate(deleting.id, {
+            remove.mutate(deleting, {
               onError: toastError('The budget duration could not be deleted.'),
             })
           }

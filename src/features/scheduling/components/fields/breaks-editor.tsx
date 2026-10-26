@@ -1,30 +1,19 @@
 import { type Control, useController, useFieldArray } from 'react-hook-form'
 import { Info, Plus, X } from 'lucide-react'
 
-import {
-  DatePickerField,
-  FieldLayoutContext,
-  SelectField,
-  TextField,
-  TimePickerField,
-} from '@/components/form'
+import { FieldLayoutContext, SelectField, TimePickerField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { BREAKPOINTS, useMediaQuery } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
 
-import { BREAK_TYPE_LABELS } from '../../constants'
+import { useBreakTypeOptions } from '../../hooks/use-scheduling'
 import type { CreateScheduleValues } from '../../schemas/schedule-forms.schema'
-import { BREAK_TYPES } from '../../types/scheduling.types'
 import { schedulingType } from '../type-styles'
-
-const BREAK_OPTIONS = BREAK_TYPES.map((type) => ({ value: type, label: BREAK_TYPE_LABELS[type] }))
 
 interface BreaksEditorProps {
   control: Control<CreateScheduleValues>
-  /** Dates new rows start with (the schedule's start and end). */
-  defaultDates: { startDate: string; endDate: string }
 }
 
 function InclusiveBox({
@@ -36,7 +25,7 @@ function InclusiveBox({
 }) {
   const {
     field: { value, onChange, ref },
-  } = useController({ control, name: `breaks.${index}.inclusive` })
+  } = useController({ control, name: `breaks.${index}.isInclusive` })
   return (
     <span className="flex items-center gap-1.5">
       <Checkbox
@@ -64,22 +53,22 @@ function InclusiveBox({
 }
 
 /**
- * "Breaks" with "+ Add": one row per break (type, dates, times, description,
- * inclusive) as a table on wide screens and stacked cards on phones.
+ * "Breaks" with "+ Add": one row per break (break type, start, end, inclusive). Rows here
+ * replace the time slots' own breaks on every shift of the batch; with none, each shift
+ * keeps its slot's breaks. A table on wide screens, stacked cards on phones.
  */
-export function BreaksEditor({ control, defaultDates }: BreaksEditorProps) {
+export function BreaksEditor({ control }: BreaksEditorProps) {
   const isWide = useMediaQuery(BREAKPOINTS.md)
   const { fields, append, remove } = useFieldArray({ control, name: 'breaks' })
+  const types = useBreakTypeOptions()
+  const options = (types.data ?? []).map((type) => ({ value: type.id, label: type.name }))
 
   const add = () => {
     append({
-      type: 'lunch',
-      startDate: defaultDates.startDate,
-      endDate: defaultDates.endDate,
+      breakTypeId: options[0]?.value ?? '',
       startTime: '13:00',
       endTime: '14:00',
-      description: '',
-      inclusive: false,
+      isInclusive: false,
     })
   }
 
@@ -91,6 +80,7 @@ export function BreaksEditor({ control, defaultDates }: BreaksEditorProps) {
           <Button
             size="sm"
             onClick={add}
+            disabled={!types.isPending && options.length === 0}
             className={cn('bg-blue-600 text-white hover:bg-blue-600/90', schedulingType.button)}
           >
             <Plus /> Add
@@ -99,25 +89,20 @@ export function BreaksEditor({ control, defaultDates }: BreaksEditorProps) {
 
         {fields.length === 0 ? (
           <p className="rounded-md bg-success/15 px-3 py-2.5 text-sm text-field-foreground">
-            No Record Found
+            No Record Found. Each shift keeps its time slot&apos;s breaks.
           </p>
         ) : isWide ? (
           <div className="scrollbar-thin overflow-x-auto">
-            <table className="w-full min-w-[52rem] text-sm">
+            <table className="w-full min-w-[36rem] text-sm">
               <thead>
                 <tr className="text-left text-heading [&>th]:px-1.5 [&>th]:pb-2 [&>th]:font-normal">
+                  <th scope="col">Break Type</th>
                   <th scope="col" className="w-36">
-                    Break Type
-                  </th>
-                  <th scope="col">Start Date</th>
-                  <th scope="col">End Date</th>
-                  <th scope="col" className="w-32">
                     Break Start Time
                   </th>
-                  <th scope="col" className="w-32">
+                  <th scope="col" className="w-36">
                     Break End Time
                   </th>
-                  <th scope="col">Description</th>
                   <th scope="col" className="w-20">
                     Inclusive
                   </th>
@@ -132,25 +117,10 @@ export function BreaksEditor({ control, defaultDates }: BreaksEditorProps) {
                     <td>
                       <SelectField
                         control={control}
-                        name={`breaks.${index}.type`}
+                        name={`breaks.${index}.breakTypeId`}
                         label={`Break ${index + 1} type`}
-                        options={BREAK_OPTIONS}
-                        className="gap-0 [&>label]:sr-only"
-                      />
-                    </td>
-                    <td>
-                      <DatePickerField
-                        control={control}
-                        name={`breaks.${index}.startDate`}
-                        label={`Break ${index + 1} start date`}
-                        className="gap-0 [&>label]:sr-only"
-                      />
-                    </td>
-                    <td>
-                      <DatePickerField
-                        control={control}
-                        name={`breaks.${index}.endDate`}
-                        label={`Break ${index + 1} end date`}
+                        placeholder="Select Break Type"
+                        options={options}
                         className="gap-0 [&>label]:sr-only"
                       />
                     </td>
@@ -170,15 +140,6 @@ export function BreaksEditor({ control, defaultDates }: BreaksEditorProps) {
                         label={`Break ${index + 1} end time`}
                         hideLabel
                         className="gap-0"
-                      />
-                    </td>
-                    <td>
-                      <TextField
-                        control={control}
-                        name={`breaks.${index}.description`}
-                        label={`Break ${index + 1} description`}
-                        maxLength={200}
-                        className="gap-0 [&>label]:sr-only"
                       />
                     </td>
                     <td className="pt-2.5">
@@ -202,21 +163,12 @@ export function BreaksEditor({ control, defaultDates }: BreaksEditorProps) {
                 </div>
                 <SelectField
                   control={control}
-                  name={`breaks.${index}.type`}
+                  name={`breaks.${index}.breakTypeId`}
                   label="Break Type"
-                  options={BREAK_OPTIONS}
+                  placeholder="Select Break Type"
+                  options={options}
                 />
                 <div className="grid grid-cols-2 gap-3">
-                  <DatePickerField
-                    control={control}
-                    name={`breaks.${index}.startDate`}
-                    label="Start Date"
-                  />
-                  <DatePickerField
-                    control={control}
-                    name={`breaks.${index}.endDate`}
-                    label="End Date"
-                  />
                   <TimePickerField
                     control={control}
                     name={`breaks.${index}.startTime`}
@@ -228,12 +180,6 @@ export function BreaksEditor({ control, defaultDates }: BreaksEditorProps) {
                     label="Break End"
                   />
                 </div>
-                <TextField
-                  control={control}
-                  name={`breaks.${index}.description`}
-                  label="Description"
-                  maxLength={200}
-                />
                 <span className="flex items-center gap-2 text-sm text-field-foreground">
                   <InclusiveBox control={control} index={index} /> Inclusive
                 </span>

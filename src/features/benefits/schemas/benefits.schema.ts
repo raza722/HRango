@@ -33,6 +33,8 @@ export const planYearFormSchema = z
       .refine((value) => /^\d+$/.test(value), 'Enter a whole number')
       .refine((value) => Number(value) >= 1 && Number(value) <= 365, 'Enter 1 to 365'),
     electionUnit: z.enum(['day', 'week', 'month']),
+    /** Days; asked only for "After a waiting period". */
+    waitingPeriodDays: z.string().trim(),
   })
   .refine((value) => endsAfterStart(value), {
     message: 'The plan year must end after it starts',
@@ -40,13 +42,25 @@ export const planYearFormSchema = z
     // Checked even while other steps' fields are still empty.
     when: () => true,
   })
+  .refine(
+    (value) =>
+      value.newHireStart !== 'waiting_period' ||
+      (/^\d+$/.test(value.waitingPeriodDays) &&
+        Number(value.waitingPeriodDays) >= 1 &&
+        Number(value.waitingPeriodDays) <= 365),
+    {
+      message: 'Enter the waiting period: 1 to 365 days',
+      path: ['waitingPeriodDays'],
+      when: () => true,
+    },
+  )
 export type PlanYearFormValues = z.infer<typeof planYearFormSchema>
 
 /** The fields each step checks before the next one opens. */
 export const PLAN_YEAR_STEP_FIELDS = {
   details: ['name', 'startDate', 'endDate'],
   plans: ['planIds'],
-  'new-hires': ['newHireStart', 'electionPeriod', 'electionUnit'],
+  'new-hires': ['newHireStart', 'waitingPeriodDays', 'electionPeriod', 'electionUnit'],
 } as const satisfies Record<string, readonly (keyof PlanYearFormValues)[]>
 
 // --- Plan (Add Medical Plan …) ------------------------------------------------------------------
@@ -56,18 +70,19 @@ export const planFormSchema = z
     category: z.enum(CATEGORY_VALUES),
     name: z.string().trim().min(1, 'Enter the plan name').max(60, 'Keep it under 60 characters'),
     planType: z.string().min(1, 'Choose the plan type'),
-    planTypeId: z
+    planTypeRef: z
       .string()
       .trim()
       .min(1, 'Enter the plan type ID')
-      .max(30, 'Keep it under 30 characters'),
+      .max(50, 'Keep it under 50 characters'),
     carrier: z.string().min(1, 'Choose the carrier'),
     startDate: date('Choose when the plan starts'),
     endDate: date('Choose when the plan ends'),
+    description: z.string().trim().max(4000, 'Keep it under 4000 characters'),
+    /** Optional: uploaded and attached once the plan is saved. */
     attachment: z
-      .object({ name: z.string(), size: z.number() })
+      .instanceof(File)
       .nullable()
-      .refine((file) => Boolean(file), 'Choose a file')
       .refine(
         (file) => file === null || file.size <= ATTACHMENT_MAX_BYTES,
         'The file must be 5 MB or smaller',
@@ -90,9 +105,10 @@ export const enrollmentWindowFormSchema = z.object({
     .max(80, 'Keep it under 80 characters'),
   planYearId: z.string().min(1, 'Choose the plan year'),
   effectiveDate: date('Choose when it becomes effective'),
-  enrollmentEndDate: date('Choose the last day of enrollment'),
+  closesOn: date('Choose the last day of enrollment'),
   planIds: z.array(z.string()).min(1, 'Choose at least one plan'),
-  employeeIds: z.array(z.string()).min(1, 'Choose who can enroll'),
+  /** Nobody chosen: everyone may enrol. */
+  employeeIds: z.array(z.string()),
 })
 export type EnrollmentWindowFormValues = z.infer<typeof enrollmentWindowFormSchema>
 
@@ -100,7 +116,7 @@ export const ENROLLMENT_STEP_ONE_FIELDS = [
   'name',
   'planYearId',
   'effectiveDate',
-  'enrollmentEndDate',
+  'closesOn',
   'planIds',
 ] as const satisfies readonly (keyof EnrollmentWindowFormValues)[]
 
@@ -109,10 +125,7 @@ export const ENROLLMENT_STEP_ONE_FIELDS = [
 export const profileFormSchema = z.object({
   dateOfBirth: date('Choose the date of birth'),
   maritalStatus: z.string().min(1, 'Choose the marital status'),
-  homeAddress: z
-    .string()
-    .trim()
-    .min(1, 'Enter the home address')
-    .max(200, 'Keep it under 200 characters'),
+  /** Optional: Employees keeps it with the person's contact details. */
+  homeAddress: z.string().trim().max(500, 'Keep it under 500 characters'),
 })
 export type ProfileFormValues = z.infer<typeof profileFormSchema>

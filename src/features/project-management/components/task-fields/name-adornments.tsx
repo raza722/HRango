@@ -9,7 +9,7 @@ import { DependenciesPopover } from './dependency-field'
 import { DescriptionIcon, LinkIcon, WarningIcon } from './field-icons'
 import { FieldPopover, PopupHeader } from './field-popup'
 import { fieldStyles } from './field-styles'
-import { openBlockers, taskLink } from './field-utils'
+import { taskLink } from './field-utils'
 import type { TaskCellProps } from './task-cell-types'
 import { useTaskSave } from './use-task-save'
 
@@ -27,7 +27,8 @@ const iconButton =
 export function TaskNameAdornments({ task, workspace, tasks }: TaskCellProps) {
   const [descriptionOpen, setDescriptionOpen] = useState(false)
   const [dependenciesOpen, setDependenciesOpen] = useState(false)
-  const blockers = openBlockers(task, tasks, workspace)
+  // Open tasks this one waits on (the row's count; the popup lists them).
+  const blockers = task.openDependencyCount
   const hasDescription = task.description.trim() !== ''
 
   const copyLink = () => {
@@ -69,7 +70,7 @@ export function TaskNameAdornments({ task, workspace, tasks }: TaskCellProps) {
         />
       </FieldPopover>
 
-      {blockers.length > 0 && (
+      {blockers > 0 && (
         <DependenciesPopover
           open={dependenciesOpen}
           onOpenChange={setDependenciesOpen}
@@ -79,7 +80,7 @@ export function TaskNameAdornments({ task, workspace, tasks }: TaskCellProps) {
           trigger={
             <button
               type="button"
-              aria-label={`Waiting on ${blockers.length} open ${blockers.length === 1 ? 'task' : 'tasks'}: show dependencies`}
+              aria-label={`Waiting on ${blockers} open ${blockers === 1 ? 'task' : 'tasks'}: show dependencies`}
               className={cn(iconButton, 'w-[1.5rem] bg-[#FFF9E7] text-[#B0A042]')}
             >
               <WarningIcon />

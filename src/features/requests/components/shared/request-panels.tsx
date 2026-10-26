@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 import { ACTION_LABELS, KIND_LABELS } from '../../constants'
+import { permits, useRequestPermissions } from '../../hooks/use-requests'
 import type {
   AnyRequest,
   ApprovalView,
@@ -38,6 +39,7 @@ const REQUEST_TAB_ACTIONS: readonly RequestAction[] = [
 const APPROVAL_TAB_ACTIONS: readonly RequestAction[] = [
   'decide',
   'consent',
+  'forward',
   'view',
   'flow',
   'history',
@@ -57,6 +59,7 @@ interface ListProps<T extends AnyRequest> {
 
 function actionLabel(action: RequestAction, request: AnyRequest) {
   if (action === 'decide' && request.status === 'cancelling') return 'Approve/Reject Cancellation'
+  if (action === 'cancel' && request.status === 'pending') return 'Withdraw'
   return ACTION_LABELS[action]
 }
 
@@ -75,6 +78,7 @@ function RequestList<T extends AnyRequest>({
   status,
 }: ListProps<T> & { title: string; allowed: readonly RequestAction[]; showStrip: boolean }) {
   const meta = page?.meta
+  const can = useRequestPermissions(kind)
   return (
     <div className="grid gap-4 px-4 pt-5 pb-5 sm:px-6">
       <h2 className={requestTitleClass}>{title}</h2>
@@ -95,7 +99,9 @@ function RequestList<T extends AnyRequest>({
           </p>
         }
         rowActions={(row) => {
-          const actions = allowed.filter((action) => row.actions.includes(action))
+          const actions = allowed.filter(
+            (action) => row.actions.includes(action) && permits(action, can),
+          )
           return (
             <RowActionsMenu
               itemClassName={rowMenuItemClass.poppins}

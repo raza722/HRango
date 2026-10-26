@@ -1,14 +1,14 @@
-import { useRef, useState } from 'react'
-import { toast } from 'sonner'
+import { useState } from 'react'
 
 import { cn } from '@/lib/utils'
 
-import { usePeople, usePmLookups } from '../../hooks/use-pm'
+import { usePeople } from '../../hooks/use-pm'
 import type { PmPerson, TaskRow, Workspace } from '../../types/pm.types'
+import { membersOf } from '../workspace/workspace-members'
 import { ChevronDownIcon, InviteIcon } from './field-icons'
 import { FieldPopover, PersonAvatar, PopupHeader, SearchField } from './field-popup'
 import { fieldStyles } from './field-styles'
-import { ADDED_PREVIEW, inviteEmailSchema, VISIBLE_AVATARS } from './field-utils'
+import { ADDED_PREVIEW, VISIBLE_AVATARS } from './field-utils'
 import { RemoveButton } from './remove-button'
 import type { TaskCellProps } from './task-cell-types'
 import { useTaskSave } from './use-task-save'
@@ -23,7 +23,14 @@ export function AssigneesCell({ task, workspace }: TaskCellProps) {
   const [membersOpen, setMembersOpen] = useState(false)
   const shown = task.assigneeIds.slice(0, VISIBLE_AVATARS)
   const hidden = task.assigneeIds.slice(VISIBLE_AVATARS)
-  const names = task.assigneeIds.map((id) => people.get(id)?.name ?? 'Unknown').join(', ')
+  const names = task.assigneeIds
+    .map(
+      (id) =>
+        people.get(id)?.name ??
+        task.assignees.find((entry) => entry.employeeId === id)?.name ??
+        'Unknown',
+    )
+    .join(', ')
 
   const openPicker = () => {
     setOpen(true)
@@ -166,28 +173,24 @@ interface AddAssigneePopupProps {
 }
 
 function AddAssigneePopup({ task, workspace, onClose }: AddAssigneePopupProps) {
-  const { data: lookups } = usePmLookups()
   const people = usePeople()
   const { save } = useTaskSave()
   const [search, setSearch] = useState('')
-  const [email, setEmail] = useState('')
-  const [emailError, setEmailError] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
-  const emailRef = useRef<HTMLInputElement>(null)
   const multiple = workspace.setup.organizer.includes('multiple-assignees')
 
   const query = search.trim().toLowerCase()
   const matches = (person: PmPerson | undefined) =>
     !query || (person?.name.toLowerCase().includes(query) ?? false)
 
-  const added = task.assigneeIds.filter((id) => matches(people.get(id)))
-  const invited = task.invitedEmails.filter((address) => !query || address.includes(query))
-  const addedRows = [
-    ...added.map((id) => ({ kind: 'person' as const, id })),
-    ...invited.map((address) => ({ kind: 'email' as const, id: address })),
-  ]
+  // Assignees are workspace members (the API refuses anyone else).
+  const members = membersOf(workspace, people)
+  const personOf = (id: string): PmPerson | undefined =>
+    people.get(id) ?? members.find((member) => member.id === id)
+  const added = task.assigneeIds.filter((id) => matches(personOf(id)))
+  const addedRows = added.map((id) => ({ kind: 'person' as const, id }))
   const visibleAdded = showAll ? addedRows : addedRows.slice(0, ADDED_PREVIEW)
-  const employees = (lookups?.employees ?? []).filter(
+  const employees = members.filter(
     (person) => !task.assigneeIds.includes(person.id) && matches(person),
   )
 
@@ -197,29 +200,6 @@ function AddAssigneePopup({ task, workspace, onClose }: AddAssigneePopupProps) {
   const remove = (id: string) => {
     void save(task.id, { assigneeIds: task.assigneeIds.filter((other) => other !== id) })
   }
-  const uninvite = (address: string) => {
-    void save(task.id, { invitedEmails: task.invitedEmails.filter((other) => other !== address) })
-  }
-
-  const invite = async () => {
-    const parsed = inviteEmailSchema.safeParse(email)
-    if (!parsed.success) {
-      setEmailError(parsed.error.issues[0]?.message ?? 'Enter a valid email address')
-      emailRef.current?.focus()
-      return
-    }
-    const address = parsed.data.toLowerCase()
-    if (task.invitedEmails.includes(address)) {
-      setEmailError('This email is already invited')
-      return
-    }
-    setEmailError(null)
-    if (await save(task.id, { invitedEmails: [...task.invitedEmails, address] })) {
-      setEmail('')
-      toast.success(`Invitation sent to ${address}`)
-    }
-  }
-
   return (
     <div className="flex flex-col gap-3.5 px-3 py-[1.125rem]">
       <PopupHeader title="Add Assignee" onClose={onClose} />
@@ -230,49 +210,6 @@ function AddAssigneePopup({ task, workspace, onClose }: AddAssigneePopupProps) {
         label="Search employee"
         className="h-[2.2rem] w-full flex-none"
       />
-      <form
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault()
-          void invite()
-        }}
-      >
-        <div
-          className={cn(
-            'flex h-9 items-center overflow-hidden rounded-[0.5625rem] border bg-white focus-within:ring-[3px] focus-within:ring-[rgba(132,78,255,0.2)]',
-            emailError ? 'border-[#DC3545]' : 'border-[#E9E9E9]',
-          )}
-        >
-          <label className="h-full min-w-0 flex-1">
-            <span className="sr-only">Invite from email</span>
-            <input
-              ref={emailRef}
-              type="email"
-              value={email}
-              onChange={(event) => {
-                setEmail(event.target.value)
-                if (emailError) setEmailError(null)
-              }}
-              placeholder="Invite from email"
-              aria-invalid={emailError !== null}
-              aria-describedby={emailError ? 'assignee-invite-error' : undefined}
-              className="h-full w-full bg-transparent px-2.5 text-xs tracking-[0.01em] text-[#3D3D3D] outline-none placeholder:text-[#909090]"
-            />
-          </label>
-          <button
-            type="submit"
-            className="flex h-full w-[4.4rem] shrink-0 items-center justify-center gap-1.5 bg-[#7127EA] text-[0.6875rem] font-semibold text-white hover:bg-[#5f1fd0]"
-          >
-            <InviteIcon className="h-[0.8rem] w-auto" />
-            Invite
-          </button>
-        </div>
-        {emailError && (
-          <p id="assignee-invite-error" role="alert" className={cn(fieldStyles.error, 'mt-1')}>
-            {emailError}
-          </p>
-        )}
-      </form>
 
       <div className={fieldStyles.divider} />
 
@@ -298,24 +235,7 @@ function AddAssigneePopup({ task, workspace, onClose }: AddAssigneePopupProps) {
             className={cn(fieldStyles.scroll, 'flex max-h-[8.4rem] flex-col gap-2 overflow-y-auto')}
           >
             {visibleAdded.map((row) => {
-              if (row.kind === 'email') {
-                return (
-                  <li key={row.id} className={fieldStyles.row}>
-                    <span className="flex size-[1.8rem] shrink-0 items-center justify-center rounded-full bg-[#EEE7FF] text-[0.625rem] font-medium text-[#7127EA] uppercase ring-[1.6px] ring-[#DBD2FF]">
-                      {row.id.slice(0, 1)}
-                    </span>
-                    <span className="truncate">{row.id}</span>
-                    <RemoveButton
-                      label={`Remove ${row.id}`}
-                      className="mr-1.5"
-                      onClick={() => {
-                        uninvite(row.id)
-                      }}
-                    />
-                  </li>
-                )
-              }
-              const person = people.get(row.id)
+              const person = personOf(row.id)
               const name = person?.name ?? 'Unknown'
               return (
                 <li key={row.id} className={fieldStyles.row}>

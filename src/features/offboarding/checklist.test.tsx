@@ -89,28 +89,30 @@ describe('Settings → Off Boarding Checklist', () => {
     await waitFor(() => {
       const created = checklists.all().find((item) => item.name === 'Exit Steps')
       expect(
-        created?.fields.map(({ name, type, required, min, max }) => ({
+        created?.fields.map(({ name, fieldType, isRequired, minValue, maxValue }) => ({
           name,
-          type,
-          required,
-          min,
-          max,
+          fieldType,
+          isRequired,
+          minValue,
+          maxValue,
         })),
       ).toEqual([
-        { name: 'Laptop Count', type: 'number', required: false, min: 5, max: 7 },
-        { name: 'Last Day', type: 'date', required: false, min: null, max: null },
+        { name: 'Laptop Count', fieldType: 'number', isRequired: false, minValue: 5, maxValue: 7 },
+        { name: 'Last Day', fieldType: 'date', isRequired: false, minValue: null, maxValue: null },
       ])
       expect(created?.code).toBe('ECL-00002')
-      expect(created?.active).toBe(true)
+      expect(created?.isActive).toBe(true)
     })
   })
 
-  it('adds a String field and deletes one, keeping the other fields', async () => {
+  it('adds a String field, keeping the ids of the other fields', async () => {
     const { user } = renderApp('/settings/off-boarding/checklist')
 
     await openRow(user, 'Edit')
     const checklist = await screen.findByRole('dialog', { name: 'Checklist Edit' })
-    expect(await within(checklist).findByRole('cell', { name: 'Asset Clear' })).toBeVisible()
+    expect(
+      await within(checklist).findByRole('cell', { name: 'Access Card Returned' }),
+    ).toBeVisible()
 
     const field = await addField(user, checklist, 'Exit Notes', 'String', {
       min: '10',
@@ -119,7 +121,36 @@ describe('Settings → Off Boarding Checklist', () => {
     await user.click(within(field).getByRole('button', { name: 'Save' }))
     expect(await within(checklist).findByRole('cell', { name: 'Exit Notes' })).toBeVisible()
 
-    await user.click(within(checklist).getByRole('button', { name: 'Delete, Handover Notes' }))
+    await user.click(within(checklist).getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Checklist updated')).toBeInTheDocument()
+    await waitFor(() => {
+      const fields = checklists.find('ecl_1')?.fields ?? []
+      expect(fields.map((item) => item.name)).toEqual([
+        'Access Card Returned',
+        'Exit Interview Done',
+        'Notice Days Served',
+        'Handover Notes',
+        'Exit Notes',
+      ])
+      // Existing fields keep their ids, so End of Employment answers still match.
+      expect(fields[0]?.id).toBe('cf_access_card')
+      expect(fields.find((item) => item.name === 'Exit Notes')).toMatchObject({
+        fieldType: 'string',
+        minLength: 10,
+        maxLength: 200,
+        minValue: null,
+      })
+    })
+  })
+
+  it('refuses to drop a field that has answers', async () => {
+    const { user } = renderApp('/settings/off-boarding/checklist')
+
+    await openRow(user, 'Edit')
+    const checklist = await screen.findByRole('dialog', { name: 'Checklist Edit' })
+    await user.click(
+      await within(checklist).findByRole('button', { name: 'Delete, Handover Notes' }),
+    )
     const confirm = await screen.findByRole('alertdialog', { name: 'Delete Handover Notes' })
     expect(within(confirm).getByText('Are you sure you want to Delete this?')).toBeVisible()
     await user.click(within(confirm).getByRole('button', { name: 'Yes' }))
@@ -130,23 +161,12 @@ describe('Settings → Off Boarding Checklist', () => {
     })
 
     await user.click(within(checklist).getByRole('button', { name: 'Save' }))
-    expect(await screen.findByText('Checklist updated')).toBeInTheDocument()
-    await waitFor(() => {
-      const fields = checklists.find('ecl_1')?.fields ?? []
-      expect(fields.map((item) => item.name)).toEqual([
-        'Asset Clear',
-        'Exit Interview Done',
-        'Notice Days Served',
-        'Exit Notes',
-      ])
-      // Existing fields keep their ids, so End of Employment answers still match.
-      expect(fields[0]?.id).toBe('cf_asset_clear')
-      expect(fields.find((item) => item.name === 'Exit Notes')).toMatchObject({
-        type: 'string',
-        min: 10,
-        max: 200,
-      })
-    })
+    expect(
+      await within(checklist).findByText(
+        'A removed field has answers on an end of employment. Keep it, or deactivate the checklist.',
+      ),
+    ).toBeVisible()
+    expect(checklists.find('ecl_1')?.fields.map((item) => item.name)).toContain('Handover Notes')
   })
 
   it('views a checklist and a field read-only', async () => {
@@ -154,11 +174,13 @@ describe('Settings → Off Boarding Checklist', () => {
 
     await openRow(user, 'View')
     const checklist = await screen.findByRole('dialog', { name: 'Checklist View' })
-    expect(await within(checklist).findByRole('cell', { name: 'Asset Clear' })).toBeVisible()
+    expect(
+      await within(checklist).findByRole('cell', { name: 'Access Card Returned' }),
+    ).toBeVisible()
     expect(within(checklist).queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
     expect(within(checklist).queryByRole('button', { name: 'Create' })).not.toBeInTheDocument()
     expect(
-      within(checklist).queryByRole('button', { name: 'Edit, Asset Clear' }),
+      within(checklist).queryByRole('button', { name: 'Edit, Access Card Returned' }),
     ).not.toBeInTheDocument()
     expect(within(checklist).getByRole('textbox', { name: /^Name/ })).toBeDisabled()
     expect(within(checklist).getByRole('button', { name: 'Cancel' })).toBeVisible()

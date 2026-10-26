@@ -6,17 +6,24 @@ import { z } from 'zod'
 import { CheckboxField, TextareaField, TextField } from '@/components/form'
 import type { DataTableColumn } from '@/components/layout'
 
-import { useDeleteResource, useResourceList, useSaveResource } from '../../hooks/use-payroll'
+import {
+  useDeleteResource,
+  useResourceList,
+  useResourceLookup,
+  useSaveResource,
+} from '../../hooks/use-payroll'
 import type { Formula, PayRule } from '../../types/payroll.types'
 import { PayrollDialog } from '../shared/payroll-dialog'
+import { SearchSelectField } from '../shared/search-select'
 import { TwoWaySwitchField } from '../shared/two-way-switch'
 import { CreateButton, DeleteConfirm, ExpressionField, SettingsRowMenu } from './settings-common'
 import { applyApiError, type DialogState, yesNo } from './settings-helpers'
 import { SettingsTable, ViewHeader } from './settings-list'
 import { SETTINGS_PAGE_SIZE } from './settings-nav'
+import { rowMenuHandlers, useSettingsCan } from './settings-permissions'
 
-const name = z.string().trim().min(1, 'Enter a name').max(80, 'Keep it under 80 characters')
-const expression = z.string().trim().min(1, 'Enter an expression').max(500)
+const name = z.string().trim().min(1, 'Enter a name').max(200, 'Keep it under 200 characters')
+const expression = z.string().trim().min(1, 'Enter an expression').max(2000)
 
 const expressionCell = (value: string) => (
   <span className="line-clamp-2 max-w-72 whitespace-normal">{value}</span>
@@ -29,7 +36,7 @@ const formulaSchema = z.object({
   expression,
   isSalaryDivision: z.enum(['no', 'yes']),
   forIntegration: z.boolean(),
-  description: z.string().trim().max(500),
+  description: z.string().trim().max(2000),
 })
 type FormulaValues = z.infer<typeof formulaSchema>
 
@@ -65,9 +72,8 @@ function FormulaDialog({
           expression: values.expression,
           isSalaryDivision: values.isSalaryDivision === 'yes',
           forIntegration: values.forIntegration,
-          // Formulas people add are their own; the seeded ones keep their flag.
-          isCustom: record?.isCustom ?? true,
-          description: values.description,
+          description: values.description || null,
+          rowVersion: record?.rowVersion ?? null,
         },
       })
       onClose()
@@ -128,6 +134,7 @@ function FormulaDialog({
 
 const formulaColumns: DataTableColumn<Formula>[] = [
   { id: 'name', header: 'Name', cell: (row) => row.name, mobile: 'heading' },
+  { id: 'reference', header: 'Reference', cell: (row) => row.reference },
   { id: 'expression', header: 'Expression', cell: (row) => expressionCell(row.expression) },
   { id: 'custom', header: 'Is Custom', cell: (row) => yesNo(row.isCustom) },
 ]
@@ -139,17 +146,20 @@ export function FormulasView() {
   const [deleting, setDeleting] = useState<Formula | null>(null)
   const list = useResourceList('formulas', { page, pageSize: SETTINGS_PAGE_SIZE })
   const remove = useDeleteResource('formulas')
+  const may = useSettingsCan('payComponents')
   return (
     <>
       <ViewHeader
         tab="pay-components"
         view="formulas"
         actions={
-          <CreateButton
-            onClick={() => {
-              setDialog({ mode: 'create' })
-            }}
-          />
+          may.create && (
+            <CreateButton
+              onClick={() => {
+                setDialog({ mode: 'create' })
+              }}
+            />
+          )
         }
       />
       <SettingsTable
@@ -163,15 +173,7 @@ export function FormulasView() {
         rowActions={(row) => (
           <SettingsRowMenu
             label={`Actions for ${row.name}`}
-            onEdit={() => {
-              setDialog({ mode: 'edit', record: row })
-            }}
-            onView={() => {
-              setDialog({ mode: 'view', record: row })
-            }}
-            onDelete={() => {
-              setDeleting(row)
-            }}
+            {...rowMenuHandlers(may, row, setDialog, setDeleting, row.isCustom)}
           />
         )}
       />
@@ -189,7 +191,6 @@ export function FormulasView() {
           setDeleting(null)
         }}
         remove={remove}
-        idOf={(row) => row.id}
       />
     </>
   )
@@ -197,10 +198,18 @@ export function FormulasView() {
 
 // --- Rules ---------------------------------------------------------------------------------------
 
-const ruleSchema = z.object({ name, expression })
+const ruleSchema = z.object({
+  name,
+  expression,
+  accountTypeId: z.string().min(1, 'Choose the employee account'),
+  description: z.string().trim().max(2000),
+})
 type RuleValues = z.infer<typeof ruleSchema>
 
-/** "Rule Create": Name and Expression. */
+/**
+ * "Rule Create": Name, Expression and the employee account the amount is posted to on
+ * every run (`accountTypeId`, required by the API).
+ */
 function RuleDialog({
   state,
   onClose,
@@ -211,21 +220,33 @@ function RuleDialog({
   const record = state.mode === 'create' ? undefined : state.record
   const readOnly = state.mode === 'view'
   const save = useSaveResource('rules')
+  const accounts = useResourceLookup('accountTypes')
   const [error, setError] = useState<string | null>(null)
   const form = useForm<RuleValues>({
     resolver: zodResolver(ruleSchema),
-    defaultValues: { name: record?.name ?? '', expression: record?.expression ?? '' },
+    defaultValues: {
+      name: record?.name ?? '',
+      expression: record?.expression ?? '',
+      accountTypeId: record?.accountTypeId ?? '',
+      description: record?.description ?? '',
+    },
   })
   const submit = form.handleSubmit(async (values) => {
     setError(null)
     try {
       await save.mutateAsync({
         id: record?.id,
-        input: { ...values, isCustom: record?.isCustom ?? true },
+        input: {
+          name: values.name,
+          expression: values.expression,
+          accountTypeId: values.accountTypeId,
+          description: values.description || null,
+          rowVersion: record?.rowVersion ?? null,
+        },
       })
       onClose()
     } catch (failure) {
-      setError(applyApiError(failure, form.setError, ['name', 'expression']))
+      setError(applyApiError(failure, form.setError, ['name', 'expression', 'accountTypeId']))
     }
   })
   const title =
@@ -245,8 +266,26 @@ function RuleDialog({
         onSubmit={(event) => void submit(event)}
         className="grid gap-5"
       >
-        <TextField control={form.control} name="name" label="Name" disabled={readOnly} />
-        <ExpressionField control={form.control} name="expression" disabled={readOnly} />
+        <TextField control={form.control} name="name" label="Name" required disabled={readOnly} />
+        <ExpressionField control={form.control} name="expression" required disabled={readOnly} />
+        <SearchSelectField
+          control={form.control}
+          name="accountTypeId"
+          label="Employee Account"
+          placeholder="Select Account Type"
+          options={(accounts.data?.data ?? []).map((item) => ({
+            value: item.id,
+            label: item.name,
+          }))}
+          required
+          disabled={readOnly}
+        />
+        <TextareaField
+          control={form.control}
+          name="description"
+          label="Description"
+          disabled={readOnly}
+        />
       </form>
     </PayrollDialog>
   )
@@ -255,7 +294,7 @@ function RuleDialog({
 const ruleColumns: DataTableColumn<PayRule>[] = [
   { id: 'name', header: 'Name', cell: (row) => row.name, mobile: 'heading' },
   { id: 'expression', header: 'Expression', cell: (row) => expressionCell(row.expression) },
-  { id: 'custom', header: 'Is Custom', cell: (row) => yesNo(row.isCustom) },
+  { id: 'account', header: 'Employee Account', cell: (row) => row.accountTypeName },
 ]
 
 /** Pay Components → Rules. */
@@ -265,17 +304,20 @@ export function RulesView() {
   const [deleting, setDeleting] = useState<PayRule | null>(null)
   const list = useResourceList('rules', { page, pageSize: SETTINGS_PAGE_SIZE })
   const remove = useDeleteResource('rules')
+  const may = useSettingsCan('payComponents')
   return (
     <>
       <ViewHeader
         tab="pay-components"
         view="rules"
         actions={
-          <CreateButton
-            onClick={() => {
-              setDialog({ mode: 'create' })
-            }}
-          />
+          may.create && (
+            <CreateButton
+              onClick={() => {
+                setDialog({ mode: 'create' })
+              }}
+            />
+          )
         }
       />
       <SettingsTable
@@ -289,15 +331,7 @@ export function RulesView() {
         rowActions={(row) => (
           <SettingsRowMenu
             label={`Actions for ${row.name}`}
-            onEdit={() => {
-              setDialog({ mode: 'edit', record: row })
-            }}
-            onView={() => {
-              setDialog({ mode: 'view', record: row })
-            }}
-            onDelete={() => {
-              setDeleting(row)
-            }}
+            {...rowMenuHandlers(may, row, setDialog, setDeleting)}
           />
         )}
       />
@@ -315,7 +349,6 @@ export function RulesView() {
           setDeleting(null)
         }}
         remove={remove}
-        idOf={(row) => row.id}
       />
     </>
   )

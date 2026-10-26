@@ -1,16 +1,13 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
+import { DEMO_USER } from '@/mocks/auth/handlers'
+import { MOCK_TOKEN_PREFIX } from '@/mocks/utils'
+import { useAuthStore } from '@/stores/auth-store'
 import { renderApp } from '@/test/test-utils'
 
-function timeInput(label: string): HTMLElement {
-  const input = screen.getAllByLabelText(label).find((el) => el.getAttribute('type') === 'time')
-  if (!input) throw new Error(`No time input labelled ${label}`)
-  return input
-}
-
 describe('Warning overview', () => {
-  it('shows the change log grouped by day, deletes an entry and clears it all', async () => {
+  it('shows the change log grouped by day, with details per entry', async () => {
     const { user } = renderApp('/warning')
     await screen.findByRole('table', { name: 'Warning policies' })
 
@@ -19,22 +16,15 @@ describe('Warning overview', () => {
     expect(await within(dialog).findByText(/^Today - /)).toBeInTheDocument()
     expect(within(dialog).getByText(/^Yesterday - /)).toBeInTheDocument()
     expect(within(dialog).getAllByRole('listitem')).toHaveLength(7)
+    // The audit log cannot be deleted.
+    expect(within(dialog).queryByRole('button', { name: 'Delete All' })).not.toBeInTheDocument()
 
-    // View expands the details; Delete removes the entry.
-    const firstEntry = 'Actions for Policy updated — Grace'
+    const firstEntry = 'Actions for Policy updated — Grace (Total Grace Minutes)'
     await user.click(within(dialog).getByRole('button', { name: firstEntry }))
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument()
     await user.click(await screen.findByRole('menuitem', { name: 'View' }))
     expect(within(dialog).getByText('Shelley Kannes')).toBeInTheDocument()
-
-    await user.click(within(dialog).getByRole('button', { name: firstEntry }))
-    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
-    await waitFor(() => {
-      expect(within(dialog).getAllByRole('listitem')).toHaveLength(6)
-    })
-
-    await user.click(within(dialog).getByRole('button', { name: 'Delete All' }))
-    await user.click(await screen.findByRole('button', { name: 'Delete All', hidden: false }))
-    expect(await within(dialog).findByText('No changes recorded yet.')).toBeInTheDocument()
+    expect(within(dialog).getByText('480 → 600')).toBeInTheDocument()
   })
 
   it('hides a column chosen in Column Preferences, but never the last one', async () => {
@@ -50,31 +40,71 @@ describe('Warning overview', () => {
     expect(within(table).queryByRole('columnheader', { name: 'Time Span' })).not.toBeInTheDocument()
 
     // Turn off all but one; the last checkbox is then locked.
-    for (const name of ['Sr #', 'Policy Name']) {
+    for (const name of ['Sr #', 'Policy Name', 'Status']) {
       await user.click(within(policyGroup).getByRole('checkbox', { name }))
     }
     expect(
       within(policyGroup).getByRole('checkbox', { name: 'Title of Warning Policy' }),
     ).toBeDisabled()
   })
+
+  it('hides the buttons the user has no permission for', async () => {
+    renderApp('/warning')
+    act(() => {
+      useAuthStore.getState().setSession({
+        token: `${MOCK_TOKEN_PREFIX}test`,
+        user: {
+          ...DEMO_USER,
+          permissions: [
+            { code: 'warning.settings.policies.view', scope: 'company' },
+            { code: 'warning.settings.penalties.view', scope: 'company' },
+          ],
+        },
+      })
+    })
+    const table = await screen.findByRole('table', { name: 'Warning policies' })
+    await within(table).findAllByRole('row')
+    expect(screen.queryByRole('button', { name: 'History' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Add Form' })).not.toBeInTheDocument()
+    expect(within(table).queryByRole('button', { name: /^Actions for/ })).not.toBeInTheDocument()
+  })
+})
+
+describe('Warning → Policy, end to end', () => {
+  it('creates a policy and shows a duplicate title next to the field', async () => {
+    const { user } = renderApp('/warning/policy')
+    await screen.findByRole('table', { name: 'Warning policies' })
+
+    await user.type(screen.getByLabelText('Title of Warning Policy'), 'Late')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(
+      await screen.findAllByText('A warning policy with this title already exists.'),
+    ).not.toHaveLength(0)
+
+    await user.clear(screen.getByLabelText('Title of Warning Policy'))
+    await user.type(screen.getByLabelText('Title of Warning Policy'), 'Night shift late')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Policy saved')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByLabelText('Title of Warning Policy')).toHaveValue('')
+    })
+  })
 })
 
 describe('Warning → Penalty, end to end', () => {
-  it('creates a penalty and lists it', async () => {
-    const { user } = renderApp('/warning/penalty')
+  it("adds a penalty to a policy's penalties and lists it", async () => {
+    const { user } = renderApp('/warning/penalty?edit=4')
     await screen.findByRole('table', { name: 'Penalties' })
     expect(screen.getByText('Showing 1–5 of 6')).toBeInTheDocument()
+    expect(await screen.findByText(/Penalties of/)).toBeInTheDocument()
 
-    await user.type(screen.getByLabelText('Title of Warning Policy'), 'Night shift penalty')
-    fireEvent.change(timeInput('From'), { target: { value: '21:00' } })
-    fireEvent.change(timeInput('To'), { target: { value: '21:30' } })
-    await user.type(screen.getByLabelText('Points'), '4')
+    await user.click(screen.getByRole('button', { name: 'Add Penalty' }))
+    expect(screen.getByLabelText('Count')).toHaveValue('1')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
-    expect(await screen.findByText('Penalty saved')).toBeInTheDocument()
+    expect(await screen.findByText('Penalties saved')).toBeInTheDocument()
     await waitFor(() => {
-      expect(screen.getByText('Showing 6–7 of 7')).toBeInTheDocument()
+      expect(screen.getByText('Showing 1–5 of 7')).toBeInTheDocument()
     })
-    expect(screen.getByLabelText('Title of Warning Policy')).toHaveValue('')
   })
 })

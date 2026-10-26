@@ -1,4 +1,4 @@
-import { type SyntheticEvent, useEffect, useId, useRef } from 'react'
+import { type SyntheticEvent, useEffect, useId, useRef, useState } from 'react'
 import {
   type Control,
   type FieldPath,
@@ -17,31 +17,31 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
-  AttachmentField,
   btn,
   DateField,
+  EmployeeSearchSelectField,
   PayrollDialog,
+  type SearchOption,
   SearchSelectField,
   SectionTitle,
   toolbarButton,
 } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import type { FileRef } from '@/lib/files'
 import { cn } from '@/lib/utils'
 
-import { CLEARANCE_CONDITION_LABELS, RETURN_STATUS_LABELS } from '../../constants'
+import { personHint } from '../../api/lookups.api'
+import { RETURN_CONDITION_LABELS, RETURN_STATUS_LABELS } from '../../constants'
+import { useClearance, useClearancePrefill, useSaveClearance } from '../../hooks/use-assets'
 import {
-  useAssetLookups,
-  useClearance,
-  useClearancePrefill,
-  useSaveClearance,
-} from '../../hooks/use-assets'
-import {
-  CLEARANCE_CONDITIONS,
-  type ClearanceDetail,
+  type Clearance,
   type ClearanceInput,
-  type ClearanceLineInput,
+  type ClearancePrefillItem,
+  type EmployeeLookupItem,
+  RETURN_CONDITIONS,
   RETURN_STATUSES,
 } from '../../types/assets.types'
+import { UploadField } from '../shared/upload-field'
 
 const DATE = 'EEE,d MMM yyyy'
 
@@ -52,38 +52,34 @@ export interface ClearancePrefillProps {
   clearanceDate?: string | undefined
 }
 
-const person = (message: string) =>
-  z
-    .string()
-    .nullable()
-    .refine((value) => Boolean(value), { message })
-
 const lineSchema = z.object({
-  assetId: z.string().min(1, 'Choose the asset'),
-  allocationId: z.string().nullable(),
-  dateAllocated: z.string().min(1, 'Choose the date allocated'),
-  condition: z.enum(CLEARANCE_CONDITIONS),
+  assetAllocationId: z.string().min(1, 'Choose the asset'),
+  conditionAtClearance: z.enum(RETURN_CONDITIONS),
   reason: z.string().trim().max(500, 'Keep it under 500 characters'),
-  returnStatus: z.enum(RETURN_STATUSES).nullable(),
+  returnStatus: z
+    .enum(RETURN_STATUSES)
+    .nullable()
+    .refine((value) => Boolean(value), { message: 'Choose the return status' }),
   comments: z.string().trim().max(1000, 'Keep it under 1000 characters'),
 })
 
 const schema = z.object({
-  employeeId: person('Choose the employee'),
+  employeeId: z
+    .string()
+    .nullable()
+    .refine((value) => Boolean(value), { message: 'Choose the employee' }),
   clearanceDate: z.string().min(1, 'Choose the clearance date'),
-  lines: z.array(lineSchema).min(1, 'Add the assets being cleared'),
-  checkedById: person('Choose who checked it'),
-  approvedById: person('Choose who approved the clearance'),
-  approvalDate: z.string().min(1, 'Choose the approval date'),
-  attachmentName: z.string().nullable(),
+  items: z.array(lineSchema).min(1, 'Add the assets being cleared'),
+  checkedById: z.string().nullable(),
+  approvedById: z.string().nullable(),
+  approvalDate: z.string(),
 })
 type Values = z.infer<typeof schema>
+type Line = Values['items'][number]
 
-const blankLine = (): ClearanceLineInput => ({
-  assetId: '',
-  allocationId: null,
-  dateAllocated: '',
-  condition: 'good',
+const lineFor = (assetAllocationId: string): Line => ({
+  assetAllocationId,
+  conditionAtClearance: 'good',
   reason: '',
   returnStatus: null,
   comments: '',
@@ -92,26 +88,23 @@ const blankLine = (): ClearanceLineInput => ({
 const today = () => format(new Date(), 'yyyy-MM-dd')
 
 const toValues = (
-  detail: ClearanceDetail | undefined,
+  detail: Clearance | undefined,
   prefill: ClearancePrefillProps | undefined,
 ): Values => ({
   employeeId: detail?.employeeId ?? prefill?.employeeId ?? null,
   clearanceDate: detail?.clearanceDate ?? prefill?.clearanceDate ?? today(),
-  lines: detail
-    ? detail.lines.map((line) => ({
-        assetId: line.assetId,
-        allocationId: line.allocationId,
-        dateAllocated: line.dateAllocated,
-        condition: line.condition,
-        reason: line.reason,
-        returnStatus: line.returnStatus,
-        comments: line.comments,
+  items: detail
+    ? detail.items.map((item) => ({
+        assetAllocationId: item.assetAllocationId,
+        conditionAtClearance: item.conditionAtClearance ?? 'good',
+        reason: item.reason ?? '',
+        returnStatus: item.returnStatus,
+        comments: item.comments ?? '',
       }))
     : [],
   checkedById: detail?.checkedById ?? null,
   approvedById: detail?.approvedById ?? null,
-  approvalDate: detail?.approvalDate ?? today(),
-  attachmentName: detail?.attachmentName ?? null,
+  approvalDate: detail?.approvalDate ?? '',
 })
 
 /** View draws every box grey, not faded white. */
@@ -151,20 +144,28 @@ function ReturnStatusField({
   disabled,
 }: {
   control: Control<Values>
-  name: `lines.${number}.returnStatus`
+  name: `items.${number}.returnStatus`
   disabled: boolean
 }) {
-  const { field } = useController({ control, name })
+  const { field, fieldState } = useController({ control, name })
   const labelId = useId()
+  const errorId = useId()
   const value = field.value
   return (
     <div className="grid gap-2 @xl:grid-cols-[10rem_minmax(0,1fr)] @xl:items-center @3xl:grid-cols-[11rem_minmax(0,1fr)]">
       <span id={labelId} className="font-inter text-sm text-heading @xl:text-base">
         Return Status
+        {!disabled && (
+          <span aria-hidden="true" className="text-destructive">
+            {' '}
+            *
+          </span>
+        )}
       </span>
       <div
         role="radiogroup"
         aria-labelledby={labelId}
+        aria-describedby={fieldState.error ? errorId : undefined}
         className="flex flex-wrap items-center gap-x-10 gap-y-3"
       >
         {RETURN_STATUSES.map((status) => {
@@ -209,6 +210,11 @@ function ReturnStatusField({
           )
         })}
       </div>
+      {fieldState.error && (
+        <p id={errorId} className="text-xs text-destructive @xl:col-start-2">
+          {fieldState.error.message}
+        </p>
+      )}
     </div>
   )
 }
@@ -218,6 +224,10 @@ const TITLES = {
   edit: 'Clearance Form Edit',
   view: 'Clearance Form View',
 } as const
+
+/** The fields a server error can name, so it shows under the field. */
+const KNOWN_FIELD =
+  /^(employeeId|clearanceDate|checkedById|approvedById|approvalDate|items\.\d+\.\w+)$/
 
 /**
  * "Clearance Form Create" / Edit / View: the person, then one "Asset Details"
@@ -251,85 +261,90 @@ function ClearanceForm({
   prefill,
   onClose,
 }: {
-  detail: ClearanceDetail | undefined
+  detail: Clearance | undefined
   mode: 'create' | 'edit' | 'view'
   prefill: ClearancePrefillProps | undefined
   onClose: () => void
 }) {
   const formId = useId()
-  const lookups = useAssetLookups()
   const save = useSaveClearance()
   const readOnly = mode === 'view'
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: toValues(detail, prefill),
   })
-  const lines = useFieldArray({ control: form.control, name: 'lines' })
-  const [employeeId, attachment, watchedLines] = useWatch({
+  const [attachment, setAttachment] = useState<FileRef | null>(detail?.file ?? null)
+  const items = useFieldArray({ control: form.control, name: 'items' })
+  const [employeeId, watchedItems] = useWatch({
     control: form.control,
-    name: ['employeeId', 'attachmentName', 'lines'],
+    name: ['employeeId', 'items'],
   })
+  // The person last picked from the lookup (their code and department, before the prefill).
+  const [picked, setPicked] = useState<EmployeeLookupItem | undefined>()
   const held = useClearancePrefill(readOnly ? null : employeeId)
-  const employees = lookups.data?.employees ?? []
-  const chosen = employees.find((item) => item.id === employeeId)
-  const assetsById = new Map((lookups.data?.assets ?? []).map((asset) => [asset.id, asset]))
-  const heldLines = held.data?.lines ?? []
+  const heldItems = held.data?.employeeId === employeeId ? held.data.items : []
 
   // A new form fills Asset Details with what the chosen person holds.
   const filledFor = useRef<string | null>(detail ? detail.employeeId : null)
   useEffect(() => {
-    if (mode !== 'create' || !employeeId || !held.data) return
-    if (held.data.employee.id !== employeeId || filledFor.current === employeeId) return
+    if (mode !== 'create' || !employeeId || held.data?.employeeId !== employeeId) return
+    if (filledFor.current === employeeId) return
     filledFor.current = employeeId
-    lines.replace(held.data.lines.length > 0 ? held.data.lines : [blankLine()])
-  }, [employeeId, held.data, lines, mode])
+    items.replace(held.data.items.map((item) => lineFor(item.assetAllocationId)))
+  }, [employeeId, held.data, items, mode])
 
-  const people = employees.map((item) => ({
-    value: item.id,
-    label: item.name,
-    hint: `${item.code} · ${item.designation}`,
+  // What each Asset Details block can name: the person's open allocations and the ones on the form.
+  const known = new Map<string, ClearancePrefillItem>()
+  for (const item of detail?.items ?? []) known.set(item.assetAllocationId, item)
+  for (const item of heldItems) known.set(item.assetAllocationId, item)
+  const assetChoices = [...known.values()].map((item) => ({
+    value: item.assetAllocationId,
+    label: item.assetName,
+    hint: [item.assetCode, item.identificationNo].filter(Boolean).join(' · '),
   }))
-  const activePeople = people.filter(
-    (option) => employees.find((item) => item.id === option.value)?.status === 'active',
-  )
-
-  // The person's allocated assets (and, when editing, the ones already on the form).
-  const assetChoices = [
-    ...new Set([
-      ...heldLines.map((line) => line.assetId),
-      ...(detail?.lines.map((line) => line.assetId) ?? []),
-    ]),
-  ].map((assetId) => {
-    const asset = assetsById.get(assetId)
-    return {
-      value: assetId,
-      label: asset?.name ?? assetId,
-      hint: asset ? `${asset.code} · ${asset.identificationNumber}` : undefined,
-    }
-  })
   const unused = assetChoices.filter(
-    (choice) => !watchedLines.some((line) => line.assetId === choice.value),
+    (choice) => !watchedItems.some((line) => line.assetAllocationId === choice.value),
   )
 
-  const pickAsset = (index: number, assetId: string | null) => {
-    const from = heldLines.find((line) => line.assetId === assetId)
-    const old = detail?.lines.find((line) => line.assetId === assetId)
-    form.setValue(`lines.${index}.allocationId`, from?.allocationId ?? old?.allocationId ?? null)
-    form.setValue(`lines.${index}.dateAllocated`, from?.dateAllocated ?? old?.dateAllocated ?? '', {
-      shouldValidate: form.formState.isSubmitted,
-    })
+  // People: searched on the server; whoever the record already names keeps their name
+  // (they may have left since, or sit on a page the lookup has not read).
+  const named: SearchOption[] = []
+  const name = (id: string | null, label: string | null | undefined) => {
+    if (id && label && !named.some((option) => option.value === id)) {
+      named.push({ value: id, label })
+    }
   }
+  name(detail?.employeeId ?? null, detail?.employeeName)
+  name(held.data?.employeeId ?? null, held.data?.employeeName)
+  name(detail?.checkedById ?? null, detail?.checkedByName)
+  name(detail?.approvedById ?? null, detail?.approvedByName)
+  const people = { permission: 'assets.clearance.create' }
+  const lookedUp = picked?.id === employeeId ? picked : undefined
+  const employeeCode = detail?.employeeCode ?? held.data?.employeeCode ?? lookedUp?.code ?? ''
+  const department =
+    detail?.departmentName ?? held.data?.departmentName ?? lookedUp?.departmentName ?? ''
 
   const submit = form.handleSubmit(async (values) => {
     const input: ClearanceInput = {
       employeeId: values.employeeId ?? '',
+      endOfEmploymentId:
+        detail?.endOfEmploymentId ??
+        prefill?.endOfEmploymentId ??
+        held.data?.endOfEmploymentId ??
+        null,
       clearanceDate: values.clearanceDate,
-      lines: values.lines,
-      checkedById: values.checkedById ?? '',
-      approvedById: values.approvedById ?? '',
-      approvalDate: values.approvalDate,
-      attachmentName: values.attachmentName,
-      endOfEmploymentId: detail?.endOfEmploymentId ?? prefill?.endOfEmploymentId ?? null,
+      checkedById: values.checkedById,
+      approvedById: values.approvedById,
+      approvalDate: values.approvalDate || null,
+      fileId: attachment?.id ?? null,
+      items: values.items.map((line) => ({
+        assetAllocationId: line.assetAllocationId,
+        conditionAtClearance: line.conditionAtClearance,
+        reason: line.reason || null,
+        returnStatus: line.returnStatus ?? 'complete',
+        comments: line.comments || null,
+      })),
+      rowVersion: detail?.rowVersion,
     }
     try {
       await save.mutateAsync({ id: detail?.id, input })
@@ -340,12 +355,7 @@ function ClearanceForm({
         return
       }
       const [key, message] = Object.entries(error.fieldErrors)[0] ?? []
-      const known =
-        key &&
-        /^(employeeId|clearanceDate|checkedById|approvedById|approvalDate|lines\.\d+\.\w+)$/.test(
-          key,
-        )
-      if (key && message && known) {
+      if (key && message && KNOWN_FIELD.test(key)) {
         form.setError(key as FieldPath<Values>, { message })
       } else {
         form.setError('root', { message: error.message })
@@ -353,7 +363,7 @@ function ClearanceForm({
     }
   })
 
-  const lineErrors = form.formState.errors.lines
+  const lineErrors = form.formState.errors.items
 
   return (
     <PayrollDialog
@@ -372,17 +382,23 @@ function ClearanceForm({
         onSubmit={(event: SyntheticEvent) => void submit(event)}
         className={cn('grid gap-5', readOnly && viewFieldsClass)}
       >
-        <SearchSelectField
+        <EmployeeSearchSelectField
           control={form.control}
           name="employeeId"
           label="Employee Name"
           placeholder="Select Employee"
-          options={mode === 'create' ? activePeople : people}
+          filters={people}
+          enabled={!readOnly}
+          known={named}
+          hint={personHint}
+          onValueChange={(_, row) => {
+            setPicked(row)
+          }}
           required={!readOnly}
           disabled={readOnly || mode === 'edit' || Boolean(prefill)}
         />
-        <ReadOnlyBox label="Employee ID" value={chosen?.code ?? ''} required={!readOnly} />
-        <ReadOnlyBox label="Department" value={chosen?.department ?? ''} required={!readOnly} />
+        <ReadOnlyBox label="Employee ID" value={employeeCode} />
+        <ReadOnlyBox label="Department" value={department} />
         <DateField
           control={form.control}
           name="clearanceDate"
@@ -393,7 +409,7 @@ function ClearanceForm({
         />
 
         <SectionTitle>Asset Details</SectionTitle>
-        {lines.fields.length === 0 && (
+        {items.fields.length === 0 && (
           <p className="font-inter text-sm text-muted-foreground">
             {employeeId
               ? held.isPending
@@ -402,27 +418,27 @@ function ClearanceForm({
               : 'Choose the employee to list the assets they hold.'}
           </p>
         )}
-        {lines.fields.map((line, index) => {
-          const assetId = watchedLines[index]?.assetId ?? ''
-          const asset = assetsById.get(assetId)
+        {items.fields.map((line, index) => {
+          const allocationId = watchedItems[index]?.assetAllocationId ?? ''
+          const asset = known.get(allocationId)
           const options = assetChoices.filter(
             (choice) =>
-              choice.value === assetId ||
-              !watchedLines.some((other) => other.assetId === choice.value),
+              choice.value === allocationId ||
+              !watchedItems.some((other) => other.assetAllocationId === choice.value),
           )
           return (
             <section
               key={line.id}
-              aria-label={`Asset ${String(index + 1)}${asset ? `, ${asset.name}` : ''}`}
+              aria-label={`Asset ${String(index + 1)}${asset ? `, ${asset.assetName}` : ''}`}
               className={cn('grid gap-5', index > 0 && 'border-t pt-5')}
             >
-              {lines.fields.length > 1 && !readOnly && (
+              {items.fields.length > 1 && !readOnly && (
                 <div className="flex justify-end">
                   <Button
                     type="button"
                     variant="ghost"
                     onClick={() => {
-                      lines.remove(index)
+                      items.remove(index)
                     }}
                     className="h-8 gap-1.5 px-2 text-xs text-destructive hover:text-destructive"
                   >
@@ -433,54 +449,47 @@ function ClearanceForm({
               )}
               <SearchSelectField
                 control={form.control}
-                name={`lines.${index}.assetId` as const}
+                name={`items.${index}.assetAllocationId` as const}
                 label="Asset Name"
                 placeholder="Select Asset"
                 options={options}
                 required={!readOnly}
                 disabled={readOnly}
-                onValueChange={(next) => {
-                  pickAsset(index, next)
-                }}
               />
               <ReadOnlyBox
                 label="Asset ID"
-                value={asset?.identificationNumber ?? ''}
-                required={!readOnly}
+                value={asset?.identificationNo ?? asset?.assetCode ?? ''}
               />
-              <DateField
-                control={form.control}
-                name={`lines.${index}.dateAllocated` as const}
+              <ReadOnlyBox
                 label="Date Allocated"
-                required={!readOnly}
-                disabled
-                display={DATE}
+                value={asset ? format(new Date(`${asset.allocatedOn}T00:00:00`), DATE) : ''}
               />
               <SelectField
                 control={form.control}
-                name={`lines.${index}.condition` as const}
+                name={`items.${index}.conditionAtClearance` as const}
                 label="Condition at Clearance"
                 disabled={readOnly}
-                options={CLEARANCE_CONDITIONS.map((condition) => ({
+                required={!readOnly}
+                options={RETURN_CONDITIONS.map((condition) => ({
                   value: condition,
-                  label: CLEARANCE_CONDITION_LABELS[condition],
+                  label: RETURN_CONDITION_LABELS[condition],
                 }))}
               />
               <TextareaField
                 control={form.control}
-                name={`lines.${index}.reason` as const}
+                name={`items.${index}.reason` as const}
                 label="Reason for Clearance"
                 disabled={readOnly}
                 textareaClassName="min-h-16"
               />
               <ReturnStatusField
                 control={form.control}
-                name={`lines.${index}.returnStatus` as const}
+                name={`items.${index}.returnStatus` as const}
                 disabled={readOnly}
               />
               <TextareaField
                 control={form.control}
-                name={`lines.${index}.comments` as const}
+                name={`items.${index}.comments` as const}
                 label="Comments"
                 disabled={readOnly}
                 textareaClassName="min-h-36"
@@ -488,13 +497,14 @@ function ClearanceForm({
             </section>
           )
         })}
-        {!readOnly && lines.fields.length > 0 && (
+        {!readOnly && items.fields.length > 0 && (
           <div className="flex justify-end">
             <Button
               type="button"
               disabled={unused.length === 0}
               onClick={() => {
-                lines.append(blankLine())
+                const next = unused[0]
+                if (next) items.append(lineFor(next.value))
               }}
               className={cn(toolbarButton, btn.navy, 'gap-1')}
             >
@@ -505,38 +515,40 @@ function ClearanceForm({
         )}
 
         <SectionTitle>Verification &amp; Approval</SectionTitle>
-        <SearchSelectField
+        <EmployeeSearchSelectField
           control={form.control}
           name="checkedById"
           label="Checked By"
           placeholder="Employee"
-          options={activePeople}
-          required={!readOnly}
+          filters={people}
+          enabled={!readOnly}
+          known={named}
+          hint={personHint}
           disabled={readOnly}
         />
-        <SearchSelectField
+        <EmployeeSearchSelectField
           control={form.control}
           name="approvedById"
           label="Clearance Approved By"
           placeholder="Employee"
-          options={activePeople}
-          required={!readOnly}
+          filters={people}
+          enabled={!readOnly}
+          known={named}
+          hint={personHint}
           disabled={readOnly}
         />
         <DateField
           control={form.control}
           name="approvalDate"
           label="Approval Date"
-          required={!readOnly}
           disabled={readOnly}
           display={DATE}
         />
-        <AttachmentField
+        <UploadField
           value={attachment}
+          onChange={setAttachment}
+          module="assets"
           disabled={readOnly}
-          onChange={(name) => {
-            form.setValue('attachmentName', name, { shouldDirty: true })
-          }}
         />
       </form>
     </PayrollDialog>

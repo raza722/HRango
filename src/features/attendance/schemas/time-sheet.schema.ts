@@ -1,12 +1,12 @@
 import { z } from 'zod'
 
 import type {
-  AttendanceBreak,
   DayDetail,
   DayEditInput,
+  DayMark,
   LocalDateTime,
+  TimeSheetDay,
 } from '../types/attendance.types'
-import { ABSENCE_MARKS } from '../types/attendance.types'
 import { splitLocal, toLocal } from '../utils/local-time'
 
 const dateText = z.string()
@@ -18,7 +18,6 @@ export const breakRowSchema = z.object({
   outTime: timeText,
   inDate: dateText,
   inTime: timeText,
-  description: z.string().trim().max(200, 'Keep it under 200 characters'),
 })
 
 /** Combines a date and a time input; null when both are empty. */
@@ -28,9 +27,9 @@ function joined(date: string, time: string): LocalDateTime | null {
 
 /**
  * Time Sheet Edit: check in / out (date + time), Mark Absent / Half Day /
- * Short Day and the breaks. A date without a time (or the reverse) is
- * incomplete; check out must follow check in; each break must end after it
- * starts.
+ * Short Day, the breaks and the comments. A date without a time (or the
+ * reverse) is incomplete; check out must follow check in; each break must end
+ * after it starts. The break type is optional (the API allows a break without one).
  */
 export const dayEditSchema = z
   .object({
@@ -41,7 +40,8 @@ export const dayEditSchema = z
     markAbsent: z.boolean(),
     markHalfDay: z.boolean(),
     markShortDay: z.boolean(),
-    breaks: z.array(breakRowSchema).max(20),
+    breaks: z.array(breakRowSchema).max(50),
+    comments: z.string().max(4000, 'Keep it under 4000 characters'),
   })
   .superRefine((values, ctx) => {
     const issue = (path: string, message: string) => {
@@ -70,7 +70,6 @@ export const dayEditSchema = z
     }
     values.breaks.forEach((row, index) => {
       const at = (field: string) => `breaks.${index}.${field}`
-      if (!row.type) issue(at('type'), 'Choose a break type')
       if (!row.outDate) issue(at('outDate'), 'Choose a date')
       if (!row.outTime) issue(at('outTime'), 'Enter a time')
       if (row.inDate && !row.inTime) issue(at('inTime'), 'Enter a time')
@@ -86,98 +85,69 @@ export const dayEditSchema = z
 export type DayEditValues = z.infer<typeof dayEditSchema>
 export type BreakRowValues = z.infer<typeof breakRowSchema>
 
+const MARK_OF: Record<DayMark, 'markAbsent' | 'markHalfDay' | 'markShortDay'> = {
+  absent: 'markAbsent',
+  half_day: 'markHalfDay',
+  short_day: 'markShortDay',
+}
+
 export function toDayEditValues(detail: DayDetail): DayEditValues {
   const part = (value: LocalDateTime | null) => (value ? splitLocal(value) : { date: '', time: '' })
-  const checkIn = part(detail.day.checkIn)
-  const checkOut = part(detail.day.checkOut)
+  const { day } = detail
+  const checkIn = part(day.firstIn)
+  const checkOut = part(day.lastOut)
+  const mark = day.markedStatus ? MARK_OF[day.markedStatus] : null
   return {
     // A day without punches still offers its own date to start from.
-    checkInDate: checkIn.date || detail.day.date,
+    checkInDate: checkIn.date || day.workDate,
     checkInTime: checkIn.time,
-    checkOutDate: checkOut.date || (detail.day.checkIn ? '' : detail.day.date),
+    checkOutDate: checkOut.date || (day.firstIn ? '' : day.workDate),
     checkOutTime: checkOut.time,
-    markAbsent: detail.marks.absent,
-    markHalfDay: detail.marks.halfDay,
-    markShortDay: detail.marks.shortDay,
+    markAbsent: mark === 'markAbsent',
+    markHalfDay: mark === 'markHalfDay',
+    markShortDay: mark === 'markShortDay',
     breaks: detail.breaks.map((item) => {
       const out = splitLocal(item.outAt)
       const back = item.inAt ? splitLocal(item.inAt) : { date: '', time: '' }
       return {
-        type: item.type,
+        type: item.breakTypeId ?? '',
         outDate: out.date,
         outTime: out.time,
         inDate: back.date,
         inTime: back.time,
-        description: item.description,
       }
     }),
+    comments: day.comments ?? '',
   }
 }
 
-export function toDayEditInput(values: DayEditValues): DayEditInput {
-  const breaks: AttendanceBreak[] = values.breaks.flatMap((row) => {
-    const outAt = joined(row.outDate, row.outTime)
-    if (!row.type || !outAt) return []
-    return [
-      {
-        type: row.type,
-        outAt,
-        inAt: joined(row.inDate, row.inTime),
-        description: row.description.trim(),
-      },
-    ]
-  })
+/** The form → `PUT /days/{..}`; the expected times and the rowVersion come from the day as read. */
+export function toDayEditInput(values: DayEditValues, day: TimeSheetDay): DayEditInput {
   const absent = values.markAbsent
+  const breaks = absent
+    ? []
+    : values.breaks.flatMap((row) => {
+        const outAt = joined(row.outDate, row.outTime)
+        if (!outAt) return []
+        return [{ breakTypeId: row.type || null, outAt, inAt: joined(row.inDate, row.inTime) }]
+      })
   const checkIn = joined(values.checkInDate, values.checkInTime)
+  const markedStatus: DayMark | null = absent
+    ? 'absent'
+    : values.markHalfDay
+      ? 'half_day'
+      : values.markShortDay
+        ? 'short_day'
+        : null
+  const comments = values.comments.trim()
   return {
-    checkIn: absent ? null : checkIn,
-    checkOut: absent || !checkIn ? null : joined(values.checkOutDate, values.checkOutTime),
-    markAbsent: absent,
-    markHalfDay: !absent && values.markHalfDay,
-    markShortDay: !absent && values.markShortDay,
-    breaks: absent ? [] : breaks,
+    expectedIn: day.expectedIn,
+    expectedOut: day.expectedOut,
+    firstIn: absent ? null : checkIn,
+    lastOut: absent || !checkIn ? null : joined(values.checkOutDate, values.checkOutTime),
+    markedStatus,
+    comments: comments === '' ? null : comments,
+    breaks,
+    rowVersion: day.rowVersion,
   }
 }
-
-const reasonSchema = z
-  .string()
-  .trim()
-  .min(1, 'Give a reason')
-  .max(500, 'Keep it under 500 characters')
-
-export const missingPunchSchema = z.object({
-  type: z.enum(['check-in', 'check-out']),
-  date: z.string().min(1, 'Choose the date'),
-  time: z.string().min(1, 'Enter the time'),
-  reason: reasonSchema,
-})
-export type MissingPunchValues = z.infer<typeof missingPunchSchema>
-
-export const relaxationSchema = z.object({ reason: reasonSchema })
-export type RelaxationValues = z.infer<typeof relaxationSchema>
-
-export const absenceSchema = z.object({
-  markAs: z.enum(ABSENCE_MARKS),
-  reason: reasonSchema,
-})
-export type AbsenceValues = z.infer<typeof absenceSchema>
-
-/** Overtime approval; the limit is the overtime worked that day. */
-export function overtimeSchema(maxMinutes: number) {
-  return z.object({
-    minutes: z
-      .string()
-      .trim()
-      .min(1, 'Enter the minutes to approve')
-      .regex(/^\d+$/, 'Whole minutes only')
-      .refine((value) => Number(value) >= 1, 'Approve at least 1 minute')
-      .refine((value) => Number(value) <= maxMinutes, `At most ${maxMinutes} minutes`),
-    reason: reasonSchema,
-  })
-}
-export type OvertimeValues = z.infer<ReturnType<typeof overtimeSchema>>
-
-export const commentSchema = z.object({
-  text: z.string().trim().min(1, 'Type a comment first').max(500, 'Keep it under 500 characters'),
-})
-export type CommentValues = z.infer<typeof commentSchema>

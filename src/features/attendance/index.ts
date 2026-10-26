@@ -39,6 +39,7 @@ export {
   toDayEditValues,
 } from './schemas/time-sheet.schema'
 export * from './types/attendance.types'
+export * from './types/logs.types'
 export * from './types/settings.types'
 export {
   formatClockTime,

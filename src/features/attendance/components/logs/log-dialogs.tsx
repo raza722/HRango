@@ -1,6 +1,7 @@
 import { useId, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { differenceInCalendarDays } from 'date-fns'
 import { z } from 'zod'
 
 import uploadFolder from '@/assets/attendance/upload-folder.svg'
@@ -13,35 +14,25 @@ import {
   TimePickerField,
 } from '@/components/form'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Switch } from '@/components/ui/switch'
+import { EmployeeSearchSelectField } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
-import { toDateValue } from '@/lib/date'
+import { parseDateValue, toDateValue } from '@/lib/date'
 import { cn } from '@/lib/utils'
 
-import { logsApi } from '../../api/settings.api'
+import { logsApi } from '../../api/logs.api'
 import { PUNCH_SOURCE_LABELS, PUNCH_TYPE_LABELS } from '../../constants'
-import { useAttendanceLookups } from '../../hooks/use-attendance'
-import {
-  useImportFile,
-  useImportMachines,
-  useMachines,
-  useSaveLog,
-} from '../../hooks/use-attendance-settings'
+import { useImportFile, useSaveLog } from '../../hooks/use-attendance-logs'
+import { useBreakTypes } from '../../hooks/use-attendance-settings'
 import { PUNCH_TYPES } from '../../types/attendance.types'
-import type {
-  AttendanceLogRow,
-  FileImportRow,
-  MachineImportResult,
-} from '../../types/settings.types'
-import { formatPunchTime, splitLocal } from '../../utils/local-time'
-import { downloadText, LOGS_TEMPLATE, logsToCsv, parseLogsCsv } from '../../utils/logs-csv'
+import type { AttendanceLogRow, FileImportRow } from '../../types/logs.types'
+import { punchDescription } from '../../utils/day'
+import { formatPunchTime, splitLocal, toLocal } from '../../utils/local-time'
+import { downloadText, LOGS_TEMPLATE, parseLogsCsv } from '../../utils/logs-csv'
 import {
   logDialogButtonClass,
   navyButtonClass,
   poppinsDialogTitleClass,
   poppinsFieldsClass,
-  switchOnClass,
 } from '../../utils/settings-styles'
 import { ReadOnlyField } from '../shared/attendance-dialog'
 import { DateBox } from '../shared/date-box'
@@ -54,11 +45,25 @@ const logSchema = z.object({
   type: z.string().min(1, 'Choose the punch type'),
   time: z.string().min(1, 'Enter the punch time'),
   date: z.string().min(1, 'Choose the punch date'),
-  description: z.string().trim().max(200, 'Keep it under 200 characters'),
+  breakTypeId: z.string(),
+  description: z.string().trim().max(2000, 'Keep it under 2000 characters'),
 })
 type LogValues = z.infer<typeof logSchema>
 
-/** "Create Attendance Log" (and Edit): Employee Name, Punch Type, Punch Time, Punch Date, Description. */
+/** API field → form field, for 422 answers. */
+const FIELD_OF: Record<string, keyof LogValues> = {
+  employeeId: 'employeeId',
+  punchedAt: 'date',
+  punchType: 'type',
+  breakTypeId: 'breakTypeId',
+  remarks: 'description',
+}
+
+/**
+ * "Create Attendance Log" (and Edit): Employee Name, Punch Type, Punch Time, Punch Date, the
+ * Break Type of a break punch, and Description. Nobody enters their own punches (the API
+ * refuses: they raise a punch request).
+ */
 export function LogFormDialog({
   log,
   onClose,
@@ -67,36 +72,46 @@ export function LogFormDialog({
   onClose: () => void
 }) {
   const save = useSaveLog()
-  const lookups = useAttendanceLookups()
-  const at = log ? splitLocal(log.at) : null
+  const breakTypes = useBreakTypes()
+  const at = log ? splitLocal(log.punchedAt) : null
   const form = useForm<LogValues>({
     resolver: zodResolver(logSchema),
     defaultValues: {
-      employeeId: log?.employee.id ?? '',
-      type: log?.type ?? '',
+      employeeId: log?.employeeId ?? '',
+      type: log?.punchType ?? '',
       time: at?.time ?? '',
-      date: log?.date ?? '',
-      description: log?.description ?? '',
+      date: at?.date ?? '',
+      breakTypeId: log?.breakTypeId ?? '',
+      description: log?.remarks ?? '',
     },
   })
+  const type = useWatch({ control: form.control, name: 'type' })
+  const isBreak = type === 'break_out' || type === 'break_in'
+
   const submit = form.handleSubmit(async (values) => {
-    const type = PUNCH_TYPES.find((item) => item === values.type)
-    if (!type) return
+    const punchType = PUNCH_TYPES.find((item) => item === values.type)
+    if (!punchType) return
+    const remarks = values.description.trim()
     try {
       await save.mutateAsync({
         id: log?.id,
         input: {
           employeeId: values.employeeId,
-          date: values.date,
-          time: values.time,
-          type,
-          description: values.description.trim(),
+          punchedAt: toLocal(values.date, values.time),
+          punchType,
+          breakTypeId: isBreak && values.breakTypeId ? values.breakTypeId : null,
+          remarks: remarks === '' ? null : remarks,
+          rowVersion: log?.rowVersion ?? null,
         },
       })
     } catch (error) {
       if (error instanceof ApiError) {
-        if (error.fieldErrors.date) form.setError('date', { message: error.fieldErrors.date })
-        else form.setError('root', { message: error.message })
+        const fields = Object.entries(error.fieldErrors).filter(([field]) => FIELD_OF[field])
+        for (const [field, message] of fields) {
+          const name = FIELD_OF[field]
+          if (name) form.setError(name, { message })
+        }
+        if (fields.length === 0) form.setError('root', { message: error.message })
       }
       return
     }
@@ -143,17 +158,19 @@ export function LogFormDialog({
           onSubmit={(event) => void submit(event)}
           className="grid gap-4 @lg:grid-cols-2"
         >
-          <SelectField
+          <EmployeeSearchSelectField
             control={form.control}
             name="employeeId"
             label="Employee Name"
             placeholder="Select"
-            options={(lookups.data?.employees ?? [])
-              .filter((employee) => employee.status === 'active')
-              .map((employee) => ({
-                value: employee.id,
-                label: `${employee.code} | ${employee.name}`,
-              }))}
+            // Active people the form's code reaches, searched on the server and paged.
+            filters={{ permission: log ? 'attendance.logs.edit' : 'attendance.logs.create' }}
+            include={(employee) => employee.status === 'active'}
+            known={
+              log
+                ? [{ value: log.employeeId, label: log.employeeName, hint: log.employeeCode }]
+                : undefined
+            }
             required
           />
           <SelectField
@@ -172,6 +189,15 @@ export function LogFormDialog({
             maxDate={new Date()}
             required
           />
+          {isBreak && (
+            <SelectField
+              control={form.control}
+              name="breakTypeId"
+              label="Break Type"
+              placeholder="Select"
+              options={breakTypes.list.map((item) => ({ value: item.id, label: item.name }))}
+            />
+          )}
           <TextareaField
             control={form.control}
             name="description"
@@ -185,7 +211,7 @@ export function LogFormDialog({
   )
 }
 
-/** One punch, read-only. */
+/** One punch, read-only (with the clock-in photo and location when it has them). */
 export function LogViewDialog({ log, onClose }: { log: AttendanceLogRow; onClose: () => void }) {
   return (
     <AppDialog
@@ -205,39 +231,59 @@ export function LogViewDialog({ log, onClose }: { log: AttendanceLogRow; onClose
       }
     >
       <div className="grid gap-4 @lg:grid-cols-2">
-        <ReadOnlyField label="Employee" value={`${log.employee.name} (${log.employee.code})`} />
-        <ReadOnlyField label="Punch Type" value={PUNCH_TYPE_LABELS[log.type]} />
-        <ReadOnlyField label="Punch Time" value={formatPunchTime(log.at)} />
+        <ReadOnlyField label="Employee" value={`${log.employeeName} (${log.employeeCode})`} />
+        <ReadOnlyField
+          label="Punch Type"
+          value={`${PUNCH_TYPE_LABELS[log.punchType]}${log.isIgnored ? ' (ignored)' : ''}`}
+        />
+        <ReadOnlyField label="Punch Time" value={formatPunchTime(log.punchedAt)} />
         <ReadOnlyField label="Source" value={PUNCH_SOURCE_LABELS[log.source]} />
-        <ReadOnlyField label="Machine" value={log.machineId ? `Machine (${log.machineId})` : '—'} />
-        <ReadOnlyField label="Manually Updated" value={log.manuallyUpdated ? 'Yes' : 'No'} />
+        <ReadOnlyField
+          label="Machine"
+          value={log.deviceId ? `${log.deviceName ?? 'Machine'} (${log.deviceCode ?? ''})` : '—'}
+        />
+        <ReadOnlyField label="Manually Updated" value={log.isManuallyUpdated ? 'Yes' : 'No'} />
+        {log.breakTypeName && <ReadOnlyField label="Break Type" value={log.breakTypeName} />}
+        {log.ipAddress && <ReadOnlyField label="IP Address" value={log.ipAddress} />}
+        {log.latitude !== null && log.longitude !== null && (
+          <ReadOnlyField label="Location" value={`${log.latitude}, ${log.longitude}`} />
+        )}
         <ReadOnlyField
           label="Description"
-          value={log.description || '—'}
+          value={punchDescription(log)}
           className="@lg:col-span-2"
         />
+        {log.photo && (
+          <figure className="grid gap-2 @lg:col-span-2">
+            <figcaption className="text-sm text-title">Picture</figcaption>
+            <img
+              src={log.photo.url}
+              alt={`Picture taken at ${formatPunchTime(log.punchedAt)}`}
+              className="max-h-64 w-fit rounded-md border object-contain"
+            />
+          </figure>
+        )}
       </div>
     </AppDialog>
   )
 }
 
-/** "Import Attendance Log": from a file (Computer) or from the biometric machines. */
+/**
+ * "Import Attendance Log" from a file (Employee Code, Date, Time, Punch Type). The file is read
+ * here to point out bad lines early; the API checks every line again and reports the ones it
+ * refused. Importing straight from a biometric machine is not possible yet: a device connector
+ * posts its punches to the API.
+ */
 export function ImportLogDialog({ onClose }: { onClose: () => void }) {
   const inputId = useId()
-  const [mode, setMode] = useState<'computer' | 'machine'>('computer')
   const [file, setFile] = useState<{
     name: string
     rows: FileImportRow[]
     errors: string[]
   } | null>(null)
   const [dragging, setDragging] = useState(false)
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
-  const [result, setResult] = useState<MachineImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const machines = useMachines()
   const importFile = useImportFile()
-  const importMachines = useImportMachines()
-  const pending = importFile.isPending || importMachines.isPending
 
   const read = async (picked: File | undefined) => {
     if (!picked) return
@@ -248,25 +294,21 @@ export function ImportLogDialog({ onClose }: { onClose: () => void }) {
 
   const submit = async () => {
     setError(null)
+    if (!file || file.rows.length === 0) {
+      setError('Choose a file with at least one good line.')
+      return
+    }
     try {
-      if (mode === 'computer') {
-        if (!file || file.rows.length === 0) {
-          setError('Choose a file with at least one good line.')
-          return
-        }
-        const outcome = await importFile.mutateAsync(file.rows)
-        if (outcome.errors.length > 0) {
-          setFile({ ...file, rows: [], errors: outcome.errors })
-          return
-        }
-        onClose()
-      } else {
-        if (selected.size === 0) {
-          setError('Select at least one machine.')
-          return
-        }
-        setResult(await importMachines.mutateAsync([...selected]))
+      const outcome = await importFile.mutateAsync(file.rows)
+      if (outcome.errors.length > 0) {
+        setFile({
+          ...file,
+          rows: [],
+          errors: outcome.errors.map((item) => `Line ${item.line}: ${item.message}`),
+        })
+        return
       }
+      onClose()
     } catch (failure) {
       setError(failure instanceof ApiError ? failure.message : 'Could not import.')
     }
@@ -286,11 +328,11 @@ export function ImportLogDialog({ onClose }: { onClose: () => void }) {
             onClick={onClose}
             className={cn(logDialogButtonClass, 'flex-1')}
           >
-            {result ? 'Close' : 'Cancel'}
+            Cancel
           </Button>
           <Button
             size="lg"
-            disabled={pending}
+            disabled={importFile.isPending}
             onClick={() => void submit()}
             className={cn(logDialogButtonClass, greenButtonClass, 'flex-1')}
           >
@@ -300,128 +342,63 @@ export function ImportLogDialog({ onClose }: { onClose: () => void }) {
       }
     >
       <div className="grid gap-4">
-        <label className="flex w-fit items-center gap-2.5 text-xs font-medium text-grey">
-          <span className={cn(mode === 'computer' && switchOnClass)}>Computer</span>
-          <Switch
-            checked={mode === 'machine'}
-            aria-label="Import from the machines"
-            onCheckedChange={(checked) => {
-              setMode(checked ? 'machine' : 'computer')
-              setError(null)
-            }}
-            className="data-[state=checked]:bg-sidebar dark:data-[state=checked]:bg-primary"
-          />
-          <span className={cn(mode === 'machine' && switchOnClass)}>Machine</span>
+        <span className="text-sm text-title">Upload Attachment</span>
+        <label
+          htmlFor={inputId}
+          onDragOver={(event) => {
+            event.preventDefault()
+            setDragging(true)
+          }}
+          onDragLeave={() => {
+            setDragging(false)
+          }}
+          onDrop={(event) => {
+            event.preventDefault()
+            setDragging(false)
+            void read(event.dataTransfer.files[0])
+          }}
+          className={cn(
+            'flex min-h-40 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border px-4 py-6 text-center text-sm text-[#A4A4A4] transition-colors dark:text-label',
+            dragging && 'border-primary bg-primary/5',
+          )}
+        >
+          <img src={uploadFolder} alt="" aria-hidden="true" className="size-12" />
+          <span>
+            Drag &amp; Drop files Here
+            <br />
+            or <span className="font-medium text-title">Browse</span>
+          </span>
+          {file && (
+            <span className="text-xs text-field-foreground">
+              {file.name}: {file.rows.length} line{file.rows.length === 1 ? '' : 's'} ready
+            </span>
+          )}
         </label>
-
-        {mode === 'computer' ? (
-          <>
-            <span className="text-sm text-title">Upload Attachment</span>
-            <label
-              htmlFor={inputId}
-              onDragOver={(event) => {
-                event.preventDefault()
-                setDragging(true)
-              }}
-              onDragLeave={() => {
-                setDragging(false)
-              }}
-              onDrop={(event) => {
-                event.preventDefault()
-                setDragging(false)
-                void read(event.dataTransfer.files[0])
-              }}
-              className={cn(
-                'flex min-h-40 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border px-4 py-6 text-center text-sm text-[#A4A4A4] transition-colors dark:text-label',
-                dragging && 'border-primary bg-primary/5',
-              )}
-            >
-              <img src={uploadFolder} alt="" aria-hidden="true" className="size-12" />
-              <span>
-                Drag &amp; Drop files Here
-                <br />
-                or <span className="font-medium text-title">Browse</span>
-              </span>
-              {file && (
-                <span className="text-xs text-field-foreground">
-                  {file.name}: {file.rows.length} line{file.rows.length === 1 ? '' : 's'} ready
-                </span>
-              )}
-            </label>
-            <input
-              id={inputId}
-              type="file"
-              accept=".csv,text/csv"
-              className="sr-only"
-              onChange={(event) => void read(event.target.files?.[0])}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                downloadText(LOGS_TEMPLATE, 'attendance-log-template.csv')
-              }}
-              className="w-fit text-xs text-primary underline-offset-2 hover:underline"
-            >
-              Download a template (Employee Code, Date, Time, Punch Type)
-            </button>
-            {file && file.errors.length > 0 && (
-              <ul
-                role="alert"
-                className="grid max-h-32 gap-1 overflow-y-auto rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
-              >
-                {file.errors.slice(0, 20).map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            )}
-          </>
-        ) : result ? (
-          <ul aria-label="Import results" className="grid gap-2 text-sm">
-            {result.machines.map((machine) => (
-              <li key={machine.id} className="rounded-md bg-muted px-3 py-2">
-                <span className="font-medium text-heading">{machine.label}</span>
-                <span className="block text-xs text-field-foreground">
-                  Checking In … {machine.checkIns} · Checking Out … {machine.checkOuts}
-                </span>
-              </li>
+        <input
+          id={inputId}
+          type="file"
+          accept=".csv,text/csv"
+          className="sr-only"
+          onChange={(event) => void read(event.target.files?.[0])}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            downloadText(LOGS_TEMPLATE, 'attendance-log-template.csv')
+          }}
+          className="w-fit text-xs text-primary underline-offset-2 hover:underline"
+        >
+          Download a template (Employee Code, Date, Time, Punch Type)
+        </button>
+        {file && file.errors.length > 0 && (
+          <ul
+            role="alert"
+            className="grid max-h-32 gap-1 overflow-y-auto rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
+            {file.errors.slice(0, 20).map((line) => (
+              <li key={line}>{line}</li>
             ))}
-            <li className="text-xs text-muted-foreground">
-              {result.imported} new punch{result.imported === 1 ? '' : 'es'} imported.
-            </li>
           </ul>
-        ) : (
-          <fieldset className="grid gap-2">
-            <legend className="mb-2 text-sm text-title">Select Machines</legend>
-            <div className="grid gap-x-6 gap-y-2 @sm:grid-cols-2">
-              {(machines.data ?? []).map((machine) => (
-                <label
-                  key={machine.id}
-                  className="flex items-start gap-2 text-xs text-field-foreground"
-                >
-                  <Checkbox
-                    checked={selected.has(machine.id)}
-                    onCheckedChange={(checked) => {
-                      setSelected((current) => {
-                        const next = new Set(current)
-                        if (checked === true) next.add(machine.id)
-                        else next.delete(machine.id)
-                        return next
-                      })
-                    }}
-                  />
-                  <span>
-                    {machine.label}
-                    <span className="block text-[0.6875rem] text-muted-foreground">
-                      {machine.branch ?? 'Spare'}
-                      {machine.lastSyncedAt
-                        ? ` · read ${formatPunchTime(machine.lastSyncedAt)}`
-                        : ''}
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
         )}
         {error && (
           <p role="alert" className="text-sm text-destructive">
@@ -433,25 +410,39 @@ export function ImportLogDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-/** "Download Attendance Log": every punch of a chosen date as a CSV file. */
-export function DownloadLogDialog({ onClose }: { onClose: () => void }) {
-  const [date, setDate] = useState(() => toDateValue(new Date()))
+/** "Download Attendance Log": the API's CSV of every punch between two dates (up to 31 days). */
+export function DownloadLogDialog({
+  initialFrom,
+  initialTo,
+  onClose,
+}: {
+  initialFrom?: string
+  initialTo?: string
+  onClose: () => void
+}) {
+  const [from, setFrom] = useState(() => initialFrom ?? toDateValue(new Date()))
+  const [to, setTo] = useState(() => initialTo ?? initialFrom ?? toDateValue(new Date()))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const start = parseDateValue(from)
+  const end = parseDateValue(to)
+  const rangeError =
+    !start || !end
+      ? 'Choose both dates'
+      : end < start
+        ? 'To must be on or after From'
+        : differenceInCalendarDays(end, start) + 1 > 31
+          ? 'Choose at most 31 days'
+          : null
   const download = async () => {
+    if (rangeError) return
     setBusy(true)
     setError(null)
     try {
-      const rows: AttendanceLogRow[] = []
-      for (let page = 1; ; page += 1) {
-        const result = await logsApi.list({ from: date, to: date, page, pageSize: 100 })
-        rows.push(...result.data)
-        if (page >= result.meta.totalPages) break
-      }
-      downloadText(logsToCsv(rows), `attendance-log-${date}.csv`)
+      await logsApi.download({ from, to })
       onClose()
-    } catch {
-      setError('Could not download the log. Try again.')
+    } catch (failure) {
+      setError(failure instanceof ApiError ? failure.message : 'Could not download the log.')
     } finally {
       setBusy(false)
     }
@@ -474,7 +465,7 @@ export function DownloadLogDialog({ onClose }: { onClose: () => void }) {
           </Button>
           <Button
             size="lg"
-            disabled={busy || !date}
+            disabled={busy || rangeError !== null}
             onClick={() => void download()}
             className={cn(logDialogButtonClass, navyButtonClass, 'flex-1')}
           >
@@ -484,16 +475,18 @@ export function DownloadLogDialog({ onClose }: { onClose: () => void }) {
       }
     >
       <div className="grid gap-3">
+        <DateBox label="From" variant="form" value={from} maxDate={new Date()} onChange={setFrom} />
         <DateBox
-          label="Select Date"
+          label="To"
           variant="form"
-          value={date}
+          value={to}
+          minDate={start}
           maxDate={new Date()}
-          onChange={setDate}
+          onChange={setTo}
         />
-        {error && (
+        {(rangeError ?? error) && (
           <p role="alert" className="text-sm text-destructive">
-            {error}
+            {rangeError ?? error}
           </p>
         )}
       </div>

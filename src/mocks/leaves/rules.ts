@@ -1,194 +1,328 @@
 import { differenceInCalendarMonths, parseISO } from 'date-fns'
 
 import type {
+  LeaveApplication,
   LeaveBalance,
-  LeaveCoverage,
-  LeaveTypeOffer,
-  PolicyKind,
+  LeaveBalanceRow,
+  LeavePolicy,
+  LeaveRequestDetail,
+  LeaveType,
 } from '@/features/leaves/types/leaves.types'
 
-import { toProfile } from '../attendance/seed'
-import { DIRECTORY, type DirectoryEmployee } from '../employees/seed'
-import type { StoredStandardRequest } from '../requests/standard/engine'
-import { leaveEntitlements, type LeaveStored } from '../requests/standard/kinds/leave'
-import { profileOf } from '../scheduling/seed'
-import { currentLeaveSettings, leavePolicies, leaveTypes } from './db'
-import type { StoredLeaveType } from './seed'
+import { createId } from '../utils'
+import { leaveLedger, leavePolicies, leaveRequests, leaveTypeStore } from './db'
+import {
+  MOCK_PEOPLE,
+  MOCK_SELF_ID,
+  type MockPerson,
+  type StoredLeavePolicy,
+  type StoredLeaveRequest,
+  type StoredLeaveType,
+  thisYear,
+} from './seed'
 
 /*
- * What a leave type and the policies decide for a person: how many days they
- * have (their balance) and whether the type is offered to them at all. The
- * requests themselves live in the shared standard requests table, so the
- * numbers agree with Requests → Leave.
+ * The backend's leave rules, simplified for the mock (comparison/05-leaves-and-warning.md,
+ * "Decisions"): the leave year is the calendar year; a person's leave types come from their
+ * distribution policy (an employee-level enrolment outranks the company-level one); balances
+ * are the ledger's credits less approved and pending requests.
  */
 
-export const leaveStored = (record: StoredStandardRequest) =>
-  record.payload as unknown as LeaveStored
+export const personOf = (id: string) => MOCK_PEOPLE.find((person) => person.id === id)
 
-export const isLeave = (record: StoredStandardRequest) => record.kind === 'leave'
+const CREDIT_REASONS = new Set([
+  'opening',
+  'allotment',
+  'earned',
+  'carry_forward',
+  'adjustment',
+  'overtime',
+])
 
-/** Whole months since the person joined. */
-export function monthsOfService(employee: DirectoryEmployee): number {
-  return Math.max(
-    0,
-    differenceInCalendarMonths(new Date(), parseISO(toProfile(employee).joiningDate)),
+/** Ledger rows, requests and policies using the type. */
+export function inUseCount(typeId: string): number {
+  return (
+    leaveLedger.all().filter((row) => row.leaveTypeId === typeId).length +
+    leaveRequests.all().filter((row) => row.leaveTypeId === typeId).length +
+    leavePolicies.all().filter((policy) => policy.types.some((row) => row.leaveTypeId === typeId))
+      .length
   )
 }
 
-/** The directory keeps no marital status: every third person is single. */
-export function maritalStatusOf(employee: DirectoryEmployee): 'married' | 'single' {
-  const index = DIRECTORY.findIndex((item) => item.id === employee.id)
-  return index % 3 === 0 ? 'single' : 'married'
-}
+export const typeOut = (type: StoredLeaveType): LeaveType => ({
+  ...type,
+  inUse: inUseCount(type.id),
+})
 
-/** Balance According to = Experience: the slab the person's service falls in. */
-function slabBalance(type: StoredLeaveType, months: number): number | undefined {
-  return type.experienceSlabs.find((slab) => months >= slab.minMonths && months <= slab.maxMonths)
-    ?.balance
-}
-
-/**
- * The person's yearly days of a type: the entitlement Requests → Leave seeds,
- * else the type's own number (or its experience slab). Pro Rated shortens the
- * first year; Earned Balance gives the days month by month.
- */
-export function entitlementFor(employee: DirectoryEmployee, type: StoredLeaveType): number {
-  const months = monthsOfService(employee)
-  const total =
-    leaveEntitlements
-      .all()
-      .find((item) => item.employeeId === employee.id && item.leaveTypeId === type.id)?.days ??
-    (type.balanceBasis === 'experience' ? slabBalance(type, months) : undefined) ??
-    type.leavesAllowed
-
-  const now = new Date()
-  let days = total
-  const joined = parseISO(toProfile(employee).joiningDate)
-  if (type.proRated && joined.getFullYear() === now.getFullYear()) {
-    days = Math.round((days * (12 - joined.getMonth())) / 12)
-  }
-  if (type.earnedBalance && type.tenure === 'yearly') {
-    days = Math.floor((days * (now.getMonth() + 1)) / 12)
-  }
-  return days
-}
-
-/**
- * The person's balance of a type: approved days are Availed (pending ones too
- * when Approve Leave on Status is Pending), pending days are held back from
- * Available. A yearly tenure counts this year's requests; Employment counts
- * them all.
- */
-export function leaveBalanceFor(
-  employee: DirectoryEmployee,
-  type: StoredLeaveType,
-  records: readonly StoredStandardRequest[],
-  ignoreId: string | null = null,
-): LeaveBalance {
-  const year = String(new Date().getFullYear())
-  let availed = 0
-  let pending = 0
-  for (const record of records) {
-    if (!isLeave(record) || record.id === ignoreId || record.employeeId !== employee.id) continue
-    const payload = leaveStored(record)
-    if (payload.leaveTypeId !== type.id) continue
-    if (type.tenure !== 'employment' && !payload.from.startsWith(year)) continue
-    if (record.status === 'completed' || record.status === 'cancelling') availed += payload.count
-    if (record.status === 'pending') pending += payload.count
-  }
-  if (currentLeaveSettings().approveOnStatus === 'pending') {
-    availed += pending
-    pending = 0
-  }
-  const total = entitlementFor(employee, type)
-  const round = (value: number) => Math.round(value * 100) / 100
+export function policyOut(policy: StoredLeavePolicy): LeavePolicy {
+  const types = policy.types.map((row) => {
+    const type = leaveTypeStore.find(row.leaveTypeId)
+    return {
+      leaveTypeId: row.leaveTypeId,
+      leaveTypeTitle: type?.title ?? '—',
+      shortCode: type?.shortCode ?? null,
+      allowance: row.allowance,
+      effectiveAllowance: row.allowance ?? type?.allowance ?? null,
+    }
+  })
+  const { enrolled, ...rest } = policy
   return {
-    total,
-    availed: round(availed),
-    pending: round(pending),
-    available: round(total - availed - pending),
+    ...rest,
+    types,
+    totalLeaves:
+      policy.policyKind === 'distribution'
+        ? types.reduce((sum, row) => sum + (row.effectiveAllowance ?? 0), 0)
+        : null,
+    enrolledCount:
+      policy.policyLevel === 'company'
+        ? MOCK_PEOPLE.filter((person) => person.status === 'active').length
+        : enrolled.length,
   }
 }
 
-/**
- * What the person's leave policies allow: a Leave Distribution Policy in
- * force (the company one, or an employee-level one they are enrolled in)
- * lets them apply for leave at all; a Half leave & Short leave policy says
- * whether half days and short leaves may be taken. An employee-level policy
- * of a kind outranks the company one.
- */
-export function coverageFor(employee: DirectoryEmployee): LeaveCoverage {
-  const applying = leavePolicies
+/** The active policy of a kind covering the person: their enrolment first, else the company's. */
+export function policyFor(employeeId: string, kind: 'distribution' | 'half_short') {
+  const active = leavePolicies
+    .all()
+    .filter((policy) => policy.isActive && policy.policyKind === kind)
+  return (
+    active.find(
+      (policy) =>
+        policy.policyLevel === 'employee' &&
+        policy.enrolled.some((row) => row.employeeId === employeeId),
+    ) ?? active.find((policy) => policy.policyLevel === 'company')
+  )
+}
+
+/** The person's leave types with the allowance their policy gives (every active type without one). */
+export function coveredTypes(employeeId: string): { type: StoredLeaveType; allowance: number }[] {
+  const policy = policyFor(employeeId, 'distribution')
+  const anyDistribution = leavePolicies
+    .all()
+    .some((item) => item.isActive && item.policyKind === 'distribution')
+  const active = leaveTypeStore.all().filter((type) => type.isActive)
+  if (!policy) {
+    return anyDistribution ? [] : active.map((type) => ({ type, allowance: type.allowance ?? 0 }))
+  }
+  return policy.types.flatMap((row) => {
+    const type = active.find((item) => item.id === row.leaveTypeId)
+    return type ? [{ type, allowance: row.allowance ?? type.allowance ?? 0 }] : []
+  })
+}
+
+/** Months served at the year start. */
+const monthsServed = (person: MockPerson, year: number) =>
+  Math.max(0, differenceInCalendarMonths(new Date(year, 0, 1), parseISO(person.joiningDate)))
+
+/** A year's entitlement: the allowance (×12 monthly) or the experience slab. */
+export function entitlement(
+  person: MockPerson,
+  type: StoredLeaveType,
+  allowance: number,
+  year: number,
+) {
+  if (type.balanceBasis === 'experience') {
+    const months = monthsServed(person, year)
+    const slab = type.experienceSlabs.find(
+      (item) => months >= item.minMonths && (item.maxMonths === null || months <= item.maxMonths),
+    )
+    return slab?.balance ?? 0
+  }
+  return type.tenure === 'monthly' ? allowance * 12 : allowance
+}
+
+const eligible = (person: MockPerson, type: StoredLeaveType) =>
+  (type.gender === 'any' || type.gender === person.gender) &&
+  (type.maritalStatus === 'any' || type.maritalStatus === person.maritalStatus)
+
+/** `POST /leaves/allotment/process`: idempotent, one allotment row per person, type and year. */
+export function runAllotment(year: number, leaveTypeId?: string, employeeId?: string) {
+  let allotted = 0
+  let days = 0
+  for (const person of MOCK_PEOPLE) {
+    if (person.status !== 'active' || (employeeId && person.id !== employeeId)) continue
+    for (const { type, allowance } of coveredTypes(person.id)) {
+      if (leaveTypeId ? type.id !== leaveTypeId : !type.autoAllotment) continue
+      if (!type.isDeductible || !eligible(person, type)) continue
+      const exists = leaveLedger
+        .all()
+        .some(
+          (row) =>
+            row.employeeId === person.id &&
+            row.leaveTypeId === type.id &&
+            row.fiscalYear === year &&
+            row.reason === 'allotment',
+        )
+      if (exists) continue
+      const amount = entitlement(person, type, allowance, year)
+      leaveLedger.insert({
+        id: createId('ll'),
+        employeeId: person.id,
+        leaveTypeId: type.id,
+        fiscalYear: year,
+        entryDate: `${String(year)}-01-01`,
+        days: amount,
+        reason: 'allotment',
+        remarks: null,
+        leaveEncashmentId: null,
+        createdAt: new Date().toISOString(),
+      })
+      allotted += 1
+      days += amount
+    }
+  }
+  return { fiscalYear: year, allotted, earned: 0, days }
+}
+
+const yearOf = (date: string) => Number(date.slice(0, 4))
+
+/** `lv.fn_leave_balance`: credits less used (approved, cancelling, encashed) and pending days. */
+export function balanceOf(employeeId: string, leaveTypeId: string, year: number): LeaveBalance {
+  const ledger = leaveLedger
     .all()
     .filter(
-      (policy) =>
-        policy.active &&
-        policy.enforced &&
-        (policy.level === 'company' || policy.enrolledIds.includes(employee.id)),
+      (row) =>
+        row.employeeId === employeeId && row.leaveTypeId === leaveTypeId && row.fiscalYear === year,
     )
-  const pick = (kind: PolicyKind) =>
-    applying.find((policy) => policy.kind === kind && policy.level === 'employee') ??
-    applying.find((policy) => policy.kind === kind)
-  const halfShort = pick('half-short')
-  return {
-    distribution: pick('distribution') !== undefined,
-    halfDay: halfShort?.allowHalfDay ?? false,
-    shortLeave: halfShort?.allowShortLeave ?? false,
-  }
-}
-
-/** Why a type is not offered to the person, or null when it is. */
-export function notOfferedBecause(
-  employee: DirectoryEmployee,
-  type: StoredLeaveType,
-): string | null {
-  const profile = profileOf(employee)
-  if (!type.active) return 'The leave type is not active.'
-  if (type.probationType && profile.employmentType !== 'probation') {
-    return 'Only people on probation may ask for it.'
-  }
-  if (!type.applyInProbation && profile.employmentType === 'probation') {
-    return 'It cannot be asked for during probation.'
-  }
-  if (type.gender !== 'any' && type.gender !== profile.gender) {
-    return `It is for ${type.gender === 'female' ? 'women' : 'men'}.`
-  }
-  if (type.maritalStatus !== 'any' && type.maritalStatus !== maritalStatusOf(employee)) {
-    return `It is for ${type.maritalStatus} employees.`
-  }
-  return null
-}
-
-/** The types the person may apply for, with their balance of each. */
-export function offeredTypes(
-  employee: DirectoryEmployee,
-  records: readonly StoredStandardRequest[],
-): LeaveTypeOffer[] {
-  return leaveTypes
+  const entitled = ledger
+    .filter((row) => CREDIT_REASONS.has(row.reason))
+    .reduce((sum, row) => sum + row.days, 0)
+  const debits = ledger
+    .filter((row) => !CREDIT_REASONS.has(row.reason))
+    .reduce((sum, row) => sum - row.days, 0)
+  const requests = leaveRequests
     .all()
-    .filter((type) => notOfferedBecause(employee, type) === null)
-    .sort((a, b) => a.title.localeCompare(b.title))
-    .map((type) => ({
-      id: type.id,
-      title: type.title,
-      shortCode: type.shortCode,
-      attachmentRequired: type.attachmentRequired,
-      attachmentRule: type.attachmentRule,
-      backDate: type.backDate,
-      deductible: type.deductible,
-      balance: leaveBalanceFor(employee, type, records),
-    }))
+    .filter(
+      (row) =>
+        row.employeeId === employeeId &&
+        row.leaveTypeId === leaveTypeId &&
+        yearOf(row.fromDate) === year,
+    )
+  const daysWhere = (statuses: string[]) =>
+    requests.filter((row) => statuses.includes(row.status)).reduce((sum, row) => sum + row.days, 0)
+  const used = daysWhere(['approved', 'cancelling']) + debits
+  const pending = daysWhere(['pending'])
+  return { entitled, used, pending, available: entitled - used - pending }
 }
 
-/** Everyone's balance of every active type, for the lists and the Approve popup. */
-export function allBalances(
-  records: readonly StoredStandardRequest[],
-): Record<string, Record<string, LeaveBalance>> {
-  const active = leaveTypes.all().filter((type) => type.active)
-  return Object.fromEntries(
-    DIRECTORY.map((employee) => [
-      employee.id,
-      Object.fromEntries(active.map((type) => [type.id, leaveBalanceFor(employee, type, records)])),
-    ]),
-  )
+/** The balance rows of `GET /leaves/balances`: each person's types with a ledger row or a request. */
+export function balanceRows(year: number): LeaveBalanceRow[] {
+  const rows: LeaveBalanceRow[] = []
+  for (const person of MOCK_PEOPLE) {
+    const typeIds = new Set([
+      ...leaveLedger
+        .all()
+        .filter((row) => row.employeeId === person.id && row.fiscalYear === year)
+        .map((row) => row.leaveTypeId),
+      ...leaveRequests
+        .all()
+        .filter((row) => row.employeeId === person.id && yearOf(row.fromDate) === year)
+        .map((row) => row.leaveTypeId),
+    ])
+    for (const typeId of typeIds) {
+      const type = leaveTypeStore.find(typeId)
+      if (!type) continue
+      rows.push({
+        employeeId: person.id,
+        employeeCode: person.code,
+        employeeName: person.name,
+        departmentName: person.departmentName,
+        leaveTypeId: type.id,
+        leaveTypeTitle: type.title,
+        shortCode: type.shortCode,
+        fiscalYear: year,
+        ...balanceOf(person.id, type.id, year),
+      })
+    }
+  }
+  return rows
+}
+
+export function applicationOut(row: StoredLeaveRequest): LeaveApplication {
+  const person = personOf(row.employeeId)
+  const type = leaveTypeStore.find(row.leaveTypeId)
+  return {
+    id: row.id,
+    code: row.code,
+    status: row.status,
+    employeeId: row.employeeId,
+    employeeCode: person?.code ?? '',
+    employeeName: person?.name ?? '—',
+    departmentId: person?.departmentId ?? null,
+    departmentName: person?.departmentName ?? null,
+    leaveTypeId: row.leaveTypeId,
+    leaveTypeTitle: type?.title ?? '—',
+    leaveTypeCode: type?.shortCode ?? null,
+    fromDate: row.fromDate,
+    toDate: row.toDate,
+    days: row.days,
+    isShort: row.isShort,
+    shortLeaveType: row.shortLeaveType,
+    startTime: row.startTime,
+    endTime: row.endTime,
+    reason: row.reason,
+    submittedAt: row.submittedAt,
+    decidedAt: row.decidedAt,
+    cancelReason: row.cancelReason,
+    createdAt: row.createdAt,
+  }
+}
+
+/** Whether the person is one of the signed-in person's reports (direct or indirect). */
+export function isSubordinate(employeeId: string): boolean {
+  let manager = personOf(employeeId)?.lineManagerId ?? null
+  const seen = new Set<string>()
+  while (manager && !seen.has(manager)) {
+    if (manager === MOCK_SELF_ID) return true
+    seen.add(manager)
+    manager = personOf(manager)?.lineManagerId ?? null
+  }
+  return false
+}
+
+/**
+ * `GET /requests/leave/{id}` as the mock answers it: the signed-in person may cancel their own
+ * pending or approved leave, and decides everyone else's (the mock's approver for all).
+ */
+export function requestDetailOut(row: StoredLeaveRequest): LeaveRequestDetail {
+  const own = row.employeeId === MOCK_SELF_ID
+  const actions = ['view']
+  if (own && row.status === 'pending') actions.push('edit', 'delete', 'cancel')
+  if (own && row.status === 'approved') actions.push('cancel')
+  if (!own && (row.status === 'pending' || row.status === 'cancelling')) {
+    actions.push('approve', 'reject')
+  }
+  const waiting = row.status === 'pending' || row.status === 'cancelling'
+  return {
+    id: row.id,
+    code: row.code,
+    status: row.status,
+    employeeId: row.employeeId,
+    employeeName: personOf(row.employeeId)?.name ?? null,
+    nextApproverName: waiting ? 'Shelley Kannes' : null,
+    nextApproverKind: waiting ? 'line_manager' : null,
+    finalAuthorityName: 'Shelley Kannes',
+    rowVersion: row.rowVersion,
+    steps: row.steps,
+    attachments: row.attachments,
+    actions,
+  }
+}
+
+/** The current leave year's balances exist once the seed is allotted. */
+export function allotSeed(): void {
+  if (leaveLedger.all().length === 0) runAllotment(thisYear())
+}
+
+/**
+ * Compatibility for `src/mocks/requests` (Requests → Leave): a person's yearly days of a type,
+ * from their policy and the type's balance settings.
+ */
+export function entitlementFor(employee: { id: string }, type: { id: string }): number {
+  const person = personOf(employee.id)
+  const covered = coveredTypes(employee.id).find((item) => item.type.id === type.id)
+  const stored = leaveTypeStore.find(type.id)
+  if (!stored) return 0
+  if (!person) return stored.allowance ?? 0
+  return entitlement(person, stored, covered?.allowance ?? stored.allowance ?? 0, thisYear())
 }

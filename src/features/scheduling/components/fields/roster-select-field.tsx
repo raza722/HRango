@@ -16,7 +16,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { RosterGroupDetails, useRosterGroup } from '@/features/roster'
 
-import { useRosterTones } from '../../hooks/use-roster-tones'
+import { useRosterGroupOptions } from '../../hooks/use-scheduling'
 
 interface RosterSelectFieldProps<
   TFieldValues extends FieldValues,
@@ -63,8 +63,8 @@ function RosterViewDialog({ groupId, onClose }: { groupId: string; onClose: () =
 }
 
 /**
- * "Time Roster": pick a roster group (Roster module) for the shift times,
- * with the red eye that opens its weekly pattern.
+ * "Time Roster": pick a roster group (`/scheduling/options/roster-groups`) whose week
+ * gives the shifts, with the red eye that opens its weekly pattern.
  */
 export function RosterSelectField<
   TFieldValues extends FieldValues,
@@ -76,7 +76,7 @@ export function RosterSelectField<
   required,
   onValueChange,
 }: RosterSelectFieldProps<TFieldValues, TName>) {
-  const tones = useRosterTones()
+  const groups = useRosterGroupOptions()
   const value = useWatch({ control, name }) as string
   const [viewing, setViewing] = useState(false)
 
@@ -88,7 +88,7 @@ export function RosterSelectField<
         label={label}
         required={required}
         placeholder="Select Time Roster"
-        options={tones.groups.map((group) => ({ value: group.id, label: group.title }))}
+        options={(groups.data ?? []).map((group) => ({ value: group.id, label: group.name }))}
         onValueChange={onValueChange}
         className="min-w-0 flex-1"
       />

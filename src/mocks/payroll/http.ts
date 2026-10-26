@@ -45,9 +45,11 @@ export function page<T>(url: URL, items: readonly T[]) {
   return HttpResponse.json<Paginated<T>>(paginate(items, number, pageSize))
 }
 
-/** Rows whose text contains `?search=` (case-insensitive). */
+/** Rows whose text contains `?q=` (the API's search; `?search=` still read) case-insensitively. */
 export function searched<T>(url: URL, items: readonly T[], text: (item: T) => string): T[] {
-  const search = (url.searchParams.get('search') ?? '').trim().toLowerCase()
+  const search = (url.searchParams.get('q') ?? url.searchParams.get('search') ?? '')
+    .trim()
+    .toLowerCase()
   return search ? items.filter((item) => text(item).toLowerCase().includes(search)) : [...items]
 }
 

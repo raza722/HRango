@@ -20,13 +20,13 @@ export function MyLeavesPage() {
   )
 }
 
-/** `/leaves/applications`: everyone's, with Approve/Reject. */
+/** `/leaves/applications`: everyone's you may see (All) or your reports' (Subordinates), with Approve/Reject. */
 export function LeaveApplicationsPage() {
   const search = applicationsRoute.useSearch()
   const navigate = applicationsRoute.useNavigate()
   return (
     <LeaveListPage
-      scope="all"
+      scope="applications"
       search={search}
       onSearch={(patch) => {
         void navigate({ search: (prev) => ({ ...prev, ...patch }) })

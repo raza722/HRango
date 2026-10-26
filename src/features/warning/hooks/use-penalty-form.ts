@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useFieldArray, useForm } from 'react-hook-form'
+import { type FieldPath, useFieldArray, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
 import { ApiError } from '@/lib/api-error'
@@ -11,34 +11,35 @@ import {
   toPenaltyFormValues,
   toPenaltyInput,
 } from '../utils/penalty-mappers'
-import {
-  useCreateWarningPenalty,
-  useUpdateWarningPenalty,
-  useWarningPenalty,
-} from './use-warning-penalties'
+import { useUpdateWarningPenalty, useWarningPenalty } from './use-warning-penalties'
 
-const SERVER_FIELDS = ['policyName', 'title', 'scaleType'] as const
-type ServerField = (typeof SERVER_FIELDS)[number]
-
-function isServerField(key: string): key is ServerField {
-  return SERVER_FIELDS.some((field) => field === key)
+/** `fieldErrors` keys are `penalties`, `penalties.0.percentage` …; the form calls them `rules`. */
+function toFormField(key: string): FieldPath<PenaltyFormValues> | null {
+  const match =
+    /^penalties(?:\.(\d+)\.(afterCount|period|penaltyType|percentage|deduction|leaveTypeId))?$/.exec(
+      key,
+    )
+  if (!match) return null
+  const [, index, field] = match
+  return index !== undefined && field !== undefined
+    ? (`rules.${Number(index)}.${field}` as FieldPath<PenaltyFormValues>)
+    : 'rules'
 }
 
 interface UsePenaltyFormOptions {
-  /** Id from `?edit=`, if a penalty is being edited. */
+  /** Id of the policy whose penalties are edited (from `?edit=`), if one is chosen. */
   editingId: string | undefined
-  /** Runs after a successful save, before the form is cleared. */
+  /** Runs after a successful save. */
   onSaved?: (mode: 'created' | 'updated') => Promise<void> | void
 }
 
 /**
- * Owns the penalty form: Zod validation, the "+ Add Penalty" rules array,
- * loading a record for editing, and the create/update mutations.
+ * Owns the penalty form: the chosen policy and its penalty rules ("+ Add Penalty"), loaded from
+ * the policy and saved back all at once (`PUT /warning/policies/{id}/penalties`).
  */
 export function usePenaltyForm({ editingId, onSaved }: UsePenaltyFormOptions) {
   const editingQuery = useWarningPenalty(editingId)
-  const createMutation = useCreateWarningPenalty()
-  const updateMutation = useUpdateWarningPenalty()
+  const saveMutation = useUpdateWarningPenalty()
 
   const editingValues = useMemo(
     () => (editingId && editingQuery.data ? toPenaltyFormValues(editingQuery.data) : undefined),
@@ -47,7 +48,7 @@ export function usePenaltyForm({ editingId, onSaved }: UsePenaltyFormOptions) {
 
   const form = useForm<PenaltyFormValues>({
     resolver: zodResolver(penaltyFormSchema),
-    defaultValues: createDefaultPenaltyValues(),
+    defaultValues: createDefaultPenaltyValues(editingId),
     values: editingValues,
     mode: 'onTouched',
   })
@@ -58,30 +59,36 @@ export function usePenaltyForm({ editingId, onSaved }: UsePenaltyFormOptions) {
     form.reset(createDefaultPenaltyValues())
   }
 
-  /** "+ Add Penalty": a new block with the same time span as the last one. */
+  /** "+ Add Penalty": same time span as the last block, the next count. */
   const addRule = () => {
     const last = form.getValues('rules').at(-1)
-    rules.append(createEmptyRule(last?.timeSpan ?? 'weekly'))
+    rules.append(
+      createEmptyRule(last?.period ?? 'month', last ? Number(last.afterCount) + 1 || 1 : 1),
+    )
   }
 
   const submit = form.handleSubmit(async (values) => {
-    const input = toPenaltyInput(values)
-    const mode = editingId ? 'updated' : 'created'
+    const policy = editingQuery.data
+    if (policy?.id !== values.policyId) {
+      form.setError('policyId', { type: 'manual', message: 'Select a policy' })
+      return
+    }
+    const mode = policy.penalties.length > 0 ? 'updated' : 'created'
     try {
-      if (editingId) await updateMutation.mutateAsync({ id: editingId, input })
-      else await createMutation.mutateAsync(input)
+      await saveMutation.mutateAsync({
+        policyId: policy.id,
+        input: toPenaltyInput(values, policy.rowVersion),
+      })
     } catch (error) {
       if (error instanceof ApiError) {
-        Object.entries(error.fieldErrors).forEach(([field, message]) => {
-          if (isServerField(field)) {
-            form.setError(field, { type: 'server', message }, { shouldFocus: true })
-          }
+        Object.entries(error.fieldErrors).forEach(([key, message]) => {
+          const field = toFormField(key)
+          if (field) form.setError(field, { type: 'server', message }, { shouldFocus: true })
         })
       }
       return
     }
     await onSaved?.(mode)
-    form.reset(createDefaultPenaltyValues())
   })
 
   return {
@@ -91,8 +98,11 @@ export function usePenaltyForm({ editingId, onSaved }: UsePenaltyFormOptions) {
     resetToNew,
     addRule,
     isEditing: editingId !== undefined,
+    /** The policy whose penalties are edited, once loaded. */
+    editingPolicy: editingQuery.data,
+    /** Legacy (kept for the barrel): Use `editingPolicy`. */
     editingPenalty: editingQuery.data,
     isLoadingPenalty: editingQuery.isLoading,
-    isSaving: createMutation.isPending || updateMutation.isPending,
+    isSaving: saveMutation.isPending,
   }
 }

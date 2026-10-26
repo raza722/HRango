@@ -5,20 +5,29 @@ import { toast } from 'sonner'
 import { ErrorState } from '@/components/feedback/error-state'
 import { PageContainer, Pagination } from '@/components/layout'
 import { Card, CardContent } from '@/components/ui/card'
+import { useCan } from '@/lib/permissions'
 
-import { schedulingApi } from '../api/scheduling.api'
-import { BOARD_PAGE_SIZE } from '../constants'
-import { useRosterTones } from '../hooks/use-roster-tones'
+import { BOARD_PAGE_SIZE, SCHEDULING_PERMISSIONS } from '../constants'
 import {
   useActiveShift,
-  useBulkDeleteEntries,
-  useDeleteEntry,
+  useBulkDelete,
+  useDeleteRestDays,
+  useDeleteSchedule,
+  useExportSchedule,
+  useMoveSchedule,
   useScheduleBoard,
+  useScheduleYear,
   useSwapShift,
 } from '../hooks/use-scheduling'
+import { useSlotTones } from '../hooks/use-slot-tones'
 import { FILTER_KEYS, type SchedulingSearch } from '../routing'
-import type { BoardParams, ScheduleEntry } from '../types/scheduling.types'
-import { downloadScheduleCsv } from '../utils/schedule-csv'
+import type {
+  BoardFilters,
+  BoardParams,
+  BoardRestDay,
+  BoardRow,
+  BoardShift,
+} from '../types/scheduling.types'
 import {
   eachDay,
   formatRange,
@@ -27,16 +36,16 @@ import {
   shiftAnchor,
   toDay,
 } from '../utils/schedule-dates'
+import type { CellPermissions } from './day-cell'
 import { ApplyDefaultShiftDialog } from './dialogs/apply-default-shift-dialog'
 import { CreateScheduleDialog } from './dialogs/create-schedule-dialog'
 import { DeleteScheduleDialog } from './dialogs/delete-schedule-dialog'
 import { EditEntryDialog } from './dialogs/edit-entry-dialog'
-import { ImportScheduleDialog } from './dialogs/import-schedule-dialog'
 import { MultiEditDialog } from './dialogs/multi-edit-dialog'
 import { RestDayDialog } from './dialogs/rest-day-dialog'
 import { SwapShiftDialog } from './dialogs/swap-shift-dialog'
 import { TrashConfirmDialog } from './dialogs/trash-confirm-dialog'
-import { ViewEntryDialog } from './dialogs/view-entry-dialog'
+import { ViewEntryDialog, ViewRestDayDialog } from './dialogs/view-entry-dialog'
 import { ScheduleBoard } from './schedule-board'
 import { SchedulingFilters } from './scheduling-filters'
 import { SchedulingHeader } from './scheduling-header'
@@ -45,7 +54,7 @@ import { YearBoard } from './year-board'
 
 const routeApi = getRouteApi('/_app/scheduling')
 
-/** Longest custom Date From → Date To range shown as days. */
+/** Longest custom Date From → Date To range shown as days (the API allows 93). */
 const MAX_CUSTOM_DAYS = 93
 
 type DialogState =
@@ -53,37 +62,42 @@ type DialogState =
   | { type: 'rest-day'; employeeIds?: string[]; date?: string }
   | { type: 'apply-default' }
   | { type: 'delete-range' }
-  | { type: 'import' }
-  | { type: 'edit' | 'view' | 'swap' | 'delete-entry'; entry: ScheduleEntry }
+  | { type: 'edit' | 'view' | 'delete-shift'; shift: BoardShift }
+  | { type: 'swap'; shift: BoardShift; row: BoardRow }
+  | { type: 'view-rest' | 'delete-rest'; restDay: BoardRestDay; row: BoardRow }
   | { type: 'multi-edit' }
   | { type: 'multi-delete' }
   | null
 
-function boardParams(search: SchedulingSearch, from: string, to: string): BoardParams {
-  return {
-    scope: search.scope,
-    from,
-    to,
-    page: search.page,
-    pageSize: BOARD_PAGE_SIZE,
-    ...(search.q ? { search: search.q } : {}),
-    ...(search.status !== 'all' ? { status: search.status } : {}),
-    ...(search.group ? { group: search.group } : {}),
-    ...(search.locationId ? { locationId: search.locationId } : {}),
-    ...(search.branchId ? { branchId: search.branchId } : {}),
-    ...(search.department ? { department: search.department } : {}),
-    ...(search.employeeId ? { employeeId: search.employeeId } : {}),
-    ...(search.employmentType ? { employmentType: search.employmentType } : {}),
-    ...(search.rosterGroupId ? { rosterGroupId: search.rosterGroupId } : {}),
+function boardFilters(search: SchedulingSearch): BoardFilters {
+  const filters: BoardFilters = {}
+  if (search.q) filters.search = search.q
+  if (search.status !== 'all') filters.employeeStatus = search.status
+  const keys = [
+    'employeeId',
+    'departmentId',
+    'branchId',
+    'locationId',
+    'designationId',
+    'employmentTypeId',
+    'employeeGroupId',
+    'gradeId',
+    'timeSlotId',
+    'rosterGroupId',
+  ] as const
+  for (const key of keys) {
+    const value = search[key]
+    if (value) filters[key] = value
   }
+  return filters
 }
 
 /**
- * Scheduling: who works which shift on which day. My / All / Subordinates
- * tabs, a week, month or year grid, and every action from the designs:
- * Create Scheduling, Apply Default Shift, Delete, Import / Export, Enable /
- * Disable Multiselect (Multi Edit, Multi Delete), and per shift Edit, View,
- * Swap (drag a shift onto another cell) and Delete.
+ * Scheduling: who works which shift on which day (`/api/scheduling/schedules`). My / All /
+ * Subordinates tabs, a week, month or year grid, and the actions from the designs the API
+ * supports: Create Scheduling, Apply Default Shift, Delete, Export, Enable / Disable
+ * Multiselect (Multi Edit, Multi Delete), and per shift Edit, View, Swap (drag a shift onto
+ * another cell) and Delete. Buttons the user's permissions do not allow are left out.
  */
 export function SchedulingPage() {
   const search = routeApi.useSearch()
@@ -93,8 +107,22 @@ export function SchedulingPage() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [dialog, setDialog] = useState<DialogState>(null)
-  const [exporting, setExporting] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
+
+  const canCreate = useCan(SCHEDULING_PERMISSIONS.create)
+  const canEdit = useCan(SCHEDULING_PERMISSIONS.edit)
+  const canDelete = useCan(SCHEDULING_PERMISSIONS.delete)
+  const canExport = useCan(SCHEDULING_PERMISSIONS.export)
+  const canCreateRestDay = useCan(SCHEDULING_PERMISSIONS.restDaysCreate)
+  const canDeleteRestDay = useCan(SCHEDULING_PERMISSIONS.restDaysDelete)
+  const can = { create: canCreate, edit: canEdit, delete: canDelete, export: canExport }
+  const cellCan: CellPermissions = {
+    create: canCreate,
+    edit: canEdit,
+    delete: canDelete,
+    createRestDay: canCreateRestDay,
+    deleteRestDay: canDeleteRestDay,
+  }
 
   const anchor = search.date ?? today
   const custom = search.from !== undefined && search.to !== undefined
@@ -104,14 +132,31 @@ export function SchedulingPage() {
   const isYear = search.view === 'year' && !custom
   const days = isYear ? [] : eachDay(period.from, period.to).slice(0, MAX_CUSTOM_DAYS)
   const to = isYear ? period.to : (days.at(-1) ?? period.to)
-  const params = boardParams(search, period.from, to)
+  const filters = boardFilters(search)
+  const params: BoardParams = {
+    scope: search.scope,
+    from: period.from,
+    to,
+    page: search.page,
+    pageSize: BOARD_PAGE_SIZE,
+    ...filters,
+  }
+  const year = Number(period.from.slice(0, 4))
 
-  const board = useScheduleBoard(params)
+  const board = useScheduleBoard(params, !isYear)
+  const yearBoard = useScheduleYear(
+    { scope: search.scope, year, page: search.page, pageSize: BOARD_PAGE_SIZE, ...filters },
+    isYear,
+  )
+  const current = isYear ? yearBoard : board
   const activeShift = useActiveShift()
-  const tones = useRosterTones()
+  const tones = useSlotTones()
   const swap = useSwapShift()
-  const deleteEntry = useDeleteEntry()
-  const bulkDelete = useBulkDeleteEntries()
+  const move = useMoveSchedule()
+  const deleteShift = useDeleteSchedule()
+  const bulkDelete = useBulkDelete()
+  const deleteRest = useDeleteRestDays()
+  const exportCsv = useExportSchedule()
 
   const update = (patch: Partial<SchedulingSearch>, replace = false) =>
     navigate({ search: (prev) => ({ ...prev, ...patch }), replace })
@@ -148,29 +193,32 @@ export function SchedulingPage() {
   }
 
   const rows = board.data?.data ?? []
-  const meta = board.data?.meta
+  const meta = current.data?.meta
   const activeFilterCount = FILTER_KEYS.filter((key) => search[key] !== undefined).length
 
-  const move = (entryId: string, employeeId: string, date: string) => {
-    swap.mutate({ entryId, targetEmployeeId: employeeId, targetDate: date })
-  }
-
-  const exportCsv = async () => {
-    setExporting(true)
-    try {
-      const all = []
-      for (let page = 1; ; page += 1) {
-        const result = await schedulingApi.board({ ...params, page, pageSize: 100 })
-        all.push(...result.data)
-        if (page >= result.meta.totalPages) break
-      }
-      downloadScheduleCsv(all, `schedule-${period.from}-to-${to}.csv`, tones.titleOf)
-      toast.success(`Exported ${all.length} employee${all.length === 1 ? '' : 's'}`)
-    } catch {
-      toast.error('Could not export the schedule. Try again.')
-    } finally {
-      setExporting(false)
+  /** A shift dropped on a cell: another date of the same person, or someone else's same date. */
+  const moveShift = (shiftId: string, employeeId: string, date: string) => {
+    const sourceRow = rows.find((row) => row.shifts.some((shift) => shift.id === shiftId))
+    const shift = sourceRow?.shifts.find((item) => item.id === shiftId)
+    if (!sourceRow || !shift) return
+    if (sourceRow.employee.id === employeeId) {
+      if (date !== shift.workDate) move.mutate({ id: shift.id, workDate: date })
+      return
     }
+    if (date !== shift.workDate) {
+      toast.error('A shift goes to someone else on the same date only. Move it first, then swap.')
+      return
+    }
+    const target = rows
+      .find((row) => row.employee.id === employeeId)
+      ?.shifts.find((item) => item.workDate === date)
+    swap.mutate({
+      id: shift.id,
+      input: {
+        ...(target ? { withScheduleId: target.id } : { withEmployeeId: employeeId }),
+        rowVersion: shift.rowVersion,
+      },
+    })
   }
 
   const closeDialog = () => {
@@ -210,10 +258,10 @@ export function SchedulingPage() {
         }}
         activeFilterCount={activeFilterCount}
         onRefresh={() => {
-          void board.refetch()
+          void current.refetch()
           void activeShift.refetch()
         }}
-        isRefreshing={board.isFetching && !board.isPending}
+        isRefreshing={current.isFetching && !current.isPending}
         onApplyDefault={() => {
           setDialog({ type: 'apply-default' })
         }}
@@ -224,15 +272,14 @@ export function SchedulingPage() {
           setDialog({ type: 'delete-range' })
         }}
         onExport={() => {
-          if (!exporting) void exportCsv()
+          const { scope, from, to: last } = params
+          exportCsv.mutate({ scope, from, to: last, ...filters })
         }}
-        onImport={() => {
-          setDialog({ type: 'import' })
-        }}
+        isExporting={exportCsv.isPending}
+        can={can}
         filters={
           <SchedulingFilters
             search={search}
-            rosterOptions={tones.groups.map((group) => ({ value: group.id, label: group.title }))}
             onChange={(patch) => {
               void update({ ...patch, page: 1 }, true)
             }}
@@ -240,7 +287,7 @@ export function SchedulingPage() {
               void update(
                 {
                   ...Object.fromEntries(FILTER_KEYS.map((key) => [key, undefined])),
-                  status: 'active',
+                  status: 'all',
                   page: 1,
                 },
                 true,
@@ -252,18 +299,18 @@ export function SchedulingPage() {
 
       <Card className="font-inter">
         <CardContent ref={boardRef} className="grid gap-4 px-3 pt-4 sm:px-4 sm:pt-5">
-          {board.error && !board.data ? (
+          {current.error && !current.data ? (
             <ErrorState
-              message={board.error.message}
+              message={current.error.message}
               onRetry={() => {
-                void board.refetch()
+                void current.refetch()
               }}
               className="shadow-none"
             />
           ) : isYear ? (
             <YearBoard
-              rows={rows}
-              year={Number(period.from.slice(0, 4))}
+              rows={yearBoard.data?.data ?? []}
+              year={year}
               currentMonth={
                 today.startsWith(period.from.slice(0, 4)) ? Number(today.slice(5, 7)) - 1 : null
               }
@@ -274,7 +321,7 @@ export function SchedulingPage() {
               onNext={() => {
                 void update({ date: shiftAnchor('year', anchor, 1), page: 1 })
               }}
-              isLoading={board.isPending}
+              isLoading={yearBoard.isPending}
               onOpenMonth={(day) => {
                 void update({ view: 'month', date: day })
               }}
@@ -299,27 +346,32 @@ export function SchedulingPage() {
                     : { date: shiftAnchor(search.view, anchor, 1) },
                 )
               }}
-              dayTotals={board.data?.dayTotals ?? {}}
+              dayTotals={board.data?.dayTotals ?? []}
               isLoading={board.isPending}
               isFetching={board.isFetching}
               multiselect={multiselect}
               selectedIds={selected}
-              canCreate={search.scope !== 'my'}
+              canCreateHere={search.scope !== 'my'}
+              can={cellCan}
               toneFor={tones.toneFor}
-              onToggleSelect={(entry) => {
-                setSelected((current) => {
-                  const next = new Set(current)
-                  if (next.has(entry.id)) next.delete(entry.id)
-                  else next.add(entry.id)
+              onToggleSelect={(shift) => {
+                setSelected((picked) => {
+                  const next = new Set(picked)
+                  if (next.has(shift.id)) next.delete(shift.id)
+                  else next.add(shift.id)
                   return next
                 })
               }}
-              onAction={(action, entry) => {
-                setDialog({ type: action === 'delete' ? 'delete-entry' : action, entry })
+              onAction={(action, shift, row) => {
+                if (action === 'swap') setDialog({ type: 'swap', shift, row })
+                else setDialog({ type: action === 'delete' ? 'delete-shift' : action, shift })
               }}
-              onMove={move}
-              onNudge={(entry, delta) => {
-                move(entry.id, entry.employeeId, nextDay(entry.date, delta))
+              onRestDayAction={(action, restDay, row) => {
+                setDialog({ type: action === 'view' ? 'view-rest' : 'delete-rest', restDay, row })
+              }}
+              onMove={moveShift}
+              onNudge={(shift, delta) => {
+                move.mutate({ id: shift.id, workDate: nextDay(shift.workDate, delta) })
               }}
               onCreateAt={(employeeId, date, kind) => {
                 setDialog({
@@ -342,7 +394,7 @@ export function SchedulingPage() {
               onPageChange={(page) => {
                 void update({ page })
               }}
-              disabled={board.isPending}
+              disabled={current.isPending}
               currentClassName={schedulingType.pagerCurrent}
             />
           </div>
@@ -361,23 +413,35 @@ export function SchedulingPage() {
       )}
       {dialog?.type === 'apply-default' && <ApplyDefaultShiftDialog onClose={closeDialog} />}
       {dialog?.type === 'delete-range' && <DeleteScheduleDialog onClose={closeDialog} />}
-      {dialog?.type === 'import' && <ImportScheduleDialog onClose={closeDialog} />}
-      {dialog?.type === 'edit' && <EditEntryDialog entry={dialog.entry} onClose={closeDialog} />}
+      {dialog?.type === 'edit' && (
+        <EditEntryDialog shiftId={dialog.shift.id} onClose={closeDialog} />
+      )}
       {dialog?.type === 'view' && (
         <ViewEntryDialog
-          entry={dialog.entry}
+          shiftId={dialog.shift.id}
           onClose={closeDialog}
-          onEdit={() => {
-            setDialog({ type: 'edit', entry: dialog.entry })
-          }}
+          onEdit={
+            can.edit
+              ? () => {
+                  setDialog({ type: 'edit', shift: dialog.shift })
+                }
+              : undefined
+          }
+        />
+      )}
+      {dialog?.type === 'view-rest' && (
+        <ViewRestDayDialog
+          restDay={dialog.restDay}
+          employeeName={dialog.row.employee.name}
+          onClose={closeDialog}
         />
       )}
       {dialog?.type === 'swap' && (
-        <SwapShiftDialog entry={dialog.entry} rows={rows} days={days} onClose={closeDialog} />
+        <SwapShiftDialog shift={dialog.shift} row={dialog.row} rows={rows} onClose={closeDialog} />
       )}
       {dialog?.type === 'multi-edit' && (
         <MultiEditDialog
-          entryIds={[...selected]}
+          shiftIds={[...selected]}
           onClose={closeDialog}
           onDone={() => {
             setSelected(new Set())
@@ -385,24 +449,44 @@ export function SchedulingPage() {
         />
       )}
       <TrashConfirmDialog
-        open={dialog?.type === 'delete-entry' || dialog?.type === 'multi-delete'}
-        pending={deleteEntry.isPending || bulkDelete.isPending}
+        open={
+          dialog?.type === 'delete-shift' ||
+          dialog?.type === 'multi-delete' ||
+          dialog?.type === 'delete-rest'
+        }
+        pending={deleteShift.isPending || bulkDelete.isPending || deleteRest.isPending}
         message={
-          dialog?.type === 'delete-entry' && dialog.entry.kind === 'rest'
+          dialog?.type === 'delete-rest'
             ? 'Are you sure you want to delete this rest day?'
             : 'Are you sure you want to Delete this Schedule? Rest Days will not be Deleted.'
         }
         onCancel={closeDialog}
         onConfirm={() => {
-          if (dialog?.type === 'delete-entry') {
-            deleteEntry.mutate(dialog.entry.id, { onSettled: closeDialog })
-          } else if (dialog?.type === 'multi-delete') {
-            bulkDelete.mutate([...selected], {
-              onSuccess: () => {
-                setSelected(new Set())
+          if (dialog?.type === 'delete-shift') {
+            deleteShift.mutate(
+              { id: dialog.shift.id, rowVersion: dialog.shift.rowVersion },
+              { onSettled: closeDialog },
+            )
+          } else if (dialog?.type === 'delete-rest') {
+            deleteRest.mutate(
+              {
+                startDate: dialog.restDay.restDate,
+                endDate: dialog.restDay.restDate,
+                employeeIds: [dialog.row.employee.id],
+                allEmployees: false,
               },
-              onSettled: closeDialog,
-            })
+              { onSettled: closeDialog },
+            )
+          } else if (dialog?.type === 'multi-delete') {
+            bulkDelete.mutate(
+              { ids: [...selected] },
+              {
+                onSuccess: () => {
+                  setSelected(new Set())
+                },
+                onSettled: closeDialog,
+              },
+            )
           }
         }}
       />

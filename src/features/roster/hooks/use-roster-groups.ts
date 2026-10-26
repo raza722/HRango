@@ -10,6 +10,7 @@ import {
   rosterGroupsQueryOptions,
   rosterKeys,
   type RosterListParams,
+  timeSlotOptionsQueryOptions,
 } from '../api/roster.api'
 import type { RosterGroupInput, RosterGroupRow } from '../types/roster.types'
 
@@ -21,6 +22,11 @@ export function useRosterGroups(params: RosterListParams) {
 /** A single roster group; pass `undefined` to stay idle. */
 export function useRosterGroup(id: string | undefined) {
   return useQuery({ ...rosterGroupQueryOptions(id ?? ''), enabled: id !== undefined })
+}
+
+/** Time slots for the week's pickers (`/scheduling/options/time-slots`). */
+export function useTimeSlotOptions() {
+  return useQuery(timeSlotOptionsQueryOptions())
 }
 
 /** Creates (no `id`) or updates a group, then refreshes the lists. */
@@ -74,20 +80,20 @@ export function useSetRosterGroupStatus() {
     onError: (_error, _variables, onMutateResult) => {
       rollback(onMutateResult?.snapshot)
     },
-    onSuccess: (row) => {
-      queryClient.removeQueries({ queryKey: rosterKeys.detail(row.id) })
-      toast.success(`“${row.title}” is now ${row.isActive ? 'active' : 'inactive'}`)
+    onSuccess: (group) => {
+      queryClient.setQueryData(rosterKeys.detail(group.id), group)
+      toast.success(`“${group.title}” is now ${group.isActive ? 'active' : 'inactive'}`)
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: rosterKeys.lists() }),
   })
 }
 
-/** Deletes a group optimistically; it comes back if employees are still enrolled. */
+/** Deletes a group optimistically; it comes back if employees are still enrolled (409). */
 export function useDeleteRosterGroup() {
   const queryClient = useQueryClient()
   const rollback = useRollback()
   return useMutation({
-    mutationFn: (group: RosterGroupRow) => rosterApi.remove(group.id),
+    mutationFn: (group: RosterGroupRow) => rosterApi.remove(group.id, group.rowVersion),
     onMutate: async (group) => {
       await queryClient.cancelQueries({ queryKey: rosterKeys.lists() })
       const snapshot: ListSnapshot = queryClient.getQueriesData<Paginated<RosterGroupRow>>({

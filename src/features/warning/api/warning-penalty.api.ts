@@ -1,36 +1,52 @@
 import { keepPreviousData, queryOptions } from '@tanstack/react-query'
 
 import { apiClient } from '@/lib/axios'
-import type { ApiItem, PageParams, Paginated } from '@/types/api'
+import type { PageParams, Paginated } from '@/types/api'
 
-import type { WarningPenalty, WarningPenaltyInput } from '../types/warning-penalty.types'
+import type {
+  LeaveTypeOption,
+  WarningPenalty,
+  WarningPenaltyInput,
+} from '../types/warning-penalty.types'
+import type { WarningPolicy } from '../types/warning-policy.types'
+import { warningPolicyApi } from './warning-policy.api'
+import { warningPolicyQueryOptions } from './warning-policy.queries'
 
-const BASE_PATH = '/warning-penalties'
+const BASE_PATH = '/warning/penalties'
 
-/** REST calls for penalty configurations. */
+export interface PenaltyListParams extends PageParams {
+  policyId?: string | undefined
+}
+
+/**
+ * Penalties. The list is every penalty rule with its policy (`GET /warning/penalties`); rules are
+ * saved per policy, all at once (`PUT /warning/policies/{id}/penalties`).
+ */
 export const warningPenaltyApi = {
-  async list(params: PageParams, signal?: AbortSignal): Promise<Paginated<WarningPenalty>> {
-    const { data } = await apiClient.get<Paginated<WarningPenalty>>(BASE_PATH, { params, signal })
+  async list(params: PenaltyListParams, signal?: AbortSignal): Promise<Paginated<WarningPenalty>> {
+    const { data } = await apiClient.get<Paginated<WarningPenalty>>(BASE_PATH, {
+      params: params.policyId ? params : { page: params.page, pageSize: params.pageSize },
+      signal,
+    })
     return data
   },
 
-  async get(id: string, signal?: AbortSignal): Promise<WarningPenalty> {
-    const { data } = await apiClient.get<ApiItem<WarningPenalty>>(`${BASE_PATH}/${id}`, { signal })
-    return data.data
+  /** The policy whose penalties are edited (its rules and rowVersion). */
+  get(policyId: string, signal?: AbortSignal): Promise<WarningPolicy> {
+    return warningPolicyApi.get(policyId, signal)
   },
 
-  async create(input: WarningPenaltyInput): Promise<WarningPenalty> {
-    const { data } = await apiClient.post<ApiItem<WarningPenalty>>(BASE_PATH, input)
-    return data.data
+  save(policyId: string, input: WarningPenaltyInput): Promise<WarningPolicy> {
+    return warningPolicyApi.savePenalties(policyId, input)
   },
 
-  async update(id: string, input: WarningPenaltyInput): Promise<WarningPenalty> {
-    const { data } = await apiClient.put<ApiItem<WarningPenalty>>(`${BASE_PATH}/${id}`, input)
-    return data.data
-  },
-
-  async remove(id: string): Promise<void> {
-    await apiClient.delete(`${BASE_PATH}/${id}`)
+  /** Active leave types for the deduction (`GET /leaves/types`, needs leaves.settings.types.view). */
+  async leaveTypes(signal?: AbortSignal): Promise<LeaveTypeOption[]> {
+    const { data } = await apiClient.get<Paginated<LeaveTypeOption>>('/leaves/types', {
+      params: { isActive: true, page: 1, pageSize: 100 },
+      signal,
+    })
+    return data.data.map(({ id, title }) => ({ id, title }))
   },
 }
 
@@ -38,12 +54,13 @@ export const warningPenaltyApi = {
 export const warningPenaltyKeys = {
   all: ['warning-penalties'] as const,
   lists: () => [...warningPenaltyKeys.all, 'list'] as const,
-  list: (params: PageParams) => [...warningPenaltyKeys.lists(), params] as const,
+  list: (params: PenaltyListParams) => [...warningPenaltyKeys.lists(), params] as const,
   details: () => [...warningPenaltyKeys.all, 'detail'] as const,
   detail: (id: string) => [...warningPenaltyKeys.details(), id] as const,
+  leaveTypes: () => [...warningPenaltyKeys.all, 'leave-types'] as const,
 }
 
-export function warningPenaltiesQueryOptions(params: PageParams) {
+export function warningPenaltiesQueryOptions(params: PenaltyListParams) {
   return queryOptions({
     queryKey: warningPenaltyKeys.list(params),
     queryFn: ({ signal }) => warningPenaltyApi.list(params, signal),
@@ -51,9 +68,15 @@ export function warningPenaltiesQueryOptions(params: PageParams) {
   })
 }
 
-export function warningPenaltyQueryOptions(id: string) {
+/** The policy whose penalties are being edited (shares the policy's detail cache). */
+export function warningPenaltyQueryOptions(policyId: string) {
+  return warningPolicyQueryOptions(policyId)
+}
+
+export function leaveTypeOptionsQueryOptions() {
   return queryOptions({
-    queryKey: warningPenaltyKeys.detail(id),
-    queryFn: ({ signal }) => warningPenaltyApi.get(id, signal),
+    queryKey: warningPenaltyKeys.leaveTypes(),
+    queryFn: ({ signal }) => warningPenaltyApi.leaveTypes(signal),
+    staleTime: 5 * 60_000,
   })
 }

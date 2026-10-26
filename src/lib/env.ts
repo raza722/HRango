@@ -3,7 +3,7 @@ import { z } from 'zod'
 const booleanString = z.enum(['true', 'false']).transform((value) => value === 'true')
 
 const envSchema = z.object({
-  VITE_APP_NAME: z.string().min(1).default('Top Edge Technologies HRMS'),
+  VITE_APP_NAME: z.string().min(1).default('hRango'),
   VITE_API_BASE_URL: z.string().min(1).default('/api'),
   VITE_API_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   VITE_ENABLE_MOCKS: booleanString.default(true),

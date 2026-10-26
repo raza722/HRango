@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
-import { addDays, format } from 'date-fns'
+import { format } from 'date-fns'
 import { describe, expect, it } from 'vitest'
 
 import { clearances } from '@/mocks/assets/db'
@@ -45,7 +45,7 @@ describe('End of Employment', () => {
     })
   })
 
-  it('asks for the required checklist answer, then makes the Final Settlement', async () => {
+  it('checks a checklist answer, then saves the record, its answers and the Final Settlement', async () => {
     const { user } = renderApp('/end-of-employment/all')
 
     await user.click(await screen.findByRole('button', { name: 'Create' }))
@@ -57,24 +57,30 @@ describe('End of Employment', () => {
       within(dialog).queryByRole('button', { name: /^Last Working Date/ }),
     ).not.toBeInTheDocument()
     await user.click(within(dialog).getByRole('checkbox', { name: 'Notice Period' }))
+    await user.type(within(dialog).getByRole('textbox', { name: /^Notice Period Days/ }), '30')
     await pickDay(user, dialog, /^Last Working Date/, new Date())
     await user.click(within(dialog).getByRole('checkbox', { name: 'Final Settlement' }))
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
-    // Asset Clear is required on the active checklist.
-    expect(await within(dialog).findByText('Enter Asset Clear')).toBeVisible()
-    expect(within(dialog).getByRole('tab', { name: 'Checklist' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    )
+    // Notice Days Served takes 0 to 90.
+    await user.click(within(dialog).getByRole('tab', { name: 'Checklist' }))
+    const served = within(dialog).getByRole('spinbutton', { name: /^Notice Days Served/ })
+    await user.type(served, '120')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(dialog).findByText('At most 90')).toBeVisible()
     expect(within(dialog).getByRole('heading', { name: 'Off Boarding Checklist' })).toBeVisible()
-    await pickDay(user, dialog, /^Asset Clear/, new Date())
+    await user.clear(served)
+    await user.type(served, '30')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByText('End of employment created')).toBeInTheDocument()
     const record = endOfEmployments.all().find((item) => item.employeeId === 'em_kashif')
-    expect(record?.reason).toBe('termination')
-    expect(record?.lastWorkingDate).toBe(format(new Date(), 'yyyy-MM-dd'))
+    expect(record).toMatchObject({
+      reason: 'termination',
+      noticePeriod: true,
+      noticePeriodDays: 30,
+      lastWorkingDate: format(new Date(), 'yyyy-MM-dd'),
+    })
+    expect(record?.checklist.cf_notice_days).toBe(30)
     const settlement = finalSettlements.all().find((item) => item.employeeId === 'em_kashif')
     expect(settlement).toEqual(
       expect.objectContaining({ status: 'pending', reason: 'termination', noticePeriod: true }),
@@ -90,7 +96,6 @@ describe('End of Employment', () => {
     await choose(user, 'Employee', /Ayesha Malik/)
     await choose(user, /^Reason/, 'Resignation')
     await user.click(within(dialog).getByRole('checkbox', { name: 'Asset Clearance' }))
-    await user.click(within(dialog).getByRole('tab', { name: 'Checklist' }))
     await pickDay(user, dialog, /^Asset Clear/, new Date())
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
@@ -100,13 +105,14 @@ describe('End of Employment', () => {
         'Ayesha Malik',
       )
     })
-    expect(await within(form).findByRole('region', { name: 'Asset 1, Car' })).toBeVisible()
+    const block = await within(form).findByRole('region', { name: 'Asset 1, Car' })
+    await user.click(within(block).getByRole('radio', { name: 'Complete Return' }))
     await choose(user, /^Checked By/, /Hina Raza/)
-    await choose(user, /^Clearance Approved By/, /Shelley Kannes/)
     await user.click(within(form).getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByText('Clearance form created')).toBeInTheDocument()
     const record = endOfEmployments.all().find((item) => item.employeeId === 'em_ayesha')
+    expect(record?.assetClearByDate).toBe(format(new Date(), 'yyyy-MM-dd'))
     const created = clearances.all().find((item) => item.employeeId === 'em_ayesha')
     expect(created?.endOfEmploymentId).toBe(record?.id)
     expect(endOfEmployments.find(record?.id ?? '')?.clearanceId).toBe(created?.id)
@@ -122,7 +128,7 @@ describe('End of Employment', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(await within(dialog).findByText('Choose the joining date')).toBeVisible()
 
-    const joining = addDays(new Date(), 0)
+    const joining = new Date()
     await pickDay(user, dialog, /^Joining Date/, joining)
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     const confirm = await screen.findByRole('alertdialog', { name: 'Rehire Nida Hassan' })
@@ -134,5 +140,14 @@ describe('End of Employment', () => {
     await user.click(await screen.findByRole('button', { name: 'Actions for Nida Hassan' }))
     expect(await screen.findByRole('menuitem', { name: 'View' })).toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: 'Rehire' })).not.toBeInTheDocument()
+  })
+
+  it('says what a pending record waits for when Complete is chosen', async () => {
+    const { user } = renderApp('/end-of-employment/pending')
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for Talha Aziz' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Complete' }))
+    expect(await screen.findByText(/^Waiting for: Final settlement to be closed/)).toBeVisible()
+    expect(endOfEmployments.find('eoe_1')?.status).toBe('pending')
   })
 })

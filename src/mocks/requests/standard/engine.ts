@@ -2,23 +2,41 @@ import { http, type HttpHandler, HttpResponse } from 'msw'
 import { z } from 'zod'
 
 import type {
-  RequestAction,
-  RequestDetail,
-  RequestPage,
+  ApprovalDetails,
+  BackendAttachment,
+  BackendRequestDetail,
+  BackendRequestPage,
   RequestStatus,
   SettingsRequestType,
   StandardKind,
-  StandardLookups,
-  StandardRequest,
 } from '@/features/requests'
 import type { ApiItem } from '@/types/api'
 
 import type { MockCollection } from '../../collection'
-import { DIRECTORY, findEmployee } from '../../employees/seed'
+import { findEmployee } from '../../employees/seed'
+import { mockFileUrl } from '../../files/handlers'
 import { profileOf } from '../../scheduling/seed'
-import { createId, latency, paginate, readPageParams, requireAuth } from '../../utils'
+import { createId, errorResponse, latency, requireAuth } from '../../utils'
+import {
+  backendActions,
+  cancelBodySchema,
+  filesFrom,
+  forwardRecord,
+  pageOf,
+  registerApprovalSource,
+  type RequestBodyIn,
+  requestBodySchema,
+  type RequestHeaderFields,
+  serializeDetail,
+  type SerializeInfo,
+  serializeRequest,
+  staleRow,
+  type StoredFile,
+  withdrawRecord,
+} from '../backend'
 import {
   applyCancelDecision,
+  applyConsent,
   applyDecision,
   buildFlow,
   currentStep,
@@ -27,23 +45,26 @@ import {
   type StoredPunchRequest,
   type StoredStep,
 } from '../flow'
-import { base, countsOf, forbidden, invalid, notFound, now, readBody, text, toStep } from '../http'
-import { delegatorsOf, ME, mustFind, ref, requestEmployee } from '../people'
+import { base, invalid, notFound, now, readBody } from '../http'
+import { ME } from '../people'
 import { restrictionFor } from '../settings-db'
 
 /*
  * The standard request types (Leave, Loan & Advances, Work From Home,
- * Promotion, Relaxation, Rest Days, Travel, Resignation) share one REST shape,
- * the same as Transfer's:
- *   GET  /requests/<kind>             ?scope=my|all&status&page&pageSize&<filters>
- *   GET  /requests/<kind>/approvals   ?view=requested|cancellations|delegates…
- *   GET  /requests/<kind>/lookups
- *   GET  /requests/<kind>/:id         the request and its history
- *   POST /requests/<kind>             PUT/DELETE /requests/<kind>/:id
- *   POST /requests/<kind>/:id/decision  { decision, remarks, extras? }
- *   POST /requests/<kind>/:id/cancel    { reason }
- * A type supplies its definition (`StandardKindServer`): how to check and
- * store its fields, its filters, look-ups, seeds and what approval changes.
+ * Promotion, Relaxation, Rest Days, Travel, Resignation …) on the backend's
+ * request engine routes (backend/app/routers/requests.py):
+ *   GET    /requests/<type>             ?view=my|subordinates|all&status&q&employeeId&departmentId&from&to
+ *   GET    /requests/<type>/:id         RequestDetailOut (steps, attachments, actions)
+ *   POST   /requests/<type>             RequestIn { employeeId?, fromDate, toDate, reason, description,
+ *                                         application, attachments: [fileId], details }
+ *   PUT    /requests/<type>/:id         RequestIn + rowVersion
+ *   DELETE /requests/<type>/:id?rowVersion
+ *   POST   /requests/<type>/:id/cancel  { reason, rowVersion }: withdraws a pending request,
+ *                                         asks to cancel an approved one
+ *   POST/DELETE /requests/<type>/:id/attachments[/:attachmentId]
+ * Approvals (`/requests/approvals…`) are shared across types (../backend.ts).
+ * A type supplies its definition (`StandardKindServer`): how to read its
+ * `details`, check and store them, show them, its seeds and what approval changes.
  */
 
 /** A stored request of a standard type; `effect` remembers what its approval changed. */
@@ -52,6 +73,7 @@ export type StoredStandardRequest = Omit<StoredPunchRequest, 'kind' | 'payload' 
   payload: Record<string, unknown>
   applied: null
   effect?: unknown
+  files?: StoredFile[]
 }
 
 export interface PayloadContext {
@@ -65,24 +87,34 @@ export interface PayloadContext {
 
 export interface StandardKindServer<I> {
   kind: StandardKind
+  /** The backend's request type code (`rest_day`); the URL is the code with hyphens. */
+  typeCode: string
+  /** `GET /requests/types` name ("Rest Day"). */
+  typeName: string
+  /** The backend's kind when it differs from the code (`time_window`). */
+  backendKind?: string
   /** The type in Requests → Settings: flows, delegations and restrictions. */
   settingsType: SettingsRequestType
   /** "RD-" → RD-0001. */
   codePrefix: string
   codeDigits?: number
-  /** The request body, without `employeeId` (added by the engine). */
+  /** A `RequestIn` body → the type's input for `schema` (default: details + reason, description). */
+  fromBody?: (body: RequestBodyIn) => unknown
+  /** The type's input, without `employeeId` (added by the engine). */
   schema: z.ZodType<I>
   /** Checks the fields and returns what to store, or an error response (`invalid(…)`). */
   toPayload: (input: I, context: PayloadContext) => Response | Record<string, unknown>
-  /** The day Request Restriction checks, and the From / To filters read. */
+  /** The day Request Restriction checks. */
   dateOf: (payload: Record<string, unknown>) => string
-  /** The payload as the client sees it (names for ids…); stored payload if left out. */
+  /** The header fields (dates, days, reason, description); default from `dateOf` and the payload. */
+  header?: (payload: Record<string, unknown>, record: StoredStandardRequest) => RequestHeaderFields
+  /** The `details` the backend sends (camelCase, ids as strings, names beside ids). */
+  toDetails?: (payload: Record<string, unknown>, record: StoredStandardRequest) => object
+  /** Older name of `toDetails`; used when `toDetails` is left out. */
   present?: (payload: Record<string, unknown>, record: StoredStandardRequest) => object
-  /** Filters dialog fields → tests, beyond the shared employee / department / status / dates. */
+  /** The type's own list filters, beyond the shared ones. */
   filters?: Record<string, (record: StoredStandardRequest, value: string) => boolean>
-  /** The type's own look-ups (`extra` in GET /lookups). */
-  lookups?: (employeeId: string) => object
-  /** Fields the approver fills in (Loan & Advances); returns the new payload or an error. */
+  /** Fields the approver fills in (`details` of the approve body); returns the new payload or an error. */
   decision?: {
     schema: z.ZodType<Record<string, unknown>>
     apply: (
@@ -92,17 +124,18 @@ export interface StandardKindServer<I> {
   }
   /** "Reason for Approval *" (Relaxation). */
   approveNeedsRemarks?: boolean
-  /** Cancellations have their own Approvals view; otherwise they show under Requested. */
-  cancellationsView?: boolean
   /** Runs when the last approver approves; what it returns is kept to undo it. */
   onCompleted?: (record: StoredStandardRequest) => unknown
   /** Runs when a cancellation is approved, with what `onCompleted` returned. */
   onCancelled?: (record: StoredStandardRequest) => void
   /** Seed requests (use `seedRequest`). */
   seed: () => StoredStandardRequest[]
-  /** Endpoints of the type's own (Loan & Advances → Settings…), registered before the shared ones. */
+  /** Endpoints of the type's own (Loan settings, look-ups …), registered before the shared ones. */
   extraHandlers?: HttpHandler[]
 }
+
+/** The approver's fields as the decision schema reads them. */
+export type DecisionExtras = ApprovalDetails
 
 // --- building and moving requests ------------------------------------------------------------------
 
@@ -248,37 +281,52 @@ export function seedRequest(
 
 // --- the handlers -----------------------------------------------------------------------------------
 
-const decisionSchema = z.object({
-  decision: z.enum(['approve', 'reject']),
-  remarks: text,
-  extras: z.record(z.string(), z.unknown()).optional(),
+/** The type's input from a `RequestIn` body, before its own checks (`schema`, `toPayload`). */
+const defaultFromBody = (body: RequestBodyIn) => ({
+  ...body.details,
+  reason: body.reason ?? '',
+  description: body.description ?? '',
 })
 
-const cancelSchema = z.object({ reason: z.string().trim().min(1).max(500) })
+function defaultHeader(
+  def: Pick<StandardKindServer<unknown>, 'dateOf'>,
+  payload: Record<string, unknown>,
+): RequestHeaderFields {
+  const text = (key: string) => {
+    const value = payload[key]
+    return typeof value === 'string' ? value : null
+  }
+  const day = def.dateOf(payload)
+  return {
+    fromDate: day || null,
+    toDate: day || null,
+    days: null,
+    reason: text('reason'),
+    description: text('description'),
+    application: text('application'),
+  }
+}
 
-const departments = () => [...new Set(DIRECTORY.map((employee) => employee.department))].sort()
 const isActive = (employeeId: string) => {
   const employee = findEmployee(employeeId)
   return employee ? profileOf(employee).status === 'active' : false
 }
 
-/** The shared filters; a type adds its own. */
-const SHARED_FILTERS: Record<
-  string,
-  (
-    record: StoredStandardRequest,
-    value: string,
-    def: Pick<StandardKindServer<unknown>, 'dateOf'>,
-  ) => boolean
-> = {
-  employeeId: (record, value) => record.employeeId === value,
-  department: (record, value) => mustFind(record.employeeId).department === value,
-  employmentStatus: (record, value) =>
-    value === 'all' || profileOf(mustFind(record.employeeId)).status === value,
-  delegatorId: (record, value) => record.flow.some((step) => step.approverId === value),
-  nextRequesteeId: (record, value) => currentStep(record)?.approverId === value,
-  from: (record, value, def) => def.dateOf(record.payload) >= value,
-  to: (record, value, def) => def.dateOf(record.payload) <= value,
+const conflict = (message: string) => errorResponse(409, message, { code: 'CONFLICT' })
+
+const attachmentSchema = z.object({
+  fileId: z.union([z.string(), z.number()]).transform(String),
+  label: z.string().nullish(),
+})
+
+/** The type's own filters (beyond q, employee, department, branch, dates; read by `pageOf`). */
+function matches<I>(def: StandardKindServer<I>, record: StoredStandardRequest, url: URL): boolean {
+  for (const [name, value] of url.searchParams) {
+    if (!value) continue
+    const own = def.filters?.[name]
+    if (own && !own(record, value)) return false
+  }
+  return true
 }
 
 /** Builds a type's endpoints over its share of the standard requests collection. */
@@ -293,90 +341,69 @@ export function createStandardHandlers<I>(
   }
   const save = (record: StoredStandardRequest) => collection.update(record.id, record)
 
-  const mayDecideFor = (approverId: string) =>
-    approverId === ME || delegatorsOf(ME, def.settingsType).includes(approverId)
+  const info = (record: StoredStandardRequest): SerializeInfo => ({
+    typeCode: def.typeCode,
+    typeName: def.typeName,
+    kind: def.backendKind ?? def.typeCode,
+    header: def.header ? def.header(record.payload, record) : defaultHeader(def, record.payload),
+    details: (def.toDetails
+      ? def.toDetails(record.payload, record)
+      : def.present
+        ? def.present(record.payload, record)
+        : record.payload) as Record<string, unknown>,
+  })
 
-  function actionsFor(record: StoredStandardRequest): RequestAction[] {
-    const mine = record.employeeId === ME || record.createdById === ME
-    const untouched = record.flow.every(
-      (step) => step.status === 'pending' || step.status === 'waiting',
-    )
-    const step = currentStep(record)
-    const actions: RequestAction[] = ['view', 'flow', 'history']
-    if (record.status === 'pending' && mine && untouched) actions.push('edit', 'delete')
-    if (record.status === 'completed' && mine) actions.push('cancel')
-    if (step && record.employeeId !== ME && mayDecideFor(step.approverId)) actions.push('decide')
-    return actions
-  }
+  const actionsFor = (record: StoredStandardRequest) => backendActions(record, def.typeCode)
 
-  function serialize(record: StoredStandardRequest): StandardRequest {
-    const step = currentStep(record)
-    return {
-      id: record.id,
-      code: record.code,
-      kind: record.kind,
-      status: record.status,
-      employee: requestEmployee(mustFind(record.employeeId)),
-      createdBy: ref(record.createdById),
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-      flow: [
-        ...record.flow.map(toStep),
-        ...(record.cancelStep
-          ? [
-              {
-                ...toStep(record.cancelStep),
-                authority: `${record.cancelStep.authority} (Cancellation)`,
-              },
-            ]
-          : []),
-      ],
-      consents: record.consents.map((consent) => ({
-        person: ref(consent.personId),
-        status: consent.status,
-        remarks: consent.remarks,
-      })),
-      cancelReason: record.cancelReason,
-      currentStep: step ? toStep(step) : null,
-      actions: actionsFor(record),
-      payload: (def.present ? def.present(record.payload, record) : record.payload) as Record<
-        string,
-        unknown
-      >,
-    }
-  }
-
-  function matches(record: StoredStandardRequest, url: URL): boolean {
-    for (const [name, value] of url.searchParams) {
-      if (!value) continue
-      const own = def.filters?.[name]
-      if (own) {
-        if (!own(record, value)) return false
-        continue
+  registerApprovalSource({
+    typeCode: def.typeCode,
+    records,
+    find: (id) => find(id),
+    info: (record) => info(record as StoredStandardRequest),
+    decide: (stored, decision, remarks, details) => {
+      const record = stored as StoredStandardRequest
+      const at = now()
+      if (record.status === 'cancelling') {
+        const next = applyCancelDecision(record, decision, ME, remarks, at)
+        if (decision === 'approve') def.onCancelled?.(record)
+        const out = decision === 'approve' ? { ...next, effect: undefined } : next
+        save(out)
+        return out
       }
-      const shared = SHARED_FILTERS[name]
-      if (shared && !shared(record, value, def)) return false
-    }
-    return true
-  }
+      if (decision === 'approve' && def.approveNeedsRemarks && !remarks) {
+        return invalid('Give a reason for approval.', { remarks: 'Give a reason for approval' })
+      }
+      let current = record
+      if (decision === 'approve' && def.decision) {
+        const extras = def.decision.schema.safeParse(details)
+        if (!extras.success) return invalid('Fill in the approval fields.')
+        const payload = def.decision.apply(record, extras.data)
+        if (payload instanceof Response) return payload
+        current = { ...record, payload }
+      }
+      const { record: next, completed } = applyDecision(current, decision, ME, remarks, at)
+      const done = completed && def.onCompleted ? { ...next, effect: def.onCompleted(next) } : next
+      save(done)
+      return done
+    },
+    consent: (stored, agree, remarks) => {
+      const record = stored as StoredStandardRequest
+      const next = applyConsent(record, ME, agree ? 'approve' : 'reject', remarks, now())
+      save(next)
+      return next
+    },
+    forward: (stored, employeeId, remarks) => {
+      const next = forwardRecord(stored as StoredStandardRequest, employeeId, remarks, now())
+      save(next)
+      return next
+    },
+  })
 
-  function listResponse(url: URL, list: StoredStandardRequest[]) {
-    const status = url.searchParams.get('status')
-    const { page, pageSize } = readPageParams(url)
-    const sorted = list
-      .filter((record) => matches(record, url))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    const filtered = status ? sorted.filter((record) => record.status === status) : sorted
-    const result = paginate(filtered, page, pageSize)
-    return HttpResponse.json<RequestPage<StandardRequest>>({
-      ...result,
-      data: result.data.map(serialize),
-      counts: countsOf(sorted),
-    })
-  }
-
-  const item = (record: StoredStandardRequest) =>
-    HttpResponse.json<ApiItem<StandardRequest>>({ data: serialize(record) })
+  const detail = (record: StoredStandardRequest, status = 200) =>
+    HttpResponse.json<ApiItem<BackendRequestDetail>>(
+      { data: serializeDetail(record, info(record)) },
+      { status },
+    )
 
   function nextCode(): string {
     const digits = def.codeDigits ?? 4
@@ -387,32 +414,36 @@ export function createStandardHandlers<I>(
     return `${def.codePrefix}${String(highest + 1).padStart(digits, '0')}`
   }
 
-  /** Reads the body, checks the employee and the type's fields, and the restriction. */
+  /** Reads a `RequestIn` body, checks the employee and the type's fields, and the restriction. */
   async function readInput(
     request: Request,
     employeeId: string | null,
     ignoreId: string | null,
-  ): Promise<Response | { employeeId: string; payload: Record<string, unknown> }> {
-    const body: unknown = await request.json().catch(() => null)
-    const who = z.object({ employeeId: z.string().min(1).optional() }).safeParse(body)
-    const parsed = def.schema.safeParse(body)
-    if (!parsed.success || !who.success) return invalid('Some fields are not valid.')
-    const id = employeeId ?? who.data.employeeId ?? ME
+  ): Promise<
+    Response | { employeeId: string; payload: Record<string, unknown>; body: RequestBodyIn }
+  > {
+    const raw: unknown = await request.json().catch(() => null)
+    const body = requestBodySchema.safeParse(raw)
+    if (!body.success) return invalid('Some fields are not valid.')
+    const parsed = def.schema.safeParse((def.fromBody ?? defaultFromBody)(body.data))
+    if (!parsed.success) {
+      const fieldErrors = Object.fromEntries(
+        parsed.error.issues.map((issue) => [issue.path.join('.'), issue.message]),
+      )
+      return invalid('Some fields are not valid.', fieldErrors)
+    }
+    const id = employeeId ?? body.data.employeeId ?? ME
     if (!isActive(id)) {
       return invalid('Choose an active employee.', { employeeId: 'Choose an active employee' })
     }
-    const payload = def.toPayload(parsed.data, {
-      employeeId: id,
-      ignoreId,
-      records: records(),
-    })
+    const payload = def.toPayload(parsed.data, { employeeId: id, ignoreId, records: records() })
     if (payload instanceof Response) return payload
     const closed = restrictionFor(def.settingsType, def.dateOf(payload), id)
-    if (closed) return invalid(closed)
-    return { employeeId: id, payload }
+    if (closed) return invalid(closed, { fromDate: closed })
+    return { employeeId: id, payload, body: body.data }
   }
 
-  const path = (suffix = '') => base(`/${def.kind}${suffix}`)
+  const path = (suffix = '') => base(`/${def.typeCode.replaceAll('_', '-')}${suffix}`)
   const guard = async (request: Request) => {
     await latency()
     return requireAuth(request)
@@ -421,82 +452,34 @@ export function createStandardHandlers<I>(
   return [
     ...(def.extraHandlers ?? []),
 
-    http.get(path('/lookups'), async ({ request }) => {
-      const unauthorized = await guard(request)
-      if (unauthorized) return unauthorized
-      const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name)
-      const people = DIRECTORY.map((employee) => ({
-        ...ref(employee.id),
-        department: employee.department,
-        designation: employee.jobTitle,
-        active: profileOf(employee).status === 'active',
-      })).sort(byName)
-      const me = people.find((person) => person.id === ME)
-      if (!me) return notFound()
-      return HttpResponse.json<ApiItem<StandardLookups<object>>>({
-        data: {
-          me,
-          employees: people,
-          departments: departments(),
-          delegators: delegatorsOf(ME, def.settingsType).map(ref),
-          extra: def.lookups ? def.lookups(ME) : {},
-        },
-      })
-    }),
-
+    // My / Subordinates / All: the mock user reaches everyone, so Subordinates is everyone else.
     http.get(path(), async ({ request }) => {
       const unauthorized = await guard(request)
       if (unauthorized) return unauthorized
       const url = new URL(request.url)
+      const view = url.searchParams.get('view') ?? 'my'
       const all = records()
-      const scope = url.searchParams.get('scope') ?? 'my'
-      return listResponse(
-        url,
-        scope === 'all' ? all : all.filter((record) => record.employeeId === ME),
+      const shown =
+        view === 'all'
+          ? all
+          : view === 'subordinates'
+            ? all.filter((record) => record.employeeId !== ME)
+            : all.filter((record) => record.employeeId === ME)
+      return HttpResponse.json<BackendRequestPage>(
+        pageOf(
+          url,
+          shown
+            .filter((record) => matches(def, record, url))
+            .map((record) => ({ row: serializeRequest(record, info(record)) })),
+        ),
       )
-    }),
-
-    http.get(path('/approvals'), async ({ request }) => {
-      const unauthorized = await guard(request)
-      if (unauthorized) return unauthorized
-      const url = new URL(request.url)
-      const view = url.searchParams.get('view') ?? 'requested'
-      const approvers = view === 'delegates' ? delegatorsOf(ME, def.settingsType) : [ME]
-      const reached = (step: StoredStep | null) =>
-        step !== null &&
-        approvers.includes(step.approverId) &&
-        // Reached you: not still waiting, nor skipped because an earlier approver rejected it.
-        step.status !== 'waiting' &&
-        step.status !== 'skipped'
-      const list = records().filter((record) => {
-        if (record.employeeId === ME) return false
-        if (view === 'cancellations') return reached(record.cancelStep)
-        const steps = def.cancellationsView
-          ? record.flow
-          : [...record.flow, ...(record.cancelStep ? [record.cancelStep] : [])]
-        return steps.some(reached)
-      })
-      return listResponse(url, list)
     }),
 
     http.get(path('/:id'), async ({ request, params }) => {
       const unauthorized = await guard(request)
       if (unauthorized) return unauthorized
       const record = find(params.id)
-      if (!record) return notFound()
-      const history = [...record.history]
-        .sort((a, b) => b.at.localeCompare(a.at))
-        .map((entry) => ({
-          id: entry.id,
-          by: ref(entry.byId),
-          delegate: entry.delegate,
-          status: entry.status,
-          remarks: entry.remarks,
-          at: entry.at,
-        }))
-      return HttpResponse.json<ApiItem<RequestDetail<StandardRequest>>>({
-        data: { request: serialize(record), history },
-      })
+      return record ? detail(record) : notFound()
     }),
 
     http.post(path(), async ({ request }) => {
@@ -504,19 +487,23 @@ export function createStandardHandlers<I>(
       if (unauthorized) return unauthorized
       const input = await readInput(request, null, null)
       if (input instanceof Response) return input
-      const record = newStandardRecord(
-        def,
-        {
-          id: createId(def.codePrefix.replace(/[^A-Za-z]/g, '').toLowerCase() || 'rq'),
-          code: nextCode(),
-          employeeId: input.employeeId,
-          createdById: ME,
-        },
-        input.payload,
-        now(),
-      )
+      const at = now()
+      const record: StoredStandardRequest = {
+        ...newStandardRecord(
+          def,
+          {
+            id: createId(def.codePrefix.replace(/[^A-Za-z]/g, '').toLowerCase() || 'rq'),
+            code: nextCode(),
+            employeeId: input.employeeId,
+            createdById: ME,
+          },
+          input.payload,
+          at,
+        ),
+        files: filesFrom(input.body.attachments, at),
+      }
       collection.insert(record)
-      return item(record)
+      return detail(record, 201)
     }),
 
     http.put(path('/:id'), async ({ request, params }) => {
@@ -525,10 +512,14 @@ export function createStandardHandlers<I>(
       const record = find(params.id)
       if (!record) return notFound()
       if (!actionsFor(record).includes('edit')) {
-        return forbidden('Only a pending request nobody has acted on can be edited.')
+        return conflict(
+          'An approver has already acted on this request, so it can no longer be edited.',
+        )
       }
       const input = await readInput(request, record.employeeId, record.id)
       if (input instanceof Response) return input
+      const stale = staleRow(record, input.body.rowVersion)
+      if (stale) return stale
       const at = now()
       const next: StoredStandardRequest = {
         ...record,
@@ -537,7 +528,7 @@ export function createStandardHandlers<I>(
         history: [...record.history, historyEntry(ME, 'Edited', null, at)],
       }
       save(next)
-      return item(next)
+      return detail(next)
     }),
 
     http.delete(path('/:id'), async ({ request, params }) => {
@@ -545,53 +536,13 @@ export function createStandardHandlers<I>(
       if (unauthorized) return unauthorized
       const record = find(params.id)
       if (!record) return notFound()
+      const stale = staleRow(record, new URL(request.url).searchParams.get('rowVersion'))
+      if (stale) return stale
       if (!actionsFor(record).includes('delete')) {
-        return forbidden('Only a pending request nobody has acted on can be deleted.')
+        return conflict('Only a pending request nobody has acted on can be deleted.')
       }
       collection.remove(record.id)
       return new HttpResponse(null, { status: 204 })
-    }),
-
-    http.post(path('/:id/decision'), async ({ request, params }) => {
-      const unauthorized = await guard(request)
-      if (unauthorized) return unauthorized
-      const record = find(params.id)
-      if (!record) return notFound()
-      if (!actionsFor(record).includes('decide')) {
-        return forbidden('This request is not waiting for your decision.')
-      }
-      const parsed = await readBody(request, decisionSchema)
-      if (!parsed.success) return invalid('Some fields are not valid.')
-      const { decision } = parsed.data
-      const remarks = parsed.data.remarks || null
-      const at = now()
-      if (record.status === 'cancelling') {
-        if (decision === 'reject' && !remarks) {
-          return invalid('Give a reason for rejecting.', { remarks: 'Give a reason for rejecting' })
-        }
-        const next = applyCancelDecision(record, decision, ME, remarks, at)
-        if (decision === 'approve') def.onCancelled?.(record)
-        save(decision === 'approve' ? { ...next, effect: undefined } : next)
-        return item(next)
-      }
-      if (decision === 'reject' && !remarks) {
-        return invalid('Give a reason for rejecting.', { remarks: 'Give a reason for rejecting' })
-      }
-      if (decision === 'approve' && def.approveNeedsRemarks && !remarks) {
-        return invalid('Give a reason for approval.', { remarks: 'Give a reason for approval' })
-      }
-      let current = record
-      if (decision === 'approve' && def.decision) {
-        const extras = def.decision.schema.safeParse(parsed.data.extras ?? {})
-        if (!extras.success) return invalid('Fill in the approval fields.')
-        const payload = def.decision.apply(record, extras.data)
-        if (payload instanceof Response) return payload
-        current = { ...record, payload }
-      }
-      const { record: next, completed } = applyDecision(current, decision, ME, remarks, at)
-      const done = completed && def.onCompleted ? { ...next, effect: def.onCompleted(next) } : next
-      save(done)
-      return item(done)
     }),
 
     http.post(path('/:id/cancel'), async ({ request, params }) => {
@@ -599,18 +550,63 @@ export function createStandardHandlers<I>(
       if (unauthorized) return unauthorized
       const record = find(params.id)
       if (!record) return notFound()
-      if (!actionsFor(record).includes('cancel')) {
-        return forbidden('Only your approved requests can be cancelled.')
-      }
-      const parsed = await readBody(request, cancelSchema)
+      const parsed = await readBody(request, cancelBodySchema)
       if (!parsed.success) {
-        return invalid('Give a reason for cancellation.', {
-          reason: 'Give a reason for cancellation',
-        })
+        return invalid('Give a reason for cancellation.', { reason: 'Reason is required.' })
       }
-      const next = requestStandardCancel(def, record, parsed.data.reason, now())
+      const stale = staleRow(record, parsed.data.rowVersion)
+      if (stale) return stale
+      if (!actionsFor(record).includes('cancel')) {
+        return conflict('Only a pending or approved request can be cancelled.')
+      }
+      const at = now()
+      const next =
+        record.status === 'pending'
+          ? withdrawRecord(record, parsed.data.reason, at)
+          : requestStandardCancel(def, record, parsed.data.reason, at)
       save(next)
-      return item(next)
+      return detail(next)
+    }),
+
+    http.post(path('/:id/attachments'), async ({ request, params }) => {
+      const unauthorized = await guard(request)
+      if (unauthorized) return unauthorized
+      const record = find(params.id)
+      if (!record) return notFound()
+      const parsed = await readBody(request, attachmentSchema)
+      const at = now()
+      const file = parsed.success ? filesFrom([parsed.data.fileId], at)[0] : undefined
+      if (!parsed.success || !file) return invalid('Choose a file.', { fileId: 'Choose a file' })
+      const stored = { ...file, label: parsed.data.label ?? null }
+      save({ ...record, files: [...(record.files ?? []), stored], updatedAt: at })
+      return HttpResponse.json<ApiItem<BackendAttachment>>(
+        {
+          data: {
+            id: stored.id,
+            fileId: stored.fileId,
+            name: stored.name,
+            mimeType: null,
+            sizeBytes: null,
+            label: stored.label,
+            url: mockFileUrl(stored.fileId),
+            createdAt: at,
+          },
+        },
+        { status: 201 },
+      )
+    }),
+
+    http.delete(path('/:id/attachments/:attachmentId'), async ({ request, params }) => {
+      const unauthorized = await guard(request)
+      if (unauthorized) return unauthorized
+      const record = find(params.id)
+      if (!record) return notFound()
+      save({
+        ...record,
+        files: (record.files ?? []).filter((file) => file.id !== params.attachmentId),
+        updatedAt: now(),
+      })
+      return new HttpResponse(null, { status: 204 })
     }),
   ]
 }

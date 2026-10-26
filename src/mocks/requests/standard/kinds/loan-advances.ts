@@ -1,24 +1,22 @@
-import {
-  addDays,
-  addMonths,
-  differenceInMonths,
-  format,
-  parse,
-  parseISO,
-  startOfMonth,
-} from 'date-fns'
+import { addDays, addMonths, differenceInMonths, format, parse, startOfMonth } from 'date-fns'
 import { http, HttpResponse } from 'msw'
 import { z } from 'zod'
 
-import type { Paginated } from '@/types/api'
+import type {
+  LoanInstallment,
+  LoanSummary,
+} from '@/features/requests/standard/kinds/loan-advances/loan-advances.types'
+import type { ApiItem, Paginated } from '@/types/api'
 
 import { toProfile } from '../../../attendance/seed'
 import type { MockCollection } from '../../../collection'
-import { DIRECTORY, findEmployee } from '../../../employees/seed'
+import { findEmployee } from '../../../employees/seed'
+import { mockFileUrl } from '../../../files/handlers'
 import { profileOf } from '../../../scheduling/seed'
-import { latency, paginate, readPageParams, requireAuth } from '../../../utils'
-import { base, invalid, today } from '../../http'
-import { mustFind, requestEmployee } from '../../people'
+import { apiPath, latency, paginate, readPageParams, requireAuth } from '../../../utils'
+import type { RequestBodyIn } from '../../backend'
+import { invalid, today } from '../../http'
+import { ME, mustFind } from '../../people'
 import {
   defineStandardKind,
   seedRequest,
@@ -28,7 +26,7 @@ import {
 } from '../engine'
 import {
   loanCategories,
-  type LoanContractType,
+  type LoanEmploymentTypeId,
   loanSettingsHandlers,
   loanTypes,
   resetLoanSettings,
@@ -36,71 +34,84 @@ import {
 } from './loan-advances-settings'
 
 /*
- * Loan & Advances: the person asks for an amount of a type (Settings → Types)
- * and a category, by a date, with guarantors when the type needs them. The
- * type's terms are checked: months of service, the contract types it is
- * offered on, and the gap since the last request of that type. Each approver
- * fills in the approved amount (at most the amount asked), the payment method
- * and the first repayment date; on approval the type's installments are kept
- * on the request, and Settings → Repayment lists them: the approved amount
- * split over No of Installments, one every Gap Between Installments months
- * from the repayment date. A Non Payable type is not repaid.
+ * Loan & Advances (`/requests/loan`, details = LoanDetails): the person asks
+ * for an amount of a type (Settings → Types) and a category, by a date, with
+ * guarantors when the type needs them. The type's terms are checked: months
+ * of service, the contract types it is offered on, one waiting request per
+ * type and the gap since the last request of that type. Approvers may fill in
+ * the approved amount (never more than asked), the payment method and the
+ * repayment date (`details` of the approval); the final approval needs the
+ * amount and the date. The approved loan is repaid in the type's installments
+ * (`/loans/installments`), one every Gap Between Installments months from the
+ * repayment date; a Non Payable type is not repaid.
  */
 
 const ymd = /^\d{4}-\d{2}-\d{2}$/
+const id = z.union([z.string(), z.number()]).transform(String)
 
 const guarantorSchema = z.object({
-  name: z.string().max(200),
-  cnic: z.string().max(40),
-  attachment: z.string().max(200).nullable(),
-  knownSince: z.string().max(20),
-  relationship: z.string().max(60),
-  extensionNo: z.string().max(20),
-  description: z.string().max(1000),
+  name: z.string().trim().min(1).max(200),
+  cnic: z
+    .string()
+    .trim()
+    .min(5)
+    .max(15)
+    .regex(/^[0-9-]+$/),
+  knownSince: z.string().regex(ymd),
+  relationship: z.string().trim().min(1).max(200),
+  extensionNo: z.string().max(20).nullish(),
+  description: z.string().nullish(),
+  fileId: id.nullish(),
 })
 
+/** `details` of RequestIn, with the header's reason and description. */
 const schema = z.object({
-  typeId: z.string().min(1),
-  categoryId: z.string().min(1),
-  requiredAmount: z.number(),
-  requiredDate: z.string().regex(ymd),
-  extensionNo: z.string().max(20),
-  attachment: z.string().max(200).nullable(),
-  reason: z.string().max(1000),
-  guarantors: z.array(guarantorSchema).max(10),
+  loanTypeId: id,
+  loanCategoryId: id.nullish(),
+  amountRequested: z.number().positive(),
+  requiredDate: z.string().regex(ymd).nullish(),
+  extensionNo: z.string().max(20).nullish(),
+  guarantors: z.array(guarantorSchema).max(10).default([]),
+  reason: z.string(),
+  description: z.string().nullish(),
 })
 type Input = z.infer<typeof schema>
-type Guarantor = z.infer<typeof guarantorSchema>
 
-export const PAYMENT_METHODS = ['bank', 'cash', 'pay-order', 'cheque'] as const
+export const PAYMENT_METHODS = ['bank', 'cash', 'pay_order', 'cheque'] as const
 type PaymentMethod = (typeof PAYMENT_METHODS)[number]
 
-const RELATIONSHIPS = ['Family', 'Friends', 'Colleague', 'Relative', 'Neighbour']
+export interface StoredGuarantor {
+  name: string
+  cnic: string
+  knownSince: string
+  relationship: string
+  extensionNo: string | null
+  description: string | null
+  fileId: string | null
+}
 
+/** The stored request: LoanDetails, the header's text, and the type's terms once approved. */
 export interface LoanStored {
-  typeId: string
-  categoryId: string
-  requiredAmount: number
+  loanTypeId: string
+  loanCategoryId: string | null
+  amountRequested: number
   requiredDate: string
-  extensionNo: string
-  attachment: string | null
+  extensionNo: string | null
   reason: string
-  guarantors: Guarantor[]
-  currency: 'PKR'
+  description: string | null
+  guarantors: StoredGuarantor[]
+  currency: string | null
   approvedAmount: number | null
   paymentMethod: PaymentMethod | null
   repaymentDate: string | null
   installments: number | null
-  installmentGapMonths: number | null
+  gapBetweenInstallmentsMonths: number | null
   nonPayable: boolean
-  deductionPayitem: string | null
+  deductionPayItemId: string | null
 }
 
 const day = (date: string) => parse(date, 'yyyy-MM-dd', new Date())
 const iso = (date: Date) => format(date, 'yyyy-MM-dd')
-const long = (date: Date) => format(date, 'd MMM yyyy')
-const money = (amount: number) =>
-  `PKR ${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(amount)}`
 
 const stored = (record: StoredStandardRequest) => record.payload as unknown as LoanStored
 
@@ -108,30 +119,17 @@ const stored = (record: StoredStandardRequest) => record.payload as unknown as L
 let table: MockCollection<StoredStandardRequest> | null = null
 const loans = () => (table?.all() ?? []).filter((record) => record.kind === 'loan-advances')
 
-const CONTRACT_LABELS: Record<LoanContractType, string> = {
-  'management-trainee': 'Management Trainee',
-  'daily-wager': 'Daily Wager',
-  permanent: 'Permanent',
-  contractual: 'Contractual',
-}
-
 /** The person's contract, as the types name them (probation is a permanent contract). */
-function contractOf(employeeId: string): LoanContractType {
+function contractOf(employeeId: string): LoanEmploymentTypeId {
   const employee = findEmployee(employeeId)
   const type = employee ? profileOf(employee).employmentType : 'permanent'
-  if (type === 'contract') return 'contractual'
-  if (type === 'intern') return 'management-trainee'
-  return 'permanent'
+  if (type === 'contract') return 'et_contractual'
+  if (type === 'intern') return 'et_trainee'
+  return 'et_permanent'
 }
 
 const monthsOfService = (employeeId: string) =>
   differenceInMonths(new Date(), day(toProfile(mustFind(employeeId)).joiningDate))
-
-/** The default first repayment: the 1st of the month after the money is needed. */
-function defaultRepaymentDate(requiredDate: string): string {
-  const from = requiredDate > today() ? requiredDate : today()
-  return iso(startOfMonth(addMonths(day(from), 1)))
-}
 
 const APPROVED = new Set<StoredStandardRequest['status']>(['completed', 'cancelling'])
 
@@ -147,13 +145,17 @@ function scheduleOf(record: StoredStandardRequest): Installment[] {
   const { approvedAmount, repaymentDate, installments } = payload
   if (!APPROVED.has(record.status) || payload.nonPayable) return []
   if (!approvedAmount || !repaymentDate || !installments) return []
-  const gap = payload.installmentGapMonths ?? 1
-  const each = Math.round(approvedAmount / installments)
+  const gap = payload.gapBetweenInstallmentsMonths ?? 1
+  const each = Math.floor((approvedAmount / installments) * 100) / 100
+  const start = startOfMonth(day(repaymentDate))
   return Array.from({ length: installments }, (_, index) => ({
     number: index + 1,
-    date: iso(addMonths(day(repaymentDate), index * gap)),
+    date: iso(addMonths(start, index * (gap || 1))),
     // The last installment takes the rounding, so they add up to the approved amount.
-    amount: index === installments - 1 ? approvedAmount - each * (installments - 1) : each,
+    amount:
+      index === installments - 1
+        ? Math.round((approvedAmount - each * (installments - 1)) * 100) / 100
+        : each,
   }))
 }
 
@@ -172,19 +174,10 @@ function totalsOf(employeeId: string) {
   return totals
 }
 
-const LIVE = new Set<StoredStandardRequest['status']>(['pending', 'completed', 'cancelling'])
-
-function checkGuarantors(guarantors: readonly Guarantor[]): string | null {
+function checkGuarantors(guarantors: readonly Input['guarantors'][number][]): string | null {
   for (const [index, guarantor] of guarantors.entries()) {
     const which = guarantors.length > 1 ? `Guarantor ${String(index + 1)}` : 'The guarantor'
-    if (!guarantor.name.trim()) return `${which} needs a name.`
-    if (!/^\d{5}-\d{7}-\d$/.test(guarantor.cnic.trim())) {
-      return `${which}: write the CNIC as 12345-1234567-1.`
-    }
-    if (!ymd.test(guarantor.knownSince) || guarantor.knownSince > today()) {
-      return `${which}: choose when you met, today or earlier.`
-    }
-    if (!RELATIONSHIPS.includes(guarantor.relationship)) return `${which}: choose the relationship.`
+    if (guarantor.knownSince > today()) return `${which}: choose when you met, today or earlier.`
   }
   return null
 }
@@ -198,39 +191,33 @@ function toPayload(
   },
 ): Response | Record<string, unknown> {
   const employee = mustFind(context.employeeId)
-  const type = loanTypes.find(input.typeId)
-  if (!type?.active) {
-    return invalid('Choose a loan & advances type.', { typeId: 'Choose a loan & advances type' })
+  const type = loanTypes.find(input.loanTypeId)
+  if (!type?.isActive) {
+    return invalid('Choose an active loan type.', { loanTypeId: 'Choose an active loan type' })
   }
-  const category = loanCategories.find(input.categoryId)
-  if (!category?.active) {
-    return invalid('Choose a loan & advances category.', {
-      categoryId: 'Choose a loan & advances category',
+  const category = input.loanCategoryId ? loanCategories.find(input.loanCategoryId) : undefined
+  if (input.loanCategoryId && !category?.isActive) {
+    return invalid('Choose an active loan category.', {
+      loanCategoryId: 'Choose an active loan category',
     })
   }
-  if (!Number.isFinite(input.requiredAmount) || input.requiredAmount <= 0) {
-    return invalid('Enter the amount you need.', { requiredAmount: 'Enter the amount' })
-  }
-  if (input.requiredAmount > 100_000_000) {
-    return invalid('Ask for PKR 100,000,000 at most.', { requiredAmount: 'Too large an amount' })
-  }
-  if (input.requiredDate < today()) {
+  const requiredDate = input.requiredDate ?? today()
+  if (requiredDate < today()) {
     return invalid('Choose today or a later day.', { requiredDate: 'Choose today or a later day' })
   }
-  if (!input.reason.trim()) return invalid('Give a reason.', { reason: 'Give a reason' })
+  if (!input.reason.trim()) return invalid('Reason is required.', { reason: 'Reason is required.' })
 
-  // The type's terms: months of service, contract type, gap between requests.
+  // The type's terms: months of service, contract type, one waiting request, gap between requests.
   const months = monthsOfService(employee.id)
-  if (months < type.experienceMonths) {
+  if (months < type.minExperienceMonths) {
     return invalid(
-      `${type.name} needs ${String(type.experienceMonths)} months of service; ${employee.name} has ${String(months)}.`,
-      { typeId: `Needs ${String(type.experienceMonths)} months of service` },
+      `${type.name} needs ${String(type.minExperienceMonths)} months of service; ${employee.name} has ${String(months)}.`,
+      { loanTypeId: `Needs ${String(type.minExperienceMonths)} months of service` },
     )
   }
-  const contract = contractOf(employee.id)
-  if (!type.contractTypes.includes(contract)) {
-    return invalid(`${type.name} is not offered on a ${CONTRACT_LABELS[contract]} contract.`, {
-      typeId: `Not offered on a ${CONTRACT_LABELS[contract]} contract`,
+  if (!type.employmentTypeIds.includes(contractOf(employee.id))) {
+    return invalid(`${type.name} is not offered on this employee's contract type.`, {
+      loanTypeId: 'Not offered on this contract type',
     })
   }
   const sameType = context.records
@@ -238,27 +225,27 @@ function toPayload(
       (record) =>
         record.id !== context.ignoreId &&
         record.employeeId === employee.id &&
-        LIVE.has(record.status) &&
-        stored(record).typeId === type.id,
+        stored(record).loanTypeId === type.id &&
+        record.status !== 'rejected' &&
+        record.status !== 'cancelled',
     )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const waiting = sameType.find((record) => record.status === 'pending')
   if (waiting) {
-    return invalid(`${waiting.code} asks for a ${type.name} and is still pending.`, {
-      typeId: `${waiting.code} is still pending`,
+    return invalid(`${waiting.code} asks for a ${type.name} and is still waiting.`, {
+      loanTypeId: `${waiting.code} is still waiting`,
     })
   }
   const last = sameType[0]
-  if (last && type.requestGapMonths) {
-    const next = addMonths(parseISO(last.createdAt), type.requestGapMonths)
+  if (last && type.gapBetweenRequestsMonths) {
+    const next = addMonths(new Date(last.createdAt), type.gapBetweenRequestsMonths)
     if (next > new Date()) {
       return invalid(
-        `${type.name} allows one request every ${String(type.requestGapMonths)} months; after ${last.code} the next can be made from ${long(next)}.`,
-        { typeId: `Next ${type.name} from ${long(next)}` },
+        `${type.name} allows one request every ${String(type.gapBetweenRequestsMonths)} months.`,
+        { loanTypeId: `Next ${type.name} from ${format(next, 'd MMM yyyy')}` },
       )
     }
   }
-
   if (type.guarantorRequired && input.guarantors.length === 0) {
     return invalid(`${type.name} needs a guarantor.`, { guarantors: 'Add a guarantor' })
   }
@@ -266,219 +253,279 @@ function toPayload(
   if (guarantorError) return invalid(guarantorError, { guarantors: guarantorError })
 
   return {
-    typeId: type.id,
-    categoryId: category.id,
-    requiredAmount: Math.round(input.requiredAmount),
-    requiredDate: input.requiredDate,
-    extensionNo: input.extensionNo.trim(),
-    attachment: input.attachment,
+    loanTypeId: type.id,
+    loanCategoryId: category?.id ?? null,
+    amountRequested: input.amountRequested,
+    requiredDate,
+    extensionNo: input.extensionNo?.trim() ?? null,
     reason: input.reason.trim(),
+    description: input.description?.trim() ?? null,
     guarantors: input.guarantors.map((guarantor) => ({
-      ...guarantor,
-      name: guarantor.name.trim(),
-      cnic: guarantor.cnic.trim(),
-      extensionNo: guarantor.extensionNo.trim(),
-      description: guarantor.description.trim(),
+      name: guarantor.name,
+      cnic: guarantor.cnic,
+      knownSince: guarantor.knownSince,
+      relationship: guarantor.relationship,
+      extensionNo: guarantor.extensionNo?.trim() ?? null,
+      description: guarantor.description?.trim() ?? null,
+      fileId: guarantor.fileId ?? null,
     })),
-    currency: 'PKR',
+    currency: null,
     approvedAmount: null,
     paymentMethod: null,
     repaymentDate: null,
     installments: null,
-    installmentGapMonths: null,
+    gapBetweenInstallmentsMonths: null,
     nonPayable: type.nonPayable,
-    deductionPayitem: type.deductionPayitem,
+    deductionPayItemId: type.deductionPayItemId,
   } satisfies LoanStored
 }
 
-/** The type's terms, kept on the request when it is approved. */
+/** The type's terms, kept on the request when it is approved (the loan the backend makes). */
 const termsOf = (type: StoredLoanType | undefined) => ({
   installments: type?.installments ?? 1,
-  installmentGapMonths: type?.installmentGapMonths ?? 1,
+  gapBetweenInstallmentsMonths: type?.gapBetweenInstallmentsMonths ?? 1,
   nonPayable: type?.nonPayable ?? false,
-  deductionPayitem: type?.deductionPayitem ?? null,
+  deductionPayItemId: type?.deductionPayItemId ?? null,
 })
 
+/** `details` of the approval (ApprovalDetailsIn): what an approver of a loan enters. */
 const decisionSchema = z.object({
-  approvedAmount: z.union([z.string(), z.number()]).nullable().optional(),
-  paymentMethod: z.string().nullable().optional(),
-  repaymentDate: z.string().nullable().optional(),
+  approvedAmount: z.number().positive().nullish(),
+  paymentMethod: z.string().nullish(),
+  repaymentDate: z.string().nullish(),
+  currency: z.string().length(3).nullish(),
 })
 
 /**
- * The approver's fields. From the Approve popup all three are needed; the
- * bulk "Approved" sends none, and then the amount asked, Bank and the default
- * repayment date are used (or what an earlier approver chose).
+ * As `req.usp_request_decide` and `loan.usp_request_apply_loan`: each value is
+ * kept when given (amount above 0 and at most the amount asked, a known
+ * payment method); the final approval needs the amount and the repayment date.
  */
-function applyDecision(
+function applyLoanDecision(
   record: StoredStandardRequest,
   extras: Record<string, unknown>,
 ): Response | Record<string, unknown> {
   const payload = stored(record)
-  const type = loanTypes.find(payload.typeId)
-  if (Object.keys(extras).length === 0) {
-    return {
-      ...payload,
-      currency: 'PKR',
-      approvedAmount: payload.approvedAmount ?? payload.requiredAmount,
-      paymentMethod: payload.paymentMethod ?? 'bank',
-      repaymentDate: payload.repaymentDate ?? defaultRepaymentDate(payload.requiredDate),
-      ...termsOf(type),
-    } satisfies LoanStored
+  const parsed = decisionSchema.safeParse(extras)
+  if (!parsed.success) return invalid('The approval details are not valid.')
+  const { approvedAmount, paymentMethod, repaymentDate, currency } = parsed.data
+  if (approvedAmount !== null && approvedAmount !== undefined) {
+    if (approvedAmount > payload.amountRequested) {
+      const message =
+        'The approved amount must be more than zero and no more than the amount asked.'
+      return invalid(message, { approvedAmount: message })
+    }
   }
-  const errors: Record<string, string> = {}
-  const raw = extras.approvedAmount
-  const amount =
-    typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw.replace(/,/g, '')) : NaN
-  if (!Number.isFinite(amount) || amount <= 0) errors.approvedAmount = 'Enter the approved amount'
-  else if (amount > payload.requiredAmount) {
-    errors.approvedAmount = `At most the amount asked, ${money(payload.requiredAmount)}`
-  }
-  const method = PAYMENT_METHODS.find((value) => value === extras.paymentMethod)
-  if (!method) errors.paymentMethod = 'Choose the payment method'
-  const date = typeof extras.repaymentDate === 'string' ? extras.repaymentDate : ''
-  if (!ymd.test(date)) errors.repaymentDate = 'Choose the repayment date'
-  else if (date < payload.requiredDate) {
-    errors.repaymentDate = 'Choose the required date or a later day'
-  }
-  const first = Object.values(errors)[0]
-  if (first || !method) return invalid(`${first ?? 'Fill in the approval fields'}.`, errors)
-  return {
-    ...payload,
-    currency: 'PKR',
-    approvedAmount: Math.round(amount),
-    paymentMethod: method,
-    repaymentDate: date,
-    ...termsOf(type),
-  } satisfies LoanStored
-}
-
-const numberFilter = (value: string) => {
-  const number = Number(value.replace(/,/g, ''))
-  return Number.isFinite(number) ? number : null
-}
-
-/** Settings → Repayment: every installment of the approved loans. */
-const repaymentsHandler = http.get(
-  base('/loan-advances/settings/repayments'),
-  async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const url = new URL(request.url)
-    const get = (name: string) => url.searchParams.get(name) ?? ''
-    const now = today()
-    const rows = loans().flatMap((record) => {
-      const payload = stored(record)
-      const employee = requestEmployee(mustFind(record.employeeId))
-      const schedule = scheduleOf(record)
-      return schedule.map((installment) => ({
-        id: `${record.id}-${String(installment.number)}`,
-        requestId: record.id,
-        code: record.code,
-        employee: {
-          id: employee.id,
-          name: employee.name,
-          code: employee.code,
-          department: employee.department,
-          photoUrl: employee.photoUrl,
-        },
-        typeId: payload.typeId,
-        typeName: loanTypes.find(payload.typeId)?.name ?? '—',
-        approvedAmount: payload.approvedAmount ?? 0,
-        installment: installment.number,
-        installments: schedule.length,
-        date: installment.date,
-        amount: installment.amount,
-        deductionPayitem: payload.deductionPayitem,
-        status: installment.date <= now ? ('repaid' as const) : ('due' as const),
-      }))
+  const method = paymentMethod ? PAYMENT_METHODS.find((value) => value === paymentMethod) : null
+  if (paymentMethod && !method) {
+    return invalid('Payment method is not valid.', {
+      paymentMethod: 'Payment method is not valid.',
     })
-    const filtered = rows
-      .filter((row) => !get('employeeId') || row.employee.id === get('employeeId'))
-      .filter((row) => !get('department') || row.employee.department === get('department'))
-      .filter((row) => !get('typeId') || row.typeId === get('typeId'))
-      .filter((row) => !get('status') || row.status === get('status'))
-      .filter((row) => !get('from') || row.date >= get('from'))
-      .filter((row) => !get('to') || row.date <= get('to'))
-      .filter((row) => !get('code') || row.code.toLowerCase().includes(get('code').toLowerCase()))
-      .sort((a, b) => a.date.localeCompare(b.date) || a.code.localeCompare(b.code))
-      .map(({ typeId: _typeId, ...row }) => row)
-    const { page, pageSize } = readPageParams(url)
-    return HttpResponse.json<Paginated<(typeof filtered)[number]>>(
-      paginate(filtered, page, pageSize),
-    )
-  },
-)
+  }
+  if (repaymentDate && !ymd.test(repaymentDate)) {
+    return invalid('Choose the repayment date.', { repaymentDate: 'Choose the repayment date.' })
+  }
+  const next: LoanStored = {
+    ...payload,
+    approvedAmount: approvedAmount ?? payload.approvedAmount,
+    paymentMethod: method ?? payload.paymentMethod,
+    repaymentDate: repaymentDate ?? payload.repaymentDate,
+    currency: currency ?? payload.currency ?? 'PKR',
+  }
+  // Bulk approve (no form): the amount asked, cash, and the first of the next month.
+  if (extras.prefill === true) {
+    const now = new Date().toISOString().slice(0, 10)
+    const from = payload.requiredDate > now ? payload.requiredDate : now
+    const [year = 0, month = 1] = from.split('-').map(Number)
+    next.approvedAmount ??= payload.amountRequested
+    next.paymentMethod ??= 'cash'
+    next.repaymentDate ??= `${String(month === 12 ? year + 1 : year)}-${String((month % 12) + 1).padStart(2, '0')}-01`
+  }
+  const index = record.flow.findIndex((step) => step.status === 'pending')
+  const final = index === record.flow.length - 1
+  if (final) {
+    if (!next.approvedAmount || !next.repaymentDate) {
+      const message = 'Approved amount and repayment date are required to approve a loan.'
+      return invalid(message, { approvedAmount: message })
+    }
+    const done: LoanStored = { ...next, ...termsOf(loanTypes.find(payload.loanTypeId)) }
+    return { ...done }
+  }
+  return { ...next }
+}
 
-const usedBy = (field: 'typeId' | 'categoryId', id: string) =>
-  loans().find((record) => stored(record)[field] === id)?.code ?? null
+// --- the Loans module's read endpoints ------------------------------------------------------------
+
+/** `GET /loans/installments?monthFrom&monthTo&status&employeeId`: every installment of the approved loans. */
+/**
+ * The Create form's options (`requests.loan.create`): `GET /requests/options/loan-types
+ * ?employeeId=` (active types with their terms; `eligible` = the person's contract type may
+ * apply) and `GET /requests/options/loan-categories` (active categories).
+ */
+const loanOptionHandlers = [
+  http.get(apiPath('/requests/options/loan-types'), async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const employeeId = new URL(request.url).searchParams.get('employeeId') ?? ME
+    const known = Boolean(findEmployee(employeeId))
+    const rows = loanTypes
+      .all()
+      .filter((type) => type.isActive)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((type) => ({
+        id: type.id,
+        name: type.name,
+        guarantorRequired: type.guarantorRequired,
+        nonPayable: type.nonPayable,
+        minExperienceMonths: type.minExperienceMonths,
+        gapBetweenRequestsMonths: type.gapBetweenRequestsMonths,
+        installments: type.installments,
+        gapBetweenInstallmentsMonths: type.gapBetweenInstallmentsMonths,
+        description: type.description,
+        eligible: known ? type.employmentTypeIds.includes(contractOf(employeeId)) : null,
+      }))
+    return HttpResponse.json({ data: rows })
+  }),
+  http.get(apiPath('/requests/options/loan-categories'), async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const rows = loanCategories
+      .all()
+      .filter((category) => category.isActive)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((category) => ({
+        id: category.id,
+        name: category.name,
+        description: category.description,
+      }))
+    return HttpResponse.json({ data: rows })
+  }),
+]
+
+const installmentsHandler = http.get(apiPath('/loans/installments'), async ({ request }) => {
+  await latency()
+  const unauthorized = requireAuth(request)
+  if (unauthorized) return unauthorized
+  const url = new URL(request.url)
+  const get = (name: string) => url.searchParams.get(name) ?? ''
+  const now = today()
+  const rows: LoanInstallment[] = loans().flatMap((record) => {
+    const payload = stored(record)
+    const employee = findEmployee(record.employeeId)
+    const profile = employee ? toProfile(employee) : null
+    return scheduleOf(record).map((installment) => {
+      const paid = installment.date <= now
+      return {
+        id: `${record.id}-${String(installment.number)}`,
+        loanId: record.id,
+        installmentNo: installment.number,
+        dueMonth: installment.date,
+        amount: installment.amount.toFixed(2),
+        paidAmount: (paid ? installment.amount : 0).toFixed(2),
+        payslipId: null,
+        paidAt: paid ? `${installment.date}T00:00:00` : null,
+        status: paid ? 'paid' : 'due',
+        employeeId: record.employeeId,
+        employeeCode: profile?.code ?? null,
+        employeeName: employee?.name ?? null,
+        loanTypeName: loanTypes.find(payload.loanTypeId)?.name ?? null,
+      }
+    })
+  })
+  const filtered = rows
+    .filter((row) => !get('employeeId') || row.employeeId === get('employeeId'))
+    .filter((row) => !get('status') || row.status === get('status'))
+    .filter((row) => !get('monthFrom') || row.dueMonth >= get('monthFrom'))
+    .filter((row) => !get('monthTo') || row.dueMonth <= get('monthTo'))
+    .sort((a, b) => a.dueMonth.localeCompare(b.dueMonth) || a.loanId.localeCompare(b.loanId))
+  const { page, pageSize } = readPageParams(url)
+  return HttpResponse.json<Paginated<LoanInstallment>>(paginate(filtered, page, pageSize))
+})
+
+/** `GET /loans/summary?employeeId`: the Approve popup's three totals. */
+const summaryHandler = http.get(apiPath('/loans/summary'), async ({ request }) => {
+  await latency()
+  const unauthorized = requireAuth(request)
+  if (unauthorized) return unauthorized
+  const employeeId = new URL(request.url).searchParams.get('employeeId') ?? ''
+  if (!findEmployee(employeeId)) return invalid('Employee not found')
+  const totals = totalsOf(employeeId)
+  return HttpResponse.json<ApiItem<LoanSummary>>({
+    data: {
+      employeeId,
+      totalApproved: totals.approved.toFixed(2),
+      totalRepaid: totals.repaid.toFixed(2),
+      totalRemaining: totals.remaining.toFixed(2),
+    },
+  })
+})
+
+const usedBy = (field: 'loanTypeId' | 'loanCategoryId', value: string) =>
+  loans().find((record) => stored(record)[field] === value)?.code ?? null
 
 const def: StandardKindServer<Input> = {
   kind: 'loan-advances',
-  settingsType: 'lend',
-  codePrefix: 'LA-',
+  typeCode: 'loan',
+  typeName: 'Loan & Advances',
+  settingsType: 'loan',
+  codePrefix: 'RQ-LA-',
   codeDigits: 4,
+  fromBody: (body: RequestBodyIn) => ({
+    ...body.details,
+    reason: body.reason ?? '',
+    description: body.description ?? null,
+  }),
   schema,
   toPayload,
-  // Request Restriction and the From / To filters read the day the money is needed.
+  // Request Restriction reads the day the money is needed.
   dateOf: (payload) => String(payload.requiredDate),
-  present: (payload, record) => {
+  header: (payload) => {
     const value = payload as unknown as LoanStored
     return {
-      ...value,
-      typeName: loanTypes.find(value.typeId)?.name ?? '—',
-      categoryName: loanCategories.find(value.categoryId)?.name ?? '—',
-      totals: totalsOf(record.employeeId),
+      fromDate: value.requiredDate,
+      toDate: value.requiredDate,
+      days: null,
+      reason: value.reason,
+      description: value.description,
+      application: null,
     }
   },
-  filters: {
-    code: (record, value) => record.code.toLowerCase().includes(value.trim().toLowerCase()),
-    typeId: (record, value) => stored(record).typeId === value,
-    amountFrom: (record, value) => {
-      const number = numberFilter(value)
-      return number === null || stored(record).requiredAmount >= number
-    },
-    amountTo: (record, value) => {
-      const number = numberFilter(value)
-      return number === null || stored(record).requiredAmount <= number
-    },
-    location: (record, value) => requestEmployee(mustFind(record.employeeId)).location === value,
-    branch: (record, value) => requestEmployee(mustFind(record.employeeId)).branch === value,
-  },
-  lookups: () => {
-    const people = DIRECTORY.map((employee) => requestEmployee(employee))
-    const names = (values: (string | null)[]) =>
-      [...new Set(values.filter((value): value is string => Boolean(value)))].sort()
+  toDetails: (payload) => {
+    const value = payload as unknown as LoanStored
     return {
-      types: loanTypes
-        .all()
-        .filter((type) => type.active)
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((type) => ({
-          id: type.id,
-          name: type.name,
-          guarantorRequired: type.guarantorRequired,
-          nonPayable: type.nonPayable,
-          experienceMonths: type.experienceMonths,
-          requestGapMonths: type.requestGapMonths,
-          installments: type.installments,
-          installmentGapMonths: type.installmentGapMonths,
-        })),
-      categories: loanCategories
-        .all()
-        .filter((category) => category.active)
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((category) => ({ id: category.id, name: category.name })),
-      locations: names(people.map((person) => person.location)),
-      branches: names(people.map((person) => person.branch)),
+      loanTypeId: value.loanTypeId,
+      loanTypeName: loanTypes.find(value.loanTypeId)?.name ?? null,
+      loanCategoryId: value.loanCategoryId,
+      loanCategoryName: value.loanCategoryId
+        ? (loanCategories.find(value.loanCategoryId)?.name ?? null)
+        : null,
+      amountRequested: value.amountRequested,
+      requiredDate: value.requiredDate,
+      extensionNo: value.extensionNo,
+      approvedAmount: value.approvedAmount,
+      currency: value.currency,
+      paymentMethod: value.paymentMethod,
+      repaymentDate: value.repaymentDate,
+      guarantors: value.guarantors.map((guarantor, index) => ({
+        id: `g${String(index + 1)}`,
+        ...guarantor,
+        fileName: guarantor.fileId ? 'Guarantor file' : null,
+        ...(guarantor.fileId ? { fileUrl: mockFileUrl(guarantor.fileId) } : {}),
+      })),
     }
   },
   decision: {
-    schema: decisionSchema,
-    apply: applyDecision,
+    schema: z.record(z.string(), z.unknown()),
+    apply: applyLoanDecision,
   },
-  extraHandlers: [repaymentsHandler, ...loanSettingsHandlers(usedBy)],
+  extraHandlers: [
+    ...loanOptionHandlers,
+    installmentsHandler,
+    summaryHandler,
+    ...loanSettingsHandlers(usedBy),
+  ],
   seed: () => {
     // The settings start again with the requests (tests reset the requests table).
     resetLoanSettings()
@@ -486,27 +533,32 @@ const def: StandardKindServer<Input> = {
     const inDays = (offset: number) => iso(addDays(new Date(), offset))
     const firstOfMonth = (offsetMonths: number) =>
       iso(startOfMonth(addMonths(new Date(), offsetMonths)))
-    const guarantor = (name: string, cnic: string, relationship: string, years: number) => ({
+    const guarantor = (
+      name: string,
+      cnic: string,
+      relationship: string,
+      years: number,
+    ): StoredGuarantor => ({
       name,
       cnic,
-      attachment: null,
       knownSince: iso(addMonths(new Date(), -12 * years)),
       relationship,
-      extensionNo: '',
-      description: '',
+      extensionNo: null,
+      description: null,
+      fileId: null,
     })
     const make = (
-      id: string,
+      key: string,
       employeeId: string,
       typeId: string,
       categoryId: string,
-      amount: number,
+      amountRequested: number,
       status: StoredStandardRequest['status'],
       options: {
         daysAgo: number
         requiredDate: string
         reason: string
-        guarantors?: Guarantor[]
+        guarantors?: StoredGuarantor[]
         approvedSteps?: number
         approved?: { amount: number; method: PaymentMethod; repaymentDate: string }
         remarks?: string
@@ -515,30 +567,31 @@ const def: StandardKindServer<Input> = {
     ) => {
       const type = loanTypes.find(typeId)
       const approved = options.approved
+      const done = status !== 'pending' && status !== 'rejected'
       return seedRequest(def, {
-        id,
-        code: `LA-${id.slice(-4)}`,
+        id: `la_${key}`,
+        code: `RQ-LA-${key}`,
         employeeId,
         payload: {
-          typeId,
-          categoryId,
-          requiredAmount: amount,
+          loanTypeId: typeId,
+          loanCategoryId: categoryId,
+          amountRequested,
           requiredDate: options.requiredDate,
-          extensionNo: '',
-          attachment: null,
+          extensionNo: null,
           reason: options.reason,
+          description: null,
           guarantors: options.guarantors ?? [],
-          currency: 'PKR',
+          currency: approved ? 'PKR' : null,
           approvedAmount: approved?.amount ?? null,
           paymentMethod: approved?.method ?? null,
           repaymentDate: approved?.repaymentDate ?? null,
-          ...(approved
+          ...(done
             ? termsOf(type)
             : {
                 installments: null,
-                installmentGapMonths: null,
+                gapBetweenInstallmentsMonths: null,
                 nonPayable: type?.nonPayable ?? false,
-                deductionPayitem: type?.deductionPayitem ?? null,
+                deductionPayItemId: type?.deductionPayItemId ?? null,
               }),
         } satisfies LoanStored,
         at: at(options.daysAgo),
@@ -550,61 +603,60 @@ const def: StandardKindServer<Input> = {
     }
     return [
       // HR staff reach the HR manager directly (Approvals → Requested).
-      make('la_0001', 'em_sadia', 'lt_bike', 'lc_personal', 180_000, 'pending', {
+      make('0001', 'em_sadia', 'lt_bike', 'lc_personal', 180_000, 'pending', {
         daysAgo: 1,
         requiredDate: inDays(20),
         reason: 'A bike to commute to the office.',
         guarantors: [guarantor('Nadia Rehman', '35202-1234567-1', 'Friends', 6)],
       }),
       // Bilal Ahmed's team: his approvals are delegated to the HR manager (Delegates).
-      make('la_0002', 'em_haroon', 'lt_laptop', 'lc_education', 150_000, 'pending', {
+      make('0002', 'em_haroon', 'lt_laptop', 'lc_education', 150_000, 'pending', {
         daysAgo: 2,
         requiredDate: inDays(14),
         reason: 'A laptop for the evening course.',
       }),
-      make('la_0003', 'em_zainab', 'lt_laptop', 'lc_education', 120_000, 'pending', {
+      make('0003', 'em_zainab', 'lt_laptop', 'lc_education', 120_000, 'pending', {
         daysAgo: 3,
         requiredDate: inDays(10),
         reason: 'A MacBook for iOS builds at home.',
         approvedSteps: 1,
         approved: { amount: 110_000, method: 'bank', repaymentDate: firstOfMonth(1) },
       }),
-      // Finance goes to Hina Raza first, then the HR manager.
-      make('la_0004', 'em_omer', 'lt_bike', 'lc_personal', 240_000, 'completed', {
+      make('0004', 'em_omer', 'lt_bike', 'lc_personal', 240_000, 'completed', {
         daysAgo: 110,
         requiredDate: iso(addDays(new Date(), -100)),
         reason: 'A bike for the family.',
         guarantors: [guarantor('Kamran Farooq', '35201-7654321-3', 'Family', 20)],
         approved: { amount: 240_000, method: 'bank', repaymentDate: firstOfMonth(-2) },
       }),
-      make('la_0005', 'em_laiba', 'lt_salary', 'lc_emergency', 60_000, 'cancelling', {
+      make('0005', 'em_laiba', 'lt_salary', 'lc_emergency', 60_000, 'cancelling', {
         daysAgo: 8,
         requiredDate: inDays(5),
         reason: 'Hospital bills.',
         approved: { amount: 60_000, method: 'cash', repaymentDate: firstOfMonth(1) },
         cancelReason: 'The insurance paid the bills.',
       }),
-      // The HR manager's own: Daniel Brooks, then Kaleem Murtaza.
-      make('la_0006', 'em_shelley', 'lt_car', 'lc_personal', 1_500_000, 'pending', {
+      // The HR manager's own.
+      make('0006', 'em_shelley', 'lt_car', 'lc_personal', 1_500_000, 'pending', {
         daysAgo: 2,
         requiredDate: inDays(30),
         reason: 'A car for client visits.',
         guarantors: [guarantor('Ahmed Kannes', '35202-2345678-5', 'Family', 30)],
       }),
-      make('la_0007', 'em_shelley', 'lt_salary', 'lc_emergency', 80_000, 'completed', {
+      make('0007', 'em_shelley', 'lt_salary', 'lc_emergency', 80_000, 'completed', {
         daysAgo: 150,
         requiredDate: iso(addDays(new Date(), -140)),
         reason: 'House repairs after the rain.',
         approved: { amount: 80_000, method: 'bank', repaymentDate: firstOfMonth(-3) },
       }),
-      make('la_0008', 'em_mahnoor', 'lt_car', 'lc_personal', 2_000_000, 'rejected', {
+      make('0008', 'em_mahnoor', 'lt_car', 'lc_personal', 2_000_000, 'rejected', {
         daysAgo: 5,
         requiredDate: inDays(25),
         reason: 'A car for the family.',
         guarantors: [guarantor('Ali Raza', '35202-3456789-7', 'Colleague', 4)],
         remarks: 'Please wait until the next review.',
       }),
-      make('la_0009', 'em_rehan', 'lt_bike', 'lc_personal', 150_000, 'cancelled', {
+      make('0009', 'em_rehan', 'lt_bike', 'lc_personal', 150_000, 'cancelled', {
         daysAgo: 40,
         requiredDate: iso(addDays(new Date(), -25)),
         reason: 'A bike to commute.',
@@ -612,19 +664,19 @@ const def: StandardKindServer<Input> = {
         approved: { amount: 150_000, method: 'cheque', repaymentDate: firstOfMonth(1) },
         cancelReason: 'Bought one with my savings.',
       }),
-      make('la_0012', 'em_saad', 'lt_salary', 'lc_emergency', 70_000, 'completed', {
+      make('0012', 'em_saad', 'lt_salary', 'lc_emergency', 70_000, 'completed', {
         daysAgo: 30,
         requiredDate: iso(addDays(new Date(), -20)),
         reason: 'Father’s surgery.',
         approved: { amount: 70_000, method: 'bank', repaymentDate: firstOfMonth(1) },
       }),
-      make('la_0010', 'em_laiba', 'lt_laptop', 'lc_education', 200_000, 'rejected', {
+      make('0010', 'em_laiba', 'lt_laptop', 'lc_education', 200_000, 'rejected', {
         daysAgo: 12,
         requiredDate: inDays(3),
         reason: 'A laptop for recruitment drives.',
         remarks: 'IT will issue a company laptop instead.',
       }),
-      make('la_0011', 'em_shelley', 'lt_medical', 'lc_emergency', 50_000, 'rejected', {
+      make('0011', 'em_shelley', 'lt_medical', 'lc_emergency', 50_000, 'rejected', {
         daysAgo: 20,
         requiredDate: iso(addDays(new Date(), -10)),
         reason: 'Physiotherapy sessions.',

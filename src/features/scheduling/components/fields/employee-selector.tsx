@@ -12,20 +12,19 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { branchResource, locationResource, useOrgList } from '@/features/settings'
+import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { cn } from '@/lib/utils'
 
-import { EMPLOYMENT_TYPE_LABELS, GENDER_LABELS } from '../../constants'
-import { useEmployeeSearch, useSchedulingLookups } from '../../hooks/use-scheduling'
-import {
-  type EmployeeFilters,
-  EMPLOYMENT_TYPES,
-  GENDERS,
-  type PickableEmployee,
-} from '../../types/scheduling.types'
+import { useEmployeeSearch, useOrgLookup } from '../../hooks/use-scheduling'
+import type { EmployeeFilters, PickableEmployee } from '../../types/scheduling.types'
 
 const ALL = '__all__'
 
+/**
+ * Filters a caller may ask for. `GET /employees/lookup` understands a search (`employee`,
+ * sent as `q`), `department` (`departmentId`) and `branch` (`branchId`); the others are
+ * accepted for compatibility and not shown.
+ */
 export type SelectorFilter =
   | 'employee'
   | 'location'
@@ -37,28 +36,23 @@ export type SelectorFilter =
   | 'branch'
   | 'gender'
 
-const ALL_FILTERS: readonly SelectorFilter[] = [
-  'employee',
-  'location',
-  'designation',
-  'department',
-  'grade',
-  'employmentType',
-  'group',
-  'branch',
-  'gender',
-]
+const ALL_FILTERS: readonly SelectorFilter[] = ['employee', 'department', 'branch']
 
 interface EmployeeSelectorProps {
-  /** Which filters the full variant shows (all by default), in this order of the grid. */
+  /** Which filters the full variant shows (search, department, branch by default). */
   filters?: readonly SelectorFilter[]
   value: readonly string[]
   onChange: (ids: string[]) => void
   error?: string | undefined
-  /** `compact` hides the filter grid (Create Scheduling step 2). */
+  /** `compact` shows only the search box (Create Scheduling step 2). */
   variant?: 'full' | 'compact'
   /** The dialog's family: filter labels Inter Medium 16 #000, or Poppins Regular 12 #303030. */
   appearance?: 'inter' | 'poppins'
+  /**
+   * The permission the form needs (e.g. `scheduling.schedules.create`): the API lists only
+   * the people the user reaches through it. Defaults to the employee directory.
+   */
+  permission?: string
   className?: string
 }
 
@@ -156,6 +150,10 @@ const PERSON_TYPE = {
 
 function PersonLine({ person, table = false }: { person: PickableEmployee; table?: boolean }) {
   const type = PERSON_TYPE[table ? 'table' : 'list']
+  const subtitle =
+    [person.designationName ?? person.jobTitleName, person.departmentName]
+      .filter(Boolean)
+      .join(' · ') || person.branchName
   return (
     <span className={cn('flex min-w-0 items-center gap-2.5', type.root)}>
       <EmployeeAvatar name={person.name} className="size-7" />
@@ -163,16 +161,21 @@ function PersonLine({ person, table = false }: { person: PickableEmployee; table
         <span className={cn('block truncate', type.name)}>
           {person.name} <span className={type.code}>({person.code})</span>
         </span>
-        <span className={cn('block truncate', type.designation)}>{person.designation}</span>
+        {subtitle && <span className={cn('block truncate', type.designation)}>{subtitle}</span>}
       </span>
     </span>
   )
 }
 
+const searchClass =
+  'h-10 w-full rounded-md border border-input bg-card px-3 text-base text-field-foreground outline-none placeholder:text-label focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/25 sm:text-sm'
+
 /**
- * "Select Employees" from the designs: filters (Employee, Location,
- * Designation, Department, Grade, Employment Type, Group, Branch, Gender),
- * "All Employees" with checkboxes and "All", and "Selected Employees" chips.
+ * "Select Employees" from the designs: a search box and the Department / Branch filters,
+ * "All Employees" with checkboxes and "All", and "Selected Employees" chips. People come
+ * from `GET /employees/lookup` (only those the user reaches through `permission`): the
+ * search runs on the server, the list shows a page at a time and "Load more" reads the
+ * next, so any number of people can be reached. "All" ticks the people shown.
  */
 export function EmployeeSelector({
   value,
@@ -181,127 +184,74 @@ export function EmployeeSelector({
   variant = 'full',
   appearance = 'inter',
   filters: shownFilters = ALL_FILTERS,
+  permission = 'employees.directory.view',
   className,
 }: EmployeeSelectorProps) {
-  const show = (filter: SelectorFilter) => shownFilters.includes(filter)
+  const show = (filter: SelectorFilter) => variant === 'full' && shownFilters.includes(filter)
   const errorId = useId()
   const allId = useId()
-  const [filters, setFilters] = useState<EmployeeFilters & { search?: string }>({})
-  const lookups = useSchedulingLookups()
-  const locations = useOrgList(locationResource, { page: 1, pageSize: 100 })
-  const branches = useOrgList(branchResource, { page: 1, pageSize: 100 })
-  const results = useEmployeeSearch({ ...filters, status: 'active' })
+  const [text, setText] = useState('')
+  const [filters, setFilters] = useState<Omit<EmployeeFilters, 'search'>>({})
+  const search = useDebouncedValue(text.trim(), 250)
+  const departments = useOrgLookup('departments', show('department'))
+  const branches = useOrgLookup('branches', show('branch'))
+  const results = useEmployeeSearch(permission, { ...filters, ...(search ? { search } : {}) })
+  // People picked earlier stay named after the list moves on to another search.
+  const [picked, setPicked] = useState<ReadonlyMap<string, PickableEmployee>>(new Map())
   const selected = new Set(value)
-  const people = results.data ?? []
-  const everyone = new Map((lookups.data?.employees ?? []).map((person) => [person.id, person]))
+  const people = results.rows
+  const known = new Map([...picked, ...people.map((person) => [person.id, person] as const)])
   const allShown = people.length > 0 && people.every((person) => selected.has(person.id))
 
-  const set = (patch: Partial<EmployeeFilters & { search?: string }>) => {
+  const remember = (persons: readonly PickableEmployee[]) => {
+    setPicked((current) => new Map([...current, ...persons.map((p) => [p.id, p] as const)]))
+  }
+  const set = (patch: Partial<Omit<EmployeeFilters, 'search'>>) => {
     setFilters((current) => ({ ...current, ...patch }))
   }
-  const toggle = (id: string, on: boolean) => {
+  const toggle = (person: PickableEmployee, on: boolean) => {
     const next = new Set(selected)
-    if (on) next.add(id)
-    else next.delete(id)
+    if (on) {
+      next.add(person.id)
+      remember([person])
+    } else next.delete(person.id)
     onChange([...next])
   }
-  const options = (values: readonly string[] | undefined) =>
-    (values ?? []).map((item) => ({ value: item, label: item }))
+  const lookupOptions = (items: readonly { id: string; name: string }[] | undefined) =>
+    (items ?? []).map((item) => ({ value: item.id, label: item.name }))
+
+  const searchBox = (
+    <input
+      type="search"
+      aria-label="Search employees"
+      placeholder="Search name or code"
+      value={text}
+      onChange={(event) => {
+        setText(event.target.value)
+      }}
+      className={searchClass}
+    />
+  )
 
   return (
     <div className={cn('grid gap-6', className)}>
       {variant === 'full' && (
         <div className="grid gap-x-6 gap-y-4 @xl:grid-cols-2 @3xl:grid-cols-3">
           {show('employee') && (
-            <FilterField
-              appearance={appearance}
-              label="Employee"
-              placeholder="Select Employee"
-              options={(lookups.data?.employees ?? []).map((person) => ({
-                value: person.id,
-                label: `${person.name} (${person.code})`,
-              }))}
-              value={filters.employeeId}
-              onChange={(employeeId) => {
-                set({ employeeId })
-              }}
-            />
-          )}
-          {show('location') && (
-            <FilterField
-              appearance={appearance}
-              label="Location"
-              placeholder="Select Location"
-              options={(locations.data?.data ?? []).map((item) => ({
-                value: item.id,
-                label: item.name,
-              }))}
-              value={filters.locationId}
-              onChange={(locationId) => {
-                set({ locationId })
-              }}
-            />
-          )}
-          {show('designation') && (
-            <FilterField
-              appearance={appearance}
-              label="Designation"
-              placeholder="Select Designation"
-              options={options(lookups.data?.designations)}
-              value={filters.designation}
-              onChange={(designation) => {
-                set({ designation })
-              }}
-            />
+            <div className="grid gap-2">
+              <span className={FILTER_TYPE[appearance].label}>Employee</span>
+              {searchBox}
+            </div>
           )}
           {show('department') && (
             <FilterField
               appearance={appearance}
               label="Department"
               placeholder="Select Department"
-              options={options(lookups.data?.departments)}
-              value={filters.department}
-              onChange={(department) => {
-                set({ department })
-              }}
-            />
-          )}
-          {show('grade') && (
-            <FilterField
-              appearance={appearance}
-              label="Grade"
-              placeholder="Select Grade"
-              options={options(lookups.data?.grades)}
-              value={filters.grade}
-              onChange={(grade) => {
-                set({ grade })
-              }}
-            />
-          )}
-          {show('employmentType') && (
-            <FilterField
-              appearance={appearance}
-              label="Employment Type"
-              placeholder="Select Employment"
-              options={EMPLOYMENT_TYPES.map((type) => ({
-                value: type,
-                label: EMPLOYMENT_TYPE_LABELS[type],
-              }))}
-              value={filters.employmentType}
-              onChange={(employmentType) => {
-                set({ employmentType: EMPLOYMENT_TYPES.find((type) => type === employmentType) })
-              }}
-            />
-          )}
-          {show('group') && (
-            <FilterField
-              appearance={appearance}
-              label="Group"
-              placeholder="Select Group"
-              options={options(lookups.data?.groups)}
-              value={filters.group}
-              onChange={(group) => {
-                set({ group })
+              options={lookupOptions(departments.data)}
+              value={filters.departmentId}
+              onChange={(departmentId) => {
+                set({ departmentId })
               }}
             />
           )}
@@ -310,25 +260,10 @@ export function EmployeeSelector({
               appearance={appearance}
               label="Branch"
               placeholder="Select Branch"
-              options={(branches.data?.data ?? []).map((item) => ({
-                value: item.id,
-                label: item.name,
-              }))}
+              options={lookupOptions(branches.data)}
               value={filters.branchId}
               onChange={(branchId) => {
                 set({ branchId })
-              }}
-            />
-          )}
-          {show('gender') && (
-            <FilterField
-              appearance={appearance}
-              label="Gender"
-              placeholder="Gender"
-              options={GENDERS.map((gender) => ({ value: gender, label: GENDER_LABELS[gender] }))}
-              value={filters.gender}
-              onChange={(gender) => {
-                set({ gender: GENDERS.find((item) => item === gender) })
               }}
             />
           )}
@@ -352,24 +287,14 @@ export function EmployeeSelector({
                     if (checked === true) next.add(person.id)
                     else next.delete(person.id)
                   })
+                  if (checked === true) remember(people)
                   onChange([...next])
                 }}
               />
               All
             </label>
           </div>
-          {variant === 'compact' && (
-            <input
-              type="search"
-              aria-label="Search employees"
-              placeholder="Search name, id or designation"
-              value={filters.search ?? ''}
-              onChange={(event) => {
-                set({ search: event.target.value })
-              }}
-              className="h-10 rounded-md border border-input bg-card px-3 text-base text-field-foreground outline-none placeholder:text-label focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/25 sm:text-sm"
-            />
-          )}
+          {(variant === 'compact' || !shownFilters.includes('employee')) && searchBox}
           <ul
             aria-describedby={error ? errorId : undefined}
             className={cn(
@@ -385,23 +310,42 @@ export function EmployeeSelector({
               </li>
             ) : people.length === 0 ? (
               <li className="px-3 py-6 text-center text-sm text-muted-foreground">
-                No employees match these filters.
+                {results.isError
+                  ? (results.error?.message ?? 'Employees could not be loaded.')
+                  : 'No employees match these filters.'}
               </li>
             ) : (
-              people.map((person) => (
-                <li key={person.id}>
-                  <label className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 hover:bg-muted">
-                    <PersonLine person={person} table={variant === 'compact'} />
-                    <Checkbox
-                      aria-label={`Select ${person.name}`}
-                      checked={selected.has(person.id)}
-                      onCheckedChange={(checked) => {
-                        toggle(person.id, checked === true)
-                      }}
-                    />
-                  </label>
-                </li>
-              ))
+              <>
+                {people.map((person) => (
+                  <li key={person.id}>
+                    <label className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 hover:bg-muted">
+                      <PersonLine person={person} table={variant === 'compact'} />
+                      <Checkbox
+                        aria-label={`Select ${person.name}`}
+                        checked={selected.has(person.id)}
+                        onCheckedChange={(checked) => {
+                          toggle(person, checked === true)
+                        }}
+                      />
+                    </label>
+                  </li>
+                ))}
+                {results.hasMore && (
+                  <li className="flex items-center justify-between gap-3 border-t px-3 py-2">
+                    <span className="font-sans text-xs text-muted-foreground">
+                      Showing {people.length} of {results.total}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={results.isFetchingMore}
+                      onClick={results.loadMore}
+                      className="rounded-sm font-sans text-sm font-medium text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50"
+                    >
+                      {results.isFetchingMore ? 'Loading…' : 'Load more'}
+                    </button>
+                  </li>
+                )}
+              </>
             )}
           </ul>
         </section>
@@ -418,7 +362,7 @@ export function EmployeeSelector({
           ) : (
             <ul className="grid grid-cols-1 gap-2 @md:grid-cols-2 @4xl:grid-cols-3">
               {value.map((id) => {
-                const person = everyone.get(id)
+                const person = known.get(id)
                 return (
                   <li
                     key={id}
@@ -427,13 +371,13 @@ export function EmployeeSelector({
                     {person ? (
                       <PersonLine person={person} />
                     ) : (
-                      <span className="text-sm">{id}</span>
+                      <span className="text-sm">Employee {id}</span>
                     )}
                     <button
                       type="button"
                       aria-label={`Remove ${person?.name ?? id}`}
                       onClick={() => {
-                        toggle(id, false)
+                        onChange(value.filter((item) => item !== id))
                       }}
                       className="flex size-6 shrink-0 items-center justify-center rounded-full bg-destructive text-white outline-none hover:bg-destructive/90 focus-visible:ring-2 focus-visible:ring-ring/50"
                     >

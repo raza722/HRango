@@ -1,59 +1,54 @@
-import { type SyntheticEvent, useId } from 'react'
-import { useController, useForm } from 'react-hook-form'
+import { type SyntheticEvent, useId, useState } from 'react'
+import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
-import { CheckboxField, FormField, SelectField, TextareaField, TextField } from '@/components/form'
+import { CheckboxField, SelectField, TextareaField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  AttachmentField,
-  btn,
-  DateField,
-  footerButton,
-  PayrollDialog,
-  RsField,
-  TwoWaySwitch,
-} from '@/features/payroll'
+import { btn, DateField, footerButton, PayrollDialog, RsField } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import type { FileRef } from '@/lib/files'
 import { cn } from '@/lib/utils'
 
-import { useAsset, useAssetLookups, useSaveAsset } from '../../hooks/use-assets'
-import { ASSET_CONDITIONS, type AssetDetail } from '../../types/assets.types'
+import { ASSET_CONDITION_LABELS, ASSET_STATUS_LABELS } from '../../constants'
+import { useAsset, useAssetTypeOptions, useSaveAsset } from '../../hooks/use-assets'
+import { type Asset, ASSET_CONDITIONS } from '../../types/assets.types'
+import { UploadField } from '../shared/upload-field'
 import { viewFieldsClass } from './view-fields'
 
-const schema = z.object({
-  name: z.string().trim().min(1, 'Enter the name').max(80, 'Keep it under 80 characters'),
-  assetTypeId: z.string().min(1, 'Choose the asset type'),
-  identificationNumber: z
+const optional = (max: number) =>
+  z
     .string()
     .trim()
-    .min(1, 'Enter the identification number')
-    .max(40, 'Keep it under 40 characters'),
-  taxable: z.boolean(),
-  condition: z.enum(ASSET_CONDITIONS),
-  manufacturer: z.string().trim().max(60, 'Keep it under 60 characters'),
-  model: z.string().trim().max(60, 'Keep it under 60 characters'),
-  attachmentName: z.string().nullable(),
-  currentValue: z.string().refine((value) => Number(value.replace(/,/g, '')) > 0, {
-    message: 'Enter the current value',
-  }),
-  acquiredDate: z.string().min(1, 'Choose the acquired date'),
-  description: z.string().trim().max(500, 'Keep it under 500 characters'),
+    .max(max, `Keep it under ${String(max)} characters`)
+
+const schema = z.object({
+  name: z.string().trim().min(1, 'Enter the name').max(200, 'Keep it under 200 characters'),
+  assetTypeId: z.string().min(1, 'Choose the asset type'),
+  identificationNo: optional(100),
+  isTaxable: z.boolean(),
+  assetCondition: z.enum(ASSET_CONDITIONS),
+  manufacturer: optional(100),
+  model: optional(100),
+  currentValue: z.string().refine((value) => {
+    const text = value.replace(/,/g, '').trim()
+    return text === '' || (Number.isFinite(Number(text)) && Number(text) >= 0)
+  }, 'Enter an amount of 0 or more'),
+  acquiredDate: z.string(),
+  description: optional(2000),
 })
 type Values = z.infer<typeof schema>
 
-const toValues = (asset: AssetDetail | undefined): Values => ({
+const toValues = (asset: Asset | undefined): Values => ({
   name: asset?.name ?? '',
   assetTypeId: asset?.assetTypeId ?? '',
-  identificationNumber: asset?.identificationNumber ?? '',
-  taxable: asset?.taxable ?? true,
-  // Create draws the switch off, on Old.
-  condition: asset?.condition ?? 'old',
+  identificationNo: asset?.identificationNo ?? '',
+  isTaxable: asset?.isTaxable ?? false,
+  assetCondition: asset?.assetCondition ?? 'new',
   manufacturer: asset?.manufacturer ?? '',
   model: asset?.model ?? '',
-  attachmentName: asset?.attachmentName ?? null,
-  currentValue: asset ? String(asset.currentValue) : '',
+  currentValue: asset?.currentValue === null || !asset ? '' : String(asset.currentValue),
   acquiredDate: asset?.acquiredDate ?? '',
   description: asset?.description ?? '',
 })
@@ -69,16 +64,18 @@ const TITLES: Record<Mode, string> = {
 const FIELDS = [
   'name',
   'assetTypeId',
-  'identificationNumber',
+  'identificationNo',
+  'assetCondition',
   'currentValue',
   'acquiredDate',
 ] as const
 const DATE = 'MMMM d, yyyy'
+const blank = (text: string) => (text.trim() === '' ? null : text.trim())
 
 /**
  * "Asset Create" / Edit / View: Name, Asset Type, Identification Number,
- * Taxable and Condition (Old / New), Manufacturer, Model, Attachment, Current
- * Value, Acquired date and Description. View has the orange History button.
+ * Taxable and Condition (New / Old / Fair), Manufacturer, Model, Attachment,
+ * Current Value, Acquired date and Description. View has the orange History button.
  */
 export function AssetDialog({
   id,
@@ -109,40 +106,43 @@ function AssetForm({
   onClose,
   onHistory,
 }: {
-  asset: AssetDetail | undefined
+  asset: Asset | undefined
   mode: Mode
   onClose: () => void
   onHistory?: (() => void) | undefined
 }) {
   const formId = useId()
-  const lookups = useAssetLookups()
+  const types = useAssetTypeOptions()
   const save = useSaveAsset()
   const readOnly = mode === 'view'
-  const creating = mode === 'create'
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues(asset) })
-  const condition = useController({ control: form.control, name: 'condition' })
-  const attachment = useController({ control: form.control, name: 'attachmentName' })
+  const [attachment, setAttachment] = useState<FileRef | null>(asset?.file ?? null)
   // Only active types can be chosen; an edited asset keeps its own type even if it is not.
-  const types = (lookups.data?.assetTypes ?? [])
-    .filter((type) => type.active || type.id === asset?.assetTypeId)
+  const typeOptions = (types.data ?? [])
+    .filter((type) => type.isActive || type.id === asset?.assetTypeId)
     .map((type) => ({ value: type.id, label: type.name }))
+  if (asset && !typeOptions.some((option) => option.value === asset.assetTypeId)) {
+    typeOptions.push({ value: asset.assetTypeId, label: asset.assetTypeName })
+  }
 
   const submit = form.handleSubmit(async (values) => {
+    const value = values.currentValue.replace(/,/g, '').trim()
     try {
       await save.mutateAsync({
         id: asset?.id,
         input: {
-          name: values.name,
+          name: values.name.trim(),
           assetTypeId: values.assetTypeId,
-          identificationNumber: values.identificationNumber,
-          taxable: values.taxable,
-          condition: values.condition,
-          manufacturer: values.manufacturer,
-          model: values.model,
-          attachmentName: values.attachmentName,
-          currentValue: Number(values.currentValue.replace(/,/g, '')),
-          acquiredDate: values.acquiredDate,
-          description: values.description,
+          identificationNo: blank(values.identificationNo),
+          isTaxable: values.isTaxable,
+          assetCondition: values.assetCondition,
+          manufacturer: blank(values.manufacturer),
+          model: blank(values.model),
+          currentValue: value === '' ? null : Number(value),
+          acquiredDate: values.acquiredDate || null,
+          description: blank(values.description),
+          fileId: attachment?.id ?? null,
+          rowVersion: asset?.rowVersion,
         },
       })
       onClose()
@@ -192,41 +192,36 @@ function AssetForm({
           name="assetTypeId"
           label="Asset Type"
           placeholder="Select Asset Type"
-          options={types}
+          options={typeOptions}
           required
           disabled={readOnly}
         />
         <TextField
           control={form.control}
-          name="identificationNumber"
+          name="identificationNo"
           label="Identification Number"
-          required
           disabled={readOnly}
         />
         {/* Taxable and Condition share a row, as drawn. */}
         <div className="grid gap-5 @2xl:grid-cols-2">
           <CheckboxField
             control={form.control}
-            name="taxable"
+            name="isTaxable"
             label="Taxable"
             tone="violet"
             disabled={readOnly}
           />
-          <FormField label="Condition">
-            {(a11y) => (
-              <TwoWaySwitch
-                id={a11y.id}
-                label="Condition"
-                options={[
-                  { value: 'old', label: 'Old' },
-                  { value: 'new', label: 'New' },
-                ]}
-                value={condition.field.value}
-                disabled={readOnly}
-                onChange={condition.field.onChange}
-              />
-            )}
-          </FormField>
+          <SelectField
+            control={form.control}
+            name="assetCondition"
+            label="Condition"
+            options={ASSET_CONDITIONS.map((value) => ({
+              value,
+              label: ASSET_CONDITION_LABELS[value],
+            }))}
+            required
+            disabled={readOnly}
+          />
         </div>
         <TextField
           control={form.control}
@@ -235,23 +230,22 @@ function AssetForm({
           disabled={readOnly}
         />
         <TextField control={form.control} name="model" label="Model" disabled={readOnly} />
-        <AttachmentField
-          value={attachment.field.value}
-          onChange={attachment.field.onChange}
+        <UploadField
+          value={attachment}
+          onChange={setAttachment}
+          module="assets"
           disabled={readOnly}
         />
         <RsField
           control={form.control}
           name="currentValue"
           label="Current Value"
-          required={creating}
           disabled={readOnly}
         />
         <DateField
           control={form.control}
           name="acquiredDate"
           label="Acquired date"
-          required={creating}
           disabled={readOnly}
           maxDate={new Date()}
           display={DATE}
@@ -261,8 +255,14 @@ function AssetForm({
           name="description"
           label="Description"
           disabled={readOnly}
-          maxLength={500}
+          maxLength={2000}
         />
+        {readOnly && asset && (
+          <p className="font-inter text-sm text-muted-foreground">
+            Status: {ASSET_STATUS_LABELS[asset.status]}
+            {asset.holderName ? ` · Allocated to ${asset.holderName}` : ''}
+          </p>
+        )}
       </form>
     </PayrollDialog>
   )

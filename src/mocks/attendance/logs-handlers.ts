@@ -3,18 +3,15 @@ import { http, HttpResponse } from 'msw'
 import { z } from 'zod'
 
 import {
-  type AttendanceLogRow,
   type FileImportResult,
-  type MachineImportResult,
-  type MachineInfo,
   PUNCH_TYPES,
+  type PunchLog as WirePunch,
 } from '@/features/attendance'
 import { eachDay } from '@/features/scheduling'
 import type { ApiItem, Paginated } from '@/types/api'
 
-import { DIRECTORY, findEmployee } from '../employees/seed'
-import { profileOf } from '../scheduling/seed'
-import { branches } from '../settings/handlers'
+import { DIRECTORY, type DirectoryEmployee, findEmployee } from '../employees/seed'
+import { CURRENT_EMPLOYEE_ID, profileOf } from '../scheduling/seed'
 import {
   apiPath,
   createId,
@@ -24,9 +21,16 @@ import {
   readPageParams,
   requireAuth,
 } from '../utils'
-import { attendancePunches } from './db'
+import { fromWire, punchTypeFromWire, punchVersion, toWirePunch } from './backend'
+import { attendanceIgnored, attendancePunches, type StoredPunch } from './db'
 import { computeRange, takeSnapshot } from './engine'
-import { MACHINE_IDS, machineBranch, machineSync } from './settings-db'
+import type { PunchLog } from './types'
+
+/**
+ * Attendance Logs as the API has them (`/api/attendance/logs`): list (≤ 31 days), export,
+ * import (JSON lines and CSV), one punch, create / edit / delete manual and imported punches,
+ * and ignore the others.
+ */
 
 const base = (path: string) => apiPath(`/attendance/logs${path}`)
 const invalid = (message: string, fieldErrors?: Record<string, string>) =>
@@ -34,6 +38,7 @@ const invalid = (message: string, fieldErrors?: Record<string, string>) =>
     code: 'VALIDATION_FAILED',
     ...(fieldErrors ? { fieldErrors } : {}),
   })
+const notFound = () => errorResponse(404, 'Punch not found', { code: 'NOT_FOUND' })
 const today = () => format(new Date(), 'yyyy-MM-dd')
 /** Longest range the log list serves at once. */
 const MAX_DAYS = 31
@@ -43,56 +48,103 @@ async function readBody<T>(request: Request, schema: z.ZodType<T>) {
   return schema.safeParse(body)
 }
 
-const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose a date')
-const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Enter a time')
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+const localDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/)
 
-const logSchema = z.object({
-  employeeId: z.string().min(1, 'Choose the employee'),
-  date: day,
-  time,
-  type: z.enum(PUNCH_TYPES),
-  description: z.string().trim().max(200),
+const punchSchema = z.object({
+  employeeId: z.union([z.string(), z.number()]).transform(String),
+  punchedAt: localDateTime,
+  punchType: z.enum(PUNCH_TYPES),
+  breakTypeId: z.union([z.string(), z.number()]).nullable().optional(),
+  remarks: z.string().max(2000).nullable().optional(),
+  rowVersion: z.string().nullable().optional(),
 })
 
-const editable = (source: string) => source === 'manual' || source === 'import'
-
-function machineInfo(id: string): MachineInfo {
-  const branchId = machineBranch(id)
-  return {
-    id,
-    label: `Machine (${id})`,
-    branch: branchId ? (branches.find(branchId)?.name ?? null) : null,
-    lastSyncedAt: machineSync.find(id)?.lastSyncedAt ?? null,
-  }
+interface Found {
+  log: PunchLog
+  employee: DirectoryEmployee
+  stored: StoredPunch | undefined
 }
 
-/** Every punch of everyone (or one person) between two dates, newest first. */
-function logRows(from: string, to: string, employeeId: string | null): AttendanceLogRow[] {
+/** Every punch of the people between two dates, newest first. */
+function logRows(from: string, to: string, employees: readonly DirectoryEmployee[]) {
   const snap = takeSnapshot()
-  const people = DIRECTORY.filter((employee) => (employeeId ? employee.id === employeeId : true))
-  return people
-    .flatMap((employee) => {
-      const ref = { id: employee.id, name: employee.name, code: profileOf(employee).code }
-      return computeRange(snap, employee.id, from, to).flatMap((item) =>
-        item.logs.map((log) => ({
-          ...log,
-          date: item.day.date,
-          employee: ref,
-          editable: editable(log.source) && attendancePunches.find(log.id) !== undefined,
-        })),
-      )
-    })
-    .sort((a, b) => b.at.localeCompare(a.at) || a.employee.name.localeCompare(b.employee.name))
+  return employees
+    .flatMap((employee) =>
+      computeRange(snap, employee.id, from, to).flatMap((item) =>
+        item.logs.map((log) => toWirePunch(log, employee)),
+      ),
+    )
+    .sort(
+      (a, b) =>
+        b.punchedAt.localeCompare(a.punchedAt) || a.employeeName.localeCompare(b.employeeName),
+    )
 }
 
-/** Today's punches a machine has handed over so far. */
-function machineCounts(id: string) {
-  const date = today()
-  const rows = logRows(date, date, null).filter((row) => row.machineId === id)
-  return {
-    checkIns: rows.filter((row) => row.type === 'check-in').length,
-    checkOuts: rows.filter((row) => row.type === 'check-out').length,
+const GENERATED = /^pl_(.+)_(\d{4}-\d{2}-\d{2})_(?:check|break)-(?:in|out)_\d+$/
+
+/** A punch by id: a stored one, or one the engine generates for a day. */
+function findPunch(id: string): Found | null {
+  const stored = attendancePunches.find(id)
+  if (stored) {
+    const employee = findEmployee(stored.employeeId)
+    return employee ? { log: stored, employee, stored } : null
   }
+  const match = GENERATED.exec(id)
+  const employee = match?.[1] ? findEmployee(match[1]) : undefined
+  const date = match?.[2]
+  if (!employee || !date) return null
+  const log = computeRange(takeSnapshot(), employee.id, date, date)[0]?.logs.find(
+    (item) => item.id === id,
+  )
+  return log ? { log, employee, stored: undefined } : null
+}
+
+const editable = (found: Found) =>
+  found.stored !== undefined &&
+  (found.stored.source === 'manual' || found.stored.source === 'import')
+
+const conflict = () =>
+  errorResponse(409, 'Someone else changed this punch. Reload it and try again', {
+    code: 'CONFLICT',
+  })
+
+const ownPunch = () =>
+  errorResponse(
+    403,
+    'You cannot enter or change your own punches. Raise a punch request instead.',
+    {
+      code: 'FORBIDDEN',
+    },
+  )
+
+/** Reads a punch body; an error response when it is not valid. */
+async function readPunch(request: Request) {
+  const parsed = await readBody(request, punchSchema)
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]
+    const field = String(issue?.path[0] ?? '')
+    return {
+      error: invalid(
+        issue?.message ?? 'Some fields are not valid.',
+        field ? { [field]: 'Not valid.' } : undefined,
+      ),
+    }
+  }
+  const input = parsed.data
+  const employee = findEmployee(input.employeeId)
+  if (!employee)
+    return { error: invalid('Employee not found.', { employeeId: 'Employee not found.' }) }
+  if (employee.id === CURRENT_EMPLOYEE_ID) return { error: ownPunch() }
+  const at = fromWire(input.punchedAt)
+  if (at.slice(0, 10) > today()) {
+    return {
+      error: invalid('Punches can only be for today or earlier.', {
+        punchedAt: 'Choose today or earlier.',
+      }),
+    }
+  }
+  return { input, employee, at }
 }
 
 export const attendanceLogHandlers = [
@@ -101,193 +153,236 @@ export const attendanceLogHandlers = [
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
     const url = new URL(request.url)
-    const from = url.searchParams.get('from') ?? today()
-    const to = url.searchParams.get('to') ?? from
-    if (!day.safeParse(from).success || !day.safeParse(to).success || to < from) {
-      return invalid('Choose a From date on or before the To date.')
+    const from = url.searchParams.get('fromDate') ?? ''
+    const to = url.searchParams.get('toDate') ?? ''
+    if (!day.safeParse(from).success || !day.safeParse(to).success) {
+      return invalid('Give fromDate and toDate.', { fromDate: 'Field required' })
     }
-    if (eachDay(from, to).length > MAX_DAYS)
-      return invalid(`Choose at most ${MAX_DAYS} days at a time.`)
-    const type = url.searchParams.get('type')
+    if (to < from) return invalid('The end date is before the start date.', { toDate: 'Too early' })
+    if (eachDay(from, to).length > MAX_DAYS) {
+      return invalid(`Choose at most ${MAX_DAYS} days.`, { toDate: 'Too far' })
+    }
+    const employeeId = url.searchParams.get('employeeId')
+    const type = url.searchParams.get('punchType')
     const source = url.searchParams.get('source')
-    const rows = logRows(from, to, url.searchParams.get('employeeId')).filter(
-      (row) => (!type || row.type === type) && (!source || row.source === source),
+    const q = (url.searchParams.get('q') ?? '').trim().toLowerCase()
+    const rows = logRows(
+      from,
+      to,
+      DIRECTORY.filter((employee) => !employeeId || employee.id === employeeId),
+    ).filter(
+      (row) =>
+        (!type || row.punchType === type) &&
+        (!source || row.source === source) &&
+        (!q || `${row.employeeName} ${row.employeeCode}`.toLowerCase().includes(q)),
     )
     const { page, pageSize } = readPageParams(url)
-    return HttpResponse.json<Paginated<AttendanceLogRow>>(paginate(rows, page, pageSize))
+    return HttpResponse.json<Paginated<WirePunch>>(paginate(rows, page, pageSize))
   }),
 
-  http.get(base('/machines'), async ({ request }) => {
+  http.get(base('/export'), async ({ request }) => {
     await latency()
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
-    return HttpResponse.json<ApiItem<MachineInfo[]>>({ data: MACHINE_IDS.map(machineInfo) })
-  }),
-
-  http.post(base(''), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(request, logSchema)
-    if (!parsed.success) {
-      const issue = parsed.error.issues[0]
-      return invalid(
-        issue?.message ?? 'Some fields are not valid.',
-        issue ? { [issue.path.join('.')]: issue.message } : undefined,
-      )
+    const url = new URL(request.url)
+    const from = url.searchParams.get('fromDate') ?? today()
+    const to = url.searchParams.get('toDate') ?? from
+    if (to < from || eachDay(from, to).length > MAX_DAYS) {
+      return invalid(`Choose at most ${MAX_DAYS} days.`, { toDate: 'Too far' })
     }
-    const input = parsed.data
-    const employee = findEmployee(input.employeeId)
-    if (!employee) return invalid('Choose the employee.', { employeeId: 'Choose the employee' })
-    if (input.date > today())
-      return invalid('Punches can only be added for today or earlier.', {
-        date: 'Choose today or earlier',
-      })
-    const id = createId('pl')
-    attendancePunches.insert({
-      id,
-      employeeId: employee.id,
-      date: input.date,
-      type: input.type,
-      at: `${input.date}T${input.time}`,
-      description: input.description || 'Added on Attendance Logs',
-      source: 'manual',
-      machineId: null,
-      manuallyUpdated: true,
+    const rows = logRows(from, to, DIRECTORY)
+    const lines = [
+      'Employee Code,Employee Name,Punched At,Punch Type,Source,Device,Remarks',
+      ...rows.map((row) =>
+        [
+          row.employeeCode,
+          row.employeeName,
+          row.punchedAt,
+          row.punchType,
+          row.source,
+          row.deviceCode ?? '',
+          (row.remarks ?? '').replace(/[",\n]/g, ' '),
+        ].join(','),
+      ),
+    ]
+    return new HttpResponse(lines.join('\n') + '\n', {
+      headers: { 'Content-Type': 'text/csv; charset=utf-8' },
     })
-    return HttpResponse.json<ApiItem<{ id: string }>>({ data: { id } })
   }),
 
-  http.put(base('/:id'), async ({ request, params }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const existing = attendancePunches.find(String(params.id))
-    if (!existing || !editable(existing.source)) {
-      return errorResponse(403, 'Only manual and imported punches can be edited.', {
-        code: 'FORBIDDEN',
-      })
-    }
-    const parsed = await readBody(request, logSchema)
-    if (!parsed.success)
-      return invalid(parsed.error.issues[0]?.message ?? 'Some fields are not valid.')
-    const input = parsed.data
-    if (input.date > today())
-      return invalid('Punches can only be for today or earlier.', {
-        date: 'Choose today or earlier',
-      })
-    attendancePunches.update(existing.id, {
-      ...existing,
-      employeeId: input.employeeId,
-      date: input.date,
-      type: input.type,
-      at: `${input.date}T${input.time}`,
-      description: input.description,
-    })
-    return HttpResponse.json<ApiItem<{ id: string }>>({ data: { id: existing.id } })
-  }),
-
-  http.delete(base('/:id'), async ({ request, params }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const existing = attendancePunches.find(String(params.id))
-    if (!existing || !editable(existing.source)) {
-      return errorResponse(403, 'Only manual and imported punches can be deleted.', {
-        code: 'FORBIDDEN',
-      })
-    }
-    attendancePunches.remove(existing.id)
-    return new HttpResponse(null, { status: 204 })
-  }),
-
-  http.post(base('/import/machines'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(
-      request,
-      z.object({ machineIds: z.array(z.enum(MACHINE_IDS as [string, ...string[]])).min(1) }),
-    )
-    if (!parsed.success)
-      return invalid('Select at least one machine.', { machineIds: 'Select at least one machine' })
-    const stamp = format(new Date(), "yyyy-MM-dd'T'HH:mm")
-    let imported = 0
-    const machines = parsed.data.machineIds.map((id) => {
-      const before = machineCounts(id)
-      const existing = machineSync.find(id)
-      if (existing) machineSync.update(id, { ...existing, lastSyncedAt: stamp })
-      else machineSync.insert({ id, lastSyncedAt: stamp })
-      const after = machineCounts(id)
-      imported += after.checkIns + after.checkOuts - before.checkIns - before.checkOuts
-      return { ...machineInfo(id), ...after }
-    })
-    return HttpResponse.json<ApiItem<MachineImportResult>>({ data: { machines, imported } })
-  }),
-
-  http.post(base('/import/file'), async ({ request }) => {
+  http.post(base('/import'), async ({ request }) => {
     await latency()
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
     const parsed = await readBody(
       request,
       z.object({
-        rows: z
+        lines: z
           .array(
             z.object({
+              line: z.number().nullable().optional(),
               employeeCode: z.string(),
-              date: z.string(),
-              time: z.string(),
-              type: z.string(),
+              punchedAt: z.string(),
+              punchType: z.string().nullable().optional(),
             }),
           )
           .min(1)
-          .max(2000),
+          .max(20000),
       }),
     )
-    if (!parsed.success) return invalid('The file has no rows to import.')
+    if (!parsed.success)
+      return invalid('Give at least one line.', { lines: 'Give at least one line.' })
     const byCode = new Map(
       DIRECTORY.map((employee) => [profileOf(employee).code.toLowerCase(), employee]),
     )
-    const result: FileImportResult = { created: 0, skipped: 0, errors: [] }
-    parsed.data.rows.forEach((row, index) => {
-      const line = index + 2
+    const result: FileImportResult = { created: 0, skipped: 0, failed: 0, errors: [] }
+    parsed.data.lines.forEach((row, index) => {
+      const line = row.line ?? index + 1
       const employee = byCode.get(row.employeeCode.trim().toLowerCase())
-      const type = PUNCH_TYPES.find((item) => item === row.type)
-      if (!employee) result.errors.push(`Line ${line}: no employee with code ${row.employeeCode}`)
-      else if (!day.safeParse(row.date).success || row.date > today())
-        result.errors.push(`Line ${line}: the date must be today or earlier (yyyy-mm-dd)`)
-      else if (!time.safeParse(row.time).success)
-        result.errors.push(`Line ${line}: the time must be HH:mm`)
-      else if (!type)
-        result.errors.push(`Line ${line}: the punch type must be ${PUNCH_TYPES.join(', ')}`)
-      else {
-        const at = `${row.date}T${row.time}`
-        const exists = attendancePunches
-          .all()
-          .some(
-            (punch) => punch.employeeId === employee.id && punch.at === at && punch.type === type,
-          )
-        if (exists) {
-          result.skipped += 1
-          return
-        }
-        attendancePunches.insert({
-          id: createId('pl'),
-          employeeId: employee.id,
-          date: row.date,
-          type,
-          at,
-          description: 'Imported from a file',
-          source: 'import',
-          machineId: null,
-          manuallyUpdated: true,
-        })
-        result.created += 1
+      const type = PUNCH_TYPES.find((item) => item === row.punchType)
+      const at = fromWire(row.punchedAt)
+      const problem = !employee
+        ? `No employee with code ${row.employeeCode}.`
+        : !localDateTime.safeParse(row.punchedAt).success
+          ? 'The time is not valid.'
+          : at.slice(0, 10) > today()
+            ? 'The punch is in the future.'
+            : !type
+              ? 'The punch type is not valid.'
+              : null
+      if (problem || !employee || !type) {
+        result.failed += 1
+        result.errors.push({ line, message: problem ?? 'Not valid.' })
         return
       }
-      result.skipped += 1
+      const legacy = punchTypeFromWire(type)
+      const exists = attendancePunches
+        .all()
+        .some(
+          (punch) => punch.employeeId === employee.id && punch.at === at && punch.type === legacy,
+        )
+      if (exists) {
+        result.skipped += 1
+        return
+      }
+      attendancePunches.insert({
+        id: createId('pl'),
+        employeeId: employee.id,
+        date: at.slice(0, 10),
+        type: legacy,
+        at,
+        description: '',
+        source: 'import',
+        machineId: null,
+        manuallyUpdated: false,
+      })
+      result.created += 1
     })
     return HttpResponse.json<ApiItem<FileImportResult>>({ data: result })
+  }),
+
+  http.get(base('/:id'), async ({ request, params }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const found = findPunch(String(params.id))
+    if (!found) return notFound()
+    return HttpResponse.json<ApiItem<WirePunch>>({ data: toWirePunch(found.log, found.employee) })
+  }),
+
+  http.post(base(''), async ({ request }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const read = await readPunch(request)
+    if (read.error) return read.error
+    const { input, employee, at } = read
+    const punch = attendancePunches.insert({
+      id: createId('pl'),
+      employeeId: employee.id,
+      date: at.slice(0, 10),
+      type: punchTypeFromWire(input.punchType),
+      at,
+      description: input.remarks ?? '',
+      source: 'manual',
+      machineId: null,
+      manuallyUpdated: true,
+    })
+    return HttpResponse.json({ data: toWirePunch(punch, employee) }, { status: 201 })
+  }),
+
+  http.put(base('/:id'), async ({ request, params }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const found = findPunch(String(params.id))
+    if (!found) return notFound()
+    if (!editable(found) || !found.stored) {
+      return errorResponse(
+        409,
+        'Only manual and imported punches can be edited; ignore the others.',
+        {
+          code: 'PUNCH_NOT_EDITABLE',
+        },
+      )
+    }
+    const read = await readPunch(request)
+    if (read.error) return read.error
+    const { input, employee, at } = read
+    if (input.rowVersion !== punchVersion(found.log)) return conflict()
+    const updated = attendancePunches.update(found.stored.id, {
+      ...found.stored,
+      employeeId: employee.id,
+      date: at.slice(0, 10),
+      type: punchTypeFromWire(input.punchType),
+      at,
+      description: input.remarks ?? '',
+      manuallyUpdated: true,
+    })
+    return HttpResponse.json<ApiItem<WirePunch>>({
+      data: toWirePunch(updated ?? found.stored, employee),
+    })
+  }),
+
+  http.patch(base('/:id/ignore'), async ({ request, params }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const found = findPunch(String(params.id))
+    if (!found) return notFound()
+    if (found.employee.id === CURRENT_EMPLOYEE_ID) return ownPunch()
+    const parsed = await readBody(
+      request,
+      z.object({ isIgnored: z.boolean(), rowVersion: z.string().nullable().optional() }),
+    )
+    if (!parsed.success) return invalid('Give isIgnored.', { isIgnored: 'Field required' })
+    if (parsed.data.rowVersion !== punchVersion(found.log)) return conflict()
+    const id = found.log.id
+    if (parsed.data.isIgnored && !attendanceIgnored.find(id)) attendanceIgnored.insert({ id })
+    if (!parsed.data.isIgnored && attendanceIgnored.find(id)) attendanceIgnored.remove(id)
+    return HttpResponse.json<ApiItem<WirePunch>>({ data: toWirePunch(found.log, found.employee) })
+  }),
+
+  http.delete(base('/:id'), async ({ request, params }) => {
+    await latency()
+    const unauthorized = requireAuth(request)
+    if (unauthorized) return unauthorized
+    const found = findPunch(String(params.id))
+    if (!found) return notFound()
+    if (!editable(found) || !found.stored) {
+      return errorResponse(
+        409,
+        'Only manual and imported punches can be deleted; ignore the others.',
+        {
+          code: 'PUNCH_NOT_EDITABLE',
+        },
+      )
+    }
+    if (found.employee.id === CURRENT_EMPLOYEE_ID) return ownPunch()
+    const rowVersion = new URL(request.url).searchParams.get('rowVersion')
+    if (!rowVersion) return invalid('Give the rowVersion.', { rowVersion: 'Field required' })
+    if (rowVersion !== punchVersion(found.log)) return conflict()
+    attendancePunches.remove(found.stored.id)
+    return new HttpResponse(null, { status: 204 })
   }),
 ]

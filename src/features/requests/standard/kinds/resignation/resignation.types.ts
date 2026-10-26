@@ -1,30 +1,27 @@
-/** A Resignation request as the client sees it. */
+/** The API's resignation types. */
+export const RESIGNATION_TYPES = ['resignation', 'voluntary', 'retirement', 'contract_end'] as const
+export type ResignationType = (typeof RESIGNATION_TYPES)[number]
+
+/** `details` of a Resignation request, as the API sends them. */
 export interface ResignationPayload {
-  /** "voluntary", "retirement" or "contract-end"; `typeLabel` is its word. */
-  type: string
-  typeLabel: string
-  resignationDate: string
-  /** The design puts it on the request (the requirements put it on the approval). */
-  lastWorkingDate: string
-  /** Days from the resignation date to the last working date. */
-  noticeDays: number
-  /** "30 days". */
-  noticePeriod: string
-  reason: string
-  attachmentName: string | null
-  /** The End of Employment record the approval opened in Off-boarding, if any. */
-  endOfEmploymentId: string | null
+  resignationType: ResignationType
+  /** yyyy-MM-dd. */
+  resignationDate: string | null
+  /** Optional on the form (Figma); the approver may set it (FRD: before the final approval). */
+  lastWorkingDate: string | null
+  noticePeriodDays: number | null
+  serveNotice: boolean
 }
 
-export interface ResignationInput {
-  employeeId?: string
-  type: string
+/** `details` of POST / PUT /requests/resignation. */
+export interface ResignationDetailsIn {
+  resignationType: ResignationType
   resignationDate: string
-  lastWorkingDate: string
-  reason: string
-  attachmentName: string | null
+  lastWorkingDate: string | null
+  noticePeriodDays: number | null
+  serveNotice: boolean
 }
 
 export interface ResignationLookups {
-  types: { value: string; label: string }[]
+  types: { value: ResignationType; label: string }[]
 }

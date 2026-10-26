@@ -1,16 +1,21 @@
 const MINUTES_PER_DAY = 24 * 60
-const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/
+const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/
 
-/** `"16:15"` → 975; `null` for empty or malformed values. */
+/** `"16:15"` or `"16:15:00"` → 975; `null` for empty or malformed values. */
 export function toMinutes(time: string | null | undefined): number | null {
   const match = time ? TIME_PATTERN.exec(time) : null
   if (!match) return null
   return Number(match[1]) * 60 + Number(match[2])
 }
 
+/** `"09:00:00"` (API) → `"09:00"`; empty stays `null`. */
+export function toHhMm(time: string | null | undefined): string | null {
+  return time ? time.slice(0, 5) : null
+}
+
 /**
- * Length of a shift in minutes. A clock out earlier than the clock in is the
- * next day (22:00 → 06:00 is 480). `null` when either time is missing.
+ * Length of a shift in minutes. A clock out earlier than the clock in is the next day
+ * (22:00 → 06:00 is 480). `null` when either time is missing.
  */
 export function shiftMinutes(
   clockIn: string | null | undefined,

@@ -36,16 +36,16 @@ const confirmYes = async (user: UserEvent) => {
   )
 }
 
-describe('Resignation (the shared standard request pages)', () => {
+describe('Resignation (the request engine’s resignation type)', () => {
   it('lists my resignation and everyone’s, and submits one for an employee', async () => {
     const { user } = renderApp('/requests/resignation')
 
     expect(await screen.findByRole('heading', { name: 'Resignation Requests' })).toBeVisible()
-    expect(await screen.findByRole('cell', { name: 'RSG-0006' })).toBeVisible()
-    expect(screen.queryByRole('cell', { name: 'RSG-0001' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('cell', { name: 'RQ-RSG-0006' })).toBeVisible()
+    expect(screen.queryByRole('cell', { name: 'RQ-RSG-0001' })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: 'All Resignations' }))
-    expect(await screen.findByRole('cell', { name: 'RSG-0001' })).toBeVisible()
+    expect(await screen.findByRole('cell', { name: 'RQ-RSG-0001' })).toBeVisible()
     expect(screen.getByRole('list', { name: 'Requests by status' })).toBeVisible()
 
     await user.click(await screen.findByRole('button', { name: 'Create' }))
@@ -71,7 +71,7 @@ describe('Resignation (the shared standard request pages)', () => {
           .find((record) => record.kind === 'resignation' && record.employeeId === 'em_hamza'),
       ).toMatchObject({
         status: 'pending',
-        payload: { type: 'voluntary', reason: 'Moving abroad.' },
+        payload: { resignationType: 'voluntary', reason: 'Moving abroad.', noticePeriodDays: 30 },
       })
     })
   }, 30_000)
@@ -89,7 +89,7 @@ describe('Resignation (the shared standard request pages)', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     expect(
-      await within(dialog).findByText(/already has resignation RSG-0006 waiting for approval/),
+      await within(dialog).findByText(/already has resignation RQ-RSG-0006 on the way/),
     ).toBeVisible()
   }, 30_000)
 
@@ -97,16 +97,19 @@ describe('Resignation (the shared standard request pages)', () => {
     const { user } = renderApp('/requests/resignation?tab=approvals')
 
     expect(await screen.findByRole('heading', { name: 'Resignation Approvals' })).toBeVisible()
-    await openAction(user, 'RSG-0001', 'Approve/Reject')
+    await openAction(user, 'RQ-RSG-0001', 'Approve/Reject')
     const dialog = await screen.findByRole('dialog', { name: 'Resignation Approve/Reject' })
     expect((await within(dialog).findAllByText('Sadia Rehman')).length).toBeGreaterThan(0)
-    expect(within(dialog).getByText('30 days')).toBeVisible()
+    // No last working date yet: the approver may set it and whether notice is served.
+    expect(within(dialog).getAllByText('—').length).toBeGreaterThan(0)
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Serve Notice' }))
     await user.click(within(dialog).getByRole('button', { name: 'Approve' }))
     await confirmYes(user)
     expect((await screen.findAllByText('Request approved')).length).toBeGreaterThan(0)
 
     const record = standardRequests.find('rsg_0001')
     expect(record?.status).toBe('completed')
+    expect(record?.payload).toMatchObject({ serveNotice: true })
     const opened = endOfEmployments
       .all()
       .find((item) => item.employeeId === 'em_sadia' && item.status === 'pending')
@@ -129,7 +132,7 @@ describe('Resignation (the shared standard request pages)', () => {
       )
     }
     await user.click(screen.getByRole('tab', { name: 'Cancellations' }))
-    await openAction(user, 'RSG-0001', 'Approve/Reject Cancellation')
+    await openAction(user, 'RQ-RSG-0001', 'Approve/Reject Cancellation')
     const cancel = await screen.findByRole('dialog', {
       name: 'Resignation Cancellation Approve/Reject',
     })
@@ -147,7 +150,7 @@ describe('Resignation (the shared standard request pages)', () => {
   it('approves the seeded cancellation from Cancellations', async () => {
     const { user } = renderApp('/requests/resignation?tab=approvals&view=cancellations')
 
-    await openAction(user, 'RSG-0005', 'Approve/Reject Cancellation')
+    await openAction(user, 'RQ-RSG-0005', 'Approve/Reject Cancellation')
     const dialog = await screen.findByRole('dialog', {
       name: 'Resignation Cancellation Approve/Reject',
     })

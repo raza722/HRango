@@ -25,6 +25,7 @@ import {
   useFilters,
 } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { ASSET_PAGE_SIZE, ASSET_TYPE_STATUS_META } from '../../constants'
@@ -44,13 +45,13 @@ const columns: DataTableColumn<AssetType>[] = [
     id: 'description',
     header: 'Description',
     className: 'whitespace-normal',
-    cell: (row) => <span className="line-clamp-2 max-w-72">{row.description || '—'}</span>,
+    cell: (row) => <span className="line-clamp-2 max-w-72">{row.description ?? '—'}</span>,
   },
   {
     id: 'status',
     header: 'Status',
     align: 'center',
-    cell: (row) => <StatusChip {...ASSET_TYPE_STATUS_META[row.active ? 'active' : 'inactive']} />,
+    cell: (row) => <StatusChip {...ASSET_TYPE_STATUS_META[row.isActive ? 'active' : 'inactive']} />,
   },
 ]
 
@@ -65,21 +66,24 @@ const FIELDS: FilterField[] = [
       { value: 'inactive', label: 'Inactive' },
     ],
   },
-  { kind: 'text', key: 'name', label: 'Name' },
+  { kind: 'text', key: 'q', label: 'Search', placeholder: 'Name or code' },
 ]
 
 /** Asset Type: Code, Name, Description and Status; Create, Filters and Edit / View / Delete. */
 export function AssetTypesPage() {
   const { page } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
-  const [filters, setFilters] = useFilters('asset-types')
+  const [filters, setFilters] = useFilters('asset-types-v2')
+  const canCreate = useCan('assets.types.create')
+  const canEdit = useCan('assets.types.edit')
+  const canDelete = useCan('assets.types.delete')
   const [dialog, setDialog] = useState<Dialog>(null)
   const remove = useDeleteAssetType()
   const list = useAssetTypes({
     page,
     pageSize: ASSET_PAGE_SIZE,
-    status: filters.status,
-    name: filters.name,
+    q: filters.q,
+    isActive: filters.status ? filters.status === 'active' : undefined,
   })
   const goTo = (next: number) => {
     void navigate({ search: (prev) => ({ ...prev, page: next }) })
@@ -93,14 +97,16 @@ export function AssetTypesPage() {
       title="Asset Type"
       actions={
         <>
-          <Button
-            onClick={() => {
-              setDialog({ type: 'create' })
-            }}
-            className={cn(toolbarButton, btn.blue, 'min-w-24')}
-          >
-            Create
-          </Button>
+          {canCreate && (
+            <Button
+              onClick={() => {
+                setDialog({ type: 'create' })
+              }}
+              className={cn(toolbarButton, btn.blue, 'min-w-24')}
+            >
+              Create
+            </Button>
+          )}
           <FiltersButton
             count={activeCount(filters)}
             onClick={() => {
@@ -125,25 +131,33 @@ export function AssetTypesPage() {
             itemClassName={rowMenuItemClass.inter}
             label={`Actions for ${row.code}, ${row.name}`}
             actions={[
-              {
-                label: 'Edit',
-                onSelect: () => {
-                  setDialog({ type: 'edit', row })
-                },
-              },
+              ...(canEdit
+                ? [
+                    {
+                      label: 'Edit',
+                      onSelect: () => {
+                        setDialog({ type: 'edit', row })
+                      },
+                    },
+                  ]
+                : []),
               {
                 label: 'View',
                 onSelect: () => {
                   setDialog({ type: 'view', row })
                 },
               },
-              {
-                label: 'Delete',
-                variant: 'destructive',
-                onSelect: () => {
-                  setDialog({ type: 'delete', row })
-                },
-              },
+              ...(canDelete
+                ? [
+                    {
+                      label: 'Delete',
+                      variant: 'destructive' as const,
+                      onSelect: () => {
+                        setDialog({ type: 'delete', row })
+                      },
+                    },
+                  ]
+                : []),
             ]}
           />
         )}
@@ -163,7 +177,7 @@ export function AssetTypesPage() {
         <FiltersDialog
           fields={FIELDS}
           value={filters}
-          preset="asset-types"
+          preset="asset-types-v2"
           onApply={(next) => {
             setFilters(next)
             goTo(1)
@@ -180,7 +194,7 @@ export function AssetTypesPage() {
         message="Are you sure you want to Delete this?"
         onConfirm={() => {
           if (dialog?.type === 'delete') {
-            remove.mutate(dialog.row.id, {
+            remove.mutate(dialog.row, {
               onError: (error) => {
                 toast.error(
                   error instanceof ApiError ? error.message : 'Could not delete the asset type.',

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
 
 import { REQUEST_PAGE_SIZE } from '../../constants'
-import { useApprovalList, useRequestList } from '../../hooks/use-requests'
+import { useApprovalList, useRequestList, useRequestPermissions } from '../../hooks/use-requests'
 import type { RequestSearch } from '../../routing'
 import { shiftApprovalColumns, shiftRequestColumns } from '../shared/request-columns'
 import { RequestTabs } from '../shared/request-controls'
@@ -20,11 +20,12 @@ export function ShiftRequestsPage() {
   const search = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
   const [dialog, setDialog] = useState<RequestDialogState>(null)
+  const can = useRequestPermissions('shift')
   const status = search.status
   const update = (patch: Partial<RequestSearch>) =>
     navigate({ search: (prev) => ({ ...prev, ...patch }) })
 
-  const isRequest = search.tab === 'request'
+  const isRequest = search.tab === 'request' || !can.approvals
   const requests = useRequestList('shift', {
     scope: search.scope,
     page: search.page,
@@ -58,17 +59,20 @@ export function ShiftRequestsPage() {
         Shift {isRequest ? 'Requests' : 'Approvals'}
       </h1>
       <RequestTabs
-        value={search.tab}
+        value={isRequest ? 'request' : 'approvals'}
+        approvals={can.approvals}
         onChange={(tab) => {
           void update({ tab, page: 1, status: undefined })
         }}
       />
       {isRequest ? (
         <>
-          <div className="border-b px-4 py-5 sm:px-6">
-            <h2 className="mb-5 text-xl font-medium text-title">Shift Request</h2>
-            <ShiftRequestForm />
-          </div>
+          {can.create && (
+            <div className="border-b px-4 py-5 sm:px-6">
+              <h2 className="mb-5 text-xl font-medium text-title">Shift Request</h2>
+              <ShiftRequestForm forOthers={search.scope === 'all'} />
+            </div>
+          )}
           <RequestTabPanel
             {...common}
             page={requests.data}
@@ -104,6 +108,7 @@ export function ShiftRequestsPage() {
         kind="shift"
         dialog={dialog}
         forOthers={search.scope === 'all'}
+        fromApprovals={!isRequest}
         onClose={() => {
           setDialog(null)
         }}

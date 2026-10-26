@@ -1,10 +1,10 @@
 import avatarUrl from '@/assets/images/avatar-shelley-kannes.png'
-import type { AttendanceEmployee, AttendanceProfile } from '@/features/attendance'
 
 import { type DirectoryEmployee } from '../employees/seed'
 import { CURRENT_EMPLOYEE_ID, profileOf } from '../scheduling/seed'
 import { branches, locations } from '../settings/handlers'
 import { COMPANIES } from '../settings/seed'
+import type { AttendanceEmployee, AttendanceProfile } from './types'
 
 export function toAttendanceEmployee(employee: DirectoryEmployee): AttendanceEmployee {
   const profile = profileOf(employee)

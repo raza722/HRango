@@ -5,12 +5,14 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
+import { WINDOW_KIND_LABELS } from '../../constants'
 import { useBenefitsLookups, useCreateEnrollmentWindow } from '../../hooks/use-benefits'
 import {
   ENROLLMENT_STEP_ONE_FIELDS,
   enrollmentWindowFormSchema,
   type EnrollmentWindowFormValues,
 } from '../../schemas/benefits.schema'
+import type { WindowKind } from '../../types/benefits.types'
 import {
   accent,
   boxClass,
@@ -46,10 +48,12 @@ const RIGHT = '@lg:grid-cols-[12.9375rem_minmax(0,14.1875rem)]'
 export function OpenEnrollmentDialog({
   planYearId,
   initialName = '',
+  kind = 'open_enrollment',
   onClose,
 }: {
   planYearId: string
   initialName?: string
+  kind?: WindowKind
   onClose: () => void
 }) {
   const lookups = useBenefitsLookups()
@@ -63,7 +67,7 @@ export function OpenEnrollmentDialog({
       name: initialName,
       planYearId,
       effectiveDate: '',
-      enrollmentEndDate: '',
+      closesOn: '',
       planIds: [],
       employeeIds: [],
     },
@@ -75,7 +79,7 @@ export function OpenEnrollmentDialog({
 
   const submit = form.handleSubmit(async (values) => {
     try {
-      await create.mutateAsync({ ...values, name: values.name.trim() })
+      await create.mutateAsync({ ...values, kind, name: values.name.trim(), description: null })
       onClose()
     } catch (error) {
       const fields = error instanceof ApiError ? Object.entries(error.fieldErrors) : []
@@ -99,7 +103,11 @@ export function OpenEnrollmentDialog({
 
   return (
     <BxDialog
-      title="New Open Enrollment Window"
+      title={
+        kind === 'open_enrollment'
+          ? 'New Open Enrollment Window'
+          : `New ${WINDOW_KIND_LABELS[kind]} Window`
+      }
       description={
         step === 'one'
           ? 'The window’s name, plan year, dates and plans.'
@@ -209,7 +217,7 @@ export function OpenEnrollmentDialog({
                   />
                   <Controller
                     control={form.control}
-                    name="enrollmentEndDate"
+                    name="closesOn"
                     render={({ field, fieldState }) => (
                       <FieldRow
                         label="When can employee complete their enrollment?"
@@ -261,6 +269,9 @@ export function OpenEnrollmentDialog({
             ) : (
               <div className="grid gap-5">
                 <p className={labelText}>Who can enroll during this plan year window?</p>
+                <p className="-mt-3 text-xs text-muted-foreground">
+                  Leave the selected list empty to let everyone enroll.
+                </p>
                 <Controller
                   control={form.control}
                   name="employeeIds"
