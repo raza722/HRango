@@ -16,14 +16,7 @@ import {
 } from 'date-fns'
 import { z } from 'zod'
 
-import type {
-  Priority,
-  StoryPoint,
-  Task,
-  TaskPatch,
-  TimeEntry,
-  Workspace,
-} from '../../types/pm.types'
+import type { Priority, StoryPoint, Task, TimeEntry, Workspace } from '../../types/pm.types'
 
 // --- dates ----------------------------------------------------------------------------------------
 
@@ -204,8 +197,9 @@ export function formatTimeOption(time: string): string {
   return formatTime12(time).toLowerCase()
 }
 
-export const trackedMinutes = (task: Pick<Task, 'timeEntries'>): number =>
-  task.timeEntries.reduce((sum, entry) => sum + entry.minutes, 0)
+/** Time Tracked: the API's total of finished entries. */
+export const trackedMinutes = (task: Pick<Task, 'timeTrackedMinutes'>): number =>
+  task.timeTrackedMinutes
 
 /** Time entries grouped by person, the person with the latest entry first. */
 export function entriesByPerson(entries: readonly TimeEntry[]) {
@@ -217,6 +211,7 @@ export function entriesByPerson(entries: readonly TimeEntry[]) {
   }
   return [...groups.entries()].map(([employeeId, list]) => ({
     employeeId,
+    name: list[0]?.employeeName ?? '',
     entries: list.toSorted((a, b) => `${b.date}${b.start}`.localeCompare(`${a.date}${a.start}`)),
     minutes: list.reduce((sum, entry) => sum + entry.minutes, 0),
   }))
@@ -237,39 +232,6 @@ export const timeEntrySchema = z
     message: 'The stop time must be after the start time',
   })
 export type TimeEntryForm = z.infer<typeof timeEntrySchema>
-
-export const newEntryId = (): string =>
-  `te_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
-
-/** A timer run from `startedAt` to `now` as a time entry (at least a minute). */
-export function timerEntry(employeeId: string, startedAt: string, now: Date): TimeEntry {
-  const start = parseISO(startedAt)
-  const minutes = Math.max(1, Math.round((now.getTime() - start.getTime()) / 60_000))
-  return {
-    id: newEntryId(),
-    employeeId,
-    date: toDay(start),
-    start: toTime(start),
-    end: toTime(now),
-    minutes,
-    notes: '',
-  }
-}
-
-/** A typed duration as an entry that ends now (it starts earlier the same day when it fits). */
-export function manualEntry(employeeId: string, minutes: number, now: Date): TimeEntry {
-  const end = toTime(now)
-  const startMinutes = Math.max(0, minutesOf(end) - minutes)
-  return {
-    id: newEntryId(),
-    employeeId,
-    date: toDay(now),
-    start: `${String(Math.floor(startMinutes / 60)).padStart(2, '0')}:${String(startMinutes % 60).padStart(2, '0')}`,
-    end,
-    minutes,
-    notes: '',
-  }
-}
 
 // --- statuses and progress ----------------------------------------------------------------------
 
@@ -341,52 +303,10 @@ export const OTHER_SIDE: Record<DependencyRelation, DependencyRelation> = {
   blocking: 'waitingOn',
 }
 
-export interface TaskUpdate {
-  id: string
-  patch: TaskPatch
-}
-
-type Links = Pick<Task, 'id' | 'waitingOn' | 'blocking'>
-
-const withId = (ids: readonly string[], id: string) => (ids.includes(id) ? [...ids] : [...ids, id])
-const withoutId = (ids: readonly string[], id: string) => ids.filter((other) => other !== id)
-
-/**
- * Both sides of a link: `task` waiting on `other` also puts `task` in `other`'s Blocking, and
- * the other way round.
- */
-export function linkUpdates(task: Links, other: Links, relation: DependencyRelation): TaskUpdate[] {
-  const back = OTHER_SIDE[relation]
-  return [
-    { id: task.id, patch: { [relation]: withId(task[relation], other.id) } },
-    { id: other.id, patch: { [back]: withId(other[back], task.id) } },
-  ]
-}
-
-export function unlinkUpdates(
-  task: Links,
-  other: Links | undefined,
-  relation: DependencyRelation,
-  otherId: string,
-): TaskUpdate[] {
-  const back = OTHER_SIDE[relation]
-  const updates: TaskUpdate[] = [
-    { id: task.id, patch: { [relation]: withoutId(task[relation], otherId) } },
-  ]
-  if (other) updates.push({ id: other.id, patch: { [back]: withoutId(other[back], task.id) } })
-  return updates
-}
-
-/** Tasks this one waits on that are not closed yet: the name's warning icon. */
-export function openBlockers<T extends Task>(
-  task: Task,
-  tasks: readonly T[],
-  workspace: Workspace,
-): T[] {
-  return task.waitingOn
-    .map((id) => tasks.find((other) => other.id === id))
-    .filter((other): other is T => other !== undefined)
-    .filter((other) => !isClosedStatus(workspace, other.statusId))
+/** The API's dependency kind for a relation of this task. */
+export const DEPENDENCY_KIND: Record<DependencyRelation, 'waiting_on' | 'blocking'> = {
+  waitingOn: 'waiting_on',
+  blocking: 'blocking',
 }
 
 // --- files ----------------------------------------------------------------------------------------
@@ -408,11 +328,11 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-/** Largest file the Files popup takes (the mock keeps only the file's details). */
-export const MAX_FILE_BYTES = 25 * 1024 * 1024
+/** Largest file a task takes (backend: PDF, DOCX, XLSX, PNG or JPG up to 10 MB). */
+export const MAX_FILE_BYTES = 10 * 1024 * 1024
 
-export const newAttachmentId = (): string =>
-  `at_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
+/** File types a task attachment may be (checked again by the API, by content). */
+export const ATTACHMENT_TYPES = '.pdf,.docx,.xlsx,.png,.jpg,.jpeg'
 
 // --- assignees ------------------------------------------------------------------------------------
 

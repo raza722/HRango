@@ -10,21 +10,31 @@ import { cn } from '@/lib/utils'
 
 import { usePeople, usePmLookups, useSaveShare, useShare } from '../../hooks/use-pm'
 import { pmButton, pmCloseButton } from '../../pm-styles'
-import type { ShareAccess, ShareSettings } from '../../types/pm.types'
+import type { ShareAccess, ShareEntity, ShareSettings } from '../../types/pm.types'
 import { CloseIcon } from '../comments/comment-icons'
 import { SHARE_ACCESS_LABELS, SHARE_PROPERTIES } from './share-options'
 
 export interface ShareDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** The task or list being shared. */
-  targetId: string
+  /** The task, list or workspace being shared. */
+  entityType: ShareEntity
+  entityId: string
   targetName: string
+  /** Saving needs `projects.sharing.edit` and a manager's workspace role; others read it. */
+  canEdit?: boolean
 }
 
-/** "Sharing & Permissions" of a task or list. */
-export function ShareDialog({ open, onOpenChange, targetId, targetName }: ShareDialogProps) {
-  const share = useShare(open ? targetId : null)
+/** "Sharing & Permissions" of a task or list (`GET` / `PUT /projects/shares`). */
+export function ShareDialog({
+  open,
+  onOpenChange,
+  entityType,
+  entityId,
+  targetName,
+  canEdit = true,
+}: ShareDialogProps) {
+  const share = useShare(entityType, open ? entityId : null)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -59,8 +69,9 @@ export function ShareDialog({ open, onOpenChange, targetId, targetName }: ShareD
         )}
         {share.isSuccess && (
           <ShareForm
-            key={targetId}
+            key={entityId}
             initial={share.data}
+            canEdit={canEdit}
             onDone={() => {
               onOpenChange(false)
             }}
@@ -74,7 +85,15 @@ export function ShareDialog({ open, onOpenChange, targetId, targetName }: ShareD
 const email = z.email()
 const sectionTitle = 'text-sm font-semibold text-[#4A4A4A]'
 
-function ShareForm({ initial, onDone }: { initial: ShareSettings; onDone: () => void }) {
+function ShareForm({
+  initial,
+  canEdit,
+  onDone,
+}: {
+  initial: ShareSettings
+  canEdit: boolean
+  onDone: () => void
+}) {
   const save = useSaveShare()
   const lookups = usePmLookups()
   const people = usePeople()
@@ -94,7 +113,8 @@ function ShareForm({ initial, onDone }: { initial: ShareSettings; onDone: () => 
       search.trim() !== '' &&
       person.name.toLowerCase().includes(search.trim().toLowerCase()),
   )
-  const link = `${window.location.origin}/shared/${draft.targetId}`
+  // The API's private link has no page yet; it is shown once the settings are saved.
+  const link = draft.link ? new URL(draft.link, window.location.origin).href : null
   const everything = SHARE_PROPERTIES.every((property) => draft.properties.includes(property.id))
 
   const addInvite = () => {
@@ -250,7 +270,9 @@ function ShareForm({ initial, onDone }: { initial: ShareSettings; onDone: () => 
                   <button
                     type="button"
                     onClick={() => {
-                      set({ people: [...draft.people, { employeeId: person.id, access: 'view' }] })
+                      set({
+                        people: [...draft.people, { employeeId: person.id, access: 'limited' }],
+                      })
                       setSearch('')
                     }}
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-[#F0E9FD]"
@@ -338,13 +360,16 @@ function ShareForm({ initial, onDone }: { initial: ShareSettings; onDone: () => 
             </div>
             <button
               type="button"
+              disabled={!link}
+              title={link ? undefined : 'Save the sharing settings first'}
               onClick={() => {
+                if (!link) return
                 void navigator.clipboard
                   .writeText(link)
                   .then(() => toast.success('Private link copied'))
                   .catch(() => toast.error('Could not copy the link'))
               }}
-              className={cn(pmButton.back, 'h-9 rounded-xl px-4 text-xs')}
+              className={cn(pmButton.back, 'h-9 rounded-xl px-4 text-xs disabled:opacity-50')}
             >
               Copy private link
             </button>
@@ -469,9 +494,15 @@ function ShareForm({ initial, onDone }: { initial: ShareSettings; onDone: () => 
         >
           Cancel
         </button>
-        <button type="submit" disabled={save.isPending} className={cn(pmButton.save, 'h-11 px-6')}>
-          Save
-        </button>
+        {canEdit && (
+          <button
+            type="submit"
+            disabled={save.isPending}
+            className={cn(pmButton.save, 'h-11 px-6')}
+          >
+            Save
+          </button>
+        )}
       </footer>
     </form>
   )

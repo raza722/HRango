@@ -4,19 +4,20 @@ import { toast } from 'sonner'
 import { pmApi, pmKeys } from '../../api/pm.api'
 import { useDeleteTask, useUpdateTask } from '../../hooks/use-pm'
 import type {
+  TaskList,
   TaskPatch,
   TaskRow,
   TaskType,
   Workspace,
-  WorkspaceItem,
   WorkspaceTree,
 } from '../../types/pm.types'
-import { descendantIds } from './list-utils'
 
 /** Where "Move To" sends a task: a workspace's top level or one of its lists. */
 export interface MoveTarget {
   workspaceId: string
   listId: string | null
+  /** The list's name, for the message. */
+  listName?: string | null | undefined
 }
 
 const message = (error: unknown) =>
@@ -46,8 +47,10 @@ export function useTaskActions({
 
   /** Applies a patch to the cached rows and saves it. */
   const patch = (id: string, changes: TaskPatch, success?: string) => {
-    queryClient.setQueryData<TaskRow[]>(key, (rows) =>
-      rows?.map((row) => (row.id === id ? { ...row, ...changes } : row)),
+    queryClient.setQueryData<TaskList>(key, (list) =>
+      list
+        ? { ...list, rows: list.rows.map((row) => (row.id === id ? { ...row, ...changes } : row)) }
+        : list,
     )
     update.mutate(
       { id, patch: changes },
@@ -77,7 +80,7 @@ export function useTaskActions({
   }
 
   const listName = (id: string | null) =>
-    id ? (tree.items.find((item) => item.id === id)?.name ?? null) : null
+    id ? (workspace.items.find((item) => item.id === id)?.name ?? null) : null
 
   return {
     rename: (task: TaskRow, name: string) => {
@@ -103,38 +106,25 @@ export function useTaskActions({
       )
     },
 
-    setReminder: (task: TaskRow, at: Date | null) => {
-      patch(
-        task.id,
-        { reminderAt: at ? at.toISOString() : null },
-        at ? 'Reminder set' : 'Reminder removed',
-      )
-    },
+    /** Remind Me: the caller's own reminder on the task (`/reminders`); null removes it. */
+    setReminder: (task: TaskRow, at: Date | null) =>
+      run(
+        async () => {
+          const current = await pmApi.reminder(task.id)
+          await pmApi.setReminder(task, at, current)
+        },
+        () => (at ? 'Reminder set' : 'Reminder removed'),
+      ),
 
     /** Moves a task and its subtasks to a list, or to a workspace's top level. */
     moveTo: (task: TaskRow, target: MoveTarget) => {
-      const family = [...descendantIds(task.id, tasks)]
-      if (target.workspaceId === workspace.id) {
-        return run(
-          () =>
-            Promise.all(
-              family.map((id) =>
-                pmApi.updateTask(
-                  id,
-                  id === task.id
-                    ? { listId: target.listId, parentId: null }
-                    : { listId: target.listId },
-                ),
-              ),
-            ),
-          () => `Moved to ${listName(target.listId) ?? workspace.name}`,
-        )
-      }
-      const destination = tree.workspaces.find((entry) => entry.id === target.workspaceId)
-      if (!destination) return Promise.resolve(undefined)
+      const destination =
+        target.workspaceId === workspace.id
+          ? workspace.name
+          : (tree.workspaces.find((entry) => entry.id === target.workspaceId)?.name ?? 'workspace')
       return run(
-        () => pmApi.moveTask(task.id, { workspaceId: destination.id, listId: target.listId }),
-        () => `Moved to ${listName(target.listId) ?? destination.name}`,
+        () => pmApi.moveTask(task.id, { workspaceId: target.workspaceId, listId: target.listId }),
+        () => `Moved to ${target.listName ?? listName(target.listId) ?? destination}`,
       )
     },
 
@@ -150,49 +140,25 @@ export function useTaskActions({
       patch(task.id, { parentId: null }, 'Now a task')
     },
 
-    /** A new list named after the task; its subtasks become the list's tasks. */
+    /** A new list named after the task; its subtasks become the list's tasks (`convert-to-list`). */
     convertToList: (task: TaskRow) =>
       run(
-        async (): Promise<WorkspaceItem> => {
-          const current = task.listId
-            ? tree.items.find((item) => item.id === task.listId)
-            : undefined
-          const list = await pmApi.createItem(workspace.id, {
-            kind: 'list',
-            name: task.name.slice(0, 80),
-            parentId: current?.parentId ?? null,
-          })
-          const family = descendantIds(task.id, tasks)
-          family.delete(task.id)
-          await Promise.all(
-            [...family].map((id) =>
-              pmApi.updateTask(
-                id,
-                tasks.find((row) => row.id === id)?.parentId === task.id
-                  ? { listId: list.id, parentId: null }
-                  : { listId: list.id },
-              ),
-            ),
-          )
-          await pmApi.deleteTask(task.id)
-          return list
-        },
+        async () => ({ id: await pmApi.convertToList(task), name: task.name }),
         (list) => `${list.name} is now a list`,
       ),
 
     remove: (task: TaskRow) => {
-      deleteTask.mutate(task.id)
+      deleteTask.mutate(task)
     },
 
     /** Bulk delete; a subtask whose task is also going goes with it. */
     removeMany: (ids: readonly string[]) => {
       const doomed = new Set(ids)
-      const roots = ids.filter((id) => {
-        const parentId = tasks.find((row) => row.id === id)?.parentId
-        return !parentId || !doomed.has(parentId)
-      })
+      const roots = tasks.filter(
+        (row) => doomed.has(row.id) && (!row.parentId || !doomed.has(row.parentId)),
+      )
       return run(
-        () => Promise.all(roots.map((id) => pmApi.deleteTask(id))),
+        () => Promise.all(roots.map((row) => pmApi.deleteTask(row))),
         () => (ids.length === 1 ? 'Task deleted' : `${ids.length} tasks deleted`),
       )
     },

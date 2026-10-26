@@ -5,9 +5,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 
 import { WORKSPACE_DESCRIPTION_MAX } from '../../constants'
+import { useSetCover } from '../../hooks/use-pm'
 import { pmButton } from '../../pm-styles'
 import type { Workspace, WorkspacePatch } from '../../types/pm.types'
-import { COVER_MAX_BYTES, COVER_PRESETS, isCover } from './covers'
+import { COVER_MAX_BYTES, COVER_MIME, COVER_TYPES, coverStyle } from './covers'
 import { CoverIcon, DescriptionIcon } from './workspace-icons'
 import { bannerStyles, popupStyles } from './workspace-styles'
 
@@ -105,45 +106,36 @@ function DescriptionForm({
   )
 }
 
-/** Reads an image file as a data URL. */
-const readFile = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      resolve(typeof reader.result === 'string' ? reader.result : '')
-    }
-    reader.onerror = () => {
-      reject(reader.error ?? new Error('Could not read the file'))
-    }
-    reader.readAsDataURL(file)
-  })
-
-/** "Change Cover": a preset or an uploaded image (kept as a data URL). */
-export function CoverPopover({ workspace, onSave }: { workspace: Workspace; onSave: Save }) {
+/** "Change Cover": upload an image (PNG, JPG, GIF or WebP), or go back to the default banner. */
+export function CoverPopover({ workspace }: { workspace: Workspace }) {
   const [open, setOpen] = useState(false)
   const input = useRef<HTMLInputElement>(null)
+  const setCover = useSetCover()
 
-  const pick = async (coverUrl: string | null) => {
-    if (await onSave({ coverUrl }, 'Cover changed')) setOpen(false)
+  const pick = (file: File | null) => {
+    setCover.mutate(
+      { workspace, file },
+      {
+        onSuccess: () => {
+          setOpen(false)
+        },
+      },
+    )
   }
 
-  const upload = async (event: ChangeEvent<HTMLInputElement>) => {
+  const upload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    if (!file.type.startsWith('image/')) {
+    if (!COVER_MIME.includes(file.type)) {
       toast.error('Choose an image file (JPG, PNG, WebP or GIF).')
       return
     }
     if (file.size > COVER_MAX_BYTES) {
-      toast.error('Choose an image under 2 MB.')
+      toast.error('Choose an image under 5 MB.')
       return
     }
-    try {
-      await pick(await readFile(file))
-    } catch {
-      toast.error('Could not read the image. Try another file.')
-    }
+    pick(file)
   }
 
   return (
@@ -159,48 +151,43 @@ export function CoverPopover({ workspace, onSave }: { workspace: Workspace; onSa
         className={cn(popupStyles.content, 'flex w-[22rem] flex-col gap-3')}
       >
         <h2 className={popupStyles.title}>Change Cover</h2>
-        <div role="radiogroup" aria-label="Covers" className="grid grid-cols-3 gap-2">
-          {COVER_PRESETS.map((preset) => {
-            const checked = isCover(workspace.coverUrl, preset.key)
-            return (
-              <button
-                key={preset.key}
-                type="button"
-                role="radio"
-                aria-checked={checked}
-                aria-label={preset.label}
-                onClick={() => {
-                  void pick(preset.key === 'cover:default' ? null : preset.key)
-                }}
-                style={{ backgroundImage: preset.background, backgroundSize: 'cover' }}
-                className={cn(
-                  'h-14 rounded-lg bg-center outline-none focus-visible:ring-2 focus-visible:ring-[#A181FF] focus-visible:ring-offset-2',
-                  checked && 'ring-2 ring-[#7127EA] ring-offset-2',
-                )}
-              />
-            )
-          })}
-        </div>
+        <div
+          aria-hidden="true"
+          className="h-20 rounded-lg"
+          style={coverStyle(workspace.cover?.url ?? null)}
+        />
         <input
           ref={input}
           type="file"
-          accept="image/*"
+          accept={COVER_TYPES}
           className="sr-only"
           tabIndex={-1}
           aria-label="Cover image file"
-          onChange={(event) => {
-            void upload(event)
-          }}
+          onChange={upload}
         />
         <button
           type="button"
+          disabled={setCover.isPending}
+          aria-busy={setCover.isPending || undefined}
           onClick={() => input.current?.click()}
-          className={cn(pmButton.back, 'h-10 rounded-xl text-sm')}
+          className={cn(pmButton.back, 'h-10 rounded-xl text-sm disabled:opacity-60')}
         >
-          Upload Cover
+          {setCover.isPending ? 'Uploading...' : 'Upload Cover'}
         </button>
+        {workspace.cover && (
+          <button
+            type="button"
+            disabled={setCover.isPending}
+            onClick={() => {
+              pick(null)
+            }}
+            className="self-start text-xs font-medium text-[#B7192C] hover:underline disabled:opacity-60"
+          >
+            Remove cover
+          </button>
+        )}
         <p className={popupStyles.text}>
-          JPG, PNG, WebP or GIF, up to 2 MB. Wide images look best.
+          JPG, PNG, WebP or GIF, up to 5 MB. Wide images look best.
         </p>
       </PopoverContent>
     </Popover>

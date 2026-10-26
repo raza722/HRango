@@ -35,6 +35,7 @@ import {
   PrivateIcon,
   SearchIcon,
 } from './workspace-icons'
+import { membersOf } from './workspace-members'
 import { popupStyles } from './workspace-styles'
 
 const LEVEL_ICONS: Record<PermissionLevel, typeof DefaultRoleIcon> = {
@@ -123,13 +124,7 @@ function PermissionForm({
   const [draft, setDraft] = useState<ColumnPermission>(() => structuredClone(initial))
   const [role, setRole] = useState<RoleChoice>('everyone')
 
-  const members = useMemo(
-    () =>
-      [...new Set([workspace.ownerId, ...workspace.memberIds])]
-        .map((id) => people.get(id))
-        .filter((person): person is PmPerson => Boolean(person)),
-    [workspace, people],
-  )
+  const members = useMemo(() => membersOf(workspace, people), [workspace, people])
   const byRole = (choice: PmRole) =>
     members.filter((person) => roleOf(person, workspace) === choice)
 
@@ -285,7 +280,9 @@ function PermissionForm({
         {draft.members.length > 0 && (
           <ul aria-label="Custom permissions" className="mt-3 flex flex-col gap-2">
             {draft.members.map((entry) => {
-              const person = people.get(entry.employeeId)
+              const person =
+                people.get(entry.employeeId) ??
+                members.find((member) => member.id === entry.employeeId)
               if (!person) return null
               return (
                 <li

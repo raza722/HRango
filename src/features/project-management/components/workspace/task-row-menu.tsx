@@ -1,10 +1,13 @@
 import { useMemo, useRef, useState } from 'react'
+import { useQueries } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import { cn } from '@/lib/utils'
 
-import type { TaskRow, WorkspaceItem } from '../../types/pm.types'
+import { pmApi, pmKeys } from '../../api/pm.api'
+import { useReminder } from '../../hooks/use-pm'
+import type { TaskRow, WorkspaceSummary } from '../../types/pm.types'
 import { ShareDialog } from '../task-fields/share-dialog'
 import { useListView } from './list-context'
 import { descendantIds, topLevel } from './list-utils'
@@ -42,9 +45,19 @@ type Dialog = 'share' | 'delete' | 'convert-list' | 'reminder' | null
 
 /** The three-dot menu of a task row (task row menu 288:156930). */
 export function TaskRowMenu({ task }: { task: TaskRow }) {
-  const { workspace, tree, allTasks, actions, taskHref, onRename, onOpenList, onToggleExpand } =
-    useListView()
+  const {
+    workspace,
+    tree,
+    access,
+    allTasks,
+    actions,
+    taskHref,
+    onRename,
+    onOpenList,
+    onToggleExpand,
+  } = useListView()
   const [dialog, setDialog] = useState<Dialog>(null)
+  const reminder = useReminder(task.id, dialog === 'reminder')
   /** The rename box or a popup takes focus when the menu closes, not the menu button. */
   const keepFocus = useRef(false)
 
@@ -71,10 +84,10 @@ export function TaskRowMenu({ task }: { task: TaskRow }) {
         onOpenChange={(open) => {
           setDialog(open ? 'reminder' : null)
         }}
-        value={task.reminderAt}
+        value={reminder.data?.remindAt ?? null}
         taskName={task.name}
         onSave={(at) => {
-          actions.setReminder(task, at)
+          void actions.setReminder(task, at)
         }}
       >
         <span className="inline-flex">
@@ -98,15 +111,17 @@ export function TaskRowMenu({ task }: { task: TaskRow }) {
                 }
               }}
             >
-              <PmMenuItem
-                icon={<RenameIcon />}
-                onSelect={() => {
-                  keepFocus.current = true
-                  onRename(task.id)
-                }}
-              >
-                Rename Task
-              </PmMenuItem>
+              {access.editTasks && (
+                <PmMenuItem
+                  icon={<RenameIcon />}
+                  onSelect={() => {
+                    keepFocus.current = true
+                    onRename(task.id)
+                  }}
+                >
+                  Rename Task
+                </PmMenuItem>
+              )}
               <PmMenuItem
                 icon={<FavoriteIcon />}
                 onSelect={() => {
@@ -117,104 +132,117 @@ export function TaskRowMenu({ task }: { task: TaskRow }) {
               </PmMenuItem>
               <PmMenuSeparator />
 
-              <PmMenuSub>
-                <PmMenuSubTrigger icon={<MoveToIcon />}>Move To</PmMenuSubTrigger>
-                <PmMenuSubContent className="w-[18rem]">
-                  <MoveToList
-                    task={task}
-                    onPick={(target) => {
-                      void actions.moveTo(task, target)
-                    }}
-                    workspaces={tree.workspaces.map((entry) => ({
-                      id: entry.id,
-                      name: entry.name,
-                      items: tree.items.filter((item) => item.workspaceId === entry.id),
-                    }))}
-                    currentWorkspaceId={workspace.id}
-                  />
-                </PmMenuSubContent>
-              </PmMenuSub>
+              {access.moveTasks && (
+                <PmMenuSub>
+                  <PmMenuSubTrigger icon={<MoveToIcon />}>Move To</PmMenuSubTrigger>
+                  <PmMenuSubContent className="w-[18rem]">
+                    <MoveToList
+                      task={task}
+                      onPick={(target) => {
+                        void actions.moveTo(task, target)
+                      }}
+                      workspaces={tree.workspaces.filter(
+                        (entry) =>
+                          entry.id === workspace.id ||
+                          entry.myRole === 'workspace-admin' ||
+                          entry.myRole === 'hr' ||
+                          entry.myRole === 'managers' ||
+                          entry.myRole === 'team-leaders',
+                      )}
+                      currentWorkspaceId={workspace.id}
+                    />
+                  </PmMenuSubContent>
+                </PmMenuSub>
+              )}
 
-              <PmMenuSub>
-                <PmMenuSubTrigger icon={<ConvertIcon />}>Convert Task</PmMenuSubTrigger>
-                <PmMenuSubContent className="w-[16rem]">
-                  {task.parentId ? (
-                    <PmMenuItem
+              {access.moveTasks && (
+                <PmMenuSub>
+                  <PmMenuSubTrigger icon={<ConvertIcon />}>Convert Task</PmMenuSubTrigger>
+                  <PmMenuSubContent className="w-[16rem]">
+                    {task.parentId ? (
+                      <PmMenuItem
+                        onSelect={() => {
+                          actions.convertToTask(task)
+                        }}
+                      >
+                        Convert to Task
+                      </PmMenuItem>
+                    ) : null}
+                    <PmMenuSub>
+                      <PmMenuSubTrigger disabled={parents.length === 0}>
+                        Convert to Subtask
+                      </PmMenuSubTrigger>
+                      <PmMenuSubContent className="max-h-[20rem] w-[17rem]">
+                        <PmMenuLabel>Make it a subtask of</PmMenuLabel>
+                        {parents.map((parent) => (
+                          <PmMenuItem
+                            key={parent.id}
+                            disabled={parent.id === task.parentId}
+                            onSelect={() => {
+                              actions.convertToSubtask(task, parent)
+                              onToggleExpand(parent.id, true)
+                            }}
+                          >
+                            {parent.name}
+                          </PmMenuItem>
+                        ))}
+                      </PmMenuSubContent>
+                    </PmMenuSub>
+                    {access.manageLists && (
+                      <PmMenuItem
+                        onSelect={() => {
+                          keepFocus.current = true
+                          setDialog('convert-list')
+                        }}
+                      >
+                        Convert to List
+                      </PmMenuItem>
+                    )}
+                  </PmMenuSubContent>
+                </PmMenuSub>
+              )}
+
+              {access.editTasks && (
+                <PmMenuSub>
+                  <PmMenuSubTrigger icon={<TaskTypeIcon />}>Task Type</PmMenuSubTrigger>
+                  <PmMenuSubContent className="w-[13rem]">
+                    <PmMenuCheckItem
+                      icon={<TaskIcon />}
+                      checked={task.type === 'task'}
                       onSelect={() => {
-                        actions.convertToTask(task)
+                        actions.setType(task, 'task')
                       }}
                     >
-                      Convert to Task
-                    </PmMenuItem>
-                  ) : null}
-                  <PmMenuSub>
-                    <PmMenuSubTrigger disabled={parents.length === 0}>
-                      Convert to Subtask
-                    </PmMenuSubTrigger>
-                    <PmMenuSubContent className="max-h-[20rem] w-[17rem]">
-                      <PmMenuLabel>Make it a subtask of</PmMenuLabel>
-                      {parents.map((parent) => (
-                        <PmMenuItem
-                          key={parent.id}
-                          disabled={parent.id === task.parentId}
-                          onSelect={() => {
-                            actions.convertToSubtask(task, parent)
-                            onToggleExpand(parent.id, true)
-                          }}
-                        >
-                          {parent.name}
-                        </PmMenuItem>
-                      ))}
-                    </PmMenuSubContent>
-                  </PmMenuSub>
-                  <PmMenuItem
-                    onSelect={() => {
-                      keepFocus.current = true
-                      setDialog('convert-list')
-                    }}
-                  >
-                    Convert to List
-                  </PmMenuItem>
-                </PmMenuSubContent>
-              </PmMenuSub>
-
-              <PmMenuSub>
-                <PmMenuSubTrigger icon={<TaskTypeIcon />}>Task Type</PmMenuSubTrigger>
-                <PmMenuSubContent className="w-[13rem]">
-                  <PmMenuCheckItem
-                    icon={<TaskIcon />}
-                    checked={task.type === 'task'}
-                    onSelect={() => {
-                      actions.setType(task, 'task')
-                    }}
-                  >
-                    Task
-                  </PmMenuCheckItem>
-                  <PmMenuCheckItem
-                    icon={<MilestoneIcon />}
-                    checked={task.type === 'milestone'}
-                    onSelect={() => {
-                      actions.setType(task, 'milestone')
-                    }}
-                  >
-                    Milestone
-                  </PmMenuCheckItem>
-                </PmMenuSubContent>
-              </PmMenuSub>
+                      Task
+                    </PmMenuCheckItem>
+                    <PmMenuCheckItem
+                      icon={<MilestoneIcon />}
+                      checked={task.type === 'milestone'}
+                      onSelect={() => {
+                        actions.setType(task, 'milestone')
+                      }}
+                    >
+                      Milestone
+                    </PmMenuCheckItem>
+                  </PmMenuSubContent>
+                </PmMenuSub>
+              )}
               <PmMenuSeparator />
 
-              <PmMenuItem
-                icon={<RemindIcon />}
-                onSelect={() => {
-                  keepFocus.current = true
-                  setDialog('reminder')
-                }}
-              >
-                <span className="flex items-center justify-between gap-2">
-                  Remind Me
-                  <ChevronRightIcon className="h-3 w-1.5 shrink-0 text-[#7127EA]" />
-                </span>
-              </PmMenuItem>
+              {access.remind && (
+                <PmMenuItem
+                  icon={<RemindIcon />}
+                  onSelect={() => {
+                    keepFocus.current = true
+                    setDialog('reminder')
+                  }}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    Remind Me
+                    <ChevronRightIcon className="h-3 w-1.5 shrink-0 text-[#7127EA]" />
+                  </span>
+                </PmMenuItem>
+              )}
               <PmMenuItem
                 icon={<CopyLinkIcon />}
                 onSelect={() => {
@@ -232,24 +260,28 @@ export function TaskRowMenu({ task }: { task: TaskRow }) {
                 Open in new tab
               </PmMenuItem>
               <PmMenuSeparator />
-              <PmMenuItem
-                className={menuStyles.outline}
-                onSelect={() => {
-                  keepFocus.current = true
-                  setDialog('share')
-                }}
-              >
-                Sharing &amp; Permissions
-              </PmMenuItem>
-              <PmMenuItem
-                className={menuStyles.danger}
-                onSelect={() => {
-                  keepFocus.current = true
-                  setDialog('delete')
-                }}
-              >
-                Delete
-              </PmMenuItem>
+              {access.viewSharing && (
+                <PmMenuItem
+                  className={menuStyles.outline}
+                  onSelect={() => {
+                    keepFocus.current = true
+                    setDialog('share')
+                  }}
+                >
+                  Sharing &amp; Permissions
+                </PmMenuItem>
+              )}
+              {access.deleteTasks && (
+                <PmMenuItem
+                  className={menuStyles.danger}
+                  onSelect={() => {
+                    keepFocus.current = true
+                    setDialog('delete')
+                  }}
+                >
+                  Delete
+                </PmMenuItem>
+              )}
             </PmMenuContent>
           </PmMenu>
         </span>
@@ -260,8 +292,10 @@ export function TaskRowMenu({ task }: { task: TaskRow }) {
         onOpenChange={(open) => {
           setDialog(open ? 'share' : null)
         }}
-        targetId={task.id}
+        entityType="task"
+        entityId={task.id}
         targetName={task.name}
+        canEdit={access.share}
       />
       <ConfirmDialog
         open={dialog === 'delete'}
@@ -302,13 +336,10 @@ export function TaskRowMenu({ task }: { task: TaskRow }) {
   )
 }
 
-interface MoveWorkspace {
-  id: string
-  name: string
-  items: WorkspaceItem[]
-}
-
-/** Move To: search, then every workspace with its folders' lists. */
+/**
+ * Move To: search, then every workspace the caller may move tasks into, with its folders' lists
+ * (each workspace's lists are read when the menu opens).
+ */
 function MoveToList({
   task,
   workspaces,
@@ -316,14 +347,23 @@ function MoveToList({
   onPick,
 }: {
   task: TaskRow
-  workspaces: MoveWorkspace[]
+  workspaces: WorkspaceSummary[]
   currentWorkspaceId: string
-  onPick: (target: { workspaceId: string; listId: string | null }) => void
+  onPick: (target: { workspaceId: string; listId: string | null; listName?: string }) => void
 }) {
   const [query, setQuery] = useState('')
+  const details = useQueries({
+    queries: workspaces.map((entry) => ({
+      queryKey: pmKeys.workspace(entry.id),
+      queryFn: ({ signal }: { signal: AbortSignal }) => pmApi.workspace(entry.id, signal),
+      staleTime: 60_000,
+    })),
+  })
   const text = query.trim().toLowerCase()
   const visible = workspaces
-    .map((entry) => {
+    .map((summary, index) => {
+      const items = details[index]?.data?.items ?? []
+      const entry = { id: summary.id, name: summary.name, items }
       const lists = entry.items.filter((item) => item.kind === 'list')
       const nameHit = entry.name.toLowerCase().includes(text)
       return {
@@ -383,7 +423,7 @@ function MoveToList({
                   disabled={list.id === task.listId}
                   className="ml-4 h-auto min-h-9 py-1.5"
                   onSelect={() => {
-                    onPick({ workspaceId: entry.id, listId: list.id })
+                    onPick({ workspaceId: entry.id, listId: list.id, listName: list.name })
                   }}
                 >
                   <span className="block truncate">{list.name}</span>

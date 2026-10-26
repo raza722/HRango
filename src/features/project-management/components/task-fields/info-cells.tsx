@@ -101,16 +101,32 @@ export function TaskIdCell({ task }: TaskCellProps) {
   )
 }
 
-/** Created by: the avatar and name; hovering shows the designation and department. */
+/**
+ * Created by: the avatar and name; hovering shows the designation and department. The API gives
+ * the creator's account name only, so the directory entry is found by that name.
+ */
 export function CreatedByCell({ task }: TaskCellProps) {
   const people = usePeople()
-  const person = people.get(task.createdById)
+  const person = [...people.values()].find((entry) => entry.name === task.createdByName)
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <div tabIndex={0} className={cn(box, 'gap-2.5 pl-1.5')}>
-          <PersonAvatar person={person} />
-          <span className="truncate">{person?.name ?? 'Unknown'}</span>
+          <PersonAvatar
+            person={
+              person ??
+              (task.createdByName
+                ? {
+                    id: '',
+                    name: task.createdByName,
+                    designation: '',
+                    department: '',
+                    photoUrl: null,
+                  }
+                : undefined)
+            }
+          />
+          <span className="truncate">{task.createdByName ?? 'Unknown'}</span>
         </div>
       </TooltipTrigger>
       {person && (
@@ -137,10 +153,9 @@ export const DateClosedCell = ({ task }: TaskCellProps) => instant(task.closedAt
 
 /** Latest Comment: the newest comment's text; clicking it opens the task's Comments panel. */
 export function LatestCommentCell({ task }: TaskCellProps) {
-  const people = usePeople()
   const openComments = useOpenComments()
   const comment = task.latestComment
-  const author = comment ? (people.get(comment.authorId)?.name ?? 'Someone') : null
+  const author = comment ? (comment.authorName ?? 'Someone') : null
 
   return (
     <button

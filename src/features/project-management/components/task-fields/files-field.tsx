@@ -1,9 +1,11 @@
 import { useId, useRef, useState } from 'react'
 
+import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
-import { usePmLookups } from '../../hooks/use-pm'
-import type { Attachment, AttachmentSource, TaskRow } from '../../types/pm.types'
+import { useAddAttachment, useAttachments, useDeleteAttachment } from '../../hooks/use-pm'
+import { usePmAccess } from '../../hooks/use-pm-access'
+import type { Attachment, TaskRow, Workspace } from '../../types/pm.types'
 import {
   AttachIcon,
   CloudSourceIcon,
@@ -16,15 +18,14 @@ import {
 import { FieldPopover, PopupHeader } from './field-popup'
 import { fieldStyles } from './field-styles'
 import {
+  ATTACHMENT_TYPES,
   type FileKind,
   fileKind,
   formatFileSize,
   MAX_FILE_BYTES,
-  newAttachmentId,
 } from './field-utils'
 import { RemoveButton } from './remove-button'
 import type { TaskCellProps } from './task-cell-types'
-import { useTaskSave } from './use-task-save'
 
 const KINDS: Record<FileKind, { label: string; color: string; Icon: typeof PdfFileIcon }> = {
   pdf: { label: 'PDF', color: '#E5383B', Icon: PdfFileIcon },
@@ -35,12 +36,12 @@ const KINDS: Record<FileKind, { label: string; color: string; Icon: typeof PdfFi
 }
 
 /** The sources of "Attach File Dropdown", in its order; none can be connected in this app. */
-const THIRD_PARTY: { source: AttachmentSource; label: string }[] = [
+const THIRD_PARTY = [
   { source: 'dropbox', label: 'Dropbox' },
   { source: 'onedrive', label: 'OneDrive' },
   { source: 'box', label: 'Box' },
   { source: 'google-drive', label: 'Google Drive' },
-]
+] as const
 
 /** A file's type icon on the white circle of the file chips. */
 function FileBadge({ name, className }: { name: string; className?: string }) {
@@ -59,10 +60,15 @@ function FileBadge({ name, className }: { name: string; className?: string }) {
   )
 }
 
-/** Files column: the first file as a chip ("Business Requirem..."), or "Attach files". */
-export function FilesCell({ task }: TaskCellProps) {
+/**
+ * Files column: the first file as a chip ("Business Requirem..."), or "Attach files". The row
+ * carries the count; the names are read when the popup opens (`GET /tasks/{id}/attachments`).
+ */
+export function FilesCell({ task, workspace }: TaskCellProps) {
   const [open, setOpen] = useState(false)
-  const files = task.attachments
+  const attachments = useAttachments(task.id, open)
+  const files = attachments.data ?? []
+  const count = attachments.data ? files.length : task.attachmentCount
   const first = files[0]
 
   return (
@@ -76,19 +82,21 @@ export function FilesCell({ task }: TaskCellProps) {
         <button
           type="button"
           aria-label={
-            files.length > 0
-              ? `Files: ${files.map((file) => file.name).join(', ')}`
+            count > 0
+              ? `Files: ${first ? files.map((file) => file.name).join(', ') : `${count} attached`}`
               : `Attach files to ${task.name}`
           }
           className={cn(fieldStyles.cell, 'pr-1.5')}
         >
-          {first ? (
+          {count > 0 ? (
             <span className="flex h-[1.8rem] min-w-0 flex-1 items-center gap-2 rounded-[0.25rem] bg-[#F6F2FF] pr-2 pl-1">
-              <FileBadge name={first.name} />
-              <span className="min-w-0 truncate">{first.name}</span>
-              {files.length > 1 && (
+              <FileBadge name={first?.name ?? 'file'} />
+              <span className="min-w-0 truncate">
+                {first?.name ?? `${count} ${count === 1 ? 'file' : 'files'}`}
+              </span>
+              {first && count > 1 && (
                 <span className="shrink-0 text-[0.6875rem] font-semibold text-[#7127EA]">
-                  +{files.length - 1}
+                  +{count - 1}
                 </span>
               )}
             </span>
@@ -103,6 +111,9 @@ export function FilesCell({ task }: TaskCellProps) {
     >
       <FilesPanel
         task={task}
+        workspace={workspace}
+        files={files}
+        loading={attachments.isPending}
         onClose={() => {
           setOpen(false)
         }}
@@ -118,30 +129,23 @@ interface Upload {
   error: string | null
 }
 
-/** Reads a file in the browser, reporting progress (the mock keeps only its details). */
-function readFile(file: File, onProgress: (percent: number) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onprogress = (event) => {
-      if (event.lengthComputable && event.total > 0) {
-        onProgress(Math.round((event.loaded / event.total) * 100))
-      }
-    }
-    reader.onload = () => {
-      onProgress(100)
-      resolve()
-    }
-    reader.onerror = () => {
-      reject(reader.error ?? new Error('The file could not be read'))
-    }
-    reader.readAsArrayBuffer(file)
-  })
-}
-
 /** "Attach File Dropdown": Upload File From This Device, the other sources, the files. */
-function FilesPanel({ task, onClose }: { task: TaskRow; onClose: () => void }) {
-  const { data: lookups } = usePmLookups()
-  const { save } = useTaskSave()
+function FilesPanel({
+  task,
+  workspace,
+  files,
+  loading,
+  onClose,
+}: {
+  task: TaskRow
+  workspace: Workspace
+  files: readonly Attachment[]
+  loading: boolean
+  onClose: () => void
+}) {
+  const access = usePmAccess(workspace)
+  const addAttachment = useAddAttachment()
+  const deleteAttachment = useDeleteAttachment()
   const inputRef = useRef<HTMLInputElement>(null)
   const [uploads, setUploads] = useState<Upload[]>([])
   const noteId = useId()
@@ -152,43 +156,37 @@ function FilesPanel({ task, onClose }: { task: TaskRow; onClose: () => void }) {
     )
   }
 
+  /** Uploads each file (`POST /files`, module projects), then attaches it to the task. */
   const upload = async (list: FileList | null) => {
-    const files = [...(list ?? [])]
-    if (files.length === 0) return
-    const started = files.map((file, index) => ({
+    const picked = [...(list ?? [])]
+    if (picked.length === 0) return
+    const started = picked.map((file, index) => ({
       key: `${Date.now()}-${index}-${file.name}`,
       name: file.name,
       percent: 0,
-      error: file.size > MAX_FILE_BYTES ? 'Files must be 25 MB or smaller' : null,
+      error: file.size > MAX_FILE_BYTES ? 'Files must be 10 MB or smaller' : null,
     }))
     setUploads((current) => [...current, ...started])
-    const added: Attachment[] = []
     await Promise.all(
-      files.map(async (file, index) => {
+      picked.map(async (file, index) => {
         const entry = started[index]
         if (!entry || entry.error) return
         try {
-          await readFile(file, (percent) => {
-            update(entry.key, { percent })
+          await addAttachment.mutateAsync({
+            taskId: task.id,
+            file,
+            onProgress: (percent) => {
+              update(entry.key, { percent })
+            },
           })
-          added.push({
-            id: newAttachmentId(),
-            name: file.name,
-            size: file.size,
-            source: 'device',
-            uploadedById: lookups?.me.id ?? '',
-            uploadedAt: new Date().toISOString(),
+          setUploads((current) => current.filter((other) => other.key !== entry.key))
+        } catch (error) {
+          update(entry.key, {
+            error: error instanceof ApiError ? error.message : 'The file could not be uploaded',
           })
-        } catch {
-          update(entry.key, { error: 'The file could not be read' })
         }
       }),
     )
-    if (added.length === 0) return
-    if (await save(task.id, { attachments: [...task.attachments, ...added] })) {
-      const done = new Set(started.filter((entry) => !entry.error).map((entry) => entry.key))
-      setUploads((current) => current.filter((entry) => !done.has(entry.key)))
-    }
   }
 
   return (
@@ -197,6 +195,7 @@ function FilesPanel({ task, onClose }: { task: TaskRow; onClose: () => void }) {
       <input
         ref={inputRef}
         type="file"
+        accept={ATTACHMENT_TYPES}
         multiple
         aria-label="Upload File From This Device"
         className="sr-only"
@@ -206,14 +205,19 @@ function FilesPanel({ task, onClose }: { task: TaskRow; onClose: () => void }) {
           event.target.value = ''
         }}
       />
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        className="flex flex-col items-center justify-center gap-2 rounded-[0.5625rem] border border-dashed border-[#7127EA] bg-[#EEE7FF] px-[1.2rem] py-[1.6rem] text-center text-[0.8125rem] font-medium text-[#626262] transition-colors hover:bg-[#E4DAFF]"
-      >
-        <AttachIcon className="size-[0.9rem] text-[#7127EA]" />
-        Upload File From This Device
-      </button>
+      {access.editTasks && (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="flex flex-col items-center justify-center gap-2 rounded-[0.5625rem] border border-dashed border-[#7127EA] bg-[#EEE7FF] px-[1.2rem] py-[1.6rem] text-center text-[0.8125rem] font-medium text-[#626262] transition-colors hover:bg-[#E4DAFF]"
+        >
+          <AttachIcon className="size-[0.9rem] text-[#7127EA]" />
+          Upload File From This Device
+          <span className="text-[0.6875rem] font-normal text-[#909090]">
+            PDF, DOCX, XLSX, PNG or JPG, up to 10 MB
+          </span>
+        </button>
+      )}
 
       {uploads.length > 0 && (
         <ul aria-label="Uploads" className="flex flex-col gap-1.5">
@@ -268,31 +272,38 @@ function FilesPanel({ task, onClose }: { task: TaskRow; onClose: () => void }) {
         Dropbox, OneDrive, Box and Google Drive cannot be connected in this app yet.
       </p>
 
-      {task.attachments.length > 0 && (
+      {loading && <p className={fieldStyles.muted}>Loading files...</p>}
+      {files.length > 0 && (
         <section aria-label="Attached files" className="flex flex-col gap-2">
           <div className={fieldStyles.divider} />
           <ul className={cn(fieldStyles.scroll, 'flex max-h-56 flex-col gap-1.5 overflow-y-auto')}>
-            {task.attachments.map((file) => (
+            {files.map((file) => (
               <li
                 key={file.id}
                 className="flex h-10 shrink-0 items-center gap-2 rounded-[0.25rem] bg-[#F6F2FF] pr-1.5 pl-1"
               >
                 <FileBadge name={file.name} />
-                <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium text-[#626262]">
+                <a
+                  href={file.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={file.uploadedByName ? `Attached by ${file.uploadedByName}` : undefined}
+                  className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium text-[#626262] hover:text-[#7127EA] hover:underline"
+                >
                   {file.name}
-                </span>
+                </a>
                 <span className="shrink-0 text-[0.625rem] text-[#909090]">
                   {formatFileSize(file.size)}
                 </span>
-                <RemoveButton
-                  label={`Remove ${file.name}`}
-                  className="ml-1"
-                  onClick={() => {
-                    void save(task.id, {
-                      attachments: task.attachments.filter((other) => other.id !== file.id),
-                    })
-                  }}
-                />
+                {access.editTasks && (
+                  <RemoveButton
+                    label={`Remove ${file.name}`}
+                    className="ml-1"
+                    onClick={() => {
+                      deleteAttachment.mutate(file.id)
+                    }}
+                  />
+                )}
               </li>
             ))}
           </ul>

@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 
-import { workspaces } from '@/mocks/project-management/db'
+import { views, workspaces } from '@/mocks/project-management/db'
 import { renderApp } from '@/test/test-utils'
 
 const wizard = () => screen.getByRole('dialog', { name: 'Create Workspace' })
@@ -55,6 +55,18 @@ async function toCustomize(
 }
 
 const summary = (title: string) => within(wizard()).getByRole('region', { name: title })
+
+/** The views the mock API made for a workspace, in order, and the default one. */
+const viewsOf = (workspaceId: string | undefined) => {
+  const own = views
+    .all()
+    .filter((view) => view.workspaceId === workspaceId)
+    .toSorted((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+  return {
+    kinds: own.map((view) => view.viewType),
+    defaultView: own.find((view) => view.isDefault)?.viewType,
+  }
+}
 
 // Each test walks the whole wizard against the mock API, so they get more than the default 15s.
 describe('Create Workspace wizard', { timeout: 60_000 }, () => {
@@ -147,15 +159,23 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
       expect(workspaces.all().some((entry) => entry.name === 'Design Ops Hub')).toBe(true)
     })
     const created = workspaces.all().find((entry) => entry.name === 'Design Ops Hub')
+    // POST /projects/workspaces: the owner joins as workspace admin, the members as contributors.
     expect(created).toMatchObject({
       ownerId: 'em_bilal',
       description: 'Design operations',
-      visibility: 'private',
-      department: 'Software',
-      template: 'marketing-team',
-      setup: { views: ['list', 'board', 'team', 'calendar'], statusMode: 'default' },
+      privacy: 'private',
+      departmentId: 'dep_software',
+      workflowTemplate: 'marketing_team',
+      statusMode: 'default',
     })
-    expect(created?.memberIds).toEqual(expect.arrayContaining(['em_maryam', 'em_haroon']))
+    expect(viewsOf(created?.id).kinds).toEqual(['list', 'board', 'team', 'calendar'])
+    expect(created?.members).toEqual(
+      expect.arrayContaining([
+        { employeeId: 'em_bilal', memberRole: 'workspace_admin' },
+        { employeeId: 'em_maryam', memberRole: 'contributor' },
+        { employeeId: 'em_haroon', memberRole: 'contributor' },
+      ]),
+    )
     await waitFor(() => {
       expect(router.state.location.pathname).toBe(
         `/project-management/workspaces/${created?.id ?? ''}`,
@@ -188,7 +208,7 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
     await user.click(within(dialog).getByRole('button', { name: 'Create Workspace' }))
     await waitFor(() => {
       expect(workspaces.all().find((entry) => entry.name === 'Company Handbook')).toMatchObject({
-        visibility: 'workspace',
+        privacy: 'workspace',
       })
     })
   })
@@ -209,11 +229,11 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
 
     // The server refuses the name: back to step 1 with the message on the field.
     const field = await within(dialog).findByRole('textbox', { name: 'Workspace Name' })
-    expect(within(dialog).getByText('A workspace with this name already exists')).toBeVisible()
+    expect(within(dialog).getByText('A workspace with this name already exists.')).toBeVisible()
     expect(field).toHaveAttribute('aria-invalid', 'true')
     await user.type(field, ' 2')
     expect(
-      within(dialog).queryByText('A workspace with this name already exists'),
+      within(dialog).queryByText('A workspace with this name already exists.'),
     ).not.toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Continue' }))
     await user.click(within(dialog).getByRole('button', { name: 'Continue' }))
@@ -336,9 +356,12 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
 
     await user.click(within(dialog).getByRole('button', { name: 'Create Workspace' }))
     await waitFor(() => {
-      expect(
-        workspaces.all().find((entry) => entry.name === 'Design Ops Hub')?.setup,
-      ).toMatchObject({ views: ['list', 'board', 'calendar', 'timeline'], defaultView: 'timeline' })
+      expect(workspaces.all().some((entry) => entry.name === 'Design Ops Hub')).toBe(true)
+    })
+    const made = workspaces.all().find((entry) => entry.name === 'Design Ops Hub')
+    expect(viewsOf(made?.id)).toEqual({
+      kinds: ['list', 'board', 'calendar', 'timeline'],
+      defaultView: 'timeline',
     })
   })
 
@@ -366,9 +389,10 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
       'Select a status template',
     )
 
+    // Custom statuses start from the workflow's own; no template is chosen yet.
     await user.click(within(dialog).getByRole('radio', { name: /^Use custom statuses/ }))
     expect(within(dialog).getByRole('button', { name: /^Status Templates/ })).toHaveTextContent(
-      'Custom',
+      'Select a status template',
     )
     expect(within(dialog).getByRole('heading', { name: 'Done' })).toBeVisible()
 
@@ -471,15 +495,13 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
     await waitFor(() => {
       expect(workspaces.all().some((entry) => entry.name === 'Design Ops Hub')).toBe(true)
     })
-    const setup = workspaces.all().find((entry) => entry.name === 'Design Ops Hub')?.setup
-    expect(setup?.statusMode).toBe('custom')
-    expect(setup?.statuses.map((status) => status.name)).toEqual([
-      'To Do',
-      'QA Review',
-      'Completed',
-    ])
-    expect(setup?.statuses.find((status) => status.name === 'QA Review')).toMatchObject({
-      group: 'active',
+    const made = workspaces.all().find((entry) => entry.name === 'Design Ops Hub')
+    expect(made?.statusMode).toBe('custom')
+    // A template made in the wizard is not one of the API's: no status template is recorded.
+    expect(made?.statusTemplate).toBeNull()
+    expect(made?.statuses.map((status) => status.name)).toEqual(['To Do', 'QA Review', 'Completed'])
+    expect(made?.statuses.find((status) => status.name === 'QA Review')).toMatchObject({
+      statusGroup: 'active',
       color: '#DC3545',
     })
   })
@@ -492,11 +514,12 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
 
     await user.click(within(dialog).getByRole('button', { name: /^Status Templates/ }))
     const options = await screen.findAllByRole('option')
+    // The API's status templates (`GET /projects/templates?kind=status`), in the design's order.
     expect(options.map((option) => option.textContent)).toEqual([
       'Content',
       'Kanban',
       'Marketing',
-      'Custom',
+      'Normal/Custom',
       'Scrum',
     ])
     await user.click(screen.getByRole('button', { name: 'Kanban template options' }))
@@ -518,9 +541,9 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
     await screen.findByRole('option', { name: 'Board Flow' })
     expect(screen.queryByRole('option', { name: 'Content' })).not.toBeInTheDocument()
 
-    // Choosing "Custom" uses the workflow's own statuses.
-    await user.click(screen.getByRole('option', { name: 'Custom' }))
-    for (const status of ['To Do', 'Planning', 'At Risk', 'Update Required']) {
+    // Choosing "Normal/Custom" takes its statuses.
+    await user.click(screen.getByRole('option', { name: 'Normal/Custom' }))
+    for (const status of ['Not Started', 'In Progress', 'Done', 'Closed']) {
       expect(within(dialog).getByRole('listitem', { name: status })).toBeVisible()
     }
   })

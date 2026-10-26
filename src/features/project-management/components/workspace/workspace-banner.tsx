@@ -6,7 +6,8 @@ import { EmployeeAvatar } from '@/components/layout/employee-avatar'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 
-import { WORKSPACE_NAME_MAX } from '../../constants'
+import { ROLE_LABELS, WORKSPACE_NAME_MAX } from '../../constants'
+import { usePmAccess } from '../../hooks/use-pm-access'
 import type { PmPerson, Workspace, WorkspacePatch } from '../../types/pm.types'
 import { CoverPopover, DescriptionPopover } from './banner-popovers'
 import { coverStyle } from './covers'
@@ -21,6 +22,7 @@ import {
   RenameIcon,
   SearchIcon,
 } from './workspace-icons'
+import { membersOf } from './workspace-members'
 import { bannerStyles, popupStyles } from './workspace-styles'
 
 /** Avatars drawn before the "16 +" bubble. */
@@ -62,9 +64,10 @@ export function WorkspaceBanner({
   const [inviting, setInviting] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const renameFocus = useRef(false)
-  const members = [...new Set([workspace.ownerId, ...workspace.memberIds])]
-    .map((id) => people.get(id))
-    .filter((person): person is PmPerson => Boolean(person))
+  const access = usePmAccess(workspace)
+  const members = membersOf(workspace, people)
+  const roleOf = (id: string) =>
+    workspace.members.find((member) => member.employeeId === id)?.role ?? 'contributors'
   const extra = members.length - SHOWN_MEMBERS
 
   const copyLink = async () => {
@@ -83,7 +86,7 @@ export function WorkspaceBanner({
   return (
     <header
       className="flex min-h-[11.25rem] flex-col justify-between gap-4 rounded-[0.9375rem] bg-[#A181FF] p-5"
-      style={coverStyle(workspace.coverUrl)}
+      style={coverStyle(workspace.cover?.url ?? null)}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -124,15 +127,17 @@ export function WorkspaceBanner({
                 renameFocus.current = false
               }}
             >
-              <PmMenuItem
-                icon={<RenameIcon />}
-                onSelect={() => {
-                  renameFocus.current = true
-                  setRenaming(true)
-                }}
-              >
-                Rename Workspace
-              </PmMenuItem>
+              {access.editWorkspace && (
+                <PmMenuItem
+                  icon={<RenameIcon />}
+                  onSelect={() => {
+                    renameFocus.current = true
+                    setRenaming(true)
+                  }}
+                >
+                  Rename Workspace
+                </PmMenuItem>
+              )}
               <PmMenuItem
                 icon={<FavoriteIcon />}
                 onSelect={() => {
@@ -154,8 +159,8 @@ export function WorkspaceBanner({
               </PmMenuItem>
             </PmMenuContent>
           </PmMenu>
-          <DescriptionPopover workspace={workspace} onSave={onSave} />
-          <CoverPopover workspace={workspace} onSave={onSave} />
+          {access.editWorkspace && <DescriptionPopover workspace={workspace} onSave={onSave} />}
+          {access.editWorkspace && <CoverPopover workspace={workspace} />}
           <PmMenu modal={false}>
             <PmMenuTrigger asChild>
               <button type="button" className={bannerStyles.iconButton}>
@@ -245,29 +250,29 @@ export function WorkspaceBanner({
                         {person.designation}
                       </span>
                     </span>
-                    {person.id === workspace.ownerId && (
-                      <span className="shrink-0 rounded-md bg-[#F0E9FD] px-2 py-0.5 text-[0.6875rem] text-[#7127EA]">
-                        Owner
-                      </span>
-                    )}
+                    <span className="shrink-0 rounded-md bg-[#F0E9FD] px-2 py-0.5 text-[0.6875rem] text-[#7127EA]">
+                      {person.id === workspace.ownerId ? 'Owner' : ROLE_LABELS[roleOf(person.id)]}
+                    </span>
                   </li>
                 ))}
               </ul>
             </PopoverContent>
           </Popover>
-          <button
-            type="button"
-            onClick={() => {
-              setInviting(true)
-            }}
-            className={cn(
-              bannerStyles.frosted,
-              'inline-flex h-[3.125rem] shrink-0 items-center gap-3 rounded-full border border-dashed border-[#7127EA] px-7 text-lg font-semibold text-[#1D1A1A] transition-colors hover:bg-white/80 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none',
-            )}
-          >
-            <InviteIcon className="h-[1.332rem] w-[0.9375rem] shrink-0 text-[#262424]" />
-            Invite Members
-          </button>
+          {access.editWorkspace && (
+            <button
+              type="button"
+              onClick={() => {
+                setInviting(true)
+              }}
+              className={cn(
+                bannerStyles.frosted,
+                'inline-flex h-[3.125rem] shrink-0 items-center gap-3 rounded-full border border-dashed border-[#7127EA] px-7 text-lg font-semibold text-[#1D1A1A] transition-colors hover:bg-white/80 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none',
+              )}
+            >
+              <InviteIcon className="h-[1.332rem] w-[0.9375rem] shrink-0 text-[#262424]" />
+              Invite Members
+            </button>
+          )}
         </div>
       </div>
 
@@ -278,9 +283,8 @@ export function WorkspaceBanner({
         employees={employees}
         saving={saving}
         onInvite={(ids) => {
-          const memberIds = [...new Set([...workspace.memberIds, ...ids])]
           void onSave(
-            { memberIds },
+            { addMemberIds: ids },
             ids.length === 1 ? 'Member invited' : `${ids.length} members invited`,
           ).then((ok) => {
             if (ok) setInviting(false)

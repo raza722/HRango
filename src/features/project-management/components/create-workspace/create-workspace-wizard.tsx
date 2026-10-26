@@ -6,12 +6,19 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
-import { useCreateWorkspace, usePeople, usePmLookups } from '../../hooks/use-pm'
-import type { Workspace } from '../../types/pm.types'
+import {
+  useCreateWorkspace,
+  useDepartments,
+  usePeople,
+  usePmLookups,
+  usePmTemplates,
+} from '../../hooks/use-pm'
+import type { PmTemplates, WorkspaceSummary } from '../../types/pm.types'
 import { CustomizeStep } from './customize-step'
 import { DetailsStep } from './details-step'
 import { OrganizerPage } from './organizer-page'
 import { StatusesPage } from './statuses-page'
+import { TemplatesContext } from './templates-context'
 import { ViewsPage } from './views-page'
 import { BackButton, CancelButton, CloseButton, ContinueButton, FormError } from './wizard-controls'
 import { WizardProgress } from './wizard-progress'
@@ -19,6 +26,7 @@ import {
   type DetailPage,
   EMPTY_LIBRARY,
   EMPTY_WIZARD,
+  fieldOfApiField,
   firstIncompleteStep,
   type StatusLibrary,
   stepComplete,
@@ -37,7 +45,7 @@ export interface CreateWorkspaceWizardProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Called with the new workspace after "Create Workspace". */
-  onCreated: (workspace: Workspace) => void
+  onCreated: (workspace: WorkspaceSummary) => void
 }
 
 /** The three-step Create Workspace modal (Add Workspace Details > Define Workflow > Customize Template). */
@@ -75,28 +83,31 @@ export function CreateWorkspaceWizard({
   )
 }
 
+const NO_TEMPLATES: PmTemplates = { workflows: [], statusTemplates: [] }
+
 /** The wizard's state; mounted while the modal is open, so closing it starts over. */
 function WizardBody({
   onClose,
   onCreated,
 }: {
   onClose: () => void
-  onCreated: (workspace: Workspace) => void
+  onCreated: (workspace: WorkspaceSummary) => void
 }) {
   const lookups = usePmLookups()
+  const departments = useDepartments()
+  const templates = usePmTemplates()
   const people = usePeople()
   const create = useCreateWorkspace()
   const form = useForm<WizardValues>({ defaultValues: EMPTY_WIZARD, mode: 'onChange' })
-  const [name, ownerId, description, visibility, memberIds, department, template, setup] = useWatch(
-    { control: form.control, name: WIZARD_FIELDS },
-  )
+  const [name, ownerId, description, visibility, memberIds, departmentId, template, setup] =
+    useWatch({ control: form.control, name: WIZARD_FIELDS })
   const values: WizardValues = {
     name,
     ownerId,
     description,
     visibility,
     memberIds,
-    department,
+    departmentId,
     template,
     setup,
   }
@@ -130,9 +141,9 @@ function WizardBody({
       onCreated(workspace)
     } catch (error) {
       const fieldErrors = error instanceof ApiError ? Object.entries(error.fieldErrors) : []
-      const known = fieldErrors.filter(([field]) =>
-        (WIZARD_FIELDS as readonly string[]).includes(field),
-      ) as [WizardField, string][]
+      const known = fieldErrors
+        .map(([field, message]) => [fieldOfApiField(field), message] as const)
+        .filter((entry): entry is [WizardField, string] => entry[0] !== null)
       const [first] = known
       if (first) {
         for (const [field, message] of known) form.setError(field, { type: 'server', message })
@@ -143,6 +154,8 @@ function WizardBody({
     }
   }
 
+  const templateData = templates.data ?? NO_TEMPLATES
+
   if (page && setup && template) {
     const saveSetup = (patch: Partial<NonNullable<WizardValues['setup']>>) => {
       form.setValue('setup', { ...setup, ...patch }, { shouldDirty: true })
@@ -150,128 +163,144 @@ function WizardBody({
     }
     if (page === 'views') {
       return (
-        <ViewsPage
-          template={template}
-          setup={setup}
-          onSave={saveSetup}
-          onDiscard={closePage}
-          onClose={onClose}
-        />
+        <TemplatesContext value={templateData}>
+          <ViewsPage
+            template={template}
+            setup={setup}
+            onSave={saveSetup}
+            onDiscard={closePage}
+            onClose={onClose}
+          />
+        </TemplatesContext>
       )
     }
     if (page === 'statuses') {
       return (
-        <StatusesPage
+        <TemplatesContext value={templateData}>
+          <StatusesPage
+            template={template}
+            statusMode={setup.statusMode}
+            statuses={setup.statuses}
+            library={library}
+            onSave={(result, nextLibrary) => {
+              setLibrary(nextLibrary)
+              saveSetup(result)
+            }}
+            onDiscard={closePage}
+            onClose={onClose}
+          />
+        </TemplatesContext>
+      )
+    }
+    return (
+      <TemplatesContext value={templateData}>
+        <OrganizerPage
           template={template}
-          statusMode={setup.statusMode}
-          statuses={setup.statuses}
-          library={library}
-          onSave={(result, nextLibrary) => {
-            setLibrary(nextLibrary)
-            saveSetup(result)
+          organizer={setup.organizer}
+          onSave={(organizer) => {
+            saveSetup({ organizer })
           }}
           onDiscard={closePage}
           onClose={onClose}
         />
-      )
-    }
-    return (
-      <OrganizerPage
-        template={template}
-        organizer={setup.organizer}
-        onSave={(organizer) => {
-          saveSetup({ organizer })
-        }}
-        onDiscard={closePage}
-        onClose={onClose}
-      />
+      </TemplatesContext>
     )
   }
 
   const complete = stepComplete(step, values)
   const employees = lookups.data?.employees ?? []
 
+  const loading = lookups.isPending || templates.isPending || departments.isPending
+  const failed = lookups.isError || templates.isError || departments.isError
+
   return (
-    <FormProvider {...form}>
-      <header
-        className={cn(
-          wz.gutter,
-          'relative shrink-0 pt-5 pr-14 sm:pt-[1.875rem] sm:pr-8 lg:pr-[3.125rem]',
-        )}
-      >
-        <WizardProgress step={step} />
-        <CloseButton
-          label="Close Create Workspace"
-          onClick={onClose}
-          className="absolute top-4 right-3 sm:top-[1.9375rem] sm:right-[1.9375rem]"
-        />
-      </header>
-
-      <div className={cn(wz.body, wz.gutter, wz.scrollbar, 'pt-8 sm:pt-10')}>
-        {lookups.isPending ? (
-          <div aria-busy="true" aria-label="Loading" className="grid gap-5">
-            <Skeleton className="h-10 w-72" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-40 w-full" />
-          </div>
-        ) : lookups.isError ? (
-          <FormError message="The employee and department lists could not be loaded. Close and try again." />
-        ) : step === 'details' ? (
-          <DetailsStep employees={employees} people={people} focusHeading={moved} />
-        ) : step === 'workflow' ? (
-          <WorkflowStep departments={lookups.data.departments} />
-        ) : template && setup ? (
-          <CustomizeStep
-            template={template}
-            setup={setup}
-            focusHeading={returnTo === null}
-            returnTo={returnTo}
-            onOpenPage={(next) => {
-              setPage(next)
-              setRootError(undefined)
-            }}
+    <TemplatesContext value={templateData}>
+      <FormProvider {...form}>
+        <header
+          className={cn(
+            wz.gutter,
+            'relative shrink-0 pt-5 pr-14 sm:pt-[1.875rem] sm:pr-8 lg:pr-[3.125rem]',
+          )}
+        >
+          <WizardProgress step={step} />
+          <CloseButton
+            label="Close Create Workspace"
+            onClick={onClose}
+            className="absolute top-4 right-3 sm:top-[1.9375rem] sm:right-[1.9375rem]"
           />
-        ) : null}
-      </div>
+        </header>
 
-      <footer className={cn(wz.gutter, 'shrink-0')}>
-        <FormError message={rootError} />
-        <div className={cn(wz.footer, step !== 'details' && 'justify-between')}>
-          {step !== 'details' && (
-            <BackButton
-              onClick={() => {
-                goTo(step === 'customize' ? 'workflow' : 'details')
+        <div className={cn(wz.body, wz.gutter, wz.scrollbar, 'pt-8 sm:pt-10')}>
+          {loading ? (
+            <div aria-busy="true" aria-label="Loading" className="grid gap-5">
+              <Skeleton className="h-10 w-72" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-40 w-full" />
+            </div>
+          ) : failed ? (
+            <FormError message="The employees, departments or templates could not be loaded. Close and try again." />
+          ) : step === 'details' ? (
+            <DetailsStep employees={employees} people={people} focusHeading={moved} />
+          ) : step === 'workflow' ? (
+            <WorkflowStep departments={departments.data} />
+          ) : template && setup ? (
+            <CustomizeStep
+              template={template}
+              setup={setup}
+              focusHeading={returnTo === null}
+              returnTo={returnTo}
+              onOpenPage={(next) => {
+                setPage(next)
+                setRootError(undefined)
               }}
             />
-          )}
-          <div className="flex flex-wrap items-center justify-end gap-3 sm:gap-[1.5625rem]">
-            <CancelButton onClick={onClose} />
-            {step === 'customize' ? (
-              <ContinueButton
-                badge="plus"
-                className={wz.create}
-                disabled={create.isPending}
-                aria-busy={create.isPending || undefined}
+          ) : null}
+        </div>
+
+        <footer className={cn(wz.gutter, 'shrink-0')}>
+          <FormError message={rootError} />
+          <div className={cn(wz.footer, step !== 'details' && 'justify-between')}>
+            {step !== 'details' && (
+              <BackButton
                 onClick={() => {
-                  void submit()
-                }}
-              >
-                Create Workspace
-              </ContinueButton>
-            ) : (
-              <ContinueButton
-                disabled={!complete}
-                onClick={() => {
-                  if (step === 'workflow' && !setup && template) {
-                    form.setValue('setup', templateSetup(template))
-                  }
-                  goTo(step === 'details' ? 'workflow' : 'customize')
+                  goTo(step === 'customize' ? 'workflow' : 'details')
                 }}
               />
             )}
+            <div className="flex flex-wrap items-center justify-end gap-3 sm:gap-[1.5625rem]">
+              <CancelButton onClick={onClose} />
+              {step === 'customize' ? (
+                <ContinueButton
+                  badge="plus"
+                  className={wz.create}
+                  disabled={create.isPending}
+                  aria-busy={create.isPending || undefined}
+                  onClick={() => {
+                    void submit()
+                  }}
+                >
+                  Create Workspace
+                </ContinueButton>
+              ) : (
+                <ContinueButton
+                  disabled={!complete}
+                  onClick={() => {
+                    if (step === 'workflow' && !setup && template) {
+                      form.setValue(
+                        'setup',
+                        templateSetup(
+                          templateData.workflows.find((entry) => entry.id === template),
+                        ),
+                      )
+                    }
+                    goTo(step === 'details' ? 'workflow' : 'customize')
+                  }}
+                />
+              )}
+            </div>
           </div>
-        </div>
-      </footer>
-    </FormProvider>
+        </footer>
+      </FormProvider>
+    </TemplatesContext>
   )
 }

@@ -55,6 +55,7 @@ export function ViewBar({
   members,
   onColumns,
   onAddTask,
+  canAddView,
 }: {
   workspace: Workspace
   view: ViewKind
@@ -64,7 +65,10 @@ export function ViewBar({
   onFilters: (filters: TaskFilters) => void
   members: readonly PmPerson[]
   onColumns: (columns: ListColumn[]) => void
-  onAddTask: (type: TaskType) => void
+  /** Absent when the caller may not add tasks (the button is hidden). */
+  onAddTask: ((type: TaskType) => void) | undefined
+  /** Shared views are kept by workspace admins and HR. */
+  canAddView: boolean
 }) {
   const views = VIEW_KINDS.filter((kind) => kind === 'list' || workspace.setup.views.includes(kind))
   const missing = VIEW_KINDS.filter((kind) => !views.includes(kind))
@@ -93,36 +97,38 @@ export function ViewBar({
             </button>
           )
         })}
-        <Divider />
-        <PmMenu modal={false}>
-          <PmMenuTrigger asChild disabled={missing.length === 0}>
-            <button
-              type="button"
-              aria-label="Add View"
-              className={cn(barButton, 'disabled:opacity-50')}
-            >
-              <PlusIcon className="size-[0.904rem]" />
-              View
-            </button>
-          </PmMenuTrigger>
-          <PmMenuContent align="start" className="w-[16rem]">
-            <PmMenuLabel>Add View</PmMenuLabel>
-            {missing.map((kind) => {
-              const { Icon } = VIEW_ICONS[kind]
-              return (
-                <PmMenuItem
-                  key={kind}
-                  icon={<Icon />}
-                  onSelect={() => {
-                    onAddView(kind)
-                  }}
-                >
-                  {VIEW_LABELS[kind]}
-                </PmMenuItem>
-              )
-            })}
-          </PmMenuContent>
-        </PmMenu>
+        {canAddView && <Divider />}
+        {canAddView && (
+          <PmMenu modal={false}>
+            <PmMenuTrigger asChild disabled={missing.length === 0}>
+              <button
+                type="button"
+                aria-label="Add View"
+                className={cn(barButton, 'disabled:opacity-50')}
+              >
+                <PlusIcon className="size-[0.904rem]" />
+                View
+              </button>
+            </PmMenuTrigger>
+            <PmMenuContent align="start" className="w-[16rem]">
+              <PmMenuLabel>Add View</PmMenuLabel>
+              {missing.map((kind) => {
+                const { Icon } = VIEW_ICONS[kind]
+                return (
+                  <PmMenuItem
+                    key={kind}
+                    icon={<Icon />}
+                    onSelect={() => {
+                      onAddView(kind)
+                    }}
+                  >
+                    {VIEW_LABELS[kind]}
+                  </PmMenuItem>
+                )
+              })}
+            </PmMenuContent>
+          </PmMenu>
+        )}
       </nav>
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -133,8 +139,8 @@ export function ViewBar({
           members={members}
         />
         <CustomizePopover columns={workspace.columns} onColumns={onColumns} />
-        <Divider />
-        <AddTaskSplit onAddTask={onAddTask} />
+        {onAddTask && <Divider />}
+        {onAddTask && <AddTaskSplit onAddTask={onAddTask} />}
       </div>
     </div>
   )

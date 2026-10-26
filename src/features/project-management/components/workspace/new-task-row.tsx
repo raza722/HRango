@@ -1,9 +1,7 @@
 import { useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 
 import { cn } from '@/lib/utils'
 
-import { pmApi, pmKeys } from '../../api/pm.api'
 import { useCreateTask } from '../../hooks/use-pm'
 import type { TaskStatus, TaskType } from '../../types/pm.types'
 import { useListView } from './list-context'
@@ -28,7 +26,6 @@ export function NewTaskRow({
 }) {
   const { workspace } = useListView()
   const create = useCreateTask()
-  const queryClient = useQueryClient()
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const label = type === 'milestone' ? 'milestone' : 'task'
@@ -42,17 +39,14 @@ export function NewTaskRow({
     }
     setError(null)
     try {
-      const task = await create.mutateAsync({
+      await create.mutateAsync({
         workspaceId: workspace.id,
         listId,
         parentId: null,
         name: trimmed,
         statusId: status.id,
+        type,
       })
-      if (type === 'milestone') {
-        await pmApi.updateTask(task.id, { type: 'milestone' })
-        await queryClient.invalidateQueries({ queryKey: pmKeys.all })
-      }
       setName('')
     } catch {
       // The global mutation toast explains; the row stays open with the name.

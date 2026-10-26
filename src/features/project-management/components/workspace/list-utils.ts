@@ -152,8 +152,7 @@ const sum = (values: readonly number[]) => values.reduce((total, value) => total
 
 export const storyPointsOf = (task: TaskRow) => sum(task.storyPoints.map((entry) => entry.points))
 
-export const trackedMinutesOf = (task: TaskRow) =>
-  sum(task.timeEntries.map((entry) => entry.minutes))
+export const trackedMinutesOf = (task: TaskRow) => task.timeTrackedMinutes
 
 /** The value a column sorts by; null sorts last in both directions. */
 export function sortValue(
@@ -161,14 +160,13 @@ export function sortValue(
   key: TaskColumnKey,
   context: SortContext,
 ): string | number | null {
-  const nameOf = (id: string | undefined) => (id ? (context.people.get(id)?.name ?? '') : '')
   const firstTag = (ids: readonly string[]) =>
     ids.length ? (context.tags.get(ids[0] ?? '')?.name ?? '') : null
   switch (key) {
     case 'name':
       return task.name.toLowerCase()
     case 'assignees':
-      return task.assigneeIds.length ? nameOf(task.assigneeIds[0]).toLowerCase() : null
+      return task.assignees[0]?.name.toLowerCase() ?? null
     case 'startDate':
       return task.startDate ? `${task.startDate} ${task.startTime ?? ''}` : null
     case 'dueDate':
@@ -180,7 +178,7 @@ export function sortValue(
     case 'labels':
       return firstTag(task.labelIds)?.toLowerCase() ?? null
     case 'dependencies':
-      return task.waitingOn.length + task.blocking.length || null
+      return task.openDependencyCount + task.blockingCount || null
     case 'status': {
       const index = context.statuses.findIndex((status) => status.id === task.statusId)
       return index < 0 ? null : index
@@ -196,7 +194,7 @@ export function sortValue(
     case 'taskId':
       return task.code
     case 'createdBy':
-      return nameOf(task.createdById).toLowerCase() || null
+      return task.createdByName?.toLowerCase() ?? null
     case 'dateCreated':
       return task.createdAt
     case 'dateClosed':
@@ -206,7 +204,7 @@ export function sortValue(
     case 'storyPoints':
       return task.storyPoints.length ? storyPointsOf(task) : null
     case 'files':
-      return task.attachments.length || null
+      return task.attachmentCount || null
   }
 }
 
@@ -376,17 +374,13 @@ export function averageStoryPoints(tasks: readonly TaskRow[]): number | null {
 
 // --- people and roles ---------------------------------------------------------------------------
 
-/** The project role a person holds in a workspace (role tag on Set Role Permission). */
-export function roleOf(person: PmPerson, workspace: Workspace): PmRole {
-  if (person.id === workspace.ownerId || person.id === workspace.createdById) {
-    return 'workspace-admin'
-  }
-  const department = person.department.toLowerCase()
-  const designation = person.designation.toLowerCase()
-  if (department.includes('human resource') || /\bhr\b/.test(designation)) return 'hr'
-  if (designation.includes('manager') || designation.startsWith('gm ')) return 'managers'
-  if (/\b(lead|head|chief)\b/.test(designation)) return 'team-leaders'
-  return 'contributors'
+/** The workspace role a member holds (`members[].memberRole`; the owner is always an admin). */
+export function roleOf(
+  person: Pick<PmPerson, 'id'>,
+  workspace: Pick<Workspace, 'members' | 'ownerId'>,
+): PmRole {
+  if (person.id === workspace.ownerId) return 'workspace-admin'
+  return workspace.members.find((member) => member.employeeId === person.id)?.role ?? 'contributors'
 }
 
 // --- reminders ----------------------------------------------------------------------------------

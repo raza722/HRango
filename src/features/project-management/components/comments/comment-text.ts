@@ -31,7 +31,8 @@ export function commentParts(
     const token = match[0]
     const index = match.index
     if (index > last) parts.push({ kind: 'text', text: body.slice(last, index) })
-    const task = byCode.get(token)
+    // Task codes are `HR000000001`; the text writes them `#HR000000001`.
+    const task = byCode.get(token.replace(/^#/, ''))
     const person = byName.find((entry) => `@${entry.name}` === token)
     if (task) parts.push({ kind: 'task', task })
     else if (person) parts.push({ kind: 'person', person })

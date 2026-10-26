@@ -63,10 +63,7 @@ function InviteForm({
 }) {
   const [query, setQuery] = useState('')
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set())
-  const members = useMemo(
-    () => new Set([workspace.ownerId, ...workspace.memberIds]),
-    [workspace.ownerId, workspace.memberIds],
-  )
+  const members = useMemo(() => new Set(workspace.memberIds), [workspace.memberIds])
   const text = query.trim().toLowerCase()
   const candidates = employees.filter(
     (person) =>

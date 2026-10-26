@@ -11,8 +11,17 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
-import { usePeople, usePmLookups } from '../../hooks/use-pm'
-import type { TaskRow } from '../../types/pm.types'
+import {
+  useAddTimeEntry,
+  useDeleteTimeEntry,
+  usePeople,
+  usePmMe,
+  useStartTimer,
+  useStopTimer,
+  useTimeEntries,
+} from '../../hooks/use-pm'
+import { usePmAccess } from '../../hooks/use-pm-access'
+import type { TaskRow, TimeEntry, Workspace } from '../../types/pm.types'
 import {
   CalendarIcon,
   ChevronDownIcon,
@@ -30,22 +39,23 @@ import {
   formatTime12,
   formatTimeOption,
   fromDay,
-  manualEntry,
   minutesOf,
-  newEntryId,
   parseDuration,
   QUARTER_TIMES,
   TIME_NOTES_MAX,
   type TimeEntryForm,
   timeEntrySchema,
-  timerEntry,
   toDay,
   trackedMinutes,
 } from './field-utils'
 import { MonthCalendar } from './month-calendar'
 import { RemoveButton } from './remove-button'
 import type { TaskCellProps } from './task-cell-types'
-import { useTaskSave } from './use-task-save'
+
+/** The caller's running timer among a task's entries. */
+function runningEntry(entries: readonly TimeEntry[] | undefined, meId: string | null) {
+  return entries?.find((entry) => entry.isRunning && (meId === null || entry.employeeId === meId))
+}
 
 /** Seconds since `startedAt`, ticking each second while a timer runs. */
 function useElapsed(startedAt: string | null): number {
@@ -68,11 +78,15 @@ function useElapsed(startedAt: string | null): number {
  * red clock while the timer runs; the popup has the timer field, the time entries per person
  * and a manual entry.
  */
-export function TimeTrackedCell({ task }: TaskCellProps) {
+export function TimeTrackedCell({ task, workspace }: TaskCellProps) {
   const [open, setOpen] = useState(false)
+  const meId = usePmMe()
+  // Entries are read when the popup opens; the cell keeps showing a running timer after that.
+  const entries = useTimeEntries(task.id, open)
+  const timer = runningEntry(entries.data, meId)
   const tracked = trackedMinutes(task)
-  const running = task.timerStartedAt !== null
-  const elapsed = useElapsed(task.timerStartedAt)
+  const running = timer !== undefined
+  const elapsed = useElapsed(timer?.startAt ?? null)
   const estimate = task.timeEstimateMinutes ?? 0
   const percent = estimate > 0 ? Math.min(100, Math.round((tracked / estimate) * 100)) : 0
 
@@ -125,6 +139,9 @@ export function TimeTrackedCell({ task }: TaskCellProps) {
     >
       <TimeTrackedPanel
         task={task}
+        workspace={workspace}
+        entries={entries.data}
+        loading={entries.isPending}
         onClose={() => {
           setOpen(false)
         }}
@@ -133,19 +150,36 @@ export function TimeTrackedCell({ task }: TaskCellProps) {
   )
 }
 
-function TimeTrackedPanel({ task, onClose }: { task: TaskRow; onClose: () => void }) {
-  const { data: lookups } = usePmLookups()
-  const meId = lookups?.me.id ?? ''
+function TimeTrackedPanel({
+  task,
+  workspace,
+  entries,
+  loading,
+  onClose,
+}: {
+  task: TaskRow
+  workspace: Workspace
+  entries: TimeEntry[] | undefined
+  loading: boolean
+  onClose: () => void
+}) {
+  const meId = usePmMe()
+  const access = usePmAccess(workspace)
   const tracked = trackedMinutes(task)
   const estimate = task.timeEstimateMinutes ?? 0
 
   return (
     <div className="flex flex-col gap-3">
       <PopupHeader title="Time Tracked" onClose={onClose} />
-      <TimerField task={task} meId={meId} />
+      {access.trackTime && <TimerField task={task} timer={runningEntry(entries, meId)} />}
       {estimate > 0 && <TrackedBar tracked={tracked} estimate={estimate} />}
-      <TimeEntries task={task} meId={meId} />
-      <ManualEntry task={task} meId={meId} />
+      <TimeEntries
+        entries={entries ?? []}
+        loading={loading}
+        meId={meId}
+        canDelete={access.deleteTime}
+      />
+      {access.trackTime && <ManualEntry task={task} />}
     </div>
   )
 }
@@ -185,27 +219,31 @@ function TrackedBar({ tracked, estimate }: { tracked: number; estimate: number }
  * Timer" with a purple play, recording "00 : 00 : 00" in red with a pause, then the recorded
  * time in purple with play to start again. Pausing records the run as a time entry.
  */
-function TimerField({ task, meId }: { task: TaskRow; meId: string }) {
-  const { save, isPending } = useTaskSave()
-  const elapsed = useElapsed(task.timerStartedAt)
+function TimerField({ task, timer }: { task: TaskRow; timer: TimeEntry | undefined }) {
+  const startTimer = useStartTimer()
+  const stopTimer = useStopTimer()
+  const addEntry = useAddTimeEntry()
+  const isPending = startTimer.isPending || stopTimer.isPending || addEntry.isPending
+  const elapsed = useElapsed(timer?.startAt ?? null)
   const [typed, setTyped] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [lastRun, setLastRun] = useState<number | null>(null)
-  const running = task.timerStartedAt !== null
+  const running = timer !== undefined
   const errorId = useId()
 
   const start = () => {
     setError(null)
-    void save(task.id, { timerStartedAt: new Date().toISOString() })
+    startTimer.mutate(task.id)
   }
 
   const pause = async () => {
-    if (!task.timerStartedAt) return
-    const now = new Date()
-    const entry = timerEntry(meId, task.timerStartedAt, now)
-    const seconds = Math.floor((now.getTime() - parseISO(task.timerStartedAt).getTime()) / 1000)
-    if (await save(task.id, { timeEntries: [...task.timeEntries, entry], timerStartedAt: null })) {
+    if (!timer) return
+    const seconds = Math.floor((Date.now() - parseISO(timer.startAt).getTime()) / 1000)
+    try {
+      await stopTimer.mutateAsync(undefined)
       setLastRun(seconds)
+    } catch {
+      // The mutation cache shows the server's message.
     }
   }
 
@@ -215,9 +253,17 @@ function TimerField({ task, meId }: { task: TaskRow; meId: string }) {
       setError('Enter a time such as 3h 30min')
       return
     }
+    if (minutes > 24 * 60) {
+      setError('One entry is at most 24 hours')
+      return
+    }
     setError(null)
-    const entry = manualEntry(meId, minutes, new Date())
-    if (await save(task.id, { timeEntries: [...task.timeEntries, entry] })) setTyped('')
+    try {
+      await addEntry.mutateAsync({ taskId: task.id, input: { minutes, notes: '' } })
+      setTyped('')
+    } catch {
+      // The mutation cache shows the server's message.
+    }
   }
 
   const state = running ? 'recording' : lastRun !== null ? 'paused' : 'idle'
@@ -297,13 +343,24 @@ function TimerField({ task, meId }: { task: TaskRow; meId: string }) {
 }
 
 /** Time Entries: one group per person with their total; each entry's day, range and length. */
-function TimeEntries({ task, meId }: { task: TaskRow; meId: string }) {
+function TimeEntries({
+  entries,
+  loading,
+  meId,
+  canDelete,
+}: {
+  entries: readonly TimeEntry[]
+  loading: boolean
+  meId: string | null
+  canDelete: boolean
+}) {
   const people = usePeople()
-  const { save } = useTaskSave()
-  const groups = entriesByPerson(task.timeEntries)
+  const deleteEntry = useDeleteTimeEntry()
+  const finished = entries.filter((entry) => !entry.isRunning)
+  const groups = entriesByPerson(finished)
   // Your own entries start open; the set holds the groups toggled away from that.
   const [toggled, setToggled] = useState<ReadonlySet<string>>(() => new Set())
-  const total = trackedMinutes(task)
+  const total = finished.reduce((sum, entry) => sum + entry.minutes, 0)
 
   const toggle = (id: string) => {
     setToggled((current) => {
@@ -322,7 +379,9 @@ function TimeEntries({ task, meId }: { task: TaskRow; meId: string }) {
           {formatDuration(total)}
         </span>
       </div>
-      {groups.length === 0 ? (
+      {loading ? (
+        <p className={cn(fieldStyles.muted, 'mt-2 px-1')}>Loading time entries...</p>
+      ) : groups.length === 0 ? (
         <p className={cn(fieldStyles.muted, 'mt-2 px-1')}>No time tracked yet</p>
       ) : (
         <ul
@@ -333,7 +392,7 @@ function TimeEntries({ task, meId }: { task: TaskRow; meId: string }) {
         >
           {groups.map((group) => {
             const person = people.get(group.employeeId)
-            const name = person?.name ?? 'Unknown'
+            const name = person?.name ?? (group.name || 'Unknown')
             const isOpen = (group.employeeId === meId) !== toggled.has(group.employeeId)
             return (
               <li key={group.employeeId} className="flex flex-col gap-1">
@@ -367,7 +426,7 @@ function TimeEntries({ task, meId }: { task: TaskRow; meId: string }) {
                         <span className="min-w-0 flex-1">
                           <span className="block truncate">
                             {format(fromDay(entry.date), 'EEE, MMM d')}, {formatTime12(entry.start)}{' '}
-                            - {formatTime12(entry.end)}
+                            - {entry.end ? formatTime12(entry.end) : 'now'}
                           </span>
                           {entry.notes && (
                             <span className="block truncate text-[#909090]">{entry.notes}</span>
@@ -376,17 +435,15 @@ function TimeEntries({ task, meId }: { task: TaskRow; meId: string }) {
                         <span className="font-medium text-[#7127EA]">
                           {formatDuration(entry.minutes)}
                         </span>
-                        <RemoveButton
-                          label={`Delete entry of ${formatTime12(entry.start)}`}
-                          onClick={() => {
-                            void save(task.id, {
-                              timeEntries: task.timeEntries.filter(
-                                (other) => other.id !== entry.id,
-                              ),
-                            })
-                          }}
-                          className="ml-0"
-                        />
+                        {canDelete && (
+                          <RemoveButton
+                            label={`Delete entry of ${formatTime12(entry.start)}`}
+                            onClick={() => {
+                              deleteEntry.mutate(entry.id)
+                            }}
+                            className="ml-0"
+                          />
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -401,8 +458,9 @@ function TimeEntries({ task, meId }: { task: TaskRow; meId: string }) {
 }
 
 /** Select Day & Date, Start Time and Stop Time (15-minute steps) and notes (165 characters). */
-function ManualEntry({ task, meId }: { task: TaskRow; meId: string }) {
-  const { save, isPending } = useTaskSave()
+function ManualEntry({ task }: { task: TaskRow }) {
+  const addEntry = useAddTimeEntry()
+  const isPending = addEntry.isPending
   const [dayOpen, setDayOpen] = useState(false)
   const notesId = useId()
   const form = useForm<TimeEntryForm>({
@@ -414,17 +472,19 @@ function ManualEntry({ task, meId }: { task: TaskRow; meId: string }) {
   const notes = useWatch({ control: form.control, name: 'notes' })
 
   const submit = form.handleSubmit(async (values) => {
-    const entry = {
-      id: newEntryId(),
-      employeeId: meId,
-      date: values.date,
-      start: values.start,
-      end: values.end,
-      minutes: minutesOf(values.end) - minutesOf(values.start),
-      notes: values.notes.trim(),
-    }
-    if (await save(task.id, { timeEntries: [...task.timeEntries, entry] })) {
+    try {
+      await addEntry.mutateAsync({
+        taskId: task.id,
+        input: {
+          date: values.date,
+          start: values.start,
+          end: values.end,
+          notes: values.notes.trim(),
+        },
+      })
       form.reset({ date: values.date, start: '', end: '', notes: '' })
+    } catch {
+      // The mutation cache shows the server's message.
     }
   })
 

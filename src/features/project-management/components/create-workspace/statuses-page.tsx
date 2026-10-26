@@ -2,7 +2,6 @@ import { useId, useRef, useState } from 'react'
 
 import { cn } from '@/lib/utils'
 
-import { WORKFLOW_TEMPLATES_BY_ID } from '../../constants'
 import type {
   StatusGroup,
   StatusMode,
@@ -14,6 +13,7 @@ import { DetailLayout } from './detail-layout'
 import { ConfirmDialog } from './small-popups'
 import { StatusGroupSection } from './status-group'
 import { StatusTemplateSelect } from './status-template-select'
+import { useWizardTemplates, useWorkflowTemplate } from './templates-context'
 import { RadioMark } from './wizard-controls'
 import {
   addStatus,
@@ -37,7 +37,7 @@ import { wz } from './wizard-styles'
 
 export interface StatusesResult {
   statusMode: StatusMode
-  statusTemplate: StatusTemplateId
+  statusTemplate: StatusTemplateId | null
   statuses: TaskStatus[]
 }
 
@@ -77,15 +77,13 @@ export function StatusesPage({
   onDiscard,
   onClose,
 }: StatusesPageProps) {
-  const workflow = WORKFLOW_TEMPLATES_BY_ID[template]
+  const workflow = useWorkflowTemplate(template)
+  const { statusTemplates } = useWizardTemplates()
   const defaults = workflow.setup.statuses
   const [draft, setDraft] = useState<Draft>(() => ({
     mode: statusMode,
     statuses: copyStatuses(statusMode === 'custom' ? statuses : defaults),
-    library:
-      statusMode === 'custom'
-        ? library
-        : { ...library, selectedId: library.selectedId ?? 'custom' },
+    library,
   }))
   const [editing, setEditing] = useState<StatusEditing | null>(null)
   const [deleting, setDeleting] = useState<TaskStatus | null>(null)
@@ -99,7 +97,7 @@ export function StatusesPage({
 
   const custom = draft.mode === 'custom'
   const shown = custom ? draft.statuses : defaults
-  const templates = libraryTemplates(draft.library, defaults)
+  const templates = libraryTemplates(draft.library, statusTemplates)
   const groups = DRAWN_STATUS_GROUPS.filter(
     (group) => custom || statusesIn(shown, group).length > 0,
   )
@@ -175,7 +173,7 @@ export function StatusesPage({
         onSave(
           {
             statusMode: draft.mode,
-            statusTemplate: custom ? templateIdFor(draft.library.selectedId) : 'custom',
+            statusTemplate: custom ? templateIdFor(draft.library.selectedId) : null,
             statuses: copyStatuses(shown),
           },
           draft.library,
@@ -209,10 +207,7 @@ export function StatusesPage({
                     setDraft((previous) => ({
                       ...previous,
                       mode: mode.value,
-                      library:
-                        mode.value === 'custom' && previous.library.selectedId === null
-                          ? { ...previous.library, selectedId: 'custom' }
-                          : previous.library,
+                      library: previous.library,
                     }))
                     setEditing(null)
                     setError(undefined)

@@ -3,6 +3,7 @@ import { type KeyboardEvent, useState } from 'react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 
+import { columnEditable } from '../../hooks/use-pm-access'
 import type { TaskRow, TaskStatus } from '../../types/pm.types'
 import { TASK_CELLS, TaskNameAdornments } from '../task-fields/task-cells'
 import { useListView } from './list-context'
@@ -16,6 +17,23 @@ import {
   SubtaskIcon,
 } from './workspace-icons'
 import { listStyles } from './workspace-styles'
+
+/**
+ * Columns whose cell is only a popup to edit the value: read-only, they become inert. Comments
+ * (Latest Comment), the files list and time entries still open to read.
+ */
+const READ_ONLY_INERT: ReadonlySet<string> = new Set([
+  'assignees',
+  'startDate',
+  'dueDate',
+  'priority',
+  'tags',
+  'labels',
+  'status',
+  'timeEstimate',
+  'storyPoints',
+  'dependencies',
+])
 
 /**
  * One task row (task row group 1:2779) and, when expanded, its subtasks indented under it.
@@ -195,10 +213,14 @@ export function TaskRowView({
             .filter((column) => column.key !== 'name')
             .map((column) => {
               const Cell = TASK_CELLS[column.key]
+              // Can View / Private Field, or no edit rights: the value shows but its popup does not open.
+              const readOnly = !view.access.editTasks || !columnEditable(workspace, column.key)
               return (
                 <div
                   key={column.key}
                   role="cell"
+                  inert={readOnly && READ_ONLY_INERT.has(column.key) ? true : undefined}
+                  aria-readonly={readOnly || undefined}
                   className={listStyles.cell}
                   style={{ width: COLUMN_WIDTHS[column.key], marginLeft: COLUMN_GAP }}
                 >
@@ -230,7 +252,7 @@ export function TaskRowView({
 
 /** The name, or the rename box while renaming. */
 function TaskName({ task }: { task: TaskRow }) {
-  const { renamingId, onRename, actions } = useListView()
+  const { renamingId, onRename, actions, access } = useListView()
 
   if (renamingId !== task.id) {
     return (
@@ -238,7 +260,7 @@ function TaskName({ task }: { task: TaskRow }) {
         className="min-w-0 flex-1 truncate text-[1.1858rem] leading-[1.5] font-medium text-[#626262]"
         title={task.name}
         onDoubleClick={() => {
-          onRename(task.id)
+          if (access.editTasks) onRename(task.id)
         }}
       >
         {task.name}

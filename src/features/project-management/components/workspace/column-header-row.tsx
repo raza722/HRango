@@ -34,7 +34,7 @@ export function ColumnHeaderRow({
   /** Every task drawn in the group, for "select all". */
   taskIds: readonly string[]
 }) {
-  const { columns, selected, onSelect, onShowColumn, workspace } = useListView()
+  const { columns, selected, onSelect, onShowColumn, workspace, access } = useListView()
   const chosen = taskIds.filter((id) => selected.has(id)).length
   const addable = addableColumns(workspace.columns, TASK_COLUMN_KEYS)
 
@@ -71,7 +71,7 @@ export function ColumnHeaderRow({
         <PmMenu>
           <Tooltip>
             <TooltipTrigger asChild>
-              <PmMenuTrigger asChild disabled={addable.length === 0}>
+              <PmMenuTrigger asChild disabled={addable.length === 0 || access.rank === 0}>
                 <button
                   type="button"
                   aria-label="Add Column"
@@ -106,7 +106,9 @@ export function ColumnHeaderRow({
 }
 
 function ColumnHeader({ columnKey }: { columnKey: TaskColumnKey }) {
-  const { sort, onSort, onColumnAction, onOpenPermission } = useListView()
+  const { sort, onSort, onColumnAction, onOpenPermission, access } = useListView()
+  /** Members keep their own column layout; readers who are not members cannot. */
+  const canArrange = access.rank > 0
   const label = COLUMN_LABELS[columnKey]
   const direction = sort?.key === columnKey ? sort.direction : null
   const isName = columnKey === 'name'
@@ -162,7 +164,7 @@ function ColumnHeader({ columnKey }: { columnKey: TaskColumnKey }) {
                 Sort as Bottom
               </HeaderCheck>
               <Menu.Separator className={headerMenuStyles.separator} />
-              {!isName && (
+              {!isName && canArrange && (
                 <>
                   <HeaderItem icon={<MoveStartIcon />} onSelect={action('move-start')}>
                     Move to Start
@@ -179,16 +181,18 @@ function ColumnHeader({ columnKey }: { columnKey: TaskColumnKey }) {
               >
                 Clear Sort
               </HeaderItem>
-              <HeaderItem
-                icon={<PermissionIcon />}
-                trailing={<ChevronRightIcon className="h-3 w-1.5 shrink-0 text-[#7127EA]" />}
-                onSelect={() => {
-                  onOpenPermission(columnKey)
-                }}
-              >
-                Add Role Permission
-              </HeaderItem>
-              {!isName && (
+              {!isName && access.editWorkspace && (
+                <HeaderItem
+                  icon={<PermissionIcon />}
+                  trailing={<ChevronRightIcon className="h-3 w-1.5 shrink-0 text-[#7127EA]" />}
+                  onSelect={() => {
+                    onOpenPermission(columnKey)
+                  }}
+                >
+                  Add Role Permission
+                </HeaderItem>
+              )}
+              {!isName && canArrange && (
                 <>
                   <Menu.Separator className={headerMenuStyles.separator} />
                   <HeaderItem icon={<HideIcon />} onSelect={action('hide')}>
