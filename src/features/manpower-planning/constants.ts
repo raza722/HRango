@@ -15,8 +15,9 @@ export const PLAN_STATUS_META: Record<PlanStatus, { label: string; tone: ChipTon
   rejected: { label: 'Rejected', tone: 'red' },
 }
 
+/** An approved budget is drawn as the designs' green "Active". */
 export const BUDGET_STATUS_META: Record<BudgetStatus, { label: string; tone: ChipTone }> = {
-  active: { label: 'Active', tone: 'green' },
+  approved: { label: 'Active', tone: 'green' },
   pending: { label: 'Pending', tone: 'amber' },
   rejected: { label: 'Rejected', tone: 'red' },
 }
@@ -30,9 +31,9 @@ export const OPEN_POSITION_STATUS_META: Record<
 }
 
 export const ACTIVE_META = {
-  true: { label: 'Active', tone: 'green' },
-  false: { label: 'Inactive', tone: 'grey' },
-} as const satisfies Record<'true' | 'false', { label: string; tone: ChipTone }>
+  active: { label: 'Active', tone: 'green' },
+  inactive: { label: 'Inactive', tone: 'grey' },
+} as const satisfies Record<'active' | 'inactive', { label: string; tone: ChipTone }>
 
 export const PLAN_MODE_LABELS: Record<PlanMode, string> = {
   new: 'New',
@@ -53,3 +54,26 @@ export type SettingsTab = (typeof SETTINGS_TABS)[number]['value']
 
 /** Division and Station start at "ALL", as Add Planning draws them. */
 export const ALL_VALUE = 'all'
+
+/** Permission codes (`app/catalogue/manpower.py`); buttons hide what the user lacks. */
+export const MP_CODES = {
+  planningCreate: 'manpower.planning.create',
+  planningEdit: 'manpower.planning.edit',
+  planningDelete: 'manpower.planning.delete',
+  budgetCreate: 'manpower.e_budgeting.create',
+  budgetEdit: 'manpower.e_budgeting.edit',
+  budgetDelete: 'manpower.e_budgeting.delete',
+  approve: 'manpower.budget_approvals.approve',
+  reject: 'manpower.budget_approvals.reject',
+  openEdit: 'manpower.open_positions.edit',
+  openClose: 'manpower.open_positions.close',
+  openReopen: 'manpower.open_positions.reopen',
+  openDownload: 'manpower.open_positions.download',
+  durationCreate: 'manpower.settings.budget_durations.create',
+  durationEdit: 'manpower.settings.budget_durations.edit',
+  durationDelete: 'manpower.settings.budget_durations.delete',
+  positionCreate: 'manpower.settings.positions.create',
+  positionEdit: 'manpower.settings.positions.edit',
+  positionDelete: 'manpower.settings.positions.delete',
+  positionImport: 'manpower.settings.positions.import',
+} as const

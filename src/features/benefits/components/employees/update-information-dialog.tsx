@@ -7,50 +7,67 @@ import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
 import { MARITAL_STATUSES } from '../../constants'
-import { useUpdateProfile } from '../../hooks/use-benefits'
+import { useRequestProfileUpdate } from '../../hooks/use-benefits'
 import { profileFormSchema, type ProfileFormValues } from '../../schemas/benefits.schema'
-import type { EmployeeRow } from '../../types/benefits.types'
+import type { BenefitEmployee, ProfileChanges } from '../../types/benefits.types'
 import { accent, boxClass, buttonClass } from '../shared/benefit-styles'
 import { BxSelect, DateBox, FieldRow } from '../shared/controls'
 import { BxDialog } from '../shared/dialogs'
 
 const COLUMNS = '@lg:grid-cols-[8.5rem_minmax(0,18rem)]'
 
+/** The API's field names (`changes.dateOfBirth` …) → this form's. */
+const fieldOf = (path: string) => path.replace(/^changes\./, '')
+
 /**
  * Update missing information (not drawn; laid out like the Edit Plan Year popup): the details
- * benefits enrollment needs from the person.
+ * benefits enrollment needs from the person. They belong to the Employees module, so saving
+ * sends an Update Information request that HR approves; the details change then.
  */
 export function UpdateInformationDialog({
   employee,
   onClose,
 }: {
-  employee: EmployeeRow
+  employee: BenefitEmployee
   onClose: () => void
 }) {
-  const update = useUpdateProfile()
+  const update = useRequestProfileUpdate()
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileFormSchema),
     defaultValues: {
-      dateOfBirth: employee.profile.dateOfBirth ?? '',
-      maritalStatus: employee.profile.maritalStatus ?? '',
-      homeAddress: employee.profile.homeAddress ?? '',
+      dateOfBirth: employee.dateOfBirth ?? '',
+      maritalStatus: employee.maritalStatus ?? '',
+      homeAddress: '',
     },
   })
   const { errors } = form.formState
 
   const submit = form.handleSubmit(async (values) => {
+    // Only what changes is asked for.
+    const changes: ProfileChanges = {}
+    if (values.dateOfBirth !== (employee.dateOfBirth ?? ''))
+      changes.dateOfBirth = values.dateOfBirth
+    if (values.maritalStatus !== (employee.maritalStatus ?? '')) {
+      changes.maritalStatus = values.maritalStatus as NonNullable<ProfileChanges['maritalStatus']>
+    }
+    if (values.homeAddress) changes.homeAddress = values.homeAddress
+    if (Object.keys(changes).length === 0) {
+      onClose()
+      return
+    }
     try {
-      await update.mutateAsync({ id: employee.id, input: values })
+      await update.mutateAsync({ id: employee.id, changes })
       onClose()
     } catch (error) {
       const fields = error instanceof ApiError ? Object.entries(error.fieldErrors) : []
-      if (fields.length > 0) {
-        for (const [name, message] of fields) {
-          if (name in values) form.setError(name as keyof ProfileFormValues, { message })
+      const known = fields.filter(([name]) => fieldOf(name) in values)
+      if (known.length > 0) {
+        for (const [name, message] of known) {
+          form.setError(fieldOf(name) as keyof ProfileFormValues, { message })
         }
       } else {
         form.setError('root', {
-          message: error instanceof ApiError ? error.message : 'Could not save the information.',
+          message: error instanceof ApiError ? error.message : 'Could not send the update.',
         })
       }
     }
@@ -59,7 +76,7 @@ export function UpdateInformationDialog({
   return (
     <BxDialog
       title="Update Information"
-      description={`The benefit details of ${employee.name}.`}
+      description={`The benefit details of ${employee.name ?? ''}.`}
       onClose={onClose}
       className="max-w-[36rem]"
     >
@@ -70,7 +87,12 @@ export function UpdateInformationDialog({
       >
         <p className="text-sm text-[#292929] dark:text-heading">
           {employee.name}
-          <span className="text-muted-foreground">{` · ${employee.jobTitle}`}</span>
+          {employee.jobTitleName && (
+            <span className="text-muted-foreground">{` · ${employee.jobTitleName}`}</span>
+          )}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          HR approves the change before it shows here.
         </p>
         <div className="mt-5 grid gap-[1.1rem]">
           <Controller
@@ -111,18 +133,13 @@ export function UpdateInformationDialog({
                     value={field.value}
                     onChange={field.onChange}
                     placeholder="Select Marital Status"
-                    options={MARITAL_STATUSES.map((status) => ({ value: status, label: status }))}
+                    options={MARITAL_STATUSES}
                   />
                 )}
               </FieldRow>
             )}
           />
-          <FieldRow
-            label="Home Address"
-            required
-            columns={COLUMNS}
-            error={errors.homeAddress?.message}
-          >
+          <FieldRow label="Home Address" columns={COLUMNS} error={errors.homeAddress?.message}>
             {(a11y) => (
               <input
                 {...a11y}
@@ -152,7 +169,7 @@ export function UpdateInformationDialog({
             disabled={update.isPending}
             className={cn(buttonClass, accent.bg, 'min-w-[8.4375rem]')}
           >
-            Save
+            Send to HR
           </button>
         </div>
       </form>

@@ -1,9 +1,11 @@
 import type {
   ElectionStatus,
   ElectionUnit,
+  MissingDetail,
   NewHireStart,
   PlanCategory,
   PlanYearStatus,
+  WindowKind,
   WindowStatus,
 } from './types/benefits.types'
 
@@ -108,8 +110,8 @@ export const CARRIERS = [
 
 export const NEW_HIRE_OPTIONS: readonly { value: NewHireStart; label: string }[] = [
   { value: 'immediately', label: 'Immediately upon hire' },
-  { value: 'waiting-period', label: 'After a waiting period' },
-  { value: 'per-employee', label: 'It will be different per employee' },
+  { value: 'waiting_period', label: 'After a waiting period' },
+  { value: 'per_employee', label: 'It will be different per employee' },
 ]
 export const NEW_HIRE_VALUES = NEW_HIRE_OPTIONS.map((option) => option.value) as [
   NewHireStart,
@@ -123,14 +125,40 @@ export function unitLabel(unit: ElectionUnit, count: number): string {
   return count === 1 ? unit : `${unit}s`
 }
 
-export const MARITAL_STATUSES = ['Single', 'Married', 'Divorced', 'Widowed'] as const
-
-/** The benefit details each person needs, with their labels. */
-export const PROFILE_FIELDS = [
-  { key: 'dateOfBirth', label: 'Date of Birth' },
-  { key: 'maritalStatus', label: 'Marital Status' },
-  { key: 'homeAddress', label: 'Home Address' },
+/** Marital statuses as the Employees module keeps them. */
+export const MARITAL_STATUSES = [
+  { value: 'single', label: 'Single' },
+  { value: 'married', label: 'Married' },
+  { value: 'divorced', label: 'Divorced' },
+  { value: 'widowed', label: 'Widowed' },
 ] as const
+
+/** The benefit details the API reports missing, with their labels. */
+export const MISSING_LABELS: Record<MissingDetail, string> = {
+  date_of_birth: 'Date of Birth',
+  marital_status: 'Marital Status',
+}
+
+export const WINDOW_KIND_LABELS: Record<WindowKind, string> = {
+  open_enrollment: 'Open Enrollment',
+  life_event: 'Qualifying Life Event',
+  new_hire: 'New Hire',
+}
+
+/** Permission codes (`app/catalogue/benefits.py`); buttons hide what the user lacks. */
+export const BEN_CODES = {
+  planYearCreate: 'benefits.plan_years.create',
+  planYearEdit: 'benefits.plan_years.edit',
+  planYearDelete: 'benefits.plan_years.delete',
+  planCreate: 'benefits.plans.create',
+  planDelete: 'benefits.plans.delete',
+  windowCreate: 'benefits.enrollment_windows.create',
+  windowDelete: 'benefits.enrollment_windows.delete',
+  fileCreate: 'benefits.files.create',
+  fileDelete: 'benefits.files.delete',
+  fileDownload: 'benefits.files.download',
+  profileUpdate: 'employees.update_requests.create',
+} as const
 
 /** Plan attachments: up to 5 MB of PDF, Word or images. */
 export const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024
@@ -157,6 +185,11 @@ export const PLAN_YEAR_STATUS: Record<PlanYearStatus, ChipMeta> = {
   },
 }
 
+export const PLAN_STATUS: Record<'active' | 'inactive', ChipMeta> = {
+  active: { label: 'Active', className: PLAN_YEAR_STATUS.active.className },
+  inactive: { label: 'Inactive', className: PLAN_YEAR_STATUS.ended.className },
+}
+
 export const WINDOW_STATUS: Record<WindowStatus, ChipMeta> = {
   open: { label: 'Open', className: PLAN_YEAR_STATUS.active.className },
   closed: { label: 'Closed', className: PLAN_YEAR_STATUS.ended.className },
@@ -173,5 +206,9 @@ export const ELECTION_STATUS: Record<ElectionStatus | 'none', ChipMeta> = {
     className: 'bg-[#FBE9E2] text-[#C2420B] dark:bg-[#C2420B]/20 dark:text-[#FCA5A5]',
   },
   waived: { label: 'Waived', className: PLAN_YEAR_STATUS.ended.className },
+  rejected: {
+    label: 'Rejected',
+    className: 'bg-[#FBE9E2] text-[#C2420B] dark:bg-[#C2420B]/20 dark:text-[#FCA5A5]',
+  },
   none: { label: 'Not started', className: PLAN_YEAR_STATUS.ended.className },
 }

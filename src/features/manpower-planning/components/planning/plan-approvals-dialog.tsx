@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 
 import { BUDGET_STATUS_META } from '../../constants'
 import { usePlan } from '../../hooks/use-manpower'
-import { formatAmount, formatCount } from '../../utils/format'
+import { formatAmount, formatCount, stampOf } from '../../utils/format'
 import { Chip, StampCell } from '../shared/cells'
 import { accent, headText } from '../shared/mp-styles'
 import { MpDialog } from '../shared/popups'
@@ -44,7 +44,7 @@ export function PlanApprovalsDialog({ planId, onClose }: { planId: string; onClo
               <caption className="sr-only">Budgets of {plan.data.title}</caption>
               <thead>
                 <tr className="border-y border-[#EBEFF8] dark:border-border">
-                  {['Position', 'Budget', 'Positions', 'Status', 'Approved By'].map((head) => (
+                  {['Position', 'Budget', 'Positions', 'Status', 'Decided By'].map((head) => (
                     <th key={head} scope="col" className={cn('h-11 px-2 text-left', headText)}>
                       {head}
                     </th>
@@ -59,14 +59,17 @@ export function PlanApprovalsDialog({ planId, onClose }: { planId: string; onClo
                       {formatAmount(budget.amount)}
                     </td>
                     <td className="px-2 py-3 align-top text-heading">
-                      {formatCount(budget.positions)}
+                      {formatCount(budget.totalPositions)}
                     </td>
                     <td className="px-2 py-3 align-top">
                       <Chip {...BUDGET_STATUS_META[budget.status]} size="sm" />
                     </td>
                     <td className="px-2 py-3 align-top">
-                      {budget.decided ? (
-                        <StampCell stamp={budget.decided} size="sm" />
+                      {budget.decidedAt ? (
+                        <StampCell
+                          stamp={stampOf(budget.decidedAt, budget.decidedByName)}
+                          size="sm"
+                        />
                       ) : (
                         <span className="text-xs text-[#707070]">Awaiting approval</span>
                       )}

@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import {
+  type BudgetFilters,
+  type EmployeeLookupParams,
   type EmployeePositionFilters,
   manpowerApi,
   manpowerKeys,
@@ -9,7 +11,6 @@ import {
   manpowerLookupsQueryOptions,
   type PageQuery,
   type PlanFilters,
-  type PositionTitleFilters,
   type SearchFilters,
 } from '../api/manpower.api'
 import type {
@@ -20,13 +21,33 @@ import type {
   ImportResult,
   OpenPositionInput,
   PlanInput,
-  PositionTitleInput,
+  SalaryRangeInput,
 } from '../types/manpower.types'
+
+interface Versioned {
+  id: string
+  rowVersion: string
+}
 
 // --- queries ------------------------------------------------------------------------------------
 
-/** Divisions, stations, departments, people, budget durations and positions for the forms. */
+/** Organisation's lists, the budget durations and the employee positions, for the forms. */
 export const useManpowerLookups = () => useQuery(manpowerLookupsQueryOptions())
+
+/**
+ * Everyone `GET /employees/lookup` gives for these filters (every page), for lists that are
+ * not pickers (the HR contacts). Pickers use `EmployeeSearchSelect` (server search, paged).
+ */
+export const useEmployeeOptions = (
+  params: Omit<EmployeeLookupParams, 'page' | 'pageSize'>,
+  enabled = true,
+) =>
+  useQuery({
+    queryKey: manpowerKeys.employees(params),
+    queryFn: ({ signal }) => manpowerApi.allEmployees(params, signal),
+    staleTime: 30_000,
+    enabled,
+  })
 
 export const usePlans = (params: PageQuery<PlanFilters>) =>
   useQuery(manpowerListQueryOptions('plans', params, manpowerApi.plans))
@@ -38,8 +59,11 @@ export const usePlan = (id: string | null) =>
     enabled: id !== null,
   })
 
-export const useBudgets = (params: PageQuery<SearchFilters>) =>
+export const useBudgets = (params: PageQuery<BudgetFilters>) =>
   useQuery(manpowerListQueryOptions('budgets', params, manpowerApi.budgets))
+
+export const useBudgetApprovals = (params: PageQuery<BudgetFilters>) =>
+  useQuery(manpowerListQueryOptions('budget-approvals', params, manpowerApi.budgetApprovals))
 
 export const useOpenPositions = (params: PageQuery<SearchFilters>) =>
   useQuery(manpowerListQueryOptions('open-positions', params, manpowerApi.openPositions))
@@ -47,11 +71,17 @@ export const useOpenPositions = (params: PageQuery<SearchFilters>) =>
 export const useBudgetDurations = (params: PageQuery<SearchFilters>) =>
   useQuery(manpowerListQueryOptions('durations', params, manpowerApi.durations))
 
-export const usePositionTitles = (params: PageQuery<PositionTitleFilters>) =>
+export const usePositionTitles = (params: PageQuery<SearchFilters>) =>
   useQuery(manpowerListQueryOptions('position-titles', params, manpowerApi.positionTitles))
 
 export const useEmployeePositions = (params: PageQuery<EmployeePositionFilters>) =>
   useQuery(manpowerListQueryOptions('positions', params, manpowerApi.positions))
+
+export const useSalaryRanges = (positionId: string) =>
+  useQuery({
+    queryKey: manpowerKeys.detail('salary-ranges', positionId),
+    queryFn: ({ signal }) => manpowerApi.salaryRanges(positionId, signal),
+  })
 
 // --- mutations ----------------------------------------------------------------------------------
 
@@ -84,26 +114,34 @@ export const useSavePlan = () =>
 
 export const useDeletePlan = () =>
   useManpowerMutation(
-    (id: string) => manpowerApi.deletePlan(id),
+    (plan: Versioned) => manpowerApi.deletePlan(plan),
     () => 'Plan deleted',
   )
 
-export const useUpdateBudget = () =>
+export const useSaveBudget = () =>
   useManpowerMutation(
-    ({ id, input }: { id: string; input: BudgetInput }) => manpowerApi.updateBudget(id, input),
-    () => 'Budget updated',
+    ({ id, input }: { id?: string | undefined; input: BudgetInput }) =>
+      id ? manpowerApi.updateBudget(id, input) : manpowerApi.createBudget(input),
+    ({ id }) => (id ? 'Budget updated' : 'Budget added'),
   )
 
 export const useDeleteBudget = () =>
   useManpowerMutation(
-    (id: string) => manpowerApi.deleteBudget(id),
+    (budget: Versioned) => manpowerApi.deleteBudget(budget),
     () => 'Budget deleted',
   )
 
 export const useDecideBudget = () =>
   useManpowerMutation(
-    ({ id, decision }: { id: string; decision: 'approve' | 'reject' }) =>
-      manpowerApi.decideBudget(id, decision),
+    ({
+      budget,
+      decision,
+      remarks,
+    }: {
+      budget: Versioned
+      decision: 'approve' | 'reject'
+      remarks?: string
+    }) => manpowerApi.decideBudget(budget, decision, remarks),
     ({ decision }) => (decision === 'approve' ? 'Budget approved' : 'Budget rejected'),
   )
 
@@ -116,8 +154,8 @@ export const useUpdateOpenPosition = () =>
 
 export const useSetOpenPositionClosed = () =>
   useManpowerMutation(
-    ({ id, closed }: { id: string; closed: boolean }) =>
-      manpowerApi.setOpenPositionClosed(id, closed),
+    ({ position, closed }: { position: Versioned; closed: boolean }) =>
+      manpowerApi.setOpenPositionClosed(position, closed),
     ({ closed }) => (closed ? 'Position closed' : 'Position reopened'),
   )
 
@@ -130,28 +168,8 @@ export const useSaveDuration = () =>
 
 export const useDeleteDuration = () =>
   useManpowerMutation(
-    (id: string) => manpowerApi.deleteDuration(id),
+    (duration: Versioned) => manpowerApi.deleteDuration(duration),
     () => 'Budget duration deleted',
-  )
-
-export const useSavePositionTitle = () =>
-  useManpowerMutation(
-    ({ id, input }: { id?: string | undefined; input: PositionTitleInput }) =>
-      id ? manpowerApi.updatePositionTitle(id, input) : manpowerApi.createPositionTitle(input),
-    ({ id }) => (id ? 'Position title updated' : 'Position title added'),
-  )
-
-export const useSetPositionTitleActive = () =>
-  useManpowerMutation(
-    ({ id, active }: { id: string; active: boolean }) =>
-      manpowerApi.setPositionTitleActive(id, active),
-    ({ active }) => (active ? 'Position title activated' : 'Position title deactivated'),
-  )
-
-export const useDeletePositionTitle = () =>
-  useManpowerMutation(
-    (id: string) => manpowerApi.deletePositionTitle(id),
-    () => 'Position title deleted',
   )
 
 export const useSavePosition = () =>
@@ -161,23 +179,36 @@ export const useSavePosition = () =>
     ({ id }) => (id ? 'Employee position updated' : 'Employee position saved'),
   )
 
-export const useSetPositionActive = () =>
+/** Activate / Deactivate: the position saved again with its other status. */
+export const useSetPositionStatus = () =>
   useManpowerMutation(
-    ({ id, active }: { id: string; active: boolean }) => manpowerApi.setPositionActive(id, active),
-    ({ active }) => (active ? 'Employee position activated' : 'Employee position deactivated'),
+    ({ id, input }: { id: string; input: EmployeePositionInput }) =>
+      manpowerApi.updatePosition(id, input),
+    ({ input }) =>
+      input.status === 'active' ? 'Employee position activated' : 'Employee position deactivated',
   )
 
 export const useDeletePosition = () =>
   useManpowerMutation(
-    (id: string) => manpowerApi.deletePosition(id),
+    (position: Versioned) => manpowerApi.deletePosition(position),
     () => 'Employee position deleted',
+  )
+
+export const useAddSalaryRange = () =>
+  useManpowerMutation(
+    ({ positionId, input }: { positionId: string; input: SalaryRangeInput }) =>
+      manpowerApi.addSalaryRange(positionId, input),
+    () => 'Salary range saved',
   )
 
 export const useImportPositions = () =>
   useManpowerMutation(
     (rows: EmployeePositionImportRow[]) => manpowerApi.importPositions(rows),
-    (_rows, result: ImportResult) =>
-      result.errors.length > 0
-        ? `${String(result.created)} imported, ${String(result.errors.length)} with errors`
-        : `${String(result.created)} imported`,
+    (_rows, result: ImportResult) => {
+      // A row can fail on several fields: count the rows.
+      const failed = new Set(result.errors.map((error) => error.rowNo)).size
+      return failed > 0
+        ? `${String(result.created)} imported, ${String(failed)} with errors`
+        : `${String(result.created)} imported`
+    },
   )

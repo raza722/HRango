@@ -216,6 +216,7 @@ export function PlansStep({ form, plans }: { form: Form; plans: readonly LookupP
 export function NewHiresStep({ form }: { form: Form }) {
   const { errors } = form.formState
   const period = useWatch({ control: form.control, name: 'electionPeriod' })
+  const start = useWatch({ control: form.control, name: 'newHireStart' })
   const count = Number(period) || 0
   const columns = '@lg:grid-cols-[13.625rem_minmax(0,22.8125rem)] @lg:gap-x-1.5'
   return (
@@ -242,6 +243,25 @@ export function NewHiresStep({ form }: { form: Form }) {
           </FieldRow>
         )}
       />
+      {start === 'waiting_period' && (
+        <FieldRow
+          label="How many days is the waiting period?"
+          required
+          columns={columns}
+          error={errors.waitingPeriodDays?.message}
+        >
+          {(a11y) => (
+            <input
+              {...a11y}
+              {...form.register('waitingPeriodDays')}
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="Days"
+              className={cn(largeBoxClass, 'max-w-[9.875rem]')}
+            />
+          )}
+        </FieldRow>
+      )}
       <FieldRow
         label="How long do new employees have to complete elections?"
         columns={columns}

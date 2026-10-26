@@ -47,11 +47,18 @@ const GROUPS: readonly (readonly {
  */
 export function PlanYearRowMenu({
   name,
+  allowed,
   onSelect,
 }: {
   name: string
+  /** The actions the user may take (permissions); the others are left out. */
+  allowed: readonly PlanYearAction[]
   onSelect: (action: PlanYearAction) => void
 }) {
+  const groups = GROUPS.map((group) =>
+    group.filter((item) => allowed.includes(item.action)),
+  ).filter((group) => group.length > 0)
+  if (groups.length === 0) return null
   return (
     <MenuPrimitive.Root modal={false}>
       <MenuPrimitive.Trigger
@@ -67,7 +74,7 @@ export function PlanYearRowMenu({
           collisionPadding={8}
           className="z-50 w-[11.6875rem] rounded-[10px] bg-popover py-1.5 text-popover-foreground shadow-[0_2px_10px_rgba(0,0,0,0.25)] data-[state=open]:animate-in data-[state=open]:fade-in-0"
         >
-          {GROUPS.map((group, index) => (
+          {groups.map((group, index) => (
             <div key={group[0]?.action}>
               {index > 0 && (
                 <MenuPrimitive.Separator className="mx-px my-1.5 h-px bg-[#D9D9D9] dark:bg-border" />

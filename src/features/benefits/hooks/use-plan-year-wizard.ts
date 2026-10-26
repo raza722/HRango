@@ -9,7 +9,7 @@ import {
   planYearFormSchema,
   type PlanYearFormValues,
 } from '../schemas/benefits.schema'
-import type { PlanYearInput, PlanYearRow } from '../types/benefits.types'
+import type { PlanYear, PlanYearInput } from '../types/benefits.types'
 
 export type PlanYearStep = 'details' | 'plans' | 'new-hires'
 
@@ -29,9 +29,10 @@ export const EMPTY_PLAN_YEAR: PlanYearFormValues = {
   newHireStart: 'immediately',
   electionPeriod: '1',
   electionUnit: 'month',
+  waitingPeriodDays: '',
 }
 
-export function planYearValues(year: PlanYearRow): PlanYearFormValues {
+export function planYearValues(year: PlanYear): PlanYearFormValues {
   return {
     name: year.name,
     startDate: year.startDate,
@@ -40,11 +41,22 @@ export function planYearValues(year: PlanYearRow): PlanYearFormValues {
     newHireStart: year.newHireStart,
     electionPeriod: String(year.electionPeriod),
     electionUnit: year.electionUnit,
+    waitingPeriodDays: year.waitingPeriodDays === null ? '' : String(year.waitingPeriodDays),
   }
 }
 
 export function toPlanYearInput(values: PlanYearFormValues): PlanYearInput {
-  return { ...values, name: values.name.trim(), electionPeriod: Number(values.electionPeriod) }
+  return {
+    name: values.name.trim(),
+    startDate: values.startDate,
+    endDate: values.endDate,
+    planIds: values.planIds,
+    newHireStart: values.newHireStart,
+    waitingPeriodDays:
+      values.newHireStart === 'waiting_period' ? Number(values.waitingPeriodDays) : null,
+    electionPeriod: Number(values.electionPeriod),
+    electionUnit: values.electionUnit,
+  }
 }
 
 /** The step a server error belongs to, so the wizard can go back to it. */

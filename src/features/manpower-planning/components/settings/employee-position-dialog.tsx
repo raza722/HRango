@@ -1,11 +1,12 @@
 import { type Control, Controller, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
+import { EmployeeSearchSelect } from '@/features/payroll'
 import { cn } from '@/lib/utils'
 
 import { useSavePosition } from '../../hooks/use-manpower'
 import { positionFormSchema, type PositionFormValues } from '../../schemas/dialog-forms.schema'
-import type { EmployeePositionRow, ManpowerLookups } from '../../types/manpower.types'
+import type { EmployeePosition, ManpowerLookups } from '../../types/manpower.types'
 import { showSaveError } from '../../utils/errors'
 import { toAmount } from '../../utils/plan-math'
 import { MpField, type MpOption, MpSelect } from '../shared/controls'
@@ -17,15 +18,16 @@ const optionsOf = (list: readonly { id: string; name: string }[]): MpOption[] =>
 
 const FIELDS = [
   'code',
-  'positionTitleId',
+  'jobTitleId',
   'divisionId',
-  'stationId',
+  'branchId',
   'departmentId',
   'subDepartmentId',
   'employeeGroupId',
   'costCenterId',
   'gradeId',
   'reportsToId',
+  'employeeId',
   'minSalary',
   'maxSalary',
 ] as const
@@ -82,16 +84,16 @@ function SelectRow({
 }
 
 /**
- * The Employee Position popup in its two columns. Position Title, Cost Center and
- * Reports To are added to the drawn fields: the list shows the position's title and
- * the filters ask for the other two.
+ * The Employee Position popup in its two columns. Position Title, Cost Center, Reports To and
+ * Held By are added to the drawn fields: the list shows the position's title, and the API keeps
+ * the cost centre, the position it reports to and the person in the seat.
  */
 export function EmployeePositionDialog({
   position,
   lookups,
   onClose,
 }: {
-  position: EmployeePositionRow | null
+  position: EmployeePosition | null
   lookups: ManpowerLookups
   onClose: () => void
 }) {
@@ -101,42 +103,46 @@ export function EmployeePositionDialog({
     defaultValues: position
       ? {
           code: position.code,
-          positionTitleId: position.positionTitleId,
+          jobTitleId: position.jobTitleId,
           divisionId: position.divisionId ?? '',
-          stationId: position.stationId ?? '',
+          branchId: position.branchId,
           departmentId: position.departmentId ?? '',
           subDepartmentId: position.subDepartmentId ?? '',
           employeeGroupId: position.employeeGroupId,
           costCenterId: position.costCenterId ?? '',
           gradeId: position.gradeId ?? '',
           reportsToId: position.reportsToId ?? '',
-          minSalary: String(position.minSalary),
-          maxSalary: String(position.maxSalary),
+          employeeId: position.employeeId ?? '',
+          minSalary: position.minSalary === null ? '' : String(position.minSalary),
+          maxSalary: position.maxSalary === null ? '' : String(position.maxSalary),
         }
       : {
           code: '',
-          positionTitleId: '',
+          jobTitleId: '',
           divisionId: '',
-          stationId: '',
+          branchId: '',
           departmentId: '',
           subDepartmentId: '',
           employeeGroupId: '',
           costCenterId: '',
           gradeId: '',
           reportsToId: '',
+          employeeId: '',
           minSalary: '',
           maxSalary: '',
         },
   })
   const { control, register, handleSubmit, formState, setError, setValue } = form
-  const [divisionId, departmentId] = useWatch({ control, name: ['divisionId', 'departmentId'] })
-  const departments = lookups.departments.filter(
-    (item) => !divisionId || item.divisionId === divisionId,
-  )
-  const subDepartments = lookups.subDepartments.filter((item) => item.departmentId === departmentId)
-  const titles = lookups.positionTitles
-    .filter((item) => item.active || item.id === position?.positionTitleId)
-    .map((item) => ({ value: item.id, label: item.title }))
+  const departmentId = useWatch({ control, name: 'departmentId' })
+  const departments = lookups.departments.filter((item) => item.parentId === null)
+  const subDepartments = lookups.departments.filter((item) => item.parentId === departmentId)
+  const reportsTo = lookups.positions
+    .filter((item) => item.id !== position?.id)
+    .map((item) => ({ value: item.id, label: `${item.jobTitleName} (${item.code})` }))
+  // The person in the seat keeps their name before the lookup reads them.
+  const heldBy = position?.employeeId
+    ? [{ value: position.employeeId, label: position.employeeName ?? position.employeeId }]
+    : undefined
   const orNull = (value: string) => (value === '' ? null : value)
 
   const submit = handleSubmit((values) => {
@@ -144,18 +150,21 @@ export function EmployeePositionDialog({
       {
         id: position?.id,
         input: {
-          code: values.code.trim(),
-          positionTitleId: values.positionTitleId,
+          code: values.code.trim() || null,
+          jobTitleId: values.jobTitleId,
           divisionId: orNull(values.divisionId),
-          stationId: values.stationId,
+          branchId: values.branchId,
           departmentId: orNull(values.departmentId),
           subDepartmentId: orNull(values.subDepartmentId),
           employeeGroupId: values.employeeGroupId,
           costCenterId: orNull(values.costCenterId),
           gradeId: orNull(values.gradeId),
           reportsToId: orNull(values.reportsToId),
+          employeeId: orNull(values.employeeId),
+          status: position?.status ?? 'active',
           minSalary: values.minSalary.trim() === '' ? 0 : toAmount(values.minSalary),
           maxSalary: toAmount(values.maxSalary),
+          ...(position ? { rowVersion: position.rowVersion } : {}),
         },
       },
       {
@@ -180,7 +189,7 @@ export function EmployeePositionDialog({
               <input
                 {...a11y}
                 {...register('code')}
-                placeholder="12212"
+                placeholder="Next number"
                 className={cn(dialogBoxClass, 'w-full')}
               />
             )}
@@ -190,17 +199,10 @@ export function EmployeePositionDialog({
             name="divisionId"
             label="Division"
             options={optionsOf(lookups.divisions)}
-            onPicked={(value) => {
-              const department = lookups.departments.find((item) => item.id === departmentId)
-              if (value && department && department.divisionId !== value) {
-                setValue('departmentId', '')
-                setValue('subDepartmentId', '')
-              }
-            }}
           />
           <SelectRow
             control={control}
-            name="stationId"
+            name="branchId"
             label="Station"
             required
             options={optionsOf(lookups.stations)}
@@ -265,10 +267,10 @@ export function EmployeePositionDialog({
           </MpField>
           <SelectRow
             control={control}
-            name="positionTitleId"
+            name="jobTitleId"
             label="Position Title"
             required
-            options={titles}
+            options={optionsOf(lookups.jobTitles)}
           />
           <SelectRow
             control={control}
@@ -276,14 +278,29 @@ export function EmployeePositionDialog({
             label="Cost Center"
             options={optionsOf(lookups.costCenters)}
           />
-          <SelectRow
+          <SelectRow control={control} name="reportsToId" label="Reports To" options={reportsTo} />
+          <Controller
             control={control}
-            name="reportsToId"
-            label="Reports To"
-            options={lookups.employees.map((person) => ({
-              value: person.id,
-              label: `${person.name}, ${person.jobTitle}`,
-            }))}
+            name="employeeId"
+            render={({ field, fieldState }) => (
+              <MpField label="Held By" error={fieldState.error?.message} className={fieldGrid}>
+                {(a11y) => (
+                  <EmployeeSearchSelect
+                    {...a11y}
+                    value={field.value || null}
+                    onChange={(value) => {
+                      field.onChange(value ?? '')
+                    }}
+                    filters={{ permission: 'manpower.settings.positions.view' }}
+                    known={heldBy}
+                    hint={(row) => [row.code, row.jobTitleName].filter(Boolean).join(' · ')}
+                    placeholder="Select Employee"
+                    clearable
+                    className={dialogBoxClass}
+                  />
+                )}
+              </MpField>
+            )}
           />
         </div>
         <div className="flex flex-wrap justify-center gap-5">

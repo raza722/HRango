@@ -9,7 +9,7 @@ import {
   planYearValues,
   usePlanYearWizard,
 } from '../../hooks/use-plan-year-wizard'
-import type { PlanYearRow } from '../../types/benefits.types'
+import type { PlanYear } from '../../types/benefits.types'
 import { accent, buttonClass } from '../shared/benefit-styles'
 import { BxDialog } from '../shared/dialogs'
 import { LookupsGate } from '../shared/list-parts'
@@ -49,7 +49,7 @@ export function EditPlanYearDialog({
   startStep = 'details',
   onClose,
 }: {
-  year: PlanYearRow
+  year: PlanYear
   startStep?: PlanYearStep
   onClose: () => void
 }) {
@@ -59,7 +59,7 @@ export function EditPlanYearDialog({
     initial: planYearValues(year),
     startStep,
     save: async (input) => {
-      await save.mutateAsync({ id: year.id, input })
+      await save.mutateAsync({ id: year.id, input: { ...input, rowVersion: year.rowVersion } })
       onClose()
     },
   })

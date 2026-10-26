@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
+import { uploadFile } from '@/lib/files'
+
 import {
   benefitKeys,
   benefitListQueryOptions,
@@ -12,18 +14,23 @@ import {
 } from '../api/benefits.api'
 import { categoryMeta } from '../constants'
 import type {
-  BenefitProfileInput,
   EnrollmentWindowInput,
   PlanInput,
   PlanYearInput,
+  ProfileChanges,
 } from '../types/benefits.types'
+
+interface Versioned {
+  id: string
+  rowVersion: string
+}
 
 // --- queries ------------------------------------------------------------------------------------
 
 /** The stats row's counts (and the Employees tab's). */
 export const useBenefitsSummary = () => useQuery(benefitsSummaryQueryOptions())
 
-/** Plan years, plans, people and carriers for the pickers. */
+/** Plan years, plans and people for the pickers. */
 export const useBenefitsLookups = () => useQuery(benefitsLookupsQueryOptions())
 
 export const usePlanYears = (filter: YearFilter) =>
@@ -78,14 +85,31 @@ export const useSavePlanYear = () =>
 
 export const useDeletePlanYear = () =>
   useBenefitsMutation(
-    (id: string) => benefitsApi.deletePlanYear(id),
+    (year: Versioned) => benefitsApi.deletePlanYear(year),
     () => 'Plan year deleted',
   )
 
+/**
+ * Add Plan: the plan, then its attachment (uploaded and attached). A failed attachment leaves
+ * the plan saved and says so.
+ */
 export const useCreatePlan = () =>
   useBenefitsMutation(
-    (input: PlanInput) => benefitsApi.createPlan(input),
-    (input) => `${categoryMeta(input.category).title} plan added`,
+    async ({ input, attachment }: { input: PlanInput; attachment: File | null }) => {
+      const plan = await benefitsApi.createPlan(input)
+      if (!attachment) return { plan, attached: true }
+      try {
+        const uploaded = await uploadFile(attachment, 'benefits')
+        await benefitsApi.addPlanFile(plan.id, uploaded.id)
+        return { plan, attached: true }
+      } catch {
+        return { plan, attached: false }
+      }
+    },
+    ({ input }, result) =>
+      result.attached
+        ? `${categoryMeta(input.category).title} plan added`
+        : `${categoryMeta(input.category).title} plan added, but its attachment could not be uploaded`,
   )
 
 export const useDuplicatePlan = () =>
@@ -96,8 +120,23 @@ export const useDuplicatePlan = () =>
 
 export const useDeletePlan = () =>
   useBenefitsMutation(
-    (id: string) => benefitsApi.deletePlan(id),
+    (plan: Versioned) => benefitsApi.deletePlan(plan),
     () => 'Plan deleted',
+  )
+
+export const useAddPlanFile = () =>
+  useBenefitsMutation(
+    async ({ planId, file }: { planId: string; file: File }) => {
+      const uploaded = await uploadFile(file, 'benefits')
+      return benefitsApi.addPlanFile(planId, uploaded.id)
+    },
+    () => 'File added',
+  )
+
+export const useDeleteFile = () =>
+  useBenefitsMutation(
+    (file: Versioned) => benefitsApi.deleteFile(file),
+    () => 'File removed',
   )
 
 export const useCreateEnrollmentWindow = () =>
@@ -108,13 +147,13 @@ export const useCreateEnrollmentWindow = () =>
 
 export const useDeleteEnrollmentWindow = () =>
   useBenefitsMutation(
-    (id: string) => benefitsApi.deleteEnrollmentWindow(id),
+    (window: Versioned) => benefitsApi.deleteEnrollmentWindow(window),
     () => 'Enrollment window deleted',
   )
 
-export const useUpdateProfile = () =>
+export const useRequestProfileUpdate = () =>
   useBenefitsMutation(
-    ({ id, input }: { id: string; input: BenefitProfileInput }) =>
-      benefitsApi.updateProfile(id, input),
-    () => 'Information updated',
+    ({ id, changes }: { id: string; changes: ProfileChanges }) =>
+      benefitsApi.requestProfileUpdate(id, changes),
+    () => 'Update sent to HR for approval',
   )
