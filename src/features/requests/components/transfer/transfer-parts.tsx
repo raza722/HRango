@@ -84,17 +84,20 @@ export function TransferStatusTabs({
   )
 }
 
-/** Approvals → "Requested | Delegates" in a grey pill, the chosen one navy. */
+type TransferView = 'requested' | 'delegates' | 'cancellations'
+
+/** Approvals → "Requested | Delegates | Cancellations" in a grey pill, the chosen one navy. */
 export function ApprovalPills({
   value,
   onChange,
 }: {
-  value: 'requested' | 'delegates'
-  onChange: (view: 'requested' | 'delegates') => void
+  value: TransferView
+  onChange: (view: TransferView) => void
 }) {
   const views = [
     { value: 'requested', label: 'Requested' },
     { value: 'delegates', label: 'Delegates' },
+    { value: 'cancellations', label: 'Cancellations' },
   ] as const
   return (
     <div

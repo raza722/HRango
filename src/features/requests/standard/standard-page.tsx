@@ -3,7 +3,9 @@ import { toast } from 'sonner'
 
 import { DataTable, Pagination, RowActionsMenu, rowMenuItemClass } from '@/components/layout'
 import { activeCount, ConfirmAction, FiltersDialog, useFilters } from '@/features/payroll'
+import { useCan } from '@/lib/permissions'
 
+import { typePermission } from '../api/backend'
 import { ACTION_LABELS, REQUEST_PAGE_SIZE } from '../constants'
 import { REQUEST_STATUSES, type RequestAction, type RequestPage } from '../types/requests.types'
 import type {
@@ -15,9 +17,11 @@ import type {
 import { selectColumn } from './standard-columns'
 import {
   StandardCancelDialog,
+  StandardConsentDialog,
   StandardDecisionDialog,
   StandardDeleteDialog,
   StandardFlowDialog,
+  StandardForwardDialog,
   StandardHistoryDialog,
   StandardUnapproveDialog,
 } from './standard-dialogs'
@@ -41,7 +45,17 @@ import {
 type Dialog<P> =
   | { type: 'create' | 'filters' | 'approve' | 'unapprove' }
   | {
-      type: 'edit' | 'view' | 'decide' | 'review' | 'flow' | 'history' | 'cancel' | 'delete'
+      type:
+        | 'edit'
+        | 'view'
+        | 'decide'
+        | 'review'
+        | 'flow'
+        | 'history'
+        | 'cancel'
+        | 'delete'
+        | 'consent'
+        | 'forward'
       request: StandardRequest<P>
     }
   | null
@@ -55,12 +69,43 @@ const REQUEST_ACTIONS: readonly RequestAction[] = [
   'history',
   'cancel',
 ]
-const APPROVAL_ACTIONS: readonly RequestAction[] = ['decide', 'flow', 'view', 'history']
+const APPROVAL_ACTIONS: readonly RequestAction[] = [
+  'decide',
+  'consent',
+  'forward',
+  'flow',
+  'view',
+  'history',
+]
 
 const VIEW_LABELS: Record<StandardApprovalView, string> = {
   requested: 'Requested',
   cancellations: 'Cancellations',
   delegates: 'Delegates',
+  consents: 'Consents',
+}
+
+/**
+ * The buttons the user's permissions open (the server checks again). Who may
+ * decide a request is set by its flow; these codes only show the buttons.
+ */
+function usePermissions(kind: StandardRequest['kind']) {
+  return {
+    create: useCan(typePermission(kind, 'create')),
+    cancel: useCan(typePermission(kind, 'cancel')),
+    approvals: useCan('requests.approvals.view'),
+    approve: useCan('requests.approvals.approve'),
+    reject: useCan('requests.approvals.reject'),
+  }
+}
+
+/** Whether the user's permissions allow a row action at all. */
+function permits(action: RequestAction, can: ReturnType<typeof usePermissions>): boolean {
+  if (action === 'edit') return can.create
+  if (action === 'delete' || action === 'cancel') return can.cancel
+  if (action === 'decide') return can.approve || can.reject
+  if (action === 'forward') return can.approve
+  return true
 }
 
 const statusOf = (value: string | undefined) => REQUEST_STATUSES.find((status) => status === value)
@@ -83,13 +128,16 @@ export function StandardRequestsPage<P>({
 }) {
   const { kind } = config
   const lookups = useStandardLookups<Record<string, unknown>>(kind)
-  const bulk = useBulkStandard(kind)
+  const bulk = useBulkStandard()
+  const can = usePermissions(kind)
   const [dialog, setDialog] = useState<Dialog<P>>(null)
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [requestFilters, setRequestFilters] = useFilters(`${kind}-requests`)
   const [approvalFilters, setApprovalFilters] = useFilters(`${kind}-approvals`)
 
-  const tab: StandardTab = search.tab === 'settings' && !config.settingsTab ? 'request' : search.tab
+  const wanted: StandardTab =
+    search.tab === 'settings' && !config.settingsTab ? 'request' : search.tab
+  const tab: StandardTab = wanted === 'approvals' && !can.approvals ? 'request' : wanted
   const isRequest = tab === 'request'
   const scope = config.scopeLabels ? search.scope : 'all'
   const view: StandardApprovalView = config.approvalViews.includes(search.view)
@@ -131,7 +179,11 @@ export function StandardRequestsPage<P>({
   }
   const runBulk = (decision: 'approve' | 'reject', remarks: string) => {
     bulk.mutate(
-      { ids: decidable.map((row) => row.id), input: { decision, remarks } },
+      {
+        items: decidable.map((row) => ({ id: row.id, rowVersion: row.rowVersion })),
+        decision,
+        remarks,
+      },
       {
         onSuccess: ({ done, failed }) => {
           const verb = decision === 'approve' ? 'approved' : 'rejected'
@@ -141,8 +193,8 @@ export function StandardRequestsPage<P>({
           setSelected(new Set())
           setDialog(null)
         },
-        onError: () => {
-          toast.error('The requests could not be updated.')
+        onError: (failure) => {
+          toast.error(failure.message || 'The requests could not be updated.')
         },
       },
     )
@@ -156,7 +208,7 @@ export function StandardRequestsPage<P>({
   const columns = isRequest ? config.requestColumns(scope) : config.approvalColumns(view)
   const tabs = [
     { value: 'request' as const, label: 'Requests' },
-    { value: 'approvals' as const, label: 'Approvals' },
+    ...(can.approvals ? [{ value: 'approvals' as const, label: 'Approvals' }] : []),
     ...(config.settingsTab
       ? [{ value: 'settings' as const, label: config.settingsTab.label }]
       : []),
@@ -191,7 +243,7 @@ export function StandardRequestsPage<P>({
                   setDialog({ type: 'filters' })
                 }}
               />
-              {isRequest && (
+              {isRequest && can.create && (
                 <StandardCreateButton
                   onClick={() => {
                     setDialog({ type: 'create' })
@@ -227,7 +279,7 @@ export function StandardRequestsPage<P>({
                 }}
               />
             )}
-            {config.bulk && (
+            {config.bulk && (can.approve || can.reject) && (
               <StandardBulkButtons
                 disabled={bulk.isPending}
                 onApprove={() => {
@@ -271,6 +323,7 @@ export function StandardRequestsPage<P>({
               const actions = allowed.filter(
                 (action) =>
                   row.actions.includes(action) &&
+                  permits(action, can) &&
                   !(action === 'history' && isRequest && row.status === 'pending'),
               )
               return (
@@ -281,13 +334,15 @@ export function StandardRequestsPage<P>({
                     label:
                       action === 'decide' && row.status === 'cancelling'
                         ? 'Approve/Reject Cancellation'
-                        : ACTION_LABELS[action],
+                        : action === 'cancel' && row.status === 'pending'
+                          ? 'Withdraw'
+                          : ACTION_LABELS[action],
                     variant: action === 'delete' ? 'destructive' : 'default',
                     onSelect: () => {
                       // Requests → View is the greyed form; Approvals → View is the Approve popup.
                       if (action === 'view') {
                         setDialog({ type: isRequest ? 'view' : 'review', request: row })
-                      } else if (action !== 'consent') {
+                      } else {
                         setDialog({ type: action, request: row })
                       }
                     },
@@ -319,14 +374,31 @@ export function StandardRequestsPage<P>({
           config={config}
           id={dialog.request.id}
           mode={dialog.type === 'decide' ? 'decide' : 'view'}
+          via={isRequest ? 'request' : 'approvals'}
           onClose={close}
         />
       )}
+      {dialog?.type === 'consent' && (
+        <StandardConsentDialog config={config} request={dialog.request} onClose={close} />
+      )}
+      {dialog?.type === 'forward' && (
+        <StandardForwardDialog config={config} request={dialog.request} onClose={close} />
+      )}
       {dialog?.type === 'flow' && (
-        <StandardFlowDialog config={config} request={dialog.request} onClose={close} />
+        <StandardFlowDialog
+          config={config}
+          id={dialog.request.id}
+          via={isRequest ? 'request' : 'approvals'}
+          onClose={close}
+        />
       )}
       {dialog?.type === 'history' && (
-        <StandardHistoryDialog config={config} id={dialog.request.id} onClose={close} />
+        <StandardHistoryDialog
+          config={config}
+          id={dialog.request.id}
+          via={isRequest ? 'request' : 'approvals'}
+          onClose={close}
+        />
       )}
       {dialog?.type === 'cancel' && (
         <StandardCancelDialog config={config} request={dialog.request} onClose={close} />
@@ -337,6 +409,7 @@ export function StandardRequestsPage<P>({
       {dialog?.type === 'filters' && (
         <FiltersDialog
           fields={config.filterFields({
+            kind,
             tab: isRequest ? 'request' : 'approvals',
             scope,
             view,

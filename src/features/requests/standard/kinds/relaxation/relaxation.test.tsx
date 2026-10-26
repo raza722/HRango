@@ -46,6 +46,10 @@ describe('Relaxation (the shared standard request pages)', () => {
     expect(await screen.findByRole('cell', { name: 'RLX-0006' })).toBeVisible()
     expect(screen.queryByRole('cell', { name: 'RLX-0001' })).not.toBeInTheDocument()
     expect(screen.getAllByRole('cell', { name: /^\d+h/ }).length).toBeGreaterThan(0)
+    // The time slot the request was checked against comes back in its details.
+    expect(screen.getAllByRole('cell', { name: /\(09:00 AM - 05:00 PM\)/ }).length).toBeGreaterThan(
+      0,
+    )
 
     await user.click(screen.getByRole('tab', { name: 'All Requests' }))
     expect(await screen.findByRole('cell', { name: 'RLX-0001' })).toBeVisible()
@@ -61,6 +65,7 @@ describe('Relaxation (the shared standard request pages)', () => {
     const date = nextWorkday()
     await pickDate(user, /^Date/, date)
     await waitFor(() => {
+      // Read from the schedule (GET /scheduling/schedules).
       expect(within(dialog).getByRole('textbox', { name: 'Time Slot' })).toHaveValue(
         'Morning Work (09:00 AM - 05:00 PM)',
       )
@@ -127,7 +132,7 @@ describe('Relaxation (the shared standard request pages)', () => {
       standardRequests.update(
         record.id,
         requestStandardCancel(
-          { settingsType: 'relaxation' },
+          { settingsType: 'relaxation' as const },
           record,
           'The appointment moved.',
           new Date().toISOString(),

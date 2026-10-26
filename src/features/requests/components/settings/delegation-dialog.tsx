@@ -9,12 +9,9 @@ import { PayrollDialog, SearchSelectField } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
-import {
-  useCreateDelegation,
-  useDelegation,
-  useRequestSettingsLookups,
-} from '../../hooks/use-request-settings'
-import type { RequestDelegationRow, SettingsRequestType } from '../../types/request-settings.types'
+import { useCreateDelegation, useDelegation } from '../../hooks/use-request-settings'
+import type { RequestDelegation, SettingsRequestType } from '../../types/request-settings.types'
+import { RequestEmployeeField } from '../shared/request-employee-field'
 import { REQUEST_TYPE_OPTIONS, viewFieldsClass } from './settings-helpers'
 
 const schema = z
@@ -54,11 +51,11 @@ function DelegationForm({
   delegation,
   onClose,
 }: {
-  delegation: RequestDelegationRow | undefined
+  delegation: RequestDelegation | undefined
   onClose: () => void
 }) {
   const formId = useId()
-  const lookups = useRequestSettingsLookups()
+  const permission = 'requests.settings.delegations.create'
   const create = useCreateDelegation()
   const readOnly = delegation !== undefined
   const form = useForm<Values>({
@@ -67,19 +64,18 @@ function DelegationForm({
       delegatorId: delegation?.delegatorId ?? '',
       requestType: delegation?.requestType ?? '',
       delegateeId: delegation?.delegateeId ?? '',
-      active: delegation?.active ?? true,
+      active: delegation?.isActive ?? true,
       description: delegation?.description ?? '',
     },
   })
 
-  // The people on file, plus the two of a delegation whose people have left.
-  const people = [
-    ...(lookups.data?.employees ?? []),
-    ...(delegation ? [delegation.delegator, delegation.delegatee] : []),
-  ]
-  const employeeOptions = [...new Map(people.map((person) => [person.id, person])).values()].map(
-    (person) => ({ value: person.id, label: person.name, hint: person.code }),
-  )
+  // The two of a delegation stay named when they have left.
+  const saved = delegation
+    ? [
+        { id: delegation.delegatorId, name: delegation.delegatorName ?? '—' },
+        { id: delegation.delegateeId, name: delegation.delegateeName ?? '—' },
+      ]
+    : []
 
   const submit = form.handleSubmit(async (values) => {
     try {
@@ -87,7 +83,8 @@ function DelegationForm({
         delegatorId: values.delegatorId,
         delegateeId: values.delegateeId,
         requestType: values.requestType as SettingsRequestType,
-        description: values.description,
+        description: values.description === '' ? null : values.description,
+        isActive: true,
       })
       onClose()
     } catch (error) {
@@ -117,11 +114,12 @@ function DelegationForm({
         onSubmit={(event: SyntheticEvent) => void submit(event)}
         className={cn('grid gap-5', readOnly && viewFieldsClass)}
       >
-        <SearchSelectField
+        <RequestEmployeeField
           control={form.control}
           name="delegatorId"
+          permission={permission}
+          current={saved}
           label="Delegator"
-          options={employeeOptions}
           placeholder="Select Delegator"
           required={!readOnly}
           disabled={readOnly}
@@ -135,11 +133,12 @@ function DelegationForm({
           required={!readOnly}
           disabled={readOnly}
         />
-        <SearchSelectField
+        <RequestEmployeeField
           control={form.control}
           name="delegateeId"
+          permission={permission}
+          current={saved}
           label="Delegatee"
-          options={employeeOptions}
           placeholder="Select Employees"
           required={!readOnly}
           disabled={readOnly}

@@ -1,35 +1,27 @@
-/** A Work From Home request: the ticked shifts between two dates. */
+/**
+ * A Work From Home request's `details` (`GET /requests/work-from-home/{id}`):
+ * the shift days asked from home. The dates and the count are the header's
+ * `fromDate`, `toDate` and `days`; the reason is the header's `reason`.
+ */
 export interface WorkFromHomePayload {
-  from: string
-  to: string
-  /** The ticked shifts' days. */
+  days: { requestDate: string; scheduleId: string | null }[]
+}
+
+/** What the form sends as `details`: the ticked days (empty: every shift day in the range). */
+export interface WorkFromHomeDetailsIn {
   dates: string[]
-  count: number
-  reason: string
 }
 
-export interface WorkFromHomeInput {
-  employeeId?: string
-  from: string
-  to: string
-  dates: string[]
-  reason: string
-}
-
-export interface WorkFromHomeLookups {
-  /** Photos of the people who have one, for the week strip. */
-  photos: Record<string, string>
-}
-
-/** A day in the week strip, from `GET /requests/<kind>/schedule`. */
+/** A day in the week strip, read from Scheduling's board. */
 export interface ShiftDay {
   date: string
   status: 'shift' | 'rest' | 'off'
   clockIn: string | null
   clockOut: string | null
-  /** "10:00 AM - 05:00 PM", "Rest Day" or "Day off". */
+  /** "10:00 AM - 05:00 PM", "Rest Day", a holiday's name or "Day off". */
   label: string
-  rosterGroupId: string | null
+  /** The shift's time slot ("RS Morning"). */
+  slotName: string | null
   /** Already a work-from-home day on the schedule. */
   workFromHome: boolean
 }

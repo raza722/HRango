@@ -1,13 +1,32 @@
 // Public API of the requests feature. Import from '@/features/requests', not from deep paths.
+// The request engine as the API speaks it (shapes, type codes, adapters) and its calls.
+export * from './api/backend'
+export {
+  type ApprovalBox,
+  engineApi,
+  type EngineApprovalParams,
+  type EngineListParams,
+  type EngineRequest,
+} from './api/engine.api'
+export {
+  employeeOptionsQuery,
+  lookupsApi,
+  type OrgLookupKind,
+  type OrgOption,
+  orgOptionsQuery,
+  type PersonOption,
+} from './api/lookups.api'
 export { requestKeys, requestsApi } from './api/requests.api'
 export { RequestTypePlaceholder } from './components/layout/request-type-placeholder'
 export { RequestsLayout } from './components/layout/requests-layout'
 export { PunchRequestsPage } from './components/punch/punch-requests-page'
+export { RequestFileField, RequestFileLinks } from './components/shared/request-files'
 export { ShiftRequestsPage } from './components/shift/shift-requests-page'
 export { TransferRequestsPage } from './components/transfer/transfer-requests-page'
 export { KIND_LABELS, PUNCH_TYPE_LABELS, REQUEST_MENU, STATUS_META } from './constants'
 export { REQUEST_SEARCH_DEFAULTS, type RequestSearch, requestSearchSchema } from './routing'
 export * from './types/requests.types'
+export { attachmentRef, detailFileRef, syncAttachments } from './utils/request-files'
 export { transferLetter, type TransferLetterInput } from './utils/transfer-letter'
 // Requests → Settings (restrictions, delegation, request flows).
 export { requestSettingsApi, requestSettingsKeys } from './api/request-settings.api'

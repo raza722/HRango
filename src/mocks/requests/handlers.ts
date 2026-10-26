@@ -1,653 +1,695 @@
-import { http, HttpResponse } from 'msw'
+import { format } from 'date-fns'
+import { http, type HttpHandler, HttpResponse } from 'msw'
 import { z } from 'zod'
 
 import {
-  type AnyRequest,
-  type DayShift,
+  type BackendAttachment,
+  type BackendRequestDetail,
+  type BackendRequestPage,
   PUNCH_REQUEST_TYPES,
-  type RequestAction,
-  type RequestDetail,
-  type RequestKind,
-  type RequestLookups,
-  type RequestPage,
 } from '@/features/requests'
 import type { ApiItem } from '@/types/api'
 
 import type { MockCollection } from '../collection'
 import { DIRECTORY, findEmployee } from '../employees/seed'
+import { mockFileUrl } from '../files/handlers'
 import { rosterGroups } from '../roster/handlers'
+import { scheduleEntries } from '../scheduling/handlers'
 import { profileOf } from '../scheduling/seed'
-import { branches } from '../settings/handlers'
-import { latency, paginate, readPageParams, requireAuth } from '../utils'
-import { punchRequests, shiftRequests, shiftText } from './db'
-import { applyEffect, entryOn, revertEffect, rosterTimes } from './effects'
 import {
+  apiPath,
+  createId,
+  errorResponse,
+  latency,
+  paginate,
+  readPageParams,
+  requireAuth,
+} from '../utils'
+import {
+  backendActions,
+  cancelBodySchema,
+  filesFrom,
+  forwardRecord,
+  pageOf,
+  registerApprovalSource,
+  type RequestBodyIn,
+  requestBodySchema,
+  type RequestHeaderFields,
+  serializeDetail,
+  type SerializeInfo,
+  serializeRequest,
+  staleRow,
+  textOrNull,
+  withdrawRecord,
+} from './backend'
+import { punchRequests, shiftRequests, slotNameOn } from './db'
+import { applyEffect, entryOn, revertEffect, rosterTimes } from './effects'
+import { fallbackGet } from './fallback'
+import {
+  type AppliedEffect,
   applyCancelDecision,
-  applyCancelRequest,
   applyConsent,
   applyDecision,
-  currentStep,
+  type FlowFacts,
   historyEntry,
-  newRecord,
-  type StoredPunchRequest,
-  type StoredRequest,
-  type StoredShiftRequest,
 } from './flow'
-import {
-  base,
-  countsOf,
-  forbidden,
-  invalid,
-  notFound,
-  now,
-  readBody,
-  text,
-  today,
-  toStep,
-} from './http'
-import { delegatorsOf, ME, mustFind, ref, requestEmployee } from './people'
+import { base, invalid, notFound, now, readBody, today } from './http'
+import { ME, requestEmployee } from './people'
 import { restrictionFor } from './settings-db'
-import { transferHandlers } from './transfer-handlers'
+import {
+  CORE_TYPE_CODES,
+  newCoreRecord,
+  releaseFlow,
+  requestCoreCancel,
+  type StoredCorePunch,
+  type StoredCoreRequest,
+  type StoredCoreShift,
+} from './transfer-flow'
+import { transferDef } from './transfer-handlers'
 
 export { resetRequestsDb } from './db'
 
-const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
-
-const punchSchema = z.object({
-  employeeId: z.string().min(1).optional(),
-  date: day,
-  punchType: z.enum(PUNCH_REQUEST_TYPES),
-  punchTime: time,
-  description: text,
-})
-
-const shiftSchema = z.object({
-  employeeId: z.string().min(1).optional(),
-  date: day,
-  rosterGroupId: z.string().min(1).nullable(),
-  swapWithId: z.string().min(1).nullable(),
-  description: text,
-})
-
-const decisionSchema = z.object({
-  decision: z.enum(['approve', 'reject']),
-  remarks: text,
-})
-
-// --- serializing -----------------------------------------------------------------
-
-/** Your own steps, and those of people who delegated this request type to you. */
-const mayDecideFor = (approverId: string, kind: RequestKind) =>
-  approverId === ME || delegatorsOf(ME, kind).includes(approverId)
-
-function actionsFor(record: StoredRequest): RequestAction[] {
-  const mine = record.employeeId === ME || record.createdById === ME
-  const untouched = record.flow.every(
-    (step) => step.status === 'pending' || step.status === 'waiting',
-  )
-  const step = currentStep(record)
-  const actions: RequestAction[] = ['view', 'flow', 'history']
-  if (record.status === 'pending' && mine && untouched) actions.push('edit', 'delete')
-  if (record.status === 'completed' && mine) actions.push('cancel')
-  if (step && record.employeeId !== ME && mayDecideFor(step.approverId, record.kind)) {
-    actions.push('decide')
-  }
-  if (
-    record.status === 'pending' &&
-    record.consents.some((consent) => consent.personId === ME && consent.status === 'pending')
-  ) {
-    actions.push('consent')
-  }
-  return actions
-}
-
-function serialize(record: StoredRequest): AnyRequest {
-  const step = currentStep(record)
-  const shared = {
-    id: record.id,
-    code: record.code,
-    status: record.status,
-    employee: requestEmployee(mustFind(record.employeeId)),
-    createdBy: ref(record.createdById),
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    flow: [
-      ...record.flow.map(toStep),
-      ...(record.cancelStep
-        ? [
-            {
-              ...toStep(record.cancelStep),
-              authority: `${record.cancelStep.authority} (Cancellation)`,
-            },
-          ]
-        : []),
-    ],
-    consents: record.consents.map((consent) => ({
-      person: ref(consent.personId),
-      status: consent.status,
-      remarks: consent.remarks,
-    })),
-    cancelReason: record.cancelReason,
-    currentStep: step ? toStep(step) : null,
-    actions: actionsFor(record),
-  }
-  if (record.kind === 'punch') {
-    const entry = entryOn(record.employeeId, record.payload.date)
-    const shift = entry?.kind === 'shift' ? entry : undefined
-    return {
-      ...shared,
-      kind: 'punch',
-      payload: {
-        ...record.payload,
-        expectedIn: shift?.clockIn ?? null,
-        expectedOut: shift?.clockOut ?? null,
-      },
-    }
-  }
-  const { swapWithId, ...payload } = record.payload
-  return {
-    ...shared,
-    kind: 'shift',
-    payload: { ...payload, swapWith: swapWithId ? ref(swapWithId) : null },
-  }
-}
-
-/**
- * The Filters dialog's values (Punch): the person and where they work, the next
- * requestee, the dates, the punch type ("Method") and a punch-time range.
+/*
+ * Punch (`/requests/punch`), Shift (`/requests/shift-swap`) and Transfer
+ * (`/requests/transfer`) on the backend's request engine routes, in its shapes
+ * (`RequestOut`, `RequestDetailOut`, `RequestIn` with each type's `details`).
+ * Approvals are the shared `/requests/approvals…` (./backend.ts); each type
+ * registers there. The pickers Scheduling owns (the day's shift, time slots)
+ * are answered only when no other mock serves them (./fallback.ts).
  */
-function matchesFilters(record: StoredRequest, url: URL): boolean {
-  const employee = mustFind(record.employeeId)
-  const checks: [string, (value: string) => boolean][] = [
-    ['employeeId', (value) => record.employeeId === value],
-    ['department', (value) => employee.department === value],
-    ['branchId', (value) => employee.branchId === value],
-    [
-      'locationId',
-      (value) =>
-        (employee.branchId ? branches.find(employee.branchId)?.locationId : null) === value,
-    ],
-    ['employmentStatus', (value) => value === 'all' || profileOf(employee).status === value],
-    ['nextRequesteeId', (value) => currentStep(record)?.approverId === value],
-    ['delegatorId', (value) => record.flow.some((step) => step.approverId === value)],
-    ['from', (value) => record.payload.date >= value],
-    ['to', (value) => record.payload.date <= value],
-    ['punchType', (value) => record.kind === 'punch' && record.payload.punchType === value],
-    ['startTime', (value) => record.kind === 'punch' && record.payload.punchTime >= value],
-    ['endTime', (value) => record.kind === 'punch' && record.payload.punchTime <= value],
-  ]
-  return checks.every(([name, test]) => {
-    const value = url.searchParams.get(name) ?? ''
-    return value === '' || test(value)
-  })
+
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+const time = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/)
+  .transform((value) => value.slice(0, 5))
+const id = z.union([z.string(), z.number()]).transform(String)
+
+const conflict = (message: string, fieldErrors?: Record<string, string>) =>
+  errorResponse(409, message, { code: 'CONFLICT', ...(fieldErrors ? { fieldErrors } : {}) })
+
+/** What a request type supplies to the shared endpoints below. */
+export interface CoreKindDef<T extends StoredCoreRequest> {
+  kind: T['kind']
+  typeName: string
+  /** `RQ-PCH` → RQ-PCH-0001. */
+  codePrefix: string
+  idPrefix: string
+  collection: MockCollection<T>
+  /** Checks a `RequestIn` body and returns what to store, or an error response. */
+  toPayload: (body: RequestBodyIn, employeeId: string, current: T | null) => Response | T['payload']
+  /** Asked before the flow starts (a shift swap's colleague). */
+  consentIds?: (payload: T['payload']) => string[]
+  facts: (payload: T['payload']) => FlowFacts
+  /** The day Request Restriction checks. */
+  dateOf: (payload: T['payload']) => string
+  details: (record: T) => Record<string, unknown>
+  header: (record: T) => RequestHeaderFields
+  /** Runs at the final approval; what it returns is kept to undo it. */
+  onApproved?: (record: T) => AppliedEffect | null
+  /** Runs when the cancellation of an approved request is approved. */
+  onCancelled?: (record: T) => void
 }
 
-function listResponse(url: URL, records: StoredRequest[]) {
-  const status = url.searchParams.get('status')
-  const { page, pageSize } = readPageParams(url)
-  const sorted = records
-    .filter((record) => matchesFilters(record, url))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  const filtered = status ? sorted.filter((record) => record.status === status) : sorted
-  const result = paginate(filtered, page, pageSize)
-  return HttpResponse.json<RequestPage<AnyRequest>>({
-    ...result,
-    data: result.data.map(serialize),
-    counts: countsOf(sorted),
-  })
-}
-
-// --- validation per type ------------------------------------------------------------
-
-type Collection = MockCollection<StoredPunchRequest> | MockCollection<StoredShiftRequest>
-
-function employeeFor(employeeId: string | undefined) {
-  const employee = findEmployee(employeeId ?? ME)
-  if (!employee || profileOf(employee).status !== 'active') return null
-  return employee
-}
-
-function validatePunch(
-  input: z.infer<typeof punchSchema>,
-  employeeId: string,
-  ignoreId: string | null,
-): Response | StoredPunchRequest['payload'] {
-  if (input.date > today()) {
-    return invalid('Choose today or a past day.', { date: 'Choose today or a past day' })
+/** Builds a type's endpoints and registers it with the Approvals screen. */
+export function createCoreHandlers<T extends StoredCoreRequest>(
+  def: CoreKindDef<T>,
+): HttpHandler[] {
+  const typeCode = CORE_TYPE_CODES[def.kind]
+  const { collection } = def
+  const find = (value: unknown) => (typeof value === 'string' ? collection.find(value) : undefined)
+  const save = (record: T) => {
+    collection.update(record.id, record)
+    return record
   }
-  const entry = entryOn(employeeId, input.date)
-  if (entry?.kind !== 'shift') {
-    return invalid('No shift is scheduled on this day.', {
-      date: 'No shift is scheduled on this day',
-    })
-  }
-  const duplicate = punchRequests
-    .all()
-    .some(
-      (record) =>
-        record.id !== ignoreId &&
-        record.employeeId === employeeId &&
-        record.status === 'pending' &&
-        record.payload.date === input.date &&
-        record.payload.punchType === input.punchType,
+  const info = (record: T): SerializeInfo => ({
+    typeCode,
+    typeName: def.typeName,
+    kind: typeCode,
+    header: def.header(record),
+    details: def.details(record),
+  })
+  const detail = (record: T, status = 200) =>
+    HttpResponse.json<ApiItem<BackendRequestDetail>>(
+      { data: serializeDetail(record, info(record)) },
+      { status },
     )
-  if (duplicate) {
-    return invalid('A request for this punch is already pending.', {
-      punchType: 'A request for this punch is already pending',
-    })
-  }
-  return {
-    date: input.date,
-    punchType: input.punchType,
-    punchTime: input.punchTime,
-    description: input.description,
-  }
-}
+  const actionsFor = (record: T) => backendActions(record, typeCode)
 
-function validateShift(
-  input: z.infer<typeof shiftSchema>,
-  employeeId: string,
-): Response | StoredShiftRequest['payload'] {
-  if (input.date < today()) {
-    return invalid('Choose today or a later day.', { date: 'Choose today or a later day' })
-  }
-  if (!input.rosterGroupId && !input.swapWithId) {
-    return invalid('Choose a time roster or someone to swap with.', {
-      rosterGroupId: 'Choose a time roster or someone to swap with',
-    })
-  }
-  const current = entryOn(employeeId, input.date)
-  if (input.swapWithId) {
-    const colleague = findEmployee(input.swapWithId)
-    const theirs = entryOn(input.swapWithId, input.date)
-    if (!colleague || input.swapWithId === employeeId) {
-      return invalid('Choose someone else to swap with.', { swapWithId: 'Choose someone else' })
-    }
-    if (theirs?.kind !== 'shift') {
-      return invalid(`${colleague.name} has no shift that day.`, {
-        swapWithId: `${colleague.name} has no shift that day`,
-      })
-    }
-  }
-  let rosterTitle: string | null = null
-  if (input.rosterGroupId && !input.swapWithId) {
-    const times = rosterTimes(input.rosterGroupId, input.date)
-    const group = rosterGroups.find(input.rosterGroupId)
-    if (!group) return invalid('Choose a time roster.', { rosterGroupId: 'Choose a time roster' })
-    if (!times) {
-      return invalid(`${group.title} has that day off.`, {
-        rosterGroupId: `${group.title} has that day off`,
-      })
-    }
-    if (current?.kind === 'shift' && current.rosterGroupId === group.id) {
-      return invalid('That is already the shift on this day.', {
-        rosterGroupId: 'That is already the shift on this day',
-      })
-    }
-    rosterTitle = group.title
-  }
-  return {
-    date: input.date,
-    rosterGroupId: input.swapWithId ? null : input.rosterGroupId,
-    rosterTitle,
-    swapFrom: shiftText(employeeId, input.date),
-    swapWithId: input.swapWithId,
-    swapToShift: input.swapWithId ? shiftText(input.swapWithId, input.date) : null,
-    description: input.description,
-  }
-}
-
-function nextCode(kind: RequestKind): string {
-  const records: StoredRequest[] = kind === 'punch' ? punchRequests.all() : shiftRequests.all()
-  const highest = records.reduce((max, record) => {
-    const number = Number(record.code.slice(-4))
-    return Number.isFinite(number) ? Math.max(max, number) : max
-  }, 0)
-  return `RQ-${kind === 'punch' ? 'ATT' : 'SFT'}-${String(highest + 1).padStart(4, '0')}`
-}
-
-function store(kind: RequestKind): Collection {
-  return kind === 'punch' ? punchRequests : shiftRequests
-}
-
-function save(record: StoredRequest) {
-  if (record.kind === 'punch') punchRequests.update(record.id, record)
-  else shiftRequests.update(record.id, record)
-}
-
-function find(kind: RequestKind, id: unknown): StoredRequest | undefined {
-  return typeof id === 'string' ? store(kind).find(id) : undefined
-}
-
-const item = (record: StoredRequest) =>
-  HttpResponse.json<ApiItem<AnyRequest>>({ data: serialize(record) })
-
-// --- handlers ---------------------------------------------------------------------------
-
-function kindHandlers(kind: RequestKind) {
-  const path = (suffix = '') => base(`/${kind}${suffix}`)
-  return [
-    http.get(path(), async ({ request }) => {
-      await latency()
-      const unauthorized = requireAuth(request)
-      if (unauthorized) return unauthorized
-      const url = new URL(request.url)
-      const all: StoredRequest[] = store(kind).all()
-      const scope = url.searchParams.get('scope') ?? 'my'
-      return listResponse(
-        url,
-        scope === 'all' ? all : all.filter((record) => record.employeeId === ME),
-      )
-    }),
-
-    http.get(path('/approvals'), async ({ request }) => {
-      await latency()
-      const unauthorized = requireAuth(request)
-      if (unauthorized) return unauthorized
-      const url = new URL(request.url)
-      const view = url.searchParams.get('view') ?? 'requested'
-      const delegators = delegatorsOf(ME, kind)
-      const steps = (record: StoredRequest) => [
-        ...record.flow,
-        ...(record.cancelStep ? [record.cancelStep] : []),
-      ]
-      const all: StoredRequest[] = store(kind).all()
-      const records = all.filter((record) => {
-        if (view === 'consents') return record.consents.some((consent) => consent.personId === ME)
-        const approvers = view === 'delegates' ? delegators : [ME]
-        return (
-          record.employeeId !== ME &&
-          steps(record).some(
-            (step) => approvers.includes(step.approverId) && step.status !== 'waiting',
-          )
-        )
-      })
-      return listResponse(url, records)
-    }),
-
-    http.get(path('/:id'), async ({ request, params }) => {
-      await latency()
-      const unauthorized = requireAuth(request)
-      if (unauthorized) return unauthorized
-      const record = find(kind, params.id)
-      if (!record) return notFound()
-      const history = [...record.history]
-        .sort((a, b) => b.at.localeCompare(a.at))
-        .map((entry) => ({
-          id: entry.id,
-          by: ref(entry.byId),
-          delegate: entry.delegate,
-          status: entry.status,
-          remarks: entry.remarks,
-          at: entry.at,
-        }))
-      return HttpResponse.json<ApiItem<RequestDetail<AnyRequest>>>({
-        data: { request: serialize(record), history },
-      })
-    }),
-
-    http.post(path(), async ({ request }) => {
-      await latency()
-      const unauthorized = requireAuth(request)
-      if (unauthorized) return unauthorized
-      if (kind === 'punch') {
-        const parsed = await readBody(request, punchSchema)
-        if (!parsed.success) return invalid('Some fields are not valid.')
-        const employee = employeeFor(parsed.data.employeeId)
-        if (!employee)
-          return invalid('Choose an active employee.', { employeeId: 'Choose an employee' })
-        const payload = validatePunch(parsed.data, employee.id, null)
-        if (payload instanceof Response) return payload
-        const closed = restrictionFor('punch', payload.date, employee.id)
-        if (closed) return invalid(closed, { date: closed })
-        const record = newRecord<StoredPunchRequest>(
-          {
-            id: `prq_${Date.now().toString(36)}`,
-            code: nextCode('punch'),
-            kind: 'punch',
-            employeeId: employee.id,
-            createdById: ME,
-            consents: [],
-            payload,
-          },
-          now(),
-        )
-        punchRequests.insert(record)
-        return item(record)
-      }
-      const parsed = await readBody(request, shiftSchema)
-      if (!parsed.success) return invalid('Some fields are not valid.')
-      const employee = employeeFor(parsed.data.employeeId)
-      if (!employee)
-        return invalid('Choose an active employee.', { employeeId: 'Choose an employee' })
-      const payload = validateShift(parsed.data, employee.id)
-      if (payload instanceof Response) return payload
-      const closed = restrictionFor('shift', payload.date, employee.id)
-      if (closed) return invalid(closed, { date: closed })
-      const record = newRecord<StoredShiftRequest>(
-        {
-          id: `srq_${Date.now().toString(36)}`,
-          code: nextCode('shift'),
-          kind: 'shift',
-          employeeId: employee.id,
-          createdById: ME,
-          consents: payload.swapWithId
-            ? [{ personId: payload.swapWithId, status: 'pending', remarks: null }]
-            : [],
-          payload,
-        },
-        now(),
-      )
-      shiftRequests.insert(record)
-      return item(record)
-    }),
-
-    http.put(path('/:id'), async ({ request, params }) => {
-      await latency()
-      const unauthorized = requireAuth(request)
-      if (unauthorized) return unauthorized
-      const record = find(kind, params.id)
-      if (!record) return notFound()
-      if (!actionsFor(record).includes('edit')) {
-        return forbidden('Only a pending request nobody has acted on can be edited.')
-      }
+  registerApprovalSource({
+    typeCode,
+    records: () => collection.all(),
+    find: (value) => collection.find(value),
+    info: (record) => info(record as T),
+    decide: (stored, decision, remarks) => {
+      const record = stored as T
       const at = now()
-      if (record.kind === 'punch') {
-        const parsed = await readBody(request, punchSchema)
-        if (!parsed.success) return invalid('Some fields are not valid.')
-        const payload = validatePunch(parsed.data, record.employeeId, record.id)
-        if (payload instanceof Response) return payload
-        const next: StoredPunchRequest = {
-          ...record,
-          payload,
-          updatedAt: at,
-          history: [...record.history, historyEntry(ME, 'Edited', null, at)],
-        }
-        save(next)
-        return item(next)
-      }
-      const parsed = await readBody(request, shiftSchema)
-      if (!parsed.success) return invalid('Some fields are not valid.')
-      const payload = validateShift(parsed.data, record.employeeId)
-      if (payload instanceof Response) return payload
-      const next: StoredShiftRequest = {
-        ...record,
-        payload,
-        consents: payload.swapWithId
-          ? [{ personId: payload.swapWithId, status: 'pending', remarks: null }]
-          : [],
-        updatedAt: at,
-        history: [...record.history, historyEntry(ME, 'Edited', null, at)],
-      }
-      save(next)
-      return item(next)
-    }),
-
-    http.delete(path('/:id'), async ({ request, params }) => {
-      await latency()
-      const unauthorized = requireAuth(request)
-      if (unauthorized) return unauthorized
-      const record = find(kind, params.id)
-      if (!record) return notFound()
-      if (!actionsFor(record).includes('delete')) {
-        return forbidden('Only a pending request nobody has acted on can be deleted.')
-      }
-      store(kind).remove(record.id)
-      return new HttpResponse(null, { status: 204 })
-    }),
-
-    http.post(path('/:id/decision'), async ({ request, params }) => {
-      await latency()
-      const unauthorized = requireAuth(request)
-      if (unauthorized) return unauthorized
-      const record = find(kind, params.id)
-      if (!record) return notFound()
-      if (!actionsFor(record).includes('decide')) {
-        return forbidden('This request is not waiting for your decision.')
-      }
-      const parsed = await readBody(request, decisionSchema)
-      if (!parsed.success) return invalid('Some fields are not valid.')
-      const { decision } = parsed.data
-      const remarks = parsed.data.remarks || null
-      if (decision === 'reject' && !remarks) {
-        return invalid('Give a reason for rejecting.', { remarks: 'Give a reason for rejecting' })
-      }
-      const at = now()
-
       if (record.status === 'cancelling') {
         const next = applyCancelDecision(record, decision, ME, remarks, at)
         if (decision === 'approve') {
-          revertEffect(record.applied, record.payload.date)
-          next.applied = null
+          def.onCancelled?.(record)
+          return save({ ...next, applied: null })
         }
-        save(next)
-        return item(next)
-      }
-
-      const step = currentStep(record)
-      const isLast = step !== null && record.flow.at(-1) === step
-      if (
-        decision === 'approve' &&
-        isLast &&
-        record.kind === 'shift' &&
-        record.payload.swapWithId
-      ) {
-        const consent = record.consents.find(
-          (entry) => entry.personId === record.payload.swapWithId,
-        )
-        const name = ref(record.payload.swapWithId).name
-        if (consent?.status === 'pending') return invalid(`Waiting for ${name}’s consent.`)
-        if (consent?.status === 'declined') return invalid(`${name} declined the swap.`)
+        return save(next)
       }
       const { record: next, completed } = applyDecision(record, decision, ME, remarks, at)
-      if (completed) next.applied = applyEffect(next)
-      save(next)
-      return item(next)
+      if (completed && def.onApproved) return save({ ...next, applied: def.onApproved(next) })
+      return save(next)
+    },
+    consent: (stored, agree, remarks) =>
+      save(
+        releaseFlow(applyConsent(stored as T, ME, agree ? 'approve' : 'reject', remarks, now())),
+      ),
+    forward: (stored, employeeId, remarks) =>
+      save(forwardRecord(stored as T, employeeId, remarks, now())),
+  })
+
+  function nextCode(): string {
+    const highest = collection.all().reduce((max, record) => {
+      const number = Number(record.code.slice(-4))
+      return Number.isFinite(number) ? Math.max(max, number) : max
+    }, 0)
+    return `${def.codePrefix}-${String(highest + 1).padStart(4, '0')}`
+  }
+
+  /** Reads a `RequestIn` body, checks the employee, the type's fields and the restriction. */
+  async function readInput(
+    request: Request,
+    current: T | null,
+  ): Promise<Response | { employeeId: string; payload: T['payload']; body: RequestBodyIn }> {
+    const parsed = requestBodySchema.safeParse(await request.json().catch(() => null))
+    if (!parsed.success) return invalid('Some fields are not valid.')
+    const employeeId = current?.employeeId ?? parsed.data.employeeId ?? ME
+    const employee = findEmployee(employeeId)
+    if (!employee || profileOf(employee).status !== 'active') {
+      return invalid('Choose an active employee.', { employeeId: 'Choose an active employee' })
+    }
+    const payload = def.toPayload(parsed.data, employeeId, current)
+    if (payload instanceof Response) return payload
+    const closed = restrictionFor(typeCode, def.dateOf(payload), employeeId)
+    if (closed) return invalid(closed, { fromDate: closed })
+    return { employeeId, payload, body: parsed.data }
+  }
+
+  const path = (suffix = '') => base(`/${typeCode.replaceAll('_', '-')}${suffix}`)
+  const guard = async (request: Request) => {
+    await latency()
+    return requireAuth(request)
+  }
+
+  return [
+    // My / Subordinates / All: the mock user reaches everyone, so Subordinates is everyone else.
+    http.get(path(), async ({ request }) => {
+      const denied = await guard(request)
+      if (denied) return denied
+      const url = new URL(request.url)
+      const view = url.searchParams.get('view') ?? 'my'
+      const shown = collection
+        .all()
+        .filter((record) =>
+          view === 'all'
+            ? true
+            : view === 'subordinates'
+              ? record.employeeId !== ME
+              : record.employeeId === ME,
+        )
+      return HttpResponse.json<BackendRequestPage>(
+        pageOf(
+          url,
+          shown.map((record) => ({ row: serializeRequest(record, info(record)) })),
+        ),
+      )
     }),
 
-    http.post(path('/:id/consent'), async ({ request, params }) => {
-      await latency()
-      const unauthorized = requireAuth(request)
-      if (unauthorized) return unauthorized
-      const record = find(kind, params.id)
-      if (!record) return notFound()
-      if (!actionsFor(record).includes('consent')) {
-        return forbidden('Your consent is not needed on this request.')
-      }
-      const parsed = await readBody(request, decisionSchema)
-      if (!parsed.success) return invalid('Some fields are not valid.')
-      const next = applyConsent(
-        record,
-        ME,
-        parsed.data.decision,
-        parsed.data.remarks || null,
-        now(),
+    http.get(path('/:id'), async ({ request, params }) => {
+      const denied = await guard(request)
+      if (denied) return denied
+      const record = find(params.id)
+      return record ? detail(record) : notFound()
+    }),
+
+    http.post(path(), async ({ request }) => {
+      const denied = await guard(request)
+      if (denied) return denied
+      const input = await readInput(request, null)
+      if (input instanceof Response) return input
+      const at = now()
+      const record = newCoreRecord<T>(
+        {
+          id: createId(def.idPrefix),
+          code: nextCode(),
+          kind: def.kind,
+          employeeId: input.employeeId,
+          createdById: ME,
+          payload: input.payload,
+          consentIds: def.consentIds?.(input.payload) ?? [],
+        },
+        def.facts(input.payload),
+        at,
       )
-      save(next)
-      return item(next)
+      collection.insert({ ...record, files: filesFrom(input.body.attachments, at) })
+      return detail(record, 201)
+    }),
+
+    http.put(path('/:id'), async ({ request, params }) => {
+      const denied = await guard(request)
+      if (denied) return denied
+      const record = find(params.id)
+      if (!record) return notFound()
+      if (!actionsFor(record).includes('edit')) {
+        return conflict(
+          'An approver has already acted on this request, so it can no longer be edited.',
+        )
+      }
+      const input = await readInput(request, record)
+      if (input instanceof Response) return input
+      const stale = staleRow(record, input.body.rowVersion)
+      if (stale) return stale
+      const at = now()
+      const consentIds = def.consentIds?.(input.payload) ?? []
+      const replanned = newCoreRecord<T>(
+        {
+          id: record.id,
+          code: record.code,
+          kind: def.kind,
+          employeeId: record.employeeId,
+          createdById: record.createdById,
+          payload: input.payload,
+          consentIds,
+        },
+        def.facts(input.payload),
+        record.createdAt,
+      )
+      return detail(
+        save({
+          ...replanned,
+          files: record.files ?? [],
+          updatedAt: at,
+          history: [...record.history, historyEntry(ME, 'Edited', null, at)],
+        }),
+      )
+    }),
+
+    http.delete(path('/:id'), async ({ request, params }) => {
+      const denied = await guard(request)
+      if (denied) return denied
+      const record = find(params.id)
+      if (!record) return notFound()
+      const stale = staleRow(record, new URL(request.url).searchParams.get('rowVersion'))
+      if (stale) return stale
+      if (!actionsFor(record).includes('delete')) {
+        return conflict('Only a pending request nobody has acted on can be deleted.')
+      }
+      collection.remove(record.id)
+      return new HttpResponse(null, { status: 204 })
     }),
 
     http.post(path('/:id/cancel'), async ({ request, params }) => {
-      await latency()
-      const unauthorized = requireAuth(request)
-      if (unauthorized) return unauthorized
-      const record = find(kind, params.id)
+      const denied = await guard(request)
+      if (denied) return denied
+      const record = find(params.id)
       if (!record) return notFound()
-      if (!actionsFor(record).includes('cancel')) {
-        return forbidden('Only your completed requests can be cancelled.')
-      }
-      const parsed = await readBody(
-        request,
-        z.object({ reason: z.string().trim().min(1).max(500) }),
-      )
+      const parsed = await readBody(request, cancelBodySchema)
       if (!parsed.success) {
-        return invalid('Give a reason for cancellation.', {
-          reason: 'Give a reason for cancellation',
-        })
+        return invalid('Give a reason for cancellation.', { reason: 'Reason is required.' })
       }
-      const next = applyCancelRequest(record, ME, parsed.data.reason, now())
-      save(next)
-      return item(next)
+      const stale = staleRow(record, parsed.data.rowVersion)
+      if (stale) return stale
+      if (!actionsFor(record).includes('cancel')) {
+        return conflict('Only a pending or approved request can be cancelled.')
+      }
+      const at = now()
+      const next =
+        record.status === 'pending'
+          ? withdrawRecord(record, parsed.data.reason, at)
+          : requestCoreCancel(record, ME, parsed.data.reason, at)
+      return detail(save(next))
+    }),
+
+    http.post(path('/:id/attachments'), async ({ request, params }) => {
+      const denied = await guard(request)
+      if (denied) return denied
+      const record = find(params.id)
+      if (!record) return notFound()
+      const parsed = await readBody(request, z.object({ fileId: id, label: z.string().nullish() }))
+      const at = now()
+      const file = parsed.success ? filesFrom([parsed.data.fileId], at)[0] : undefined
+      if (!parsed.success || !file) return invalid('Choose a file.', { fileId: 'Choose a file' })
+      const stored = { ...file, label: parsed.data.label ?? null }
+      save({ ...record, files: [...(record.files ?? []), stored], updatedAt: at })
+      return HttpResponse.json<ApiItem<BackendAttachment>>(
+        {
+          data: {
+            id: stored.id,
+            fileId: stored.fileId,
+            name: stored.name,
+            mimeType: null,
+            sizeBytes: null,
+            label: stored.label,
+            url: mockFileUrl(stored.fileId),
+            createdAt: at,
+          },
+        },
+        { status: 201 },
+      )
+    }),
+
+    http.delete(path('/:id/attachments/:attachmentId'), async ({ request, params }) => {
+      const denied = await guard(request)
+      if (denied) return denied
+      const record = find(params.id)
+      if (!record) return notFound()
+      save({
+        ...record,
+        files: (record.files ?? []).filter((file) => file.id !== params.attachmentId),
+        updatedAt: now(),
+      })
+      return new HttpResponse(null, { status: 204 })
     }),
   ]
 }
 
-export const requestHandlers = [
-  http.get(base('/lookups'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    return HttpResponse.json<ApiItem<RequestLookups>>({
-      data: {
-        employees: DIRECTORY.filter((employee) => profileOf(employee).status === 'active')
-          .map((employee) => ({ ...ref(employee.id), department: employee.department }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-        rosters: rosterGroups
-          .all()
-          .map((group) => ({ id: group.id, title: group.title }))
-          .sort((a, b) => a.title.localeCompare(b.title)),
-      },
-    })
-  }),
+// --- Punch ----------------------------------------------------------------------------------------
 
-  http.get(base('/day-shift'), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
-    const url = new URL(request.url)
-    const employee = findEmployee(url.searchParams.get('employeeId') ?? ME)
-    const date = url.searchParams.get('date') ?? ''
-    if (!employee || !day.safeParse(date).success) {
-      return invalid('Choose an employee and a date.')
+const punchDetails = z.object({
+  punchDate: day.nullish(),
+  punchType: z.enum(PUNCH_REQUEST_TYPES, { message: 'Punch type is required.' }),
+  punchTime: time,
+})
+
+const hhmmss = (value: string) => (value.length === 5 ? `${value}:00` : value)
+
+const punchDef: CoreKindDef<StoredCorePunch> = {
+  kind: 'punch',
+  typeName: 'Punch',
+  codePrefix: 'RQ-PCH',
+  idPrefix: 'prq',
+  collection: punchRequests,
+  toPayload: (body, employeeId, current) => {
+    const parsed = punchDetails.safeParse(body.details)
+    const date = parsed.success ? (parsed.data.punchDate ?? body.fromDate) : null
+    if (!parsed.success || !date) {
+      const fieldErrors = parsed.success
+        ? { punchDate: 'Date is required.' }
+        : Object.fromEntries(
+            parsed.error.issues.map((issue) => [issue.path.join('.'), issue.message]),
+          )
+      return invalid('Some fields are not valid.', fieldErrors)
     }
-    const entry = entryOn(employee.id, date)
-    const shift = entry?.kind === 'shift' ? entry : undefined
-    const sameTeam = DIRECTORY.filter(
-      (other) =>
-        other.id !== employee.id &&
-        profileOf(other).status === 'active' &&
-        other.department === employee.department,
-    )
-    const colleagues = sameTeam.flatMap((other) => {
-      const theirs = entryOn(other.id, date)
-      if (theirs?.kind !== 'shift') return []
-      if (shift?.clockIn === theirs.clockIn && shift.clockOut === theirs.clockOut) return []
-      return [{ person: ref(other.id), shift: shiftText(other.id, date) ?? '' }]
-    })
-    return HttpResponse.json<ApiItem<DayShift>>({
-      data: {
-        date,
-        slotName: entry ? (shift ? shift.slot.name : 'Rest Day') : null,
-        rosterGroupId: entry?.rosterGroupId ?? null,
-        clockIn: shift?.clockIn ?? null,
-        clockOut: shift?.clockOut ?? null,
-        colleagues,
-      },
-    })
+    if (date > today()) {
+      return invalid('A punch request is for today or an earlier date.', {
+        punchDate: 'A punch request is for today or an earlier date.',
+      })
+    }
+    const entry = entryOn(employeeId, date)
+    if (entry?.kind !== 'shift') {
+      return invalid('There is no shift on this date, so a punch cannot be requested.', {
+        punchDate: 'There is no shift on this date, so a punch cannot be requested.',
+      })
+    }
+    const duplicate = punchRequests
+      .all()
+      .some(
+        (record) =>
+          record.id !== current?.id &&
+          record.employeeId === employeeId &&
+          (record.status === 'pending' || record.status === 'completed') &&
+          record.payload.date === date &&
+          record.payload.punchType === parsed.data.punchType,
+      )
+    if (duplicate) {
+      return conflict('A request for this punch on this date already exists.', {
+        punchType: 'A request for this punch on this date already exists.',
+      })
+    }
+    return {
+      date,
+      punchType: parsed.data.punchType,
+      punchTime: parsed.data.punchTime,
+      reason: textOrNull(body.reason),
+      description: textOrNull(body.description),
+    }
+  },
+  facts: (payload) => ({ punchType: payload.punchType }),
+  dateOf: (payload) => payload.date,
+  details: (record) => ({
+    punchDate: record.payload.date,
+    punchType: record.payload.punchType,
+    punchTime: hhmmss(record.payload.punchTime),
   }),
+  header: (record) => ({
+    fromDate: record.payload.date,
+    toDate: record.payload.date,
+    days: 1,
+    reason: record.payload.reason,
+    description: record.payload.description,
+    application: null,
+  }),
+  onApproved: (record) => applyEffect(record),
+  onCancelled: (record) => {
+    revertEffect(record.applied, record.payload.date)
+  },
+}
 
-  ...kindHandlers('punch'),
-  ...kindHandlers('shift'),
-  ...transferHandlers,
+// --- Shift ----------------------------------------------------------------------------------------
+
+const shiftDetails = z.object({
+  shiftDate: day.nullish(),
+  timeSlotId: id.nullish(),
+  withEmployeeId: id.nullish(),
+})
+
+const shiftDef: CoreKindDef<StoredCoreShift> = {
+  kind: 'shift',
+  typeName: 'Shift Swap',
+  codePrefix: 'RQ-SFT',
+  idPrefix: 'srq',
+  collection: shiftRequests,
+  toPayload: (body, employeeId, current) => {
+    const parsed = shiftDetails.safeParse(body.details)
+    if (!parsed.success) return invalid('Some fields are not valid.')
+    const date = parsed.data.shiftDate ?? body.fromDate
+    const timeSlotId = parsed.data.timeSlotId ?? null
+    const swapWithId = parsed.data.withEmployeeId ?? null
+    if (!date) return invalid('Date is required.', { shiftDate: 'Date is required.' })
+    if (date < today()) {
+      return invalid('A shift request is for today or a later date.', {
+        shiftDate: 'A shift request is for today or a later date.',
+      })
+    }
+    if ((timeSlotId === null) === (swapWithId === null)) {
+      return invalid('Choose either a new shift or a colleague to swap with.', {
+        timeSlotId: 'Choose either a new shift or a colleague to swap with.',
+      })
+    }
+    const mine = entryOn(employeeId, date)
+    if (mine?.kind !== 'shift') {
+      return invalid('There is no shift on this date to change.', {
+        shiftDate: 'There is no shift on this date to change.',
+      })
+    }
+    if (timeSlotId) {
+      if (!rosterGroups.find(timeSlotId)) {
+        return invalid('Shift not found.', { timeSlotId: 'Shift not found.' })
+      }
+      if (!rosterTimes(timeSlotId, date)) {
+        return invalid('That shift has this day off.', {
+          timeSlotId: 'That shift has this day off.',
+        })
+      }
+      if (mine.rosterGroupId === timeSlotId) {
+        return errorResponse(422, 'The new shift is the same as the current one.', {
+          code: 'SHIFT_UNCHANGED',
+          fieldErrors: { timeSlotId: 'The new shift is the same as the current one.' },
+        })
+      }
+    }
+    if (swapWithId) {
+      const colleague = findEmployee(swapWithId)
+      if (!colleague || swapWithId === employeeId) {
+        return invalid('Choose a colleague to swap with.', {
+          withEmployeeId: 'Choose a colleague to swap with.',
+        })
+      }
+      if (entryOn(swapWithId, date)?.kind !== 'shift') {
+        return invalid('The colleague has no shift on this date.', {
+          withEmployeeId: 'The colleague has no shift on this date.',
+        })
+      }
+      if (slotNameOn(swapWithId, date) === slotNameOn(employeeId, date)) {
+        return errorResponse(422, 'The colleague works the same shift on this date.', {
+          code: 'SHIFT_UNCHANGED',
+          fieldErrors: { withEmployeeId: 'The colleague works the same shift on this date.' },
+        })
+      }
+    }
+    const waiting = shiftRequests
+      .all()
+      .some(
+        (record) =>
+          record.id !== current?.id &&
+          record.employeeId === employeeId &&
+          (record.status === 'pending' || record.status === 'cancelling') &&
+          record.payload.date === date,
+      )
+    if (waiting) {
+      return conflict('A shift request for this date is already waiting.', {
+        shiftDate: 'A shift request for this date is already waiting.',
+      })
+    }
+    return {
+      date,
+      timeSlotId,
+      swapWithId,
+      fromSlotName: slotNameOn(employeeId, date),
+      toSlotName: swapWithId ? slotNameOn(swapWithId, date) : null,
+      reason: textOrNull(body.reason),
+      description: textOrNull(body.description),
+    }
+  },
+  consentIds: (payload) => (payload.swapWithId ? [payload.swapWithId] : []),
+  facts: () => ({}),
+  dateOf: (payload) => payload.date,
+  details: (record) => {
+    const { payload } = record
+    const slot = payload.timeSlotId ? rosterGroups.find(payload.timeSlotId) : undefined
+    return {
+      shiftDate: payload.date,
+      fromScheduleId: null,
+      fromTimeSlotName: payload.fromSlotName,
+      timeSlotId: payload.timeSlotId,
+      timeSlotName: slot?.title ?? null,
+      withEmployeeId: payload.swapWithId,
+      withEmployeeName: payload.swapWithId
+        ? (findEmployee(payload.swapWithId)?.name ?? null)
+        : null,
+      toScheduleId: null,
+      toTimeSlotName: payload.toSlotName,
+    }
+  },
+  header: (record) => ({
+    fromDate: record.payload.date,
+    toDate: record.payload.date,
+    days: 1,
+    reason: record.payload.reason,
+    description: record.payload.description,
+    application: null,
+  }),
+  onApproved: (record) => applyEffect(record),
+  onCancelled: (record) => {
+    revertEffect(record.applied, record.payload.date)
+  },
+}
+
+// --- Scheduling's pickers (fallbacks) --------------------------------------------------------------
+
+const clockOf = (time: string) => `${time}:00`
+
+/** `GET /scheduling/schedules?employeeId&from&to`: the schedule board, as far as the forms read it. */
+const scheduleBoard = fallbackGet('/scheduling/schedules', async ({ request }) => {
+  const denied = requireAuth(request)
+  if (denied) return denied
+  await latency()
+  const url = new URL(request.url)
+  const employeeId = url.searchParams.get('employeeId')
+  const from = url.searchParams.get('from') ?? format(new Date(), 'yyyy-MM-dd')
+  const to = url.searchParams.get('to') ?? from
+  const entries = scheduleEntries
+    .all()
+    .filter(
+      (entry) =>
+        entry.date >= from && entry.date <= to && (!employeeId || entry.employeeId === employeeId),
+    )
+  // The signed-in person first, as the API's board for one's own schedule.
+  const people = [...new Set(entries.map((entry) => entry.employeeId))].sort((a, b) =>
+    a === ME ? -1 : b === ME ? 1 : a.localeCompare(b),
+  )
+  const rows = people.flatMap((personId) => {
+    const person = findEmployee(personId)
+    if (!person) return []
+    const mine = entries.filter((entry) => entry.employeeId === personId)
+    return [
+      {
+        employee: { id: person.id, code: person.id, name: person.name },
+        shifts: mine
+          .filter((entry) => entry.kind === 'shift' && entry.clockIn && entry.clockOut)
+          .map((entry) => ({
+            id: entry.id,
+            workDate: entry.date,
+            startAt: `${entry.date}T${clockOf(entry.clockIn ?? '00:00')}`,
+            endAt: `${entry.date}T${clockOf(entry.clockOut ?? '00:00')}`,
+            timeSlotId: entry.rosterGroupId,
+            timeSlotName: entry.slot.name,
+          })),
+        restDays: mine
+          .filter((entry) => entry.kind === 'rest')
+          .map((entry) => ({ id: entry.id, restDate: entry.date })),
+        holidays: [],
+      },
+    ]
+  })
+  return HttpResponse.json({
+    data: rows,
+    meta: { page: 1, pageSize: rows.length, total: rows.length, totalPages: 1 },
+    dayTotals: [],
+  })
+})
+
+/** `GET /scheduling/options/time-slots`: the mock's time slots are the roster groups. */
+const timeSlots = fallbackGet('/scheduling/options/time-slots', async ({ request }) => {
+  const denied = requireAuth(request)
+  if (denied) return denied
+  await latency()
+  const data = rosterGroups.all().map((group, index) => {
+    const first = group.days.find((entry) => !entry.isWeekend && entry.clockIn && entry.clockOut)
+    return {
+      id: group.id,
+      code: `TS-${String(index + 1).padStart(4, '0')}`,
+      name: group.title,
+      startTime: first?.clockIn ? clockOf(first.clockIn) : null,
+      endTime: first?.clockOut ? clockOf(first.clockOut) : null,
+    }
+  })
+  return HttpResponse.json({ data })
+})
+
+/**
+ * `GET /requests/options/colleagues?q&employeeId&page&pageSize`: whom a shift may be swapped
+ * with (the company's current people but the requester; id, code, name, department, branch).
+ */
+const colleagueOptions = http.get(apiPath('/requests/options/colleagues'), async ({ request }) => {
+  await latency()
+  const denied = requireAuth(request)
+  if (denied) return denied
+  const url = new URL(request.url)
+  const requester = url.searchParams.get('employeeId') ?? ME
+  const rows = DIRECTORY.filter((employee) => employee.id !== requester)
+    .map((employee) => {
+      const person = requestEmployee(employee)
+      return {
+        id: person.id,
+        code: person.code,
+        name: person.name,
+        departmentId: null,
+        departmentName: person.department,
+        branchId: employee.branchId ?? null,
+        branchName: person.branch,
+      }
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+  const q = (url.searchParams.get('q') ?? '').trim().toLowerCase()
+  const { page, pageSize } = readPageParams(url)
+  const matches = q
+    ? rows.filter((row) => `${row.name} ${row.code}`.toLowerCase().includes(q))
+    : rows
+  return HttpResponse.json(paginate(matches, page, pageSize))
+})
+
+export const requestHandlers = [
+  colleagueOptions,
+  ...createCoreHandlers(punchDef),
+  ...createCoreHandlers(shiftDef),
+  ...createCoreHandlers(transferDef),
+  scheduleBoard,
+  timeSlots,
 ]

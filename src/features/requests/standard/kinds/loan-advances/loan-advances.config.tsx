@@ -1,5 +1,7 @@
 import type { FilterField } from '@/features/payroll'
 
+import { typePermission } from '../../../api/backend'
+import { employeeFilterField } from '../../../components/shared/request-employee'
 import { REQUEST_STATUSES } from '../../../types/requests.types'
 import type {
   StandardFilterContext,
@@ -31,11 +33,11 @@ const columns = () => [
   // Drawn on two lines ("Thu, 29 Aug" / "2024"), as are the amount headers.
   col.text('date', 'Date', (row: Row) => listStamp(row.createdAt), wrap),
   col.text('requiredDate', 'Required Date', (row: Row) => listDay(row.payload.requiredDate), wrap),
-  col.text('type', 'Loan Type', (row: Row) => row.payload.typeName, wrap),
+  col.text('type', 'Loan Type', (row: Row) => row.payload.loanTypeName ?? '—', wrap),
   col.text(
     'required',
     'Required Amount',
-    (row: Row) => nowrap(pkrShort(row.payload.requiredAmount)),
+    (row: Row) => nowrap(pkrShort(row.payload.amountRequested)),
     wrap,
   ),
   col.text(
@@ -59,32 +61,21 @@ const columns = () => [
   col.status<LoanAdvancePayload>({}),
 ]
 
-/** The Filters popups, as drawn for each list (4172:61026, 4172:63856, 4180:44986, 4187:79719). */
+/**
+ * The Filters popups (4172:61026, 4172:63856, 4180:44986, 4187:79719), cut to
+ * what the API filters on: code / name (`q`), location, branch, department,
+ * employee, status, the request's dates and (Delegates) the delegator.
+ */
 function filterFields({
+  kind,
   tab,
   scope,
   view,
   lookups,
 }: StandardFilterContext): readonly FilterField[] {
   const extra = lookups?.extra as LoanAdvanceLookups | undefined
-  const people = (lookups?.employees ?? []).map((person) => ({
-    value: person.id,
-    label: person.name,
-    hint: person.code,
-  }))
-  const names = (values: readonly string[] | undefined) =>
-    (values ?? []).map((name) => ({ value: name, label: name }))
-  const types = (extra?.types ?? []).map((type) => ({ value: type.id, label: type.name }))
-  const employment = (label: string): FilterField => ({
-    kind: 'select',
-    key: 'employmentStatus',
-    label,
-    placeholder: `Select ${label}`,
-    options: [
-      { value: 'active', label: 'Active' },
-      { value: 'inactive', label: 'Inactive' },
-    ],
-  })
+  const options = (items: readonly { id: string; name: string }[] | undefined) =>
+    (items ?? []).map((item) => ({ value: item.id, label: item.name }))
   const status: FilterField = {
     kind: 'select',
     key: 'status',
@@ -92,90 +83,42 @@ function filterFields({
     placeholder: 'Select an Option',
     options: REQUEST_STATUSES.map((value) => ({ value, label: STANDARD_STATUS_META[value].label })),
   }
-  const code: FilterField = { kind: 'text', key: 'code', label: 'Code', placeholder: 'Code' }
-  const range: FilterField = {
-    kind: 'range',
-    key: 'amount',
-    label: 'Range',
-    from: 'amountFrom',
-    to: 'amountTo',
-  }
-  const loanType = (label: string): FilterField => ({
-    kind: 'select',
-    key: 'typeId',
-    label,
-    placeholder: `Select ${label}`,
-    options: types,
-  })
-  const flow: FilterField = {
-    kind: 'select',
-    key: 'nextRequesteeId',
-    label: 'Request Flow',
-    placeholder: 'Select Request Flow',
-    options: people,
-  }
+  const code: FilterField = { kind: 'text', key: 'q', label: 'Code', placeholder: 'Code or name' }
   const dates: FilterField[] = [
     { kind: 'date', key: 'from', label: 'From' },
     { kind: 'date', key: 'to', label: 'To' },
   ]
+  if (tab === 'request' && scope === 'my') return [status, code, ...dates]
   const where: FilterField[] = [
     {
       kind: 'select',
-      key: 'location',
+      key: 'locationId',
       label: 'Location',
       placeholder: 'Select Location',
-      options: names(extra?.locations),
+      options: options(extra?.locations),
     },
     {
       kind: 'select',
-      key: 'branch',
+      key: 'branchId',
       label: 'Branch',
       placeholder: 'Select Branch',
-      options: names(extra?.branches),
+      options: options(extra?.branches),
     },
     {
       kind: 'select',
-      key: 'department',
+      key: 'departmentId',
       label: 'Department',
       placeholder: 'Select Department',
-      options: names(lookups?.departments),
+      options: options(lookups?.departments),
     },
-    {
-      kind: 'select',
-      key: 'employeeId',
+    employeeFilterField(typePermission(kind, 'create'), {
       label: 'Employees',
       placeholder: 'Select Employees',
-      options: people,
-    },
+    }),
   ]
-
-  if (tab === 'request' && scope === 'my') {
-    return [
-      employment('Employee Status'),
-      status,
-      code,
-      range,
-      loanType('Advance Loan Type'),
-      flow,
-      ...dates,
-    ]
-  }
-  if (tab === 'request') {
+  if (tab === 'approvals' && view === 'delegates') {
     return [
       ...where,
-      employment('Employment Status'),
-      status,
-      code,
-      range,
-      loanType('Advance Loan Type'),
-      flow,
-      ...dates,
-    ]
-  }
-  if (view === 'delegates') {
-    return [
-      ...where,
-      employment('Employment Status'),
       status,
       {
         kind: 'select',
@@ -185,24 +128,13 @@ function filterFields({
         options: (lookups?.delegators ?? []).map((person) => ({
           value: person.id,
           label: person.name,
-          hint: person.code,
         })),
       },
       code,
-      flow,
-      loanType('Loan & Advance Type'),
       ...dates,
     ]
   }
-  return [
-    ...where,
-    employment('Employment Status'),
-    status,
-    code,
-    loanType('Advance Loan Type'),
-    flow,
-    ...dates,
-  ]
+  return [...where, status, code, ...dates]
 }
 
 /**
@@ -218,8 +150,9 @@ export const loanAdvancesConfig: StandardKindConfig<LoanAdvancePayload> = {
   requestsTitle: 'Loan & Advances',
   approvalsTitle: 'Loan & Advances Approval',
   scopeLabels: { my: 'My Loan & Advances', all: 'All Loan & Advances' },
-  // The frames also draw "Consents", with no content designed for it.
-  approvalViews: ['requested', 'delegates'],
+  // The frames also draw "Consents", with no content designed for it. Cancellations: an
+  // approved loan's cancellation walks the cancellation flow (the API's box).
+  approvalViews: ['requested', 'delegates', 'cancellations'],
   statusTabs: true,
   bulk: true,
   settingsTab: { label: 'Settings', Page: LoanAdvancesSettings },

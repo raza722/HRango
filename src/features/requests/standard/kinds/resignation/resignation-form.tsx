@@ -1,19 +1,31 @@
 import { useId } from 'react'
-import { useController, useForm, useWatch } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { differenceInCalendarDays, parse } from 'date-fns'
+import { parse } from 'date-fns'
 import { z } from 'zod'
 
-import { FormField, TextareaField } from '@/components/form'
+import { CheckboxField, FormField, TextareaField } from '@/components/form'
 import { Input } from '@/components/ui/input'
-import { AttachmentField, DateField, PayrollDialog, SearchSelectField } from '@/features/payroll'
+import { DateField, PayrollDialog, SearchSelectField } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
+import { type RequestBody, typePermission } from '../../../api/backend'
+import { RequestEmployeeField } from '../../../components/shared/request-employee-field'
+import { RequestFileField } from '../../../components/shared/request-files'
+import { syncAttachments } from '../../../utils/request-files'
 import type { StandardFormProps } from '../../standard.types'
 import { standardReadOnlyClass } from '../../standard-styles'
 import { useCreateStandard, useStandardLookups, useUpdateStandard } from '../../use-standard'
-import type { ResignationInput, ResignationLookups, ResignationPayload } from './resignation.types'
+import { useRequestAttachment } from '../loan-advances/use-request-attachment'
+import {
+  RESIGNATION_TYPES,
+  type ResignationDetailsIn,
+  type ResignationLookups,
+  type ResignationPayload,
+  type ResignationType,
+} from './resignation.types'
+import { noticeDaysOf } from './resignation.utils'
 
 const chosen = (message: string) =>
   z
@@ -26,9 +38,9 @@ const schema = z
     employeeId: z.string().nullable(),
     type: chosen('Choose the type'),
     resignationDate: z.string().min(1, 'Choose the resignation date'),
-    lastWorkingDate: z.string().min(1, 'Choose the last working date'),
+    lastWorkingDate: z.string(),
+    serveNotice: z.boolean(),
     reason: z.string().trim().min(1, 'Give the reason').max(500, 'Keep it under 500 characters'),
-    attachmentName: z.string().nullable(),
   })
   .refine(
     (values) =>
@@ -43,10 +55,24 @@ const day = (date: string) => parse(date, 'yyyy-MM-dd', new Date())
 
 /** "30 days" between the two dates; empty until both are chosen. */
 function noticeText(from: string, to: string): string {
-  if (!from || !to || to < from) return ''
-  const days = differenceInCalendarDays(day(to), day(from))
-  return `${String(days)} ${days === 1 ? 'day' : 'days'}`
+  const days = noticeDaysOf(from || null, to || null)
+  return days === null ? '' : `${String(days)} ${days === 1 ? 'day' : 'days'}`
 }
+
+/** The API's field names → the form's. */
+const FIELD_OF: Record<string, keyof Values> = {
+  employeeId: 'employeeId',
+  resignationType: 'type',
+  resignationDate: 'resignationDate',
+  fromDate: 'resignationDate',
+  lastWorkingDate: 'lastWorkingDate',
+  toDate: 'lastWorkingDate',
+  serveNotice: 'serveNotice',
+  reason: 'reason',
+}
+
+const isType = (value: string | null): value is ResignationType =>
+  (RESIGNATION_TYPES as readonly (string | null)[]).includes(value)
 
 const TITLES = {
   create: 'Create Resignation Request',
@@ -73,8 +99,8 @@ function ComputedField({ label, value }: { label: string; value: string }) {
 
 /**
  * "Create Resignation Request": Employee (All only), Type, Resignation Date,
- * Last Working Date, Notice Period (the days between the two dates), Reason
- * and Attachment, as the notes list them.
+ * Last Working Date (optional: the approver may set it), Notice Period (the
+ * days between the two dates), Serve Notice, Reason and Attachment.
  */
 export function ResignationForm({
   mode,
@@ -88,47 +114,61 @@ export function ResignationForm({
   const update = useUpdateStandard('resignation')
   const readOnly = mode === 'view'
   const pickPerson = scope === 'all' && mode === 'create'
-  const people = lookups.data?.employees ?? []
+  const { attachment, setAttachment, before } = useRequestAttachment('resignation', request)
 
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
       employeeId: request?.employee.id ?? null,
-      type: request?.payload.type ?? null,
+      type: request?.payload.resignationType ?? null,
       resignationDate: request?.payload.resignationDate ?? '',
       lastWorkingDate: request?.payload.lastWorkingDate ?? '',
-      reason: request?.payload.reason ?? '',
-      attachmentName: request?.payload.attachmentName ?? null,
+      serveNotice: request?.payload.serveNotice ?? false,
+      reason: request?.reason ?? '',
     },
   })
   const [resignationDate, lastWorkingDate] = useWatch({
     control: form.control,
     name: ['resignationDate', 'lastWorkingDate'],
   })
-  const attachment = useController({ control: form.control, name: 'attachmentName' })
 
   const submit = form.handleSubmit(async (values) => {
     if (pickPerson && !values.employeeId) {
       form.setError('employeeId', { message: 'Choose the employee' })
       return
     }
-    const input: ResignationInput = {
-      ...(pickPerson && values.employeeId ? { employeeId: values.employeeId } : {}),
-      type: values.type ?? '',
+    const lastWorkingDate = values.lastWorkingDate || null
+    const details = {
+      resignationType: isType(values.type) ? values.type : 'resignation',
       resignationDate: values.resignationDate,
-      lastWorkingDate: values.lastWorkingDate,
+      lastWorkingDate,
+      noticePeriodDays: noticeDaysOf(values.resignationDate, lastWorkingDate),
+      serveNotice: values.serveNotice,
+    } satisfies ResignationDetailsIn
+    const body: RequestBody = {
+      ...(pickPerson && values.employeeId ? { employeeId: values.employeeId } : {}),
+      fromDate: values.resignationDate,
+      toDate: lastWorkingDate ?? values.resignationDate,
       reason: values.reason.trim(),
-      attachmentName: values.attachmentName,
+      details,
     }
     try {
-      if (mode === 'edit' && request) await update.mutateAsync({ id: request.id, input })
-      else await create.mutateAsync(input)
+      if (mode === 'edit' && request) {
+        await update.mutateAsync({
+          id: request.id,
+          body: { ...body, rowVersion: request.rowVersion },
+        })
+        await syncAttachments('resignation', request.id, before, [attachment])
+      } else {
+        await create.mutateAsync({ ...body, attachments: attachment ? [attachment.id] : [] })
+      }
     } catch (failure) {
       if (failure instanceof ApiError) {
         let placed = false
         for (const [field, message] of Object.entries(failure.fieldErrors)) {
-          if (field in values) {
-            form.setError(field as keyof Values, { message })
+          const name = FIELD_OF[field]
+          if (name) {
+            form.setError(name, { message })
             placed = true
           }
         }
@@ -157,16 +197,13 @@ export function ResignationForm({
       >
         {/* All Resignations only: HR picks whose notice it is; locked once made. */}
         {scope === 'all' && (
-          <SearchSelectField
+          <RequestEmployeeField
             control={form.control}
             name="employeeId"
-            label="Employee"
+            permission={typePermission('resignation', 'create')}
+            current={request?.employee}
             required
-            placeholder="Select"
             disabled={!pickPerson}
-            options={people
-              .filter((person) => person.active || person.id === request?.employee.id)
-              .map((person) => ({ value: person.id, label: person.name, hint: person.code }))}
           />
         )}
         <SearchSelectField
@@ -192,11 +229,17 @@ export function ResignationForm({
           control={form.control}
           name="lastWorkingDate"
           label="Last Working Date"
-          required
           disabled={readOnly}
           minDate={resignationDate ? day(resignationDate) : undefined}
         />
         <ComputedField label="Notice Period" value={noticeText(resignationDate, lastWorkingDate)} />
+        <CheckboxField
+          control={form.control}
+          name="serveNotice"
+          label="Serve Notice"
+          tone="navy"
+          disabled={readOnly}
+        />
         <TextareaField
           control={form.control}
           name="reason"
@@ -207,11 +250,7 @@ export function ResignationForm({
           placeholder="Write here"
           disabled={readOnly}
         />
-        <AttachmentField
-          value={attachment.field.value}
-          onChange={attachment.field.onChange}
-          disabled={readOnly}
-        />
+        <RequestFileField value={attachment} onChange={setAttachment} disabled={readOnly} />
       </form>
     </PayrollDialog>
   )

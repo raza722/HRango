@@ -1,17 +1,13 @@
 import { addDays, format, subDays } from 'date-fns'
 import { z } from 'zod'
 
-import type { SalaryRevision } from '@/features/payroll'
-
-import { DIRECTORY } from '../../../employees/seed'
-import { payItems, salaryRevisions } from '../../../payroll/db'
+import { payItems, salaryRevisions, type StoredSalaryRevision } from '../../../payroll/db'
 import { salaryOn } from '../../../payroll/engine'
 import { nextCode } from '../../../payroll/http'
-import { profileOf } from '../../../scheduling/seed'
 import { jobTitles } from '../../../settings/handlers'
 import { createId } from '../../../utils'
+import type { RequestBodyIn } from '../../backend'
 import { invalid, today } from '../../http'
-import { mustFind } from '../../people'
 import {
   defineStandardKind,
   seedRequest,
@@ -20,17 +16,26 @@ import {
 } from '../engine'
 
 /*
- * Promotion: HR asks to promote (or, with Demotion, to demote) a person
- * ("Create Promotion Request": Employee, Type, Grade, Level, Designation, Job
- * Title, Previous Salary (RS), Salary, Benefits, Effective Date, Attachment,
- * Description). Previous Salary is the person's current salary from Payroll.
- * Approval records the new salary as a Payroll salary revision from the
- * effective date; an approved cancellation removes it again.
+ * Promotion (`/requests/promotion`, details = PromotionDetails): HR asks to
+ * promote (or, with Demotion, to demote) a person: Grade, Level (optional),
+ * Designation, Job Title, new salary, Effective Date, benefit pay items and a
+ * description. Promotion is admin only (never for oneself). The previous salary
+ * is the person's salary when the request is saved. Approving needs remarks
+ * (FRD). Approval records the new salary as a Payroll salary revision from the
+ * effective date (the backend's hr.usp_request_apply_promotion changes the
+ * employee); an approved cancellation removes it again.
  */
 
-const GRADES = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6'] as const
-const LEVELS = ['L1', 'L2', 'L3', 'L4', 'L5'] as const
-const DESIGNATIONS = [
+/** The organisation pickers the mock knows (`/organisation/lookups/grades|job-levels|designations`). */
+export const PROMOTION_GRADES = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6'].map((name) => ({
+  id: `gr_${name.toLowerCase()}`,
+  name,
+}))
+export const PROMOTION_LEVELS = ['L1', 'L2', 'L3', 'L4', 'L5'].map((name) => ({
+  id: `jl_${name.toLowerCase()}`,
+  name,
+}))
+export const PROMOTION_DESIGNATIONS = [
   'Associate',
   'Senior Associate',
   'Team Lead',
@@ -38,52 +43,41 @@ const DESIGNATIONS = [
   'Manager',
   'Senior Manager',
   'Head of Department',
-] as const
-/** "Benefits (EOBI, Medical)": the pay items they are paid through. */
-const BENEFIT_ITEMS = ['pi_eobi', 'pi_medical'] as const
+].map((name) => ({ id: `ds_${name.toLowerCase().replace(/[^a-z]+/g, '_')}`, name }))
+
+const nameIn = (list: readonly { id: string; name: string }[], id: string | null) =>
+  id ? (list.find((item) => item.id === id)?.name ?? null) : null
 
 const ymd = /^\d{4}-\d{2}-\d{2}$/
+const id = z.union([z.string(), z.number()]).transform(String)
 const schema = z.object({
-  demotion: z.boolean(),
-  grade: z.string().min(1),
-  level: z.string().min(1),
-  designation: z.string().min(1),
-  jobTitle: z.string().trim().min(1).max(80),
-  salary: z.number().positive().max(10_000_000),
-  benefits: z.array(z.string()).max(BENEFIT_ITEMS.length),
-  effectiveDate: z.string().regex(ymd),
-  attachment: z.string().max(200).nullable(),
-  description: z.string().trim().max(500),
+  isDemotion: z.boolean().default(false),
+  gradeId: id,
+  jobLevelId: id.nullish(),
+  designationId: id,
+  jobTitleId: id,
+  newSalary: z.number().positive(),
+  effectiveDate: z.string().regex(ymd).nullish(),
+  benefitPayItemIds: z.array(id).default([]),
+  description: z.string().nullish(),
 })
 type Input = z.infer<typeof schema>
 
-export interface PromotionStored extends Input {
-  /** The salary when the request was made ("Previous Salary (RS)"). */
-  previousSalary: number
+export interface PromotionStored {
+  isDemotion: boolean
+  gradeId: string
+  jobLevelId: string | null
+  designationId: string
+  jobTitleId: string
+  newSalary: number
+  effectiveDate: string
+  benefitPayItemIds: string[]
+  /** The salary when the request was saved ("Previous Salary (RS)"). */
+  previousSalary: number | null
+  description: string | null
 }
 
 const stored = (record: StoredStandardRequest) => record.payload as unknown as PromotionStored
-
-const benefitName = (id: string) => payItems.find(id)?.name ?? id
-
-/** The job titles on the forms: Settings → Job Title and the ones people hold now. */
-const jobTitleNames = () =>
-  [
-    ...new Set([
-      ...jobTitles.all().map((item) => item.name),
-      ...DIRECTORY.map((employee) => employee.jobTitle),
-    ]),
-  ].sort((a, b) => a.localeCompare(b))
-
-/** What the person is paid and holds now. */
-function currentOf(employeeId: string) {
-  const employee = mustFind(employeeId)
-  return {
-    salary: salaryOn(employeeId, today()),
-    grade: profileOf(employee).grade,
-    jobTitle: employee.jobTitle,
-  }
-}
 
 function toPayload(
   input: Input,
@@ -93,35 +87,33 @@ function toPayload(
     records: readonly StoredStandardRequest[]
   },
 ): Response | Record<string, unknown> {
-  if (!(GRADES as readonly string[]).includes(input.grade)) {
-    return invalid('Choose the grade.', { grade: 'Choose the grade' })
+  if (!nameIn(PROMOTION_GRADES, input.gradeId)) {
+    return invalid('Grade not found.', { gradeId: 'Grade not found.' })
   }
-  if (!(LEVELS as readonly string[]).includes(input.level)) {
-    return invalid('Choose the level.', { level: 'Choose the level' })
+  if (input.jobLevelId && !nameIn(PROMOTION_LEVELS, input.jobLevelId)) {
+    return invalid('Job level not found.', { jobLevelId: 'Job level not found.' })
   }
-  if (!(DESIGNATIONS as readonly string[]).includes(input.designation)) {
-    return invalid('Choose the designation.', { designation: 'Choose the designation' })
+  if (!nameIn(PROMOTION_DESIGNATIONS, input.designationId)) {
+    return invalid('Designation not found.', { designationId: 'Designation not found.' })
   }
-  if (!jobTitleNames().includes(input.jobTitle)) {
-    return invalid('Choose the job title.', { jobTitle: 'Choose the job title' })
+  if (!jobTitles.find(input.jobTitleId)) {
+    return invalid('Job title not found.', { jobTitleId: 'Job title not found.' })
   }
-  if (input.benefits.some((id) => !(BENEFIT_ITEMS as readonly string[]).includes(id))) {
-    return invalid('Choose the benefits from the list.', { benefits: 'Choose from the list' })
-  }
-  if (input.effectiveDate < today()) {
-    return invalid('Choose today or a later day.', {
-      effectiveDate: 'Choose today or a later day',
+  if (input.benefitPayItemIds.some((item) => !payItems.find(item))) {
+    return invalid('Benefit pay item not found.', {
+      benefitPayItemIds: 'Benefit pay item not found.',
     })
   }
-  const previousSalary = currentOf(context.employeeId).salary
-  if (!input.demotion && input.salary < previousSalary) {
-    return invalid('A promotion does not lower the salary.', {
-      salary: `At least ${previousSalary.toLocaleString('en-US')}`,
+  const effectiveDate = input.effectiveDate ?? today()
+  const previousSalary = salaryOn(context.employeeId, today())
+  if (!input.isDemotion && input.newSalary < previousSalary) {
+    return invalid('A promotion cannot lower the salary.', {
+      newSalary: 'A promotion cannot lower the salary.',
     })
   }
-  if (input.demotion && input.salary > previousSalary) {
-    return invalid('A demotion does not raise the salary.', {
-      salary: `At most ${previousSalary.toLocaleString('en-US')}`,
+  if (input.isDemotion && input.newSalary > previousSalary) {
+    return invalid('A demotion cannot raise the salary.', {
+      newSalary: 'A demotion cannot raise the salary.',
     })
   }
   const open = context.records.find(
@@ -136,9 +128,16 @@ function toPayload(
     })
   }
   return {
-    ...input,
-    benefits: BENEFIT_ITEMS.filter((id) => input.benefits.includes(id)),
+    isDemotion: input.isDemotion,
+    gradeId: input.gradeId,
+    jobLevelId: input.jobLevelId ?? null,
+    designationId: input.designationId,
+    jobTitleId: input.jobTitleId,
+    newSalary: input.newSalary,
+    effectiveDate,
+    benefitPayItemIds: [...new Set(input.benefitPayItemIds)],
     previousSalary,
+    description: input.description?.trim() ?? null,
   } satisfies PromotionStored
 }
 
@@ -158,7 +157,7 @@ function recordRevision(record: StoredStandardRequest): Effect {
   // Payroll keeps one revision per person and day; one already there stays as it is.
   if (clash) return { revisionId: null }
   const dayBefore = format(subDays(new Date(`${payload.effectiveDate}T00:00`), 1), 'yyyy-MM-dd')
-  const revision: SalaryRevision = {
+  const revision: StoredSalaryRevision = {
     id: createId('sr'),
     code: nextCode(
       'SR-',
@@ -169,7 +168,7 @@ function recordRevision(record: StoredStandardRequest): Effect {
     type: 'flat',
     percentage: null,
     previousSalary: salaryOn(record.employeeId, dayBefore),
-    salary: payload.salary,
+    salary: payload.newSalary,
   }
   salaryRevisions.insert(revision)
   return { revisionId: revision.id }
@@ -182,46 +181,64 @@ function removeRevision(record: StoredStandardRequest): void {
 
 const def: StandardKindServer<Input> = {
   kind: 'promotion',
+  typeCode: 'promotion',
+  typeName: 'Promotion',
   settingsType: 'promotion',
-  codePrefix: 'PR-',
+  codePrefix: 'RQ-PRM-',
   codeDigits: 4,
+  fromBody: (body: RequestBodyIn) => ({
+    ...body.details,
+    description: body.description ?? null,
+  }),
   schema,
   toPayload,
   dateOf: (payload) => String(payload.effectiveDate),
-  present: (payload) => {
+  header: (payload) => {
     const value = payload as unknown as PromotionStored
     return {
-      ...value,
-      benefitNames: value.benefits.map(benefitName),
+      fromDate: value.effectiveDate,
+      toDate: value.effectiveDate,
+      days: null,
+      reason: null,
+      description: value.description,
+      application: null,
     }
   },
-  filters: {
-    designation: (record, value) => stored(record).designation === value,
-    grade: (record, value) => stored(record).grade === value,
+  toDetails: (payload) => {
+    const value = payload as unknown as PromotionStored
+    return {
+      isDemotion: value.isDemotion,
+      gradeId: value.gradeId,
+      gradeName: nameIn(PROMOTION_GRADES, value.gradeId),
+      jobLevelId: value.jobLevelId,
+      jobLevelName: nameIn(PROMOTION_LEVELS, value.jobLevelId),
+      designationId: value.designationId,
+      designationName: nameIn(PROMOTION_DESIGNATIONS, value.designationId),
+      jobTitleId: value.jobTitleId,
+      jobTitleName: jobTitles.find(value.jobTitleId)?.name ?? null,
+      previousSalary: value.previousSalary,
+      newSalary: value.newSalary,
+      effectiveDate: value.effectiveDate,
+      benefits: value.benefitPayItemIds.map((payItemId) => ({
+        payItemId,
+        payItemName: payItems.find(payItemId)?.name ?? null,
+      })),
+    }
   },
-  lookups: () => ({
-    grades: GRADES,
-    levels: LEVELS,
-    designations: DESIGNATIONS,
-    jobTitles: jobTitleNames(),
-    benefits: BENEFIT_ITEMS.map((id) => ({ value: id, label: benefitName(id) })),
-    /** Each person's salary, grade and job title now ("Previous Salary (RS)"). */
-    current: Object.fromEntries(DIRECTORY.map((employee) => [employee.id, currentOf(employee.id)])),
-  }),
-  cancellationsView: false,
+  approveNeedsRemarks: true,
   onCompleted: recordRevision,
   onCancelled: removeRevision,
   seed: () => {
     const day = (offset: number) => format(addDays(new Date(), offset), 'yyyy-MM-dd')
     const at = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString()
+    const titles = jobTitles.all()
     const make = (
       key: string,
       employeeId: string,
       change: {
         grade: string
-        level: string
+        level: string | null
         designation: string
-        jobTitle?: string
         raise: number
         effectiveIn: number
         demotion?: boolean
@@ -231,34 +248,35 @@ const def: StandardKindServer<Input> = {
       status: StoredStandardRequest['status'],
       options: { approvedSteps?: number; daysAgo?: number; cancelReason?: string } = {},
     ) => {
-      const current = currentOf(employeeId)
+      const previousSalary = salaryOn(employeeId, today())
       const payload: PromotionStored = {
-        demotion: change.demotion ?? false,
-        grade: change.grade,
-        level: change.level,
-        designation: change.designation,
-        jobTitle: change.jobTitle ?? current.jobTitle,
-        previousSalary: current.salary,
-        salary: current.salary + change.raise,
-        benefits: change.benefits ?? ['pi_eobi', 'pi_medical'],
+        isDemotion: change.demotion ?? false,
+        gradeId: `gr_${change.grade.toLowerCase()}`,
+        jobLevelId: change.level ? `jl_${change.level.toLowerCase()}` : null,
+        designationId:
+          PROMOTION_DESIGNATIONS.find((item) => item.name === change.designation)?.id ?? '',
+        jobTitleId: titles[Number(key) % Math.max(1, titles.length)]?.id ?? '',
+        previousSalary,
+        newSalary: previousSalary + change.raise,
+        benefitPayItemIds: change.benefits ?? ['pi_medical'],
         effectiveDate: day(change.effectiveIn),
-        attachment: null,
         description: change.description ?? 'Strong results over the last two reviews.',
       }
       return seedRequest(def, {
         id: `pr_${key}`,
-        code: `PR-${key.padStart(4, '0')}`,
+        code: `RQ-PRM-${key}`,
         employeeId,
         payload: payload as unknown as Record<string, unknown>,
         at: at(options.daysAgo ?? 3),
         status,
+        remarks: 'Well deserved.',
         ...(options.approvedSteps !== undefined ? { approvedSteps: options.approvedSteps } : {}),
         ...(options.cancelReason ? { cancelReason: options.cancelReason } : {}),
       })
     }
     return [
       make(
-        '001',
+        '0001',
         'em_sadia',
         {
           grade: 'G3',
@@ -271,28 +289,21 @@ const def: StandardKindServer<Input> = {
         { daysAgo: 1 },
       ),
       make(
-        '002',
+        '0002',
         'em_haroon',
-        {
-          grade: 'G4',
-          level: 'L3',
-          designation: 'Team Lead',
-          jobTitle: 'Senior Software Engineer',
-          raise: 40_000,
-          effectiveIn: 25,
-        },
+        { grade: 'G4', level: 'L3', designation: 'Team Lead', raise: 40_000, effectiveIn: 25 },
         'pending',
         { daysAgo: 2 },
       ),
       make(
-        '003',
+        '0003',
         'em_rehan',
         { grade: 'G4', level: 'L2', designation: 'Team Lead', raise: 30_000, effectiveIn: 30 },
         'pending',
         { approvedSteps: 1, daysAgo: 2 },
       ),
       make(
-        '004',
+        '0004',
         'em_omer',
         {
           grade: 'G3',
@@ -305,14 +316,14 @@ const def: StandardKindServer<Input> = {
         { daysAgo: 12 },
       ),
       make(
-        '005',
+        '0005',
         'em_laiba',
         { grade: 'G2', level: 'L3', designation: 'Associate', raise: 15_000, effectiveIn: 18 },
         'cancelling',
         { daysAgo: 6, cancelReason: 'Held until the yearly review.' },
       ),
       make(
-        '006',
+        '0006',
         'em_shelley',
         {
           grade: 'G6',
@@ -326,30 +337,23 @@ const def: StandardKindServer<Input> = {
         { daysAgo: 1 },
       ),
       make(
-        '007',
-        'em_shelley',
-        { grade: 'G5', level: 'L3', designation: 'Manager', raise: 0, effectiveIn: 2 },
-        'rejected',
-        { daysAgo: 30 },
-      ),
-      make(
-        '008',
+        '0007',
         'em_mahnoor',
         {
           grade: 'G2',
-          level: 'L1',
+          level: null,
           designation: 'Associate',
           raise: -10_000,
           effectiveIn: 14,
           demotion: true,
-          benefits: ['pi_eobi'],
+          benefits: [],
           description: 'Back to the associate role at her request.',
         },
         'rejected',
         { daysAgo: 4 },
       ),
       make(
-        '009',
+        '0008',
         'em_zainab',
         {
           grade: 'G3',

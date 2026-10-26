@@ -8,18 +8,22 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
+import type { DetailSource } from '../../api/engine.api'
 import { KIND_LABELS } from '../../constants'
 import {
   useCancelRequest,
   useConsentRequest,
   useDecideRequest,
   useDeleteRequest,
+  useForwardRequest,
   useRequestDetail,
 } from '../../hooks/use-requests'
 import type { AnyRequest, FlowStepStatus, RequestKind } from '../../types/requests.types'
 import { stamp } from '../../utils/request-format'
+import { RequestEmployeeSelect } from '../shared/request-employee-field'
 import { personCodeText, personNameText } from '../shared/request-styles'
 import { RequestFields, RequestPersonCard } from './request-fields'
 
@@ -29,6 +33,10 @@ const STEP_STATUS: Record<FlowStepStatus, { label: string; className: string }> 
   approved: { label: 'Approved', className: 'text-[#51B969] dark:text-green-400' },
   rejected: { label: 'Rejected', className: 'text-destructive' },
   skipped: { label: 'Skipped', className: 'text-muted-foreground' },
+  informed: { label: 'Informed', className: 'text-muted-foreground' },
+  forwarded: { label: 'Forwarded', className: 'text-muted-foreground' },
+  consented: { label: 'Agreed', className: 'text-[#51B969] dark:text-green-400' },
+  disagreed: { label: 'Disagreed', className: 'text-destructive' },
 }
 
 /** A remarks box with its label and error, used by the decision popups. */
@@ -59,7 +67,7 @@ function RemarksField({
       <Textarea
         id={id}
         rows={3}
-        maxLength={500}
+        maxLength={4000}
         value={value}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${id}-error` : undefined}
@@ -80,35 +88,46 @@ type DecisionMode = 'view' | 'decide' | 'consent'
 
 /**
  * View, and the same popup with Remarks and Approve / Reject ("decide") or
- * Give / Decline consent ("consent"). A decision asks "Are you sure…?" first.
+ * Agree / Disagree ("consent", a Can Disagree step such as a shift swap's
+ * colleague). A decision asks "Are you sure…?" first; rejecting and
+ * disagreeing need a reason.
  */
 export function RequestViewDialog({
   kind,
   id,
   mode,
+  via = mode === 'view' ? 'request' : 'approvals',
   onClose,
 }: {
   kind: RequestKind
   id: string
   mode: DecisionMode
+  via?: DetailSource
   onClose: () => void
 }) {
-  const detail = useRequestDetail(kind, id)
-  const decide = useDecideRequest(kind)
-  const consent = useConsentRequest(kind)
+  const detail = useRequestDetail(kind, id, via)
+  const decide = useDecideRequest()
+  const consent = useConsentRequest()
+  const canApprove = useCan('requests.approvals.approve')
+  const canReject = useCan('requests.approvals.reject')
   const [remarks, setRemarks] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<'approve' | 'reject' | null>(null)
   const request = detail.data?.request
   const pending = decide.isPending || consent.isPending
+  const acting =
+    mode !== 'view' && Boolean(request?.actions.includes(mode === 'consent' ? 'consent' : 'decide'))
+  // Each button only when the API lists it for the caller (the detail's `actions`).
+  const may = (action: 'approve' | 'reject' | 'consent' | 'disagree') =>
+    request?.decisions?.includes(action) ?? true
   const labels =
     mode === 'consent'
-      ? { approve: 'Give Consent', reject: 'Decline' }
+      ? { approve: 'Agree', reject: 'Disagree' }
       : { approve: 'Approve', reject: 'Reject' }
 
   const ask = (decision: 'approve' | 'reject') => {
-    if (decision === 'reject' && mode === 'decide' && !remarks.trim()) {
-      setError('Give a reason for rejecting')
+    if (decision === 'reject' && !remarks.trim()) {
+      setError(mode === 'consent' ? 'Give a reason for disagreeing' : 'Give a reason for rejecting')
       return
     }
     setError(null)
@@ -117,9 +136,13 @@ export function RequestViewDialog({
 
   const submit = async (decision: 'approve' | 'reject') => {
     setConfirming(null)
+    if (!request) return
     const mutation = mode === 'consent' ? consent : decide
     try {
-      await mutation.mutateAsync({ id, input: { decision, remarks: remarks.trim() } })
+      await mutation.mutateAsync({
+        id,
+        input: { decision, remarks: remarks.trim(), rowVersion: request.rowVersion },
+      })
     } catch (failure) {
       if (failure instanceof ApiError) setError(failure.fieldErrors.remarks ?? failure.message)
       return
@@ -142,12 +165,16 @@ export function RequestViewDialog({
         className="max-w-3xl"
         footer={
           <>
-            {mode !== 'view' && request && (
+            {acting && request && (
               <>
                 <Button
                   variant="success"
                   size="lg"
-                  disabled={pending}
+                  disabled={
+                    pending ||
+                    (mode === 'decide' && !canApprove) ||
+                    !may(mode === 'consent' ? 'consent' : 'approve')
+                  }
                   onClick={() => {
                     ask('approve')
                   }}
@@ -158,7 +185,11 @@ export function RequestViewDialog({
                 <Button
                   variant="destructive"
                   size="lg"
-                  disabled={pending}
+                  disabled={
+                    pending ||
+                    (mode === 'decide' && !canReject) ||
+                    !may(mode === 'consent' ? 'disagree' : 'reject')
+                  }
                   onClick={() => {
                     ask('reject')
                   }}
@@ -190,12 +221,17 @@ export function RequestViewDialog({
             <RequestPersonCard employee={request.employee} />
             {request.status === 'cancelling' && mode === 'decide' && (
               <p className="rounded-md bg-amber-100 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/15 dark:text-amber-200">
-                {request.employee.name} asks to cancel this completed request. Approving the
+                {request.employee.name} asks to cancel this approved request. Approving the
                 cancellation undoes it.
               </p>
             )}
+            {mode !== 'view' && !acting && (
+              <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+                This request is not waiting for you.
+              </p>
+            )}
             <RequestFields request={request} />
-            {mode !== 'view' && (
+            {acting && (
               <RemarksField
                 label={mode === 'consent' ? 'Remarks' : 'Approval Remarks'}
                 value={remarks}
@@ -227,22 +263,31 @@ export function RequestViewDialog({
   )
 }
 
-/** "Flow": each approver in order with their authority and status. */
+/**
+ * "Flow": each approver the flow has reached, with their authority and status
+ * (the API records a step when the flow reaches it).
+ */
 export function RequestFlowDialog({
-  request,
+  kind,
+  id,
+  via = 'request',
   onClose,
 }: {
-  request: AnyRequest
+  kind: RequestKind
+  id: string
+  via?: DetailSource
   onClose: () => void
 }) {
+  const detail = useRequestDetail(kind, id, via)
+  const steps = detail.data?.request.flow ?? []
   return (
     <AppDialog
-      title={`${KIND_LABELS[request.kind].title} Flow`}
+      title={`${KIND_LABELS[kind].title} Flow`}
       onRequestClose={onClose}
       className="max-w-2xl"
       footer={
         // The Transfer Flow frame closes with a red Cancel under the table.
-        request.kind === 'transfer' && (
+        kind === 'transfer' && (
           <Button variant="destructive" size="lg" onClick={onClose} className={dialogButtonClass}>
             Cancel
           </Button>
@@ -259,9 +304,23 @@ export function RequestFlowDialog({
             </tr>
           </thead>
           <tbody>
-            {request.flow.map((step, index) => (
+            {detail.isPending && (
+              <tr>
+                <td colSpan={3} className="p-4">
+                  <Skeleton className="h-10 w-full" />
+                </td>
+              </tr>
+            )}
+            {!detail.isPending && steps.length === 0 && (
+              <tr>
+                <td colSpan={3} className="px-4 py-2.5">
+                  No approver has been reached yet.
+                </td>
+              </tr>
+            )}
+            {steps.map((step, index) => (
               <tr
-                key={`${step.authority}-${index}`}
+                key={`${step.authority}-${String(index)}`}
                 className="border-t align-top [&>td]:px-4 [&>td]:py-2.5"
               >
                 <td>
@@ -273,7 +332,10 @@ export function RequestFlowDialog({
                     </span>
                   </span>
                 </td>
-                <td>{step.authority}</td>
+                <td>
+                  {step.authority}
+                  {step.isConsent && <span className="block text-[0.6875rem]">Consent</span>}
+                </td>
                 <td>
                   <span className={cn('font-medium', STEP_STATUS[step.status].className)}>
                     {STEP_STATUS[step.status].label}
@@ -302,13 +364,15 @@ export function RequestFlowDialog({
 export function RequestHistoryDialog({
   kind,
   id,
+  via = 'request',
   onClose,
 }: {
   kind: RequestKind
   id: string
+  via?: DetailSource
   onClose: () => void
 }) {
-  const detail = useRequestDetail(kind, id)
+  const detail = useRequestDetail(kind, id, via)
   const history = detail.data?.history ?? []
   return (
     <AppDialog
@@ -353,7 +417,10 @@ export function RequestHistoryDialog({
   )
 }
 
-/** "Cancel": a completed request goes back to the final authority with a reason. */
+/**
+ * "Cancel": a pending request is withdrawn at once; an approved one goes
+ * through the cancellation flow. A reason is required either way.
+ */
 export function CancelRequestDialog({
   request,
   onClose,
@@ -370,7 +437,11 @@ export function CancelRequestDialog({
       return
     }
     try {
-      await cancel.mutateAsync({ id: request.id, reason: reason.trim() })
+      await cancel.mutateAsync({
+        id: request.id,
+        reason: reason.trim(),
+        rowVersion: request.rowVersion,
+      })
     } catch (failure) {
       if (failure instanceof ApiError) setError(failure.fieldErrors.reason ?? failure.message)
       return
@@ -380,7 +451,11 @@ export function CancelRequestDialog({
   return (
     <AppDialog
       title={`${KIND_LABELS[request.kind].title} Cancel`}
-      description={`${request.code}: the cancellation goes to ${request.flow.at(-1)?.approver.name ?? 'the final authority'} for approval.`}
+      description={
+        request.status === 'pending'
+          ? `${request.code}: the request is withdrawn at once.`
+          : `${request.code}: the cancellation goes for approval before it takes effect.`
+      }
       onRequestClose={onClose}
       className="max-w-xl"
       footer={
@@ -434,8 +509,84 @@ export function DeleteRequestDialog({
       cancelLabel="No"
       variant="destructive"
       onConfirm={() => {
-        remove.mutate(request.id, { onSettled: onClose })
+        remove.mutate({ id: request.id, rowVersion: request.rowVersion }, { onSettled: onClose })
       }}
     />
+  )
+}
+
+/** "Forward": passes the step waiting for you to another employee, with remarks. */
+export function ForwardRequestDialog({
+  request,
+  onClose,
+}: {
+  request: AnyRequest
+  onClose: () => void
+}) {
+  const forward = useForwardRequest()
+  const selectId = useId()
+  const [employeeId, setEmployeeId] = useState<string | null>(null)
+  const [remarks, setRemarks] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const submit = async () => {
+    if (!employeeId) {
+      setError('Choose whom to forward it to')
+      return
+    }
+    try {
+      await forward.mutateAsync({
+        id: request.id,
+        employeeId,
+        remarks: remarks.trim(),
+        rowVersion: request.rowVersion,
+      })
+    } catch (failure) {
+      if (failure instanceof ApiError) setError(failure.fieldErrors.employeeId ?? failure.message)
+      return
+    }
+    onClose()
+  }
+  return (
+    <AppDialog
+      title={`${KIND_LABELS[request.kind].title} Forward`}
+      description={`${request.code}: the step waiting for you passes to the person you choose.`}
+      onRequestClose={onClose}
+      className="max-w-xl"
+      footer={
+        <>
+          <Button
+            size="lg"
+            disabled={forward.isPending}
+            onClick={() => void submit()}
+            className={cn(dialogButtonClass, 'bg-sidebar text-white hover:bg-sidebar/90')}
+          >
+            Forward
+          </Button>
+          <Button variant="destructive" size="lg" onClick={onClose} className={dialogButtonClass}>
+            Cancel
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-4">
+        <div className="grid gap-2">
+          <label htmlFor={selectId} className="font-inter text-base text-heading">
+            Forward To
+          </label>
+          <RequestEmployeeSelect
+            id={selectId}
+            permission="requests.approvals.view"
+            exclude={[request.employee.id]}
+            value={employeeId}
+            onChange={(next) => {
+              setEmployeeId(next)
+              setError(null)
+            }}
+            placeholder="Choose an employee"
+          />
+        </div>
+        <RemarksField label="Remarks" value={remarks} onChange={setRemarks} error={error} />
+      </div>
+    </AppDialog>
   )
 }

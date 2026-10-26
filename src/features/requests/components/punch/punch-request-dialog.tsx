@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
@@ -11,18 +12,24 @@ import {
 } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api-error'
+import type { FileRef } from '@/lib/files'
 import { cn } from '@/lib/utils'
 
+import { type RequestBody, typePermission } from '../../api/backend'
+import { engineApi } from '../../api/engine.api'
+import { currentPerson } from '../../api/lookups.api'
 import { PUNCH_TYPE_LABELS } from '../../constants'
 import {
   useCreateRequest,
   useDayShift,
-  useRequestLookups,
+  useRequestDetail,
   useUpdateRequest,
 } from '../../hooks/use-requests'
 import { punchRequestSchema, type PunchRequestValues } from '../../schemas/request-forms.schema'
 import { PUNCH_REQUEST_TYPES, type PunchRequest } from '../../types/requests.types'
 import { clock } from '../../utils/request-format'
+import { RequestEmployeeField } from '../shared/request-employee-field'
+import { RequestFileField, RequestFileLinks } from '../shared/request-files'
 import {
   punchDialogButtonClass,
   punchDialogTitleClass,
@@ -33,7 +40,16 @@ const TYPE_OPTIONS = PUNCH_REQUEST_TYPES.map((type) => ({
   value: type,
   label: PUNCH_TYPE_LABELS[type],
 }))
-const FIELDS = ['employeeId', 'date', 'punchType', 'punchTime', 'description'] as const
+/** The API's field names → the form's. */
+const FIELD_OF: Record<string, 'employeeId' | 'date' | 'punchType' | 'punchTime' | 'description'> =
+  {
+    employeeId: 'employeeId',
+    punchDate: 'date',
+    fromDate: 'date',
+    punchType: 'punchType',
+    punchTime: 'punchTime',
+    description: 'description',
+  }
 
 function ReadOnlyTime({ label, value }: { label: string; value: string }) {
   return (
@@ -53,7 +69,9 @@ function ReadOnlyTime({ label, value }: { label: string; value: string }) {
 
 /**
  * Punch Request Create (and Edit): the day's expected times come from the
- * schedule; All adds the Employee picker.
+ * schedule (`/scheduling/schedules`); All adds the Employee picker. The punch
+ * goes to the API as `details { punchDate, punchType, punchTime }`; an
+ * attachment is uploaded first and sent by id.
  */
 export function PunchRequestDialog({
   forOthers,
@@ -68,16 +86,17 @@ export function PunchRequestDialog({
 }) {
   const create = useCreateRequest('punch')
   const update = useUpdateRequest('punch')
-  const lookups = useRequestLookups()
+  const detail = useRequestDetail('punch', request?.id ?? '', 'request')
+  const [file, setFile] = useState<FileRef | null>(null)
   const form = useForm<PunchRequestValues>({
     resolver: zodResolver(punchRequestSchema),
     defaultValues: request
       ? {
           employeeId: request.employee.id,
-          date: request.payload.date,
+          date: request.payload.punchDate ?? request.fromDate ?? '',
           punchType: request.payload.punchType,
-          punchTime: request.payload.punchTime,
-          description: request.payload.description,
+          punchTime: request.payload.punchTime.slice(0, 5),
+          description: request.description ?? '',
         }
       : { employeeId: '', date: '', punchType: '', punchTime: '', description: '' },
   })
@@ -86,7 +105,7 @@ export function PunchRequestDialog({
   const showEmployee = forOthers && !request
   const waitingForEmployee = showEmployee && !employeeId
   const shift = useDayShift(
-    showEmployee ? employeeId : request?.employee.id,
+    showEmployee ? employeeId : (request?.employee.id ?? currentPerson()?.id),
     waitingForEmployee ? '' : date,
   )
 
@@ -96,24 +115,39 @@ export function PunchRequestDialog({
       return
     }
     if (!values.punchType) return
-    const input = {
+    const body: RequestBody = {
       ...(showEmployee ? { employeeId: values.employeeId } : {}),
-      date: values.date,
-      punchType: values.punchType,
-      punchTime: values.punchTime,
-      description: values.description.trim(),
+      fromDate: values.date,
+      toDate: values.date,
+      description: values.description.trim() || null,
+      details: {
+        punchDate: values.date,
+        punchType: values.punchType,
+        punchTime: values.punchTime,
+      },
     }
     try {
-      if (request) await update.mutateAsync({ id: request.id, input })
-      else await create.mutateAsync(input)
+      if (request) {
+        await update.mutateAsync({
+          id: request.id,
+          body: { ...body, rowVersion: request.rowVersion },
+        })
+        if (file) await engineApi.addAttachment('punch', request.id, file.id)
+      } else {
+        await create.mutateAsync({ ...body, attachments: file ? [file.id] : [] })
+      }
     } catch (error) {
       if (error instanceof ApiError) {
         const fields = Object.entries(error.fieldErrors)
+        let shown = false
         for (const [field, message] of fields) {
-          const name = FIELDS.find((key) => key === field)
-          if (name) form.setError(name, { message })
+          const name = FIELD_OF[field]
+          if (name) {
+            form.setError(name, { message })
+            shown = true
+          }
         }
-        if (fields.length === 0) form.setError('root', { message: error.message })
+        if (!shown) form.setError('root', { message: error.message })
       }
       return
     }
@@ -123,6 +157,7 @@ export function PunchRequestDialog({
   const pending = create.isPending || update.isPending
   const rootError = form.formState.errors.root?.message
   const noShift = shift.data && !shift.data.clockIn
+  const existing = detail.data?.request.attachments ?? []
 
   return (
     <AppDialog
@@ -168,15 +203,11 @@ export function PunchRequestDialog({
           className="grid gap-x-8 gap-y-5 @2xl:grid-cols-3"
         >
           {showEmployee && (
-            <SelectField
+            <RequestEmployeeField
               control={control}
               name="employeeId"
-              label="Employee"
+              permission={typePermission('punch', 'create')}
               placeholder="Enter name"
-              options={(lookups.data?.employees ?? []).map((employee) => ({
-                value: employee.id,
-                label: `${employee.code} | ${employee.name}`,
-              }))}
               required
               className="@2xl:col-span-3"
             />
@@ -213,6 +244,14 @@ export function PunchRequestDialog({
           />
           <TimePickerField control={control} name="punchTime" label="Punch Time" required />
           <div className="hidden @2xl:block" aria-hidden="true" />
+          <div className="@2xl:col-span-3">
+            {existing.length > 0 && (
+              <div className="mb-2 text-sm">
+                <RequestFileLinks files={existing} />
+              </div>
+            )}
+            <RequestFileField value={file} onChange={setFile} />
+          </div>
           <TextareaField
             control={control}
             name="description"

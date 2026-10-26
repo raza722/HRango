@@ -45,7 +45,7 @@ export const REQUEST_MENU: readonly RequestMenuItem[] = [
     label: 'Expense',
     icon: ExpenseRequestIcon,
     kind: null,
-    planned: 'Expense claims (menu entry only in the design).',
+    planned: 'Expense claims: several claims sent together, each with its receipt.',
   },
   {
     slug: 'leave',
@@ -104,6 +104,14 @@ export const REQUEST_MENU: readonly RequestMenuItem[] = [
     kind: null,
     planned: 'Purpose, advances, travel details, hotel and ticket bookings.',
   },
+  // Not drawn in the Requests menu; the API has the type (Figma App Version: Air Tickets).
+  {
+    slug: 'air-tickets',
+    label: 'Air Tickets',
+    icon: TravelRequestIcon,
+    kind: null,
+    planned: 'Title, claim and travel dates, from / to, amount and the ticket.',
+  },
   // The design gives Transfer the Travel icon.
   { slug: 'transfer', label: 'Transfer', icon: TravelRequestIcon, kind: 'transfer' },
   {
@@ -112,6 +120,14 @@ export const REQUEST_MENU: readonly RequestMenuItem[] = [
     icon: ResignationRequestIcon,
     kind: null,
     planned: 'Type, resignation and last working dates, notice period and reason.',
+  },
+  // Not drawn; the API has the type (Request Flows lists "Requisition").
+  {
+    slug: 'requisition',
+    label: 'Requisition',
+    icon: ExpenseRequestIcon,
+    kind: null,
+    planned: 'Title, type, needed-by date, items and justification.',
   },
   {
     slug: 'settings',
@@ -178,15 +194,17 @@ export const TRANSFER_STATUS_META: Record<RequestStatus, { label: string; classN
 }
 
 export const PUNCH_TYPE_LABELS: Record<PunchRequestType, string> = {
-  'check-in': 'Check In',
-  'check-out': 'Check Out',
-  'missing-punch': 'Missing Punch',
+  check_in: 'Check In',
+  check_out: 'Check Out',
+  break_out: 'Break Out',
+  break_in: 'Break In',
 }
 
 export const APPROVAL_VIEW_LABELS: Record<ApprovalView, string> = {
   requested: 'Requested',
   delegates: 'Delegates',
   consents: 'Consents',
+  cancellations: 'Cancellations',
 }
 
 export const ACTION_LABELS: Record<RequestAction, string> = {
@@ -198,6 +216,7 @@ export const ACTION_LABELS: Record<RequestAction, string> = {
   cancel: 'Cancel',
   decide: 'Approve/Reject',
   consent: 'Consent',
+  forward: 'Forward',
 }
 
 export const REQUEST_PAGE_SIZE = 10

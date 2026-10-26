@@ -10,7 +10,7 @@ import {
 } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { differenceInCalendarDays, parse } from 'date-fns'
-import { Paperclip, X } from 'lucide-react'
+import { Loader2, Paperclip, X } from 'lucide-react'
 import { z } from 'zod'
 
 import { CheckboxField, TextField, TimePickerField } from '@/components/form'
@@ -23,6 +23,8 @@ import {
   SearchSelect,
   SearchSelectField,
 } from '@/features/payroll'
+import { ApiError } from '@/lib/api-error'
+import { ACCEPTED_FILE_TYPES, type FileRef, uploadFile } from '@/lib/files'
 import { cn } from '@/lib/utils'
 
 import { transferFieldsClass } from '../../../components/transfer/transfer-styles'
@@ -52,12 +54,12 @@ const hotelRow = z.object({
 const ticketRow = z.object({
   id: z.string(),
   ticketNo: z.string().trim().min(1, 'Required').max(40),
-  ticketClass: z.string().trim().max(40),
+  ticketClass: z.string().trim().max(30, 'Up to 30 characters'),
   departureFrom: z.string().trim().max(80),
   arrivalAt: z.string().trim().max(80),
   date: z.string().min(1, 'Required'),
   time: z.string().min(1, 'Required'),
-  attachment: z.string().nullable(),
+  file: z.custom<FileRef | null>(),
   description: z.string().trim().max(300),
 })
 
@@ -323,7 +325,11 @@ function DateCell({
   )
 }
 
-/** "Attachment" in a ticket row: the file's name and a small Attach button. */
+/**
+ * "Attachment" in a ticket row: the file's name (a link once uploaded) and a
+ * small Attach button. Picking a file uploads it (`POST /files`, module
+ * `requests`); the request sends its id as the ticket's `fileId`.
+ */
 function AttachCell({
   control,
   name,
@@ -331,57 +337,97 @@ function AttachCell({
   disabled,
 }: {
   control: Control<Values>
-  name: `tickets.${number}.attachment`
+  name: `tickets.${number}.file`
   label: string
   disabled: boolean
 }) {
   const input = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
   return (
     <Controller
       control={control}
       name={name}
-      render={({ field }) => (
-        <div className="flex h-10 min-w-0 overflow-hidden rounded-md border border-input bg-card">
-          <span className="flex min-w-0 flex-1 items-center truncate px-2 font-inter text-xs text-field-value">
-            {field.value ?? ''}
-          </span>
-          {field.value && !disabled && (
-            <button
-              type="button"
-              aria-label={`Remove ${field.value}`}
-              onClick={() => {
-                field.onChange(null)
-              }}
-              className="px-1 text-muted-foreground hover:text-destructive"
-            >
-              <X aria-hidden="true" className="size-3.5" />
-            </button>
-          )}
-          <button
-            type="button"
-            disabled={disabled}
-            aria-label={
-              field.value ? `${label}: replace ${field.value}` : `${label}: attach a file`
-            }
-            onClick={() => input.current?.click()}
-            className="flex shrink-0 items-center bg-[#707070] px-2.5 text-white outline-none hover:bg-[#5c5c5c] focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-60"
-          >
-            <Paperclip aria-hidden="true" className="size-3.5" />
-          </button>
-          <input
-            ref={input}
-            type="file"
-            className="sr-only"
-            tabIndex={-1}
-            aria-hidden="true"
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              if (file) field.onChange(file.name)
-              event.target.value = ''
-            }}
-          />
-        </div>
-      )}
+      render={({ field }) => {
+        const value = field.value
+        const pick = async (file: File) => {
+          setUploading(true)
+          setFailure(null)
+          try {
+            const uploaded = await uploadFile(file, 'requests')
+            field.onChange({ id: uploaded.id, name: uploaded.name, url: uploaded.url })
+          } catch (problem) {
+            setFailure(problem instanceof ApiError ? problem.message : 'Could not upload')
+          } finally {
+            setUploading(false)
+          }
+        }
+        return (
+          <div className="min-w-0">
+            <div className="flex h-10 min-w-0 overflow-hidden rounded-md border border-input bg-card">
+              <span className="flex min-w-0 flex-1 items-center truncate px-2 font-inter text-xs text-field-value">
+                {uploading ? (
+                  'Uploading…'
+                ) : value?.url ? (
+                  <a
+                    href={value.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="truncate text-primary underline-offset-2 hover:underline"
+                  >
+                    {value.name ?? 'Ticket'}
+                  </a>
+                ) : (
+                  (value?.name ?? '')
+                )}
+              </span>
+              {value && !disabled && !uploading && (
+                <button
+                  type="button"
+                  aria-label={`Remove ${value.name ?? 'the file'}`}
+                  onClick={() => {
+                    field.onChange(null)
+                  }}
+                  className="px-1 text-muted-foreground hover:text-destructive"
+                >
+                  <X aria-hidden="true" className="size-3.5" />
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={disabled || uploading}
+                aria-label={
+                  value
+                    ? `${label}: replace ${value.name ?? 'the file'}`
+                    : `${label}: attach a file`
+                }
+                onClick={() => input.current?.click()}
+                className="flex shrink-0 items-center bg-[#707070] px-2.5 text-white outline-none hover:bg-[#5c5c5c] focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-60"
+              >
+                {uploading ? (
+                  <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+                ) : (
+                  <Paperclip aria-hidden="true" className="size-3.5" />
+                )}
+              </button>
+              <input
+                ref={input}
+                type="file"
+                accept={ACCEPTED_FILE_TYPES}
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden="true"
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  if (file) void pick(file)
+                  event.target.value = ''
+                }}
+              />
+            </div>
+            {failure && <span className="mt-1 block text-xs text-destructive">{failure}</span>}
+          </div>
+        )
+      }}
     />
   )
 }
@@ -450,7 +496,7 @@ export function TravelDetailDialog({
       arrivalAt,
       date: fromDate,
       time: '',
-      attachment: null,
+      file: null,
       description: '',
     })
   }
@@ -778,7 +824,7 @@ export function TravelDetailDialog({
                 </div>
                 <AttachCell
                   control={control}
-                  name={`tickets.${index}.attachment`}
+                  name={`tickets.${index}.file`}
                   label={`Ticket ${n} Attachment`}
                   disabled={readOnly}
                 />

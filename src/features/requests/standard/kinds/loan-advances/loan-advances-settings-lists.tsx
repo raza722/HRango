@@ -9,9 +9,12 @@ import {
   rowMenuItemClass,
 } from '@/components/layout'
 import { activeCount, type FilterField, FiltersDialog, useFilters } from '@/features/payroll'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 import type { Paginated } from '@/types/api'
 
+import { typePermission } from '../../../api/backend'
+import { employeeFilterField } from '../../../components/shared/request-employee'
 import { REQUEST_PAGE_SIZE } from '../../../constants'
 import { nowrap } from '../../standard-columns'
 import {
@@ -20,22 +23,17 @@ import {
   StandardPersonCell,
 } from '../../standard-parts'
 import { STANDARD_STATUS_META, standardTableClass } from '../../standard-styles'
-import { useStandardLookups } from '../../use-standard'
 import {
+  amount,
   useDeleteLoanSetting,
   useLoanCategories,
-  useLoanRepayments,
+  useLoanInstallments,
   useLoanTypes,
   useSaveLoanCategory,
   useSaveLoanType,
 } from './loan-advances.api'
-import { categoryInput, listDay, pkrShort, typeInput } from './loan-advances.constants'
-import type {
-  LoanAdvanceLookups,
-  LoanCategory,
-  LoanRepayment,
-  LoanType,
-} from './loan-advances.types'
+import { categoryInput, monthOf, pkrShort, typeInput } from './loan-advances.constants'
+import type { LoanCategory, LoanInstallment, LoanType } from './loan-advances.types'
 import {
   LoanCategoryDialog,
   LoanTypeDialog,
@@ -125,18 +123,67 @@ function Pager<T>({
   )
 }
 
+/** `isActive` of GET /loans/types and /loans/categories. */
 const STATUS_FILTER: FilterField = {
   kind: 'select',
-  key: 'status',
+  key: 'isActive',
   label: 'Status',
   placeholder: 'Select Status',
   options: [
-    { value: 'active', label: 'Active' },
-    { value: 'inactive', label: 'Inactive' },
+    { value: 'true', label: 'Active' },
+    { value: 'false', label: 'Inactive' },
   ],
 }
 
-const NAME_FILTER: FilterField = { kind: 'text', key: 'name', label: 'Name', placeholder: 'Name' }
+/** `q`: the name. */
+const NAME_FILTER: FilterField = { kind: 'text', key: 'q', label: 'Name', placeholder: 'Name' }
+
+type SettingsAction = 'view' | 'edit' | 'toggle' | 'delete'
+
+/** The row menu, cut to what the user's Loan Settings permissions allow. */
+function settingsActions(
+  active: boolean,
+  can: { edit: boolean; remove: boolean },
+  pending: boolean,
+  open: (action: SettingsAction) => void,
+) {
+  return [
+    {
+      label: 'View',
+      onSelect: () => {
+        open('view')
+      },
+    },
+    ...(can.edit
+      ? [
+          {
+            label: 'Edit',
+            onSelect: () => {
+              open('edit')
+            },
+          },
+          {
+            label: active ? 'Inactivate' : 'Activate',
+            disabled: pending,
+            onSelect: () => {
+              open('toggle')
+            },
+          },
+        ]
+      : []),
+    ...(can.remove
+      ? [
+          {
+            label: 'Delete',
+            variant: 'destructive' as const,
+            onSelect: () => {
+              open('delete')
+            },
+          },
+        ]
+      : []),
+  ]
+}
 
 const nameCell = (name: string) => <span className="text-xs font-medium text-person">{name}</span>
 
@@ -153,6 +200,11 @@ export function LoanTypesSection({ pill, page, onPage }: SectionProps) {
   const list = useLoanTypes({ page, pageSize: REQUEST_PAGE_SIZE, ...filters })
   const save = useSaveLoanType()
   const remove = useDeleteLoanSetting('types')
+  const can = {
+    create: useCan('loans.settings.types.create'),
+    edit: useCan('loans.settings.types.edit'),
+    remove: useCan('loans.settings.types.delete'),
+  }
   const close = () => {
     setDialog(null)
   }
@@ -162,19 +214,20 @@ export function LoanTypesSection({ pill, page, onPage }: SectionProps) {
     {
       id: 'experience',
       header: 'Employee Experience',
-      cell: (row) => String(row.experienceMonths),
+      cell: (row) => String(row.minExperienceMonths),
     },
     {
       id: 'gap',
       header: 'Gap Between Requests (In Months)',
-      cell: (row) => (row.requestGapMonths === null ? '—' : String(row.requestGapMonths)),
+      cell: (row) =>
+        row.gapBetweenRequestsMonths === null ? '—' : String(row.gapBetweenRequestsMonths),
     },
     {
       id: 'status',
       header: 'Status',
       align: 'center',
       cell: (row) =>
-        row.active ? (
+        row.isActive ? (
           <Chip tone="completed" label="Active" />
         ) : (
           <Chip tone="rejected" label="Inactive" />
@@ -189,9 +242,13 @@ export function LoanTypesSection({ pill, page, onPage }: SectionProps) {
       onFilter={() => {
         setDialog({ type: 'filters' })
       }}
-      onCreate={() => {
-        setDialog({ type: 'form', mode: 'create', item: null })
-      }}
+      {...(can.create
+        ? {
+            onCreate: () => {
+              setDialog({ type: 'form', mode: 'create', item: null })
+            },
+          }
+        : {})}
       total={list.data?.meta.total}
     >
       <DataTable
@@ -212,34 +269,15 @@ export function LoanTypesSection({ pill, page, onPage }: SectionProps) {
           <RowActionsMenu
             label={`Actions for ${row.name}`}
             itemClassName={rowMenuItemClass.poppins}
-            actions={[
-              {
-                label: 'View',
-                onSelect: () => {
-                  setDialog({ type: 'form', mode: 'view', item: row })
-                },
-              },
-              {
-                label: 'Edit',
-                onSelect: () => {
-                  setDialog({ type: 'form', mode: 'edit', item: row })
-                },
-              },
-              {
-                label: row.active ? 'Inactivate' : 'Activate',
-                disabled: save.isPending,
-                onSelect: () => {
-                  save.mutate({ id: row.id, input: { ...typeInput(row), active: !row.active } })
-                },
-              },
-              {
-                label: 'Delete',
-                variant: 'destructive',
-                onSelect: () => {
-                  setDialog({ type: 'delete', item: row })
-                },
-              },
-            ]}
+            actions={settingsActions(row.isActive, can, save.isPending, (action) => {
+              if (action === 'toggle') {
+                save.mutate({ id: row.id, input: { ...typeInput(row), isActive: !row.isActive } })
+              } else if (action === 'delete') {
+                setDialog({ type: 'delete', item: row })
+              } else {
+                setDialog({ type: 'form', mode: action, item: row })
+              }
+            })}
           />
         )}
       />
@@ -271,7 +309,12 @@ export function LoanTypesSection({ pill, page, onPage }: SectionProps) {
         cancelLabel="No"
         variant="destructive"
         onConfirm={() => {
-          if (dialog?.type === 'delete') remove.mutate(dialog.item.id, { onSettled: close })
+          if (dialog?.type === 'delete') {
+            remove.mutate(
+              { id: dialog.item.id, rowVersion: dialog.item.rowVersion },
+              { onSettled: close },
+            )
+          }
         }}
       />
     </SettingsShell>
@@ -285,6 +328,11 @@ export function LoanCategoriesSection({ pill, page, onPage }: SectionProps) {
   const list = useLoanCategories({ page, pageSize: REQUEST_PAGE_SIZE, ...filters })
   const save = useSaveLoanCategory()
   const remove = useDeleteLoanSetting('categories')
+  const can = {
+    create: useCan('loans.settings.categories.create'),
+    edit: useCan('loans.settings.categories.edit'),
+    remove: useCan('loans.settings.categories.delete'),
+  }
   const close = () => {
     setDialog(null)
   }
@@ -295,14 +343,14 @@ export function LoanCategoriesSection({ pill, page, onPage }: SectionProps) {
       id: 'description',
       header: 'Description',
       className: 'min-w-48 whitespace-normal',
-      cell: (row) => row.description || '—',
+      cell: (row) => row.description ?? '—',
     },
     {
       id: 'status',
       header: 'Status',
       align: 'center',
       cell: (row) =>
-        row.active ? (
+        row.isActive ? (
           <Chip tone="completed" label="Active" />
         ) : (
           <Chip tone="rejected" label="Inactive" />
@@ -317,9 +365,13 @@ export function LoanCategoriesSection({ pill, page, onPage }: SectionProps) {
       onFilter={() => {
         setDialog({ type: 'filters' })
       }}
-      onCreate={() => {
-        setDialog({ type: 'form', mode: 'create', item: null })
-      }}
+      {...(can.create
+        ? {
+            onCreate: () => {
+              setDialog({ type: 'form', mode: 'create', item: null })
+            },
+          }
+        : {})}
       total={list.data?.meta.total}
     >
       <DataTable
@@ -340,34 +392,18 @@ export function LoanCategoriesSection({ pill, page, onPage }: SectionProps) {
           <RowActionsMenu
             label={`Actions for ${row.name}`}
             itemClassName={rowMenuItemClass.poppins}
-            actions={[
-              {
-                label: 'View',
-                onSelect: () => {
-                  setDialog({ type: 'form', mode: 'view', item: row })
-                },
-              },
-              {
-                label: 'Edit',
-                onSelect: () => {
-                  setDialog({ type: 'form', mode: 'edit', item: row })
-                },
-              },
-              {
-                label: row.active ? 'Inactivate' : 'Activate',
-                disabled: save.isPending,
-                onSelect: () => {
-                  save.mutate({ id: row.id, input: { ...categoryInput(row), active: !row.active } })
-                },
-              },
-              {
-                label: 'Delete',
-                variant: 'destructive',
-                onSelect: () => {
-                  setDialog({ type: 'delete', item: row })
-                },
-              },
-            ]}
+            actions={settingsActions(row.isActive, can, save.isPending, (action) => {
+              if (action === 'toggle') {
+                save.mutate({
+                  id: row.id,
+                  input: { ...categoryInput(row), isActive: !row.isActive },
+                })
+              } else if (action === 'delete') {
+                setDialog({ type: 'delete', item: row })
+              } else {
+                setDialog({ type: 'form', mode: action, item: row })
+              }
+            })}
           />
         )}
       />
@@ -399,7 +435,12 @@ export function LoanCategoriesSection({ pill, page, onPage }: SectionProps) {
         cancelLabel="No"
         variant="destructive"
         onConfirm={() => {
-          if (dialog?.type === 'delete') remove.mutate(dialog.item.id, { onSettled: close })
+          if (dialog?.type === 'delete') {
+            remove.mutate(
+              { id: dialog.item.id, rowVersion: dialog.item.rowVersion },
+              { onSettled: close },
+            )
+          }
         }}
       />
     </SettingsShell>
@@ -408,52 +449,54 @@ export function LoanCategoriesSection({ pill, page, onPage }: SectionProps) {
 
 /**
  * Settings → Repayment (frame 4195:108102): every installment of the approved
- * loans, with its date and amount, and whether payroll has deducted it.
+ * loans (`GET /loans/installments`), by due month, and whether payroll has
+ * deducted it. The API gives no request code, approved amount or deduction pay
+ * item per installment, so those columns are not shown.
  */
 export function LoanRepaymentSection({ pill, page, onPage }: SectionProps) {
   const [filters, setFilters] = useFilters('loan-advances-repayments')
   const [filtering, setFiltering] = useState(false)
-  const lookups = useStandardLookups<LoanAdvanceLookups>('loan-advances')
-  const list = useLoanRepayments({ page, pageSize: REQUEST_PAGE_SIZE, ...filters })
+  const list = useLoanInstallments({ page, pageSize: REQUEST_PAGE_SIZE, ...filters })
 
-  const columns: DataTableColumn<LoanRepayment>[] = [
-    { id: 'code', header: 'Code', mobile: 'heading', cell: (row) => nowrap(row.code) },
+  const columns: DataTableColumn<LoanInstallment>[] = [
     {
       id: 'employee',
       header: 'Employees',
+      mobile: 'heading',
       className: 'min-w-36',
-      cell: (row) => <StandardPersonCell person={row.employee} />,
+      cell: (row) => (
+        <StandardPersonCell
+          person={{
+            id: row.employeeId ?? '',
+            name: row.employeeName ?? '—',
+            code: row.employeeCode ?? '',
+          }}
+        />
+      ),
     },
-    {
-      id: 'department',
-      header: 'Department',
-      className: 'min-w-24 whitespace-normal',
-      cell: (row) => row.employee.department,
-    },
-    { id: 'type', header: 'Loan Type', cell: (row) => row.typeName },
-    {
-      id: 'approved',
-      header: 'Approved Amount',
-      cell: (row) => nowrap(pkrShort(row.approvedAmount)),
-    },
+    { id: 'type', header: 'Loan Type', cell: (row) => row.loanTypeName ?? '—' },
     {
       id: 'installment',
       header: 'Installment',
-      cell: (row) => nowrap(`${String(row.installment)} of ${String(row.installments)}`),
+      cell: (row) => nowrap(`No. ${String(row.installmentNo)}`),
     },
-    { id: 'date', header: 'Repayment Date', cell: (row) => listDay(row.date) },
+    { id: 'date', header: 'Repayment Month', cell: (row) => nowrap(monthOf(row.dueMonth)) },
     {
       id: 'amount',
       header: 'Repayment Amount',
-      cell: (row) => nowrap(pkrShort(row.amount)),
+      cell: (row) => nowrap(pkrShort(amount(row.amount))),
     },
-    { id: 'payitem', header: 'Deduction Payitem', cell: (row) => row.deductionPayitem ?? '—' },
+    {
+      id: 'paid',
+      header: 'Paid Amount',
+      cell: (row) => nowrap(pkrShort(amount(row.paidAmount) ?? 0)),
+    },
     {
       id: 'status',
       header: 'Status',
       align: 'center',
       cell: (row) =>
-        row.status === 'repaid' ? (
+        row.status === 'paid' ? (
           <Chip tone="completed" label="Repaid" />
         ) : (
           <Chip tone="pending" label="Due" />
@@ -462,47 +505,22 @@ export function LoanRepaymentSection({ pill, page, onPage }: SectionProps) {
   ]
 
   const fields: FilterField[] = [
-    {
-      kind: 'select',
-      key: 'employeeId',
+    employeeFilterField(typePermission('loan-advances', 'create'), {
       label: 'Employees',
       placeholder: 'Select Employees',
-      options: (lookups.data?.employees ?? []).map((person) => ({
-        value: person.id,
-        label: person.name,
-        hint: person.code,
-      })),
-    },
-    {
-      kind: 'select',
-      key: 'department',
-      label: 'Department',
-      placeholder: 'Select Department',
-      options: (lookups.data?.departments ?? []).map((name) => ({ value: name, label: name })),
-    },
-    {
-      kind: 'select',
-      key: 'typeId',
-      label: 'Advance Loan Type',
-      placeholder: 'Select Advance Loan Type',
-      options: (lookups.data?.extra.types ?? []).map((type) => ({
-        value: type.id,
-        label: type.name,
-      })),
-    },
+    }),
     {
       kind: 'select',
       key: 'status',
       label: 'Status',
       placeholder: 'Select Status',
       options: [
-        { value: 'repaid', label: 'Repaid' },
+        { value: 'paid', label: 'Repaid' },
         { value: 'due', label: 'Due' },
       ],
     },
-    { kind: 'text', key: 'code', label: 'Code', placeholder: 'Code' },
-    { kind: 'date', key: 'from', label: 'From' },
-    { kind: 'date', key: 'to', label: 'To' },
+    { kind: 'date', key: 'monthFrom', label: 'From' },
+    { kind: 'date', key: 'monthTo', label: 'To' },
   ]
 
   return (

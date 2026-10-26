@@ -1,94 +1,102 @@
 import { keepPreviousData, queryOptions } from '@tanstack/react-query'
 
-import { apiClient } from '@/lib/axios'
-import type { ApiItem } from '@/types/api'
-
-import type { RequestDetail, RequestPage } from '../types/requests.types'
+import { compactQuery, REQUEST_TYPE_CODES, type RequestBody, typePermission } from '../api/backend'
+import { asDetails, type DetailSource, engineApi } from '../api/engine.api'
+import { currentPerson, lookupsApi } from '../api/lookups.api'
 import type {
   StandardApprovalParams,
   StandardDecisionInput,
   StandardKind,
   StandardListParams,
   StandardLookups,
-  StandardRequest,
 } from './standard.types'
+import { STANDARD_EXTRA_LOOKUPS } from './standard-lookups'
 
-/** Flattens the filters into the query and leaves out empty values. */
-function query(params: object & { filters?: Record<string, string | undefined> | undefined }) {
-  const { filters, ...rest } = params
-  return Object.fromEntries(
-    Object.entries({ ...rest, ...filters }).filter(
-      ([, value]) => value !== undefined && value !== '',
-    ),
-  )
-}
+/*
+ * The standard request types on the API's request engine
+ * (`/requests/<type>`, `/requests/approvals`). The screens read each type's
+ * `details` as the API sends them, so the payload is the details.
+ */
 
-const path = (kind: StandardKind, suffix = '') => `/requests/${kind}${suffix}`
-
-/** REST calls of the standard request types (the same shape as Transfer's). */
+/** REST calls of the standard request types. */
 export const standardApi = {
-  async list<P>(kind: StandardKind, params: StandardListParams, signal?: AbortSignal) {
-    const { data } = await apiClient.get<RequestPage<StandardRequest<P>>>(path(kind), {
-      params: query(params),
+  list: <P>(kind: StandardKind, params: StandardListParams, signal?: AbortSignal) =>
+    engineApi.list(
+      kind,
+      {
+        view: params.scope,
+        status: params.status,
+        page: params.page,
+        pageSize: params.pageSize,
+        filters: params.filters,
+      },
+      asDetails<P>(),
       signal,
-    })
-    return data
-  },
-  async approvals<P>(kind: StandardKind, params: StandardApprovalParams, signal?: AbortSignal) {
-    const { data } = await apiClient.get<RequestPage<StandardRequest<P>>>(
-      path(kind, '/approvals'),
-      { params: query(params), signal },
-    )
-    return data
-  },
-  async detail<P>(kind: StandardKind, id: string, signal?: AbortSignal) {
-    const { data } = await apiClient.get<ApiItem<RequestDetail<StandardRequest<P>>>>(
-      path(kind, `/${id}`),
-      { signal },
-    )
-    return data.data
-  },
-  async lookups<X>(kind: StandardKind, signal?: AbortSignal) {
-    const { data } = await apiClient.get<ApiItem<StandardLookups<X>>>(path(kind, '/lookups'), {
+    ),
+  approvals: <P>(kind: StandardKind, params: StandardApprovalParams, signal?: AbortSignal) =>
+    engineApi.approvals(
+      kind,
+      {
+        box: params.view,
+        status: params.status,
+        page: params.page,
+        pageSize: params.pageSize,
+        filters: params.filters,
+      },
+      asDetails<P>(),
       signal,
-    })
-    return data.data
+    ),
+  detail: <P>(
+    kind: StandardKind,
+    id: string,
+    via: DetailSource = 'request',
+    signal?: AbortSignal,
+  ) => engineApi.detail(kind, id, asDetails<P>(), via, signal),
+  /**
+   * The forms' and filters' look-ups: the signed-in person, whom they may file
+   * for, departments, their delegators, and the type's own (`extra`).
+   */
+  async lookups<X>(kind: StandardKind, signal?: AbortSignal): Promise<StandardLookups<X>> {
+    const extra = STANDARD_EXTRA_LOOKUPS[kind]
+    const [employees, departments, delegators, own] = await Promise.all([
+      lookupsApi.employees(typePermission(kind, 'create'), {}, signal).catch(() => []),
+      lookupsApi.org('departments', undefined, signal).catch(() => []),
+      lookupsApi.delegators(REQUEST_TYPE_CODES[kind], signal).catch(() => []),
+      extra ? extra(signal) : Promise.resolve({}),
+    ])
+    return {
+      me: currentPerson(),
+      employees,
+      departments: departments.map(({ id, name }) => ({ id, name })),
+      delegators,
+      extra: own as X,
+    }
   },
-  async create<P>(kind: StandardKind, input: object) {
-    const { data } = await apiClient.post<ApiItem<StandardRequest<P>>>(path(kind), input)
-    return data.data
-  },
-  async update<P>(kind: StandardKind, id: string, input: object) {
-    const { data } = await apiClient.put<ApiItem<StandardRequest<P>>>(path(kind, `/${id}`), input)
-    return data.data
-  },
-  async remove(kind: StandardKind, id: string) {
-    await apiClient.delete(path(kind, `/${id}`))
-  },
-  async decide<P>(kind: StandardKind, id: string, input: StandardDecisionInput) {
-    const { data } = await apiClient.post<ApiItem<StandardRequest<P>>>(
-      path(kind, `/${id}/decision`),
-      input,
-    )
-    return data.data
-  },
-  async cancel<P>(kind: StandardKind, id: string, reason: string) {
-    const { data } = await apiClient.post<ApiItem<StandardRequest<P>>>(
-      path(kind, `/${id}/cancel`),
-      { reason },
-    )
-    return data.data
-  },
+  create: <P>(kind: StandardKind, body: RequestBody) =>
+    engineApi.create(kind, body, asDetails<P>()),
+  update: <P>(kind: StandardKind, id: string, body: RequestBody) =>
+    engineApi.update(kind, id, body, asDetails<P>()),
+  remove: (kind: StandardKind, id: string, rowVersion: string) =>
+    engineApi.remove(kind, id, rowVersion),
+  decide: (id: string, input: StandardDecisionInput) =>
+    engineApi.decide(id, input.decision, {
+      remarks: input.remarks || null,
+      details: input.extras ?? null,
+      rowVersion: input.rowVersion,
+    }),
+  cancel: (kind: StandardKind, id: string, reason: string, rowVersion: string) =>
+    engineApi.cancel(kind, id, reason, rowVersion),
 }
 
 export const standardKeys = {
   all: ['requests', 'standard'] as const,
   kind: (kind: StandardKind) => [...standardKeys.all, kind] as const,
   list: (kind: StandardKind, params: StandardListParams) =>
-    [...standardKeys.kind(kind), 'list', query(params)] as const,
+    [...standardKeys.kind(kind), 'list', compactQuery(params)] as const,
   approvals: (kind: StandardKind, params: StandardApprovalParams) =>
-    [...standardKeys.kind(kind), 'approvals', query(params)] as const,
-  detail: (kind: StandardKind, id: string) => [...standardKeys.kind(kind), 'detail', id] as const,
+    [...standardKeys.kind(kind), 'approvals', compactQuery(params)] as const,
+  detail: (kind: StandardKind, id: string, via: DetailSource = 'request') =>
+    [...standardKeys.kind(kind), 'detail', id, via] as const,
   lookups: (kind: StandardKind) => [...standardKeys.kind(kind), 'lookups'] as const,
 }
 
@@ -109,10 +117,14 @@ export const standardApprovalsQueryOptions = <P>(
     placeholderData: keepPreviousData,
   })
 
-export const standardDetailQueryOptions = <P>(kind: StandardKind, id: string) =>
+export const standardDetailQueryOptions = <P>(
+  kind: StandardKind,
+  id: string,
+  via: DetailSource = 'request',
+) =>
   queryOptions({
-    queryKey: standardKeys.detail(kind, id),
-    queryFn: ({ signal }) => standardApi.detail<P>(kind, id, signal),
+    queryKey: standardKeys.detail(kind, id, via),
+    queryFn: ({ signal }) => standardApi.detail<P>(kind, id, via, signal),
   })
 
 export const standardLookupsQueryOptions = <X>(kind: StandardKind) =>

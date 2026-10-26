@@ -33,7 +33,7 @@ const confirmYes = async (user: UserEvent) => {
 const entryOf = (employeeId: string, date: string) =>
   scheduleEntries.all().find((entry) => entry.employeeId === employeeId && entry.date === date)
 
-describe('Work From Home (the shared standard request pages)', () => {
+describe('Work From Home (the shared standard request pages, on /requests/work-from-home)', () => {
   // Long: two date picks, the strip and a save; the default 15 s is tight on a busy machine.
   it('lists the requests with "Completed", and saves the shifts ticked in the week strip', async () => {
     const { user } = renderApp('/requests/work-from-home')
@@ -47,6 +47,8 @@ describe('Work From Home (the shared standard request pages)', () => {
     const dialog = await screen.findByRole('dialog', { name: 'WFH Request Create' })
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(await within(dialog).findByText('Choose the start date')).toBeVisible()
+    expect(within(dialog).getByText('Give the reason')).toBeVisible()
+    await user.type(within(dialog).getByRole('textbox', { name: /^Reason/ }), 'Office repairs.')
 
     // A Monday to Friday two weeks ahead, clear of the seeded requests.
     const start = nextMonday(addDays(new Date(), 13))
@@ -112,7 +114,7 @@ describe('Work From Home (the shared standard request pages)', () => {
   })
 
   it('an approved cancellation puts the shifts back', async () => {
-    const { user } = renderApp('/requests/work-from-home?tab=approvals')
+    const { user } = renderApp('/requests/work-from-home?tab=approvals&view=cancellations')
 
     const dates = (standardRequests.find('wfh_0005')?.payload.dates ?? []) as string[]
     for (const date of dates) expect(entryOf('em_laiba', date)?.workFromHome).toBe(true)

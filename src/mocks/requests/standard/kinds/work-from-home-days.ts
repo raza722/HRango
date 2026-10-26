@@ -1,17 +1,16 @@
-import { differenceInCalendarDays, format, parse } from 'date-fns'
-import { http, type HttpHandler, HttpResponse } from 'msw'
+import { addDays, differenceInCalendarDays, format, parse } from 'date-fns'
+import { type HttpHandler, HttpResponse } from 'msw'
 import { z } from 'zod'
 
-import type { StandardKind } from '@/features/requests'
 import { eachDay } from '@/features/scheduling'
 
-import { DIRECTORY } from '../../../employees/seed'
+import { DIRECTORY, findEmployee } from '../../../employees/seed'
 import { enrollments } from '../../../roster/handlers'
 import { scheduleEntries } from '../../../scheduling/handlers'
-import { latency, requireAuth } from '../../../utils'
 import { entryOn, rosterTimes } from '../../effects'
-import { base, invalid } from '../../http'
-import { requestEmployee } from '../../people'
+import { fallbackGet } from '../../fallback'
+import { invalid } from '../../http'
+import { ME, mustFind, requestEmployee } from '../../people'
 
 /*
  * A person's days as the Work From Home week strip and Leave's shift strip
@@ -112,30 +111,99 @@ export const scheduleDays = (employeeId: string, from: string, to: string) =>
   eachDay(from, to).map((date) => scheduleDay(employeeId, date))
 
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-const querySchema = z.object({ employeeId: z.string().min(1), from: ymd, to: ymd })
+const querySchema = z.object({
+  tab: z.enum(['my', 'subordinates', 'all']).default('all'),
+  employeeId: z.string().min(1).optional(),
+  from: ymd,
+  to: ymd,
+})
 
-/** Days a strip can ask for at once (two months). */
+/** Days one board answers at once (two months). */
 const MAX_DAYS = 62
 
-/** `GET /requests/<kind>/schedule?employeeId&from&to`: the person's days. */
-export function scheduleHandler(kind: StandardKind): HttpHandler {
-  return http.get(base(`/${kind}/schedule`), async ({ request }) => {
-    await latency()
-    const unauthorized = requireAuth(request)
-    if (unauthorized) return unauthorized
+const nextDay = (date: string) =>
+  format(addDays(parse(date, 'yyyy-MM-dd', new Date()), 1), 'yyyy-MM-dd')
+
+/** One person's row of Scheduling's board (`BoardRowOut`) from their days. */
+function boardRow(employeeId: string, from: string, to: string) {
+  const person = requestEmployee(mustFind(employeeId))
+  const days = scheduleDays(employeeId, from, to)
+  const shifts = days.flatMap((item) =>
+    item.status === 'shift' && item.clockIn && item.clockOut
+      ? [
+          {
+            id: `${employeeId}-${item.date}`,
+            workDate: item.date,
+            startAt: `${item.date}T${item.clockIn}:00`,
+            endAt: `${item.clockOut < item.clockIn ? nextDay(item.date) : item.date}T${item.clockOut}:00`,
+            timeSlotId: item.rosterGroupId ?? 'ts_default',
+            timeSlotCode: 'TS',
+            timeSlotName: item.label,
+            timeSlotColor: null,
+            isFlexible: false,
+            isOvernight: item.clockOut < item.clockIn,
+            geoFenceId: null,
+            geoFenceName: null,
+            isWfh: item.workFromHome,
+            plannedMinutes: 0,
+            scheduleBatchId: null,
+            rowVersion: '1',
+          },
+        ]
+      : [],
+  )
+  return {
+    employee: {
+      id: employeeId,
+      code: person.code,
+      name: person.name,
+      designationName: person.designation,
+      departmentName: person.department,
+      status: 'active',
+      defaultTimeSlotId: null,
+      defaultTimeSlotName: null,
+      plannedMinutes: 0,
+      shiftCount: shifts.length,
+    },
+    shifts,
+    restDays: days
+      .filter((item) => item.status === 'rest')
+      .map((item) => ({
+        id: `${employeeId}-rest-${item.date}`,
+        restDate: item.date,
+        isPayable: true,
+        restDayRuleId: null,
+        requestId: null,
+      })),
+    holidays: [],
+  }
+}
+
+/**
+ * `GET /scheduling/schedules?tab&employeeId&from&to` (Scheduling's board) for
+ * the request forms' shift strips, answered only when the Scheduling mock does
+ * not serve it. `tab=my` is the signed-in person.
+ */
+export const scheduleBoardHandler: HttpHandler = fallbackGet(
+  '/scheduling/schedules',
+  ({ request }) => {
     const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams))
-    if (!parsed.success) return invalid('Choose the person and the dates.')
-    const { employeeId, from, to } = parsed.data
+    if (!parsed.success) return invalid('Choose the dates.')
+    const { tab, employeeId, from, to } = parsed.data
     const span = differenceInCalendarDays(
       parse(to, 'yyyy-MM-dd', new Date()),
       parse(from, 'yyyy-MM-dd', new Date()),
     )
-    if (span < 0 || span >= MAX_DAYS) {
-      return invalid(`Choose up to ${String(MAX_DAYS)} days.`)
-    }
-    return HttpResponse.json({ data: scheduleDays(employeeId, from, to) })
-  })
-}
+    if (span < 0 || span >= MAX_DAYS) return invalid(`Choose up to ${String(MAX_DAYS)} days.`)
+    const people = employeeId ? [employeeId] : tab === 'my' ? [ME] : []
+    const rows = people.filter((id) => findEmployee(id)).map((id) => boardRow(id, from, to))
+    return HttpResponse.json({
+      data: rows,
+      meta: { page: 1, pageSize: 10, total: rows.length, totalPages: 1 },
+      dayTotals: [],
+    })
+  },
+)
 
 /** The people who have a photo, for the strip's person cell. */
 export function photos(): Record<string, string> {

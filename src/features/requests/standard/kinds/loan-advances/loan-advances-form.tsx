@@ -4,26 +4,27 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
 import { TextareaField, TextField } from '@/components/form'
-import {
-  AttachmentField,
-  DateField,
-  PayrollDialog,
-  RsField,
-  SearchSelectField,
-} from '@/features/payroll'
+import { DateField, PayrollDialog, RsField, SearchSelectField } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
 
+import { type RequestBody, typePermission } from '../../../api/backend'
+import { RequestEmployeeField } from '../../../components/shared/request-employee-field'
+import { RequestFileField } from '../../../components/shared/request-files'
+import { syncAttachments } from '../../../utils/request-files'
 import type { StandardFormProps } from '../../standard.types'
 import { StandardDecisionDialog } from '../../standard-dialogs'
 import { useCreateStandard, useStandardLookups, useUpdateStandard } from '../../use-standard'
 import { loanAdvancesConfig } from './loan-advances.config'
+import { useLoanTypeOptions } from './loan-advances.lookups'
 import type {
-  LoanAdvanceInput,
+  LoanAdvanceDetailsIn,
   LoanAdvanceLookups,
   LoanAdvancePayload,
   LoanGuarantor,
+  LoanTypeOption,
 } from './loan-advances.types'
 import { GuarantorDialog, GuarantorsRow } from './loan-advances-guarantor'
+import { useRequestAttachment } from './use-request-attachment'
 
 const chosen = (message: string) =>
   z
@@ -49,15 +50,36 @@ const schema = z.object({
     .string()
     .trim()
     .regex(/^\d{0,6}$/, 'Up to 6 digits'),
-  attachment: z.string().nullable(),
   reason: z.string().trim().min(1, 'Give a reason').max(500, 'Keep it under 500 characters'),
 })
 type Values = z.infer<typeof schema>
+
+/** The API's field names → the form's. */
+const FIELD_OF: Record<string, keyof Values> = {
+  employeeId: 'employeeId',
+  loanTypeId: 'typeId',
+  loanCategoryId: 'categoryId',
+  amountRequested: 'requiredAmount',
+  requiredDate: 'requiredDate',
+  fromDate: 'requiredDate',
+  extensionNo: 'extensionNo',
+  reason: 'reason',
+}
 
 const today = () => {
   const date = new Date()
   date.setHours(0, 0, 0, 0)
   return date
+}
+
+/** "12 installments, 6 months of service": a loan type's terms. */
+function terms(type: LoanTypeOption): string {
+  const parts = [`${String(type.installments)} installments`]
+  if (type.minExperienceMonths > 0) {
+    parts.push(`${String(type.minExperienceMonths)} months of service`)
+  }
+  if (type.guarantorRequired) parts.push('guarantor needed')
+  return parts.join(', ')
 }
 
 const TITLES = {
@@ -78,6 +100,7 @@ export function LoanAdvancesForm(props: StandardFormProps<LoanAdvancePayload>) {
         config={loanAdvancesConfig}
         id={request.id}
         mode="view"
+        via="request"
         onClose={onClose}
       />
     )
@@ -101,11 +124,10 @@ function LoanAdvancesEditor({
   const create = useCreateStandard('loan-advances')
   const update = useUpdateStandard('loan-advances')
   const pickPerson = scope === 'all' && mode === 'create'
-  const people = lookups.data?.employees ?? []
-  const types = lookups.data?.extra.types ?? []
   const payload = request?.payload
 
   const [guarantors, setGuarantors] = useState<LoanGuarantor[]>(payload?.guarantors ?? [])
+  const { attachment, setAttachment, before } = useRequestAttachment('loan-advances', request)
   const [guarantorError, setGuarantorError] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ index: number | null } | null>(null)
 
@@ -113,16 +135,20 @@ function LoanAdvancesEditor({
     resolver: zodResolver(schema),
     defaultValues: {
       employeeId: request?.employee.id ?? null,
-      typeId: payload?.typeId ?? null,
-      categoryId: payload?.categoryId ?? null,
-      requiredAmount: payload ? String(payload.requiredAmount) : '',
+      typeId: payload?.loanTypeId ?? null,
+      categoryId: payload?.loanCategoryId ?? null,
+      requiredAmount: payload ? String(payload.amountRequested) : '',
       requiredDate: payload?.requiredDate ?? '',
       extensionNo: payload?.extensionNo ?? '',
-      attachment: payload?.attachment ?? null,
-      reason: payload?.reason ?? '',
+      reason: request?.reason ?? '',
     },
   })
-  const [typeId, attachment] = useWatch({ control: form.control, name: ['typeId', 'attachment'] })
+  const [typeId, employeeId] = useWatch({ control: form.control, name: ['typeId', 'employeeId'] })
+  // The types (terms, eligibility) of whom the request is for: the signed-in person's from the
+  // look-ups, someone else's from `GET /requests/options/loan-types?employeeId=`.
+  const forId = pickPerson ? employeeId : (request?.employee.id ?? null)
+  const others = useLoanTypeOptions(forId)
+  const types = forId ? (others.data ?? []) : (lookups.data?.extra.types ?? [])
   const type = types.find((item) => item.id === typeId)
   // Drawn as "Guarantor*"; a type without "Guarantor Required" makes them optional.
   const guarantorRequired = type ? type.guarantorRequired : true
@@ -132,33 +158,58 @@ function LoanAdvancesEditor({
       form.setError('employeeId', { message: 'Choose the employee' })
       return
     }
+    if (type?.eligible === false) {
+      form.setError('typeId', { message: `${type.name} is not open to this contract type` })
+      return
+    }
     if (type?.guarantorRequired && guarantors.length === 0) {
       setGuarantorError(`${type.name} needs a guarantor`)
       return
     }
-    const input: LoanAdvanceInput = {
-      ...(pickPerson && values.employeeId ? { employeeId: values.employeeId } : {}),
-      typeId: values.typeId ?? '',
-      categoryId: values.categoryId ?? '',
-      requiredAmount: amountOf(values.requiredAmount),
+    const details = {
+      loanTypeId: values.typeId ?? '',
+      loanCategoryId: values.categoryId,
+      amountRequested: amountOf(values.requiredAmount),
       requiredDate: values.requiredDate,
-      extensionNo: values.extensionNo,
-      attachment: values.attachment,
+      extensionNo: values.extensionNo || null,
+      guarantors: guarantors.map((guarantor) => ({
+        name: guarantor.name,
+        cnic: guarantor.cnic,
+        knownSince: guarantor.knownSince,
+        relationship: guarantor.relationship,
+        extensionNo: guarantor.extensionNo?.trim() ? guarantor.extensionNo : null,
+        description: guarantor.description?.trim() ? guarantor.description : null,
+        fileId: guarantor.fileId ?? null,
+      })),
+    } satisfies LoanAdvanceDetailsIn
+    const body: RequestBody = {
+      ...(pickPerson && values.employeeId ? { employeeId: values.employeeId } : {}),
+      // The request's dates are the day the money is needed.
+      fromDate: values.requiredDate,
+      toDate: values.requiredDate,
       reason: values.reason,
-      guarantors,
+      details,
     }
     try {
-      if (mode === 'edit' && request) await update.mutateAsync({ id: request.id, input })
-      else await create.mutateAsync(input)
+      if (mode === 'edit' && request) {
+        await update.mutateAsync({
+          id: request.id,
+          body: { ...body, rowVersion: request.rowVersion },
+        })
+        await syncAttachments('loan-advances', request.id, before, [attachment])
+      } else {
+        await create.mutateAsync({ ...body, attachments: attachment ? [attachment.id] : [] })
+      }
     } catch (failure) {
       if (failure instanceof ApiError) {
         let placed = false
         for (const [field, message] of Object.entries(failure.fieldErrors)) {
-          if (field === 'guarantors') {
+          const name = FIELD_OF[field]
+          if (field.startsWith('guarantors')) {
             setGuarantorError(message)
             placed = true
-          } else if (field in values) {
-            form.setError(field as keyof Values, { message })
+          } else if (name) {
+            form.setError(name, { message })
             placed = true
           }
         }
@@ -181,15 +232,13 @@ function LoanAdvancesEditor({
     >
       <form id={formId} noValidate onSubmit={(event) => void submit(event)} className="grid gap-5">
         {pickPerson && (
-          <SearchSelectField
+          <RequestEmployeeField
             control={form.control}
             name="employeeId"
             label="Employee"
             required
             placeholder="Select Employee"
-            options={people
-              .filter((person) => person.active)
-              .map((person) => ({ value: person.id, label: person.name, hint: person.code }))}
+            permission={typePermission('loan-advances', 'create')}
           />
         )}
         <SearchSelectField
@@ -198,11 +247,25 @@ function LoanAdvancesEditor({
           label="Loan & Advances Type"
           required
           placeholder="Select Loan & Advances Type"
-          options={types.map((item) => ({ value: item.id, label: item.name }))}
+          options={[
+            ...(payload && !types.some((item) => item.id === payload.loanTypeId)
+              ? [{ value: payload.loanTypeId, label: payload.loanTypeName ?? '—' }]
+              : []),
+            ...types.map((item) => ({
+              value: item.id,
+              label: item.name,
+              hint: item.eligible === false ? 'Not open to this contract type' : terms(item),
+            })),
+          ]}
           onValueChange={() => {
             setGuarantorError(null)
           }}
         />
+        {type && (
+          <p className="-mt-3 text-xs text-muted-foreground">
+            {[terms(type), type.description].filter(Boolean).join(' · ')}
+          </p>
+        )}
         <SearchSelectField
           control={form.control}
           name="categoryId"
@@ -227,12 +290,7 @@ function LoanAdvancesEditor({
           required
           minDate={today()}
         />
-        <AttachmentField
-          value={attachment}
-          onChange={(name) => {
-            form.setValue('attachment', name)
-          }}
-        />
+        <RequestFileField value={attachment} onChange={setAttachment} disabled={pending} />
         <TextField
           control={form.control}
           name="extensionNo"

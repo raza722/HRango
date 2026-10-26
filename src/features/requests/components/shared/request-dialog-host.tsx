@@ -2,6 +2,7 @@ import type { AnyRequest, RequestAction } from '../../types/requests.types'
 import {
   CancelRequestDialog,
   DeleteRequestDialog,
+  ForwardRequestDialog,
   RequestFlowDialog,
   RequestHistoryDialog,
   RequestViewDialog,
@@ -16,16 +17,20 @@ export function RequestDialogHost({
   kind,
   dialog,
   forOthers,
+  fromApprovals = false,
   onClose,
 }: {
   kind: AnyRequest['kind']
   dialog: RequestDialogState
   /** All tab: forms pick the employee. */
   forOthers: boolean
+  /** Opened from Approvals: read the request as an approver. */
+  fromApprovals?: boolean
   onClose: () => void
 }) {
   if (!dialog) return null
   const { action, request } = dialog
+  const via = fromApprovals ? 'approvals' : 'request'
 
   if (action === 'create' || action === 'edit') {
     if (kind === 'punch') {
@@ -44,16 +49,21 @@ export function RequestDialogHost({
   if (!request) return null
   switch (action) {
     case 'view':
+      return (
+        <RequestViewDialog kind={kind} id={request.id} mode="view" via={via} onClose={onClose} />
+      )
     case 'decide':
     case 'consent':
       return <RequestViewDialog kind={kind} id={request.id} mode={action} onClose={onClose} />
     case 'flow':
-      return <RequestFlowDialog request={request} onClose={onClose} />
+      return <RequestFlowDialog kind={kind} id={request.id} via={via} onClose={onClose} />
     case 'history':
-      return <RequestHistoryDialog kind={kind} id={request.id} onClose={onClose} />
+      return <RequestHistoryDialog kind={kind} id={request.id} via={via} onClose={onClose} />
     case 'cancel':
       return <CancelRequestDialog request={request} onClose={onClose} />
     case 'delete':
       return <DeleteRequestDialog request={request} onClose={onClose} />
+    case 'forward':
+      return <ForwardRequestDialog request={request} onClose={onClose} />
   }
 }

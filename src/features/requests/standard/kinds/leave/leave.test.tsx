@@ -43,17 +43,16 @@ const shelleysLeave = () =>
 /** A weekday a week or more ahead, clear of the seeded requests. */
 const aMonday = () => nextMonday(addDays(new Date(), 6))
 
-describe('Leave (the shared standard request pages)', () => {
+describe('Leave (the shared standard request pages, on /requests/leave)', () => {
   it('shows the balance card over my requests, and everyone’s on All Requests', async () => {
     const { user } = renderApp('/requests/leave')
 
     expect(await screen.findByRole('heading', { name: 'Leave Request' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Balance' })).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Request' })).toBeVisible()
+    // The card reads GET /leaves/balances (the signed-in person's own).
     const card = screen.getByRole('table', { name: /leave balance/i })
-    // Casual: 8 a year, one day approved. Sick: 15, a half day pending.
-    expect(await within(card).findByRole('row', { name: 'Casual Leaves 8 1 7 0' })).toBeVisible()
-    expect(within(card).getByRole('row', { name: 'Sick Leave 15 0 14.5 0.5' })).toBeVisible()
+    expect(await within(card).findByRole('rowheader', { name: 'Casual Leaves' })).toBeVisible()
 
     expect(await screen.findByRole('cell', { name: 'LV-0007' })).toBeVisible()
     expect(screen.getByRole('cell', { name: /Short Leave/ })).toBeVisible()
@@ -63,7 +62,7 @@ describe('Leave (the shared standard request pages)', () => {
     expect(await screen.findByRole('cell', { name: 'LV-0001' })).toBeVisible()
   })
 
-  it('checks the fields and the balance, then saves a leave of the shift days', async () => {
+  it('checks the fields, then saves a leave of the shift days', async () => {
     const { user } = renderApp('/requests/leave')
 
     await user.click(await screen.findByRole('button', { name: 'Create' }))
@@ -72,25 +71,17 @@ describe('Leave (the shared standard request pages)', () => {
     expect(await within(dialog).findByText('Choose the leave type')).toBeVisible()
     expect(within(dialog).getByText('Give the reason')).toBeVisible()
 
-    await choose(user, /^Leave Type/, 'Casual Leaves')
-    expect(within(dialog).getByRole('textbox', { name: 'Available Leaves' })).toHaveValue('7')
-
-    // Two working weeks: ten shift days, more than the seven available.
+    await choose(user, /^Leave Type/, /^Casual Leaves/)
+    // Monday to Wednesday: three shift days on the person's schedule.
     const start = aMonday()
     await pickDate(user, /^Start Date/, start)
-    await pickDate(user, /^End Date/, addDays(start, 11), start)
-    await waitFor(() => {
-      expect(within(dialog).getByText('Selected Days').nextElementSibling).toHaveTextContent('10')
-    })
-    await user.type(within(dialog).getByRole('textbox', { name: /^Reason/ }), 'Family wedding.')
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-    expect(await within(dialog).findByText('Only 7 available')).toBeVisible()
-
-    // Monday to Wednesday: three shift days.
-    await pickDate(user, /^End Date/, addDays(start, 2), addDays(start, 11))
+    await pickDate(user, /^End Date/, addDays(start, 2), start)
     await waitFor(() => {
       expect(within(dialog).getByText('Selected Days').nextElementSibling).toHaveTextContent('3')
     })
+    await user.type(within(dialog).getByRole('textbox', { name: /^Reason/ }), 'Family wedding.')
+
+    expect(within(dialog).getByRole('button', { name: 'Attach a file' })).toBeVisible()
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     expect((await screen.findAllByText('Request submitted')).length).toBeGreaterThan(0)
@@ -106,7 +97,7 @@ describe('Leave (the shared standard request pages)', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Leave Request Create' })
-    await choose(user, /^Leave Type/, 'Sick Leave')
+    await choose(user, /^Leave Type/, /^Casual Leaves/)
     await user.click(within(dialog).getByRole('checkbox', { name: 'Short' }))
     await choose(user, /^Short Leave Type/, 'Half Day')
     const date = nextWednesday(addDays(new Date(), 6))
@@ -116,9 +107,9 @@ describe('Leave (the shared standard request pages)', () => {
     const strip = await within(dialog).findByRole('region', { name: 'The day’s shift' })
     expect(await within(strip).findByText('09:00 AM - 05:00 PM')).toBeVisible()
     await waitFor(() => {
-      expect(within(dialog).getByLabelText('Start Time time')).toHaveValue('09:00')
+      expect(within(dialog).getByLabelText(/^Start Time/)).toHaveValue('09:00')
     })
-    expect(within(dialog).getByLabelText('End Time time')).toHaveValue('13:00')
+    expect(within(dialog).getByLabelText(/^End Time/)).toHaveValue('13:00')
     expect(within(dialog).getByText('Selected Days').nextElementSibling).toHaveTextContent('0.5')
 
     await user.type(within(dialog).getByRole('textbox', { name: /^Reason/ }), 'Dentist.')
@@ -130,7 +121,7 @@ describe('Leave (the shared standard request pages)', () => {
     })
     const saved = shelleysLeave().find((record) => record.payload.reason === 'Dentist.')
     expect(saved?.payload).toMatchObject({
-      leaveTypeId: 'lt_sick',
+      leaveTypeId: 'lt_casual',
       short: true,
       shortType: 'half-day',
       from: format(date, 'yyyy-MM-dd'),
@@ -155,16 +146,23 @@ describe('Leave (the shared standard request pages)', () => {
     await confirmYes(user)
     expect((await screen.findAllByText('Request approved')).length).toBeGreaterThan(0)
 
-    const record = standardRequests.find('lv_0001')
-    expect(record?.status).toBe('completed')
+    expect(standardRequests.find('lv_0001')?.status).toBe('completed')
     expect(balanceOf('em_sadia', 'lt_casual', standardRequests.all())).toMatchObject({
       availed: 2,
       pending: 0,
     })
+  })
 
-    // Delegates: Bilal Ahmed's team.
-    await user.click(screen.getByRole('tab', { name: 'Delegates' }))
-    expect(await screen.findByRole('cell', { name: 'LV-0002' })).toBeVisible()
-    expect(screen.getByRole('columnheader', { name: 'Required Date' })).toBeVisible()
+  it('decides a cancellation from Cancellations', async () => {
+    const { user } = renderApp('/requests/leave?tab=approvals&view=cancellations')
+
+    await openAction(user, 'LV-0005', 'Approve/Reject Cancellation')
+    const dialog = await screen.findByRole('dialog', { name: 'Leave Cancellation Approve/Reject' })
+    expect(await within(dialog).findByText(/Plans changed/)).toBeVisible()
+    await user.click(within(dialog).getByRole('button', { name: 'Approve' }))
+    await confirmYes(user)
+    await waitFor(() => {
+      expect(standardRequests.find('lv_0005')?.status).toBe('cancelled')
+    })
   })
 })

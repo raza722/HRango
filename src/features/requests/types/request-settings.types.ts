@@ -1,151 +1,229 @@
-import type { PersonRef } from './requests.types'
-
 // --- request types the settings speak about ----------------------------------------------------
 
 /**
- * Every request type the Settings pages offer, in the design's order (Shift
- * Request is added after Punch: the app has it, the design's lists do not).
+ * Every request type the Settings pages offer: the API's request type codes
+ * (`GET /requests/types`), in the Requests menu's order. Restrictions,
+ * delegations, flows and authorities are kept per type code.
  */
 export const SETTINGS_REQUEST_TYPES = [
   'punch',
-  'shift',
+  'shift_swap',
   'expense',
   'leave',
-  'lend',
-  'official-duty',
+  'loan',
+  'official_visit',
   'overtime',
   'promotion',
   'relaxation',
   'transfer',
-  'benefit-withdrawal',
   'travel',
+  'air_ticket',
   'requisition',
   'resignation',
-  'work-from-home',
-  // Not in the design's lists; added so Rest Days requests have a flow, delegations and restrictions.
-  'rest-day',
+  'work_from_home',
+  'rest_day',
 ] as const
 export type SettingsRequestType = (typeof SETTINGS_REQUEST_TYPES)[number]
 
 /** A flow is set for a request type or for its cancellation ("Punch Cancel Request"). */
 export type FlowRequestType = SettingsRequestType | `${SettingsRequestType}-cancel`
 
-// --- Request Restriction -----------------------------------------------------------------------
+// --- Request Restriction (`/requests/settings/restrictions`) -----------------------------------
 
-/** A request type closed for a company between two dates. */
+/** A request type closed for the company between two dates (`RestrictionOut`). */
 export interface RequestRestriction {
   id: string
-  companyId: string
+  companyName: string
+  requestType: SettingsRequestType
+  requestTypeName: string
+  startDate: string
+  endDate: string
+  description: string | null
+  createdAt: string
+  updatedAt: string | null
+  rowVersion: string
+}
+
+/** `RestrictionIn`: the start date must be in the future; no overlap with the type's others. */
+export interface RequestRestrictionInput {
   requestType: SettingsRequestType
   startDate: string
   endDate: string
-  description: string
-  createdAt: string
-}
-export type RequestRestrictionInput = Pick<
-  RequestRestriction,
-  'requestType' | 'startDate' | 'endDate' | 'description'
->
-export interface RequestRestrictionRow extends RequestRestriction {
-  company: string
+  description: string | null
+  /** Required on edit (`PUT`). */
+  rowVersion?: string
 }
 
-// --- Delegation --------------------------------------------------------------------------------
+// --- Delegation (`/requests/settings/delegations`) ---------------------------------------------
 
-/** The delegatee approves the delegator's requests of one type while it is active. */
+/** The delegatee decides the delegator's steps of one request type while it is active (`DelegationOut`). */
 export interface RequestDelegation {
   id: string
   delegatorId: string
+  delegatorName: string | null
+  delegateeId: string
+  delegateeName: string | null
+  requestType: SettingsRequestType
+  requestTypeName: string
+  description: string | null
+  isActive: boolean
+  createdAt: string
+  updatedAt: string | null
+  rowVersion: string
+}
+
+/** `DelegationIn`. No start / end dates (Open Question D6). */
+export interface RequestDelegationInput {
+  delegatorId: string
   delegateeId: string
   requestType: SettingsRequestType
-  description: string
-  active: boolean
-  createdAt: string
-}
-export type RequestDelegationInput = Pick<
-  RequestDelegation,
-  'delegatorId' | 'delegateeId' | 'requestType' | 'description'
->
-export interface RequestDelegationRow extends RequestDelegation {
-  delegator: PersonRef
-  delegatee: PersonRef
+  description: string | null
+  isActive: boolean
 }
 
-// --- Request Flows -----------------------------------------------------------------------------
+/** `PATCH`: Disable / Enable, and the description. */
+export interface RequestDelegationPatch {
+  isActive: boolean
+  description: string | null
+  rowVersion: string
+}
 
-/** "Node": who a step goes to. */
-export const FLOW_NODE_TYPES = [
-  'line-manager',
+// --- Request Flows (`/requests/settings/flows`) ------------------------------------------------
+
+/** Approvers the organisation gives (structural) — the rest are held through Authorities. */
+export const FLOW_STRUCTURAL_KINDS = [
+  'line_manager',
   'hod',
-  'hod-finance',
-  'final-authority',
-  'hod-hr-admin',
-  'hod-hr',
-  'hod-admin',
+  'branch_manager',
+  'final_authority',
   'employee',
-  'consentee',
-  'branch-manager',
-  'area-manager',
+  'role',
 ] as const
-export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number]
 
-/** One row of "Request Flow Edit". */
-export interface FlowNode {
-  /** The node's number; Next / If True / If False point at these. */
-  id: number
-  canEdit: boolean
-  /** Told about the request, does not decide. */
-  onLooker: boolean
-  /** Asked for consent rather than approval. */
-  canDisagree: boolean
-  isCondition: boolean
-  node: FlowNodeType
-  /** For an Employee or Consentee node. */
-  employeeId: string | null
-  next: number | null
-  /** With Is Condition: e.g. `days > 3`. */
-  expression: string
-  ifTrue: number | null
-  ifFalse: number | null
-}
-
-export interface RequestFlowDefinition {
-  requestType: FlowRequestType
-  name: string
-  nodes: FlowNode[]
-}
-
-export interface FlowNodeRow extends FlowNode {
-  employee: PersonRef | null
-}
-
-/** "Authority" on the Request Flow page: General Flow, or a chain of authorities. */
+/** Authorities someone holds under Request Settings → Authorities. */
 export const FLOW_AUTHORITIES = [
-  'general-flow',
-  'line-manager',
-  'hod',
-  'final-authority',
-  'branch-manager',
-  'area-manager',
-  'retail-employee',
+  'team_lead',
+  'hr_manager',
+  'operations_manager',
+  'finance_manager',
+  'director',
+  'compliance_officer',
+  'project_manager',
+  'admin_supervisor',
+  'it_administrator',
+  'area_manager',
+  'admin_manager',
 ] as const
 export type FlowAuthority = (typeof FLOW_AUTHORITIES)[number]
 
-/** One row of the Request Flow table: a person and the authorities their requests go to. */
-export interface FlowAssignmentRow {
-  employee: PersonRef & { department: string }
-  branch: string | null
-  designation: string
-  authorities: FlowAuthority[]
+/** "Node": who decides at a step (`approverKind`). */
+export const FLOW_NODE_TYPES = [...FLOW_STRUCTURAL_KINDS, ...FLOW_AUTHORITIES] as const
+export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number]
+
+export type FlowPurpose = 'request' | 'cancellation'
+export const FLOW_SCOPES = ['company', 'branch', 'department', 'employee'] as const
+export type FlowScope = (typeof FLOW_SCOPES)[number]
+
+/**
+ * One node of a flow (`FlowNodeIn`). Next / If True / If False name another
+ * node's `stepNo`; empty means the next node by number (the last ends the flow).
+ */
+export interface FlowNode {
+  stepNo: number
+  /** Null on a condition node. */
+  approverKind: FlowNodeType | null
+  /** An Employee node's person. */
+  employeeId: string | null
+  /** A Role node's role. */
+  roleId: string | null
+  isCondition: boolean
+  /** `<field> <op> <number>`: fields days, amount, minutes, department_id, branch_id, location_id, grade_id, designation_id, employment_type_id. */
+  expression: string | null
+  next: number | null
+  ifTrue: number | null
+  ifFalse: number | null
+  canEdit: boolean
+  /** A consent step: agree or disagree, the flow goes on. */
+  canDisagree: boolean
+  /** "On Looker": told, does not decide. */
+  isObserver: boolean
 }
 
-export interface FlowAssignmentInput {
-  requestType: FlowRequestType
-  employeeIds: string[]
-  authorities: FlowAuthority[]
+/** A node as the API returns it (`FlowNodeOut`). */
+export interface FlowNodeRow extends FlowNode {
+  id: string
+  employeeName: string | null
+  roleName: string | null
 }
 
-export interface RequestSettingsLookups {
-  companies: { id: string; name: string }[]
-  employees: (PersonRef & { department: string; branchId: string | null })[]
+/** A flow in the list (`FlowOut`). */
+export interface RequestFlow {
+  id: string
+  requestType: SettingsRequestType
+  requestTypeName: string
+  purpose: FlowPurpose
+  name: string
+  scopeType: FlowScope
+  scopeId: string | null
+  scopeName: string | null
+  description: string | null
+  isActive: boolean
+  nodeCount: number
+  createdAt: string
+  updatedAt: string | null
+  rowVersion: string
+}
+
+/** A flow with its nodes (`FlowDetailOut`). */
+export interface RequestFlowDetail extends RequestFlow {
+  nodes: FlowNodeRow[]
+}
+
+/** `FlowIn`. Saving an existing flow stores a new version (a new id); requests on the way keep theirs. */
+export interface RequestFlowInput {
+  requestType: SettingsRequestType
+  purpose: FlowPurpose
+  name: string
+  scopeType: FlowScope
+  scopeId: string | null
+  description: string | null
+  isActive: boolean
+  nodes: FlowNode[]
+  rowVersion?: string | undefined
+}
+
+// --- Authorities (`/requests/settings/authorities`) --------------------------------------------
+
+/** Who holds an authority (HR Manager, Finance Manager …), for a type / branch / department or all. */
+export interface RequestAuthority {
+  id: string
+  authority: FlowAuthority
+  employeeId: string
+  employeeName: string | null
+  employeeCode: string
+  designationName: string | null
+  employeeBranchName: string | null
+  requestType: SettingsRequestType | null
+  requestTypeName: string | null
+  branchId: string | null
+  branchName: string | null
+  departmentId: string | null
+  departmentName: string | null
+  description: string | null
+  isActive: boolean
+  createdAt: string
+  updatedAt: string | null
+  rowVersion: string
+}
+
+/** `AuthorityIn`; empty type / branch / department: every one. */
+export interface RequestAuthorityInput {
+  authority: FlowAuthority
+  employeeId: string
+  requestType: SettingsRequestType | null
+  branchId: string | null
+  departmentId: string | null
+  description: string | null
+  isActive: boolean
+  rowVersion?: string | undefined
 }

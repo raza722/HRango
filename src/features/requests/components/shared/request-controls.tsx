@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, CircleX } from 'lucide-react'
 
 import { DelegatesIcon } from '@/components/icons/request-icons'
 import {
@@ -48,9 +48,12 @@ const TAB_LABELS: Record<RequestTab, string> = { request: 'Request', approvals: 
 export function RequestTabs({
   value,
   onChange,
+  approvals = true,
 }: {
   value: RequestTab
   onChange: (tab: RequestTab) => void
+  /** Approvals shows only with `requests.approvals.view`. */
+  approvals?: boolean
 }) {
   return (
     <div
@@ -58,7 +61,7 @@ export function RequestTabs({
       aria-label="Requests or approvals"
       className="flex gap-6 border-b px-4 sm:px-6"
     >
-      {REQUEST_TABS.map((tab) => {
+      {REQUEST_TABS.filter((tab) => approvals || tab !== 'approvals').map((tab) => {
         const selected = tab === value
         return (
           <button
@@ -89,9 +92,14 @@ export function RequestTabs({
   )
 }
 
-const VIEW_ICONS = { requested: RequestedIcon, delegates: DelegatesIcon, consents: ConsentsIcon }
+const VIEW_ICONS = {
+  requested: RequestedIcon,
+  delegates: DelegatesIcon,
+  consents: ConsentsIcon,
+  cancellations: CircleX,
+}
 
-/** Approvals → Requested / Delegates / Consents. */
+/** Approvals → Requested / Delegates / Consents / Cancellations. */
 export function ApprovalViewTabs({
   value,
   onChange,

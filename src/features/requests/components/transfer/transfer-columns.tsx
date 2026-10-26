@@ -66,24 +66,24 @@ const employee: Column = {
 const effectiveDate: Column = {
   id: 'effectiveDate',
   header: 'Effective Date',
-  cell: (row) => nowrap(listDate(row.payload.effectiveDate)),
+  cell: (row) => nowrap(row.payload.effectiveDate ? listDate(row.payload.effectiveDate) : '—'),
 }
 // The design's Requests frame shows dates under Department; it lists the new department.
 const department: Column = {
   id: 'department',
   header: 'Department',
   className: 'min-w-28 whitespace-normal',
-  cell: (row) => row.payload.department,
+  cell: (row) => row.payload.departmentName ?? '—',
 }
 const authority: Column = {
   id: 'authority',
   header: 'Approving Authority',
-  cell: (row) => row.currentStep?.authority ?? row.flow.at(-1)?.authority ?? '—',
+  cell: (row) => row.currentStep?.authority ?? '—',
 }
 const nextRequestee: Column = {
   id: 'next',
   header: 'Next Requestee',
-  cell: (row) => row.currentStep?.approver.name ?? '—',
+  cell: (row) => row.nextApprover?.name ?? '—',
 }
 const status: Column = {
   id: 'status',

@@ -8,6 +8,7 @@ import { PUNCH_TYPE_LABELS } from '../../constants'
 import type { AnyRequest, RequestEmployee } from '../../types/requests.types'
 import { clock, longDate, stamp } from '../../utils/request-format'
 import { StatusChip } from '../shared/request-controls'
+import { RequestFileLinks } from '../shared/request-files'
 
 /**
  * A label and its value. Figma: the request's fields have Inter Regular 16 #000
@@ -72,13 +73,17 @@ export function RequestPersonCard({ employee }: { employee: RequestEmployee }) {
             {employee.location ?? '—'}
           </Fact>
           <Fact person label="Joining Date">
-            {format(parse(employee.joiningDate, 'yyyy-MM-dd', new Date()), 'd MMMM yyyy')}
+            {employee.joiningDate
+              ? format(parse(employee.joiningDate, 'yyyy-MM-dd', new Date()), 'd MMMM yyyy')
+              : '—'}
           </Fact>
         </dl>
       </div>
     </section>
   )
 }
+
+const dateOrDash = (date: string | null) => (date ? longDate(date) : '—')
 
 /** The request's own fields, then who created it and when. */
 export function RequestFields({ request }: { request: AnyRequest }) {
@@ -91,39 +96,47 @@ export function RequestFields({ request }: { request: AnyRequest }) {
       </Fact>
       {request.kind === 'punch' ? (
         <>
-          <Fact label="Date">{longDate(request.payload.date)}</Fact>
+          <Fact label="Date">{dateOrDash(request.payload.punchDate ?? request.fromDate)}</Fact>
           <Fact label="Punch Type">{PUNCH_TYPE_LABELS[request.payload.punchType]}</Fact>
-          <Fact label="Expected Check In">{clock(request.payload.expectedIn)}</Fact>
-          <Fact label="Expected Check Out">{clock(request.payload.expectedOut)}</Fact>
           <Fact label="Punch Time">{clock(request.payload.punchTime)}</Fact>
         </>
       ) : request.kind === 'transfer' ? (
         <>
-          <Fact label="Effective Date">{longDate(request.payload.effectiveDate)}</Fact>
+          <Fact label="Effective Date">{dateOrDash(request.payload.effectiveDate)}</Fact>
           <Fact label="Transfer To">
-            {`${request.payload.branch.name}, ${request.payload.location.name} (${request.payload.department})`}
+            {`${request.payload.branchName ?? '—'}, ${request.payload.locationName ?? '—'} (${request.payload.departmentName ?? '—'})`}
           </Fact>
         </>
       ) : (
         <>
-          <Fact label="Date">{longDate(request.payload.date)}</Fact>
-          <Fact label="Time Roster">
-            {request.payload.rosterTitle ?? (request.payload.swapWith ? 'Swap' : '—')}
+          <Fact label="Date">{dateOrDash(request.payload.shiftDate ?? request.fromDate)}</Fact>
+          <Fact label="Time Slot">
+            {request.payload.timeSlotName ?? (request.payload.withEmployeeId ? 'Swap' : '—')}
           </Fact>
-          <Fact label="Swap From">{request.payload.swapFrom ?? '—'}</Fact>
+          <Fact label="Swap From">{request.payload.fromTimeSlotName ?? '—'}</Fact>
           <Fact label="Swap To">
-            {request.payload.swapWith
-              ? `${request.payload.swapWith.name}${request.payload.swapToShift ? `, ${request.payload.swapToShift}` : ''}`
+            {request.payload.withEmployeeId
+              ? `${request.payload.withEmployeeName ?? '—'}${request.payload.toTimeSlotName ? `, ${request.payload.toTimeSlotName}` : ''}`
               : '—'}
           </Fact>
         </>
       )}
+      {request.reason && (
+        <div className="@2xl:col-span-2">
+          <Fact label="Reason">{request.reason}</Fact>
+        </div>
+      )}
       <div className="@2xl:col-span-2">
-        <Fact label="Description">{request.payload.description || '—'}</Fact>
+        <Fact label="Description">{request.description ?? '—'}</Fact>
       </div>
-      <Fact label="Created">
-        {stamp(request.createdAt)} by {request.createdBy.name}
-      </Fact>
+      {request.attachments.length > 0 && (
+        <div className="@2xl:col-span-2">
+          <Fact label="Attachments">
+            <RequestFileLinks files={request.attachments} />
+          </Fact>
+        </div>
+      )}
+      <Fact label="Created">{stamp(request.createdAt)}</Fact>
       {request.currentStep && (
         <Fact label="Next Requestee">
           {request.currentStep.approver.name} ({request.currentStep.authority})
@@ -135,7 +148,7 @@ export function RequestFields({ request }: { request: AnyRequest }) {
             {request.consents
               .map(
                 (consent) =>
-                  `${consent.person.name}: ${consent.status === 'pending' ? 'waiting' : consent.status}`,
+                  `${consent.person.name}: ${consent.status === 'pending' ? 'waiting' : consent.status === 'given' ? 'agreed' : 'disagreed'}`,
               )
               .join(', ')}
           </Fact>

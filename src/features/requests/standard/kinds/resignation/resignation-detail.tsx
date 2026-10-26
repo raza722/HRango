@@ -2,9 +2,12 @@ import { format, parse } from 'date-fns'
 
 import type { StandardRequest } from '../../standard.types'
 import { StandardReadOnlyRow } from '../../standard-dialogs'
+import { RESIGNATION_TYPE_LABELS } from './resignation.lookups'
 import type { ResignationPayload } from './resignation.types'
+import { noticePeriod } from './resignation.utils'
 
-const viewDay = (date: string) => format(parse(date, 'yyyy-MM-dd', new Date()), 'MMMM d, yyyy')
+const day = (date: string) => parse(date, 'yyyy-MM-dd', new Date())
+const viewDay = (date: string | null) => (date ? format(day(date), 'MMMM d, yyyy') : '—')
 
 /**
  * The request's fields in the View and Approve/Reject popups. A cancellation
@@ -15,12 +18,12 @@ export function ResignationDetail({ request }: { request: StandardRequest<Resign
   const { payload } = request
   return (
     <>
-      <StandardReadOnlyRow label="Type" value={payload.typeLabel} />
+      <StandardReadOnlyRow label="Type" value={RESIGNATION_TYPE_LABELS[payload.resignationType]} />
       <StandardReadOnlyRow label="Resignation Date" value={viewDay(payload.resignationDate)} />
       <StandardReadOnlyRow label="Last Working Date" value={viewDay(payload.lastWorkingDate)} />
-      <StandardReadOnlyRow label="Notice Period" value={payload.noticePeriod} />
-      <StandardReadOnlyRow label="Reason" value={payload.reason || '—'} multiline />
-      <StandardReadOnlyRow label="Attachment" value={payload.attachmentName ?? '—'} />
+      <StandardReadOnlyRow label="Notice Period" value={noticePeriod(payload)} />
+      <StandardReadOnlyRow label="Serve Notice" value={payload.serveNotice ? 'Yes' : 'No'} />
+      <StandardReadOnlyRow label="Reason" value={request.reason ?? '—'} multiline />
       {request.cancelReason && (
         <>
           <h3 className="font-inter text-base font-semibold text-heading">Cancel Request</h3>

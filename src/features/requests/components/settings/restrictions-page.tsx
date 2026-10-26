@@ -26,15 +26,12 @@ import {
   useFilters,
 } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import {
-  useDeleteRestrictions,
-  useRequestSettingsLookups,
-  useRestrictions,
-} from '../../hooks/use-request-settings'
+import { useDeleteRestrictions, useRestrictions } from '../../hooks/use-request-settings'
 import { SETTINGS_PAGE_SIZE } from '../../settings.constants'
-import type { RequestRestrictionRow } from '../../types/request-settings.types'
+import type { RequestRestriction } from '../../types/request-settings.types'
 import { RestrictionDialog } from './restriction-dialog'
 import { REQUEST_TYPE_OPTIONS, useTicks } from './settings-helpers'
 import { CreateButton } from './settings-parts'
@@ -43,17 +40,20 @@ const routeApi = getRouteApi('/_app/requests/settings/restrictions')
 
 type Dialog =
   | { type: 'create' | 'filters' | 'bulk-delete' }
-  | { type: 'view' | 'delete'; row: RequestRestrictionRow }
+  | { type: 'view' | 'edit' | 'delete'; row: RequestRestriction }
   | null
 
 /**
- * Request Restriction: request types closed for a company between two
- * dates. Tick rows to delete several at once.
+ * Request Restriction: request types closed for the company between two
+ * dates (`/requests/settings/restrictions`). Tick rows to delete several at
+ * once (deleted one by one). A request whose dates touch the period is refused.
  */
 export function RestrictionsPage() {
   const { page } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
-  const lookups = useRequestSettingsLookups()
+  const canCreate = useCan('requests.settings.restrictions.create')
+  const canEdit = useCan('requests.settings.restrictions.edit')
+  const canDelete = useCan('requests.settings.restrictions.delete')
   const [filters, setFilters] = useFilters('request-restrictions')
   const [dialog, setDialog] = useState<Dialog>(null)
   const { ticked, setTicked, toggle, clear } = useTicks()
@@ -61,7 +61,6 @@ export function RestrictionsPage() {
   const list = useRestrictions({
     page,
     pageSize: SETTINGS_PAGE_SIZE,
-    companyId: filters.companyId,
     requestType: filters.requestType,
     startFrom: filters.startFrom,
     startTo: filters.startTo,
@@ -79,8 +78,8 @@ export function RestrictionsPage() {
   }
   const allTicked = rows.length > 0 && rows.every((row) => ticked.has(row.id))
 
-  const deleteRows = (ids: string[]) => {
-    remove.mutate(ids, {
+  const deleteRows = (picked: readonly RequestRestriction[]) => {
+    remove.mutate(picked, {
       onSuccess: () => {
         clear()
       },
@@ -90,7 +89,7 @@ export function RestrictionsPage() {
     })
   }
 
-  const columns: DataTableColumn<RequestRestrictionRow>[] = [
+  const columns: DataTableColumn<RequestRestriction>[] = [
     {
       id: 'select',
       header: (
@@ -117,22 +116,13 @@ export function RestrictionsPage() {
         />
       ),
     },
-    { id: 'company', header: 'Company', mobile: 'heading', cell: (row) => row.company },
+    { id: 'company', header: 'Company', cell: (row) => row.companyName },
+    { id: 'type', header: 'Request Type', mobile: 'heading', cell: (row) => row.requestTypeName },
     { id: 'start', header: 'Start Date', cell: (row) => formatLong(row.startDate) },
     { id: 'end', header: 'End Date', cell: (row) => formatLong(row.endDate) },
   ]
 
   const fields: FilterField[] = [
-    {
-      kind: 'select',
-      key: 'companyId',
-      label: 'Company',
-      placeholder: 'Select Company',
-      options: (lookups.data?.companies ?? []).map((item) => ({
-        value: item.id,
-        label: item.name,
-      })),
-    },
     {
       kind: 'select',
       key: 'requestType',
@@ -151,7 +141,7 @@ export function RestrictionsPage() {
       title="Request Restriction"
       actions={
         <>
-          {ticked.size > 0 && (
+          {canDelete && ticked.size > 0 && (
             <Button
               disabled={remove.isPending}
               onClick={() => {
@@ -162,11 +152,13 @@ export function RestrictionsPage() {
               Delete
             </Button>
           )}
-          <CreateButton
-            onClick={() => {
-              setDialog({ type: 'create' })
-            }}
-          />
+          {canCreate && (
+            <CreateButton
+              onClick={() => {
+                setDialog({ type: 'create' })
+              }}
+            />
+          )}
           <FiltersButton
             count={activeCount(filters)}
             onClick={() => {
@@ -197,13 +189,27 @@ export function RestrictionsPage() {
                   setDialog({ type: 'view', row })
                 },
               },
-              {
-                label: 'Delete',
-                variant: 'destructive' as const,
-                onSelect: () => {
-                  setDialog({ type: 'delete', row })
-                },
-              },
+              ...(canEdit
+                ? [
+                    {
+                      label: 'Edit',
+                      onSelect: () => {
+                        setDialog({ type: 'edit', row })
+                      },
+                    },
+                  ]
+                : []),
+              ...(canDelete
+                ? [
+                    {
+                      label: 'Delete',
+                      variant: 'destructive' as const,
+                      onSelect: () => {
+                        setDialog({ type: 'delete', row })
+                      },
+                    },
+                  ]
+                : []),
             ]}
           />
         )}
@@ -217,6 +223,7 @@ export function RestrictionsPage() {
 
       {dialog?.type === 'create' && <RestrictionDialog id={null} onClose={close} />}
       {dialog?.type === 'view' && <RestrictionDialog id={dialog.row.id} onClose={close} />}
+      {dialog?.type === 'edit' && <RestrictionDialog id={dialog.row.id} edit onClose={close} />}
       {dialog?.type === 'filters' && (
         <FiltersDialog
           fields={fields}
@@ -239,8 +246,8 @@ export function RestrictionsPage() {
         }
         message="Are you sure you want to Delete this?"
         onConfirm={() => {
-          if (dialog?.type === 'delete') deleteRows([dialog.row.id])
-          if (dialog?.type === 'bulk-delete') deleteRows([...ticked])
+          if (dialog?.type === 'delete') deleteRows([dialog.row])
+          if (dialog?.type === 'bulk-delete') deleteRows(rows.filter((row) => ticked.has(row.id)))
         }}
       />
     </PayrollCard>

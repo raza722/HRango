@@ -1,9 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
 import { addDays, differenceInCalendarMonths, format } from 'date-fns'
-import { describe, expect, it } from 'vitest'
+import { http, HttpResponse } from 'msw'
+import { beforeEach, describe, expect, it } from 'vitest'
 
-import { employeeTransfers, transferRequests } from '@/mocks/requests/db'
+import { server } from '@/mocks/node'
+import { employeeTransfers, mockDepartments, transferRequests } from '@/mocks/requests/db'
+import { apiPath } from '@/mocks/utils'
 import { renderApp } from '@/test/test-utils'
 
 async function choose(user: UserEvent, label: RegExp, option: string | RegExp) {
@@ -27,6 +30,18 @@ async function openAction(user: UserEvent, code: string, action: string) {
   await user.click(await screen.findByRole('button', { name: `Actions for ${code}` }))
   await user.click(await screen.findByRole('menuitem', { name: action }))
 }
+
+// The organisation mock does not list departments yet; the API does
+// (`GET /organisation/lookups/departments`), so the test serves them.
+beforeEach(() => {
+  server.use(
+    http.get(apiPath('/organisation/lookups/departments'), () =>
+      HttpResponse.json({
+        data: mockDepartments().map((item) => ({ ...item, code: null, parentId: null })),
+      }),
+    ),
+  )
+})
 
 describe('Transfer requests', () => {
   it('checks the form, writes the application with Regenerate and submits the request', async () => {
@@ -84,6 +99,7 @@ describe('Transfer requests', () => {
       department: 'Sales',
       lineManagerId: 'em_sara',
       effectiveDate: format(effective, 'yyyy-MM-dd'),
+      description: 'Closer to home',
     })
     expect(saved?.payload.application).toContain('Dear Shelley Kannes,')
   })
@@ -126,7 +142,6 @@ describe('Transfer requests', () => {
 
     await user.click(await screen.findByRole('tab', { name: 'Delegates' }))
     expect(await screen.findByRole('cell', { name: 'RQ-TRF-0001' })).toBeVisible()
-    expect(screen.getByRole('cell', { name: 'Bilal Ahmed' })).toBeVisible()
 
     await user.click(screen.getByRole('checkbox', { name: 'Select RQ-TRF-0001' }))
     await user.click(screen.getByRole('button', { name: 'Approved' }))
@@ -145,9 +160,7 @@ describe('Transfer requests', () => {
 
     await openAction(user, 'RQ-TRF-0003', 'History')
     const dialog = await screen.findByRole('dialog', { name: 'Transfer Request History' })
-    expect(
-      await within(dialog).findByText('Approved by HR Manager (Final Authority)'),
-    ).toBeVisible()
+    expect(await within(dialog).findByText('Approved by Final Authority')).toBeVisible()
     expect(within(dialog).getByText('Approved for the new office.')).toBeVisible()
     expect(within(dialog).getByText('Requested')).toBeVisible()
   })

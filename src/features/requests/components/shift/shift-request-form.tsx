@@ -1,26 +1,43 @@
-import { useId } from 'react'
+import { useId, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
 import { AppDialog, dialogButtonClass } from '@/components/feedback/app-dialog'
 import { DatePickerField, FieldLayoutContext, SelectField, TextareaField } from '@/components/form'
 import { Button } from '@/components/ui/button'
+import { SearchSelectField } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import type { FileRef } from '@/lib/files'
 import { cn } from '@/lib/utils'
 
+import { type RequestBody, typePermission } from '../../api/backend'
+import { engineApi } from '../../api/engine.api'
+import { currentPerson } from '../../api/lookups.api'
 import {
   useCreateRequest,
   useDayShift,
-  useRequestLookups,
+  useSwapColleagueSearch,
+  useTimeSlots,
   useUpdateRequest,
 } from '../../hooks/use-requests'
 import { shiftRequestSchema, type ShiftRequestValues } from '../../schemas/request-forms.schema'
 import type { ShiftRequest } from '../../types/requests.types'
 import { clock } from '../../utils/request-format'
+import { RequestEmployeeField } from '../shared/request-employee-field'
+import { RequestFileField } from '../shared/request-files'
 import { shiftFieldsClass } from '../shared/request-styles'
 
-const FIELDS = ['employeeId', 'date', 'rosterGroupId', 'swapWithId', 'description'] as const
 const NONE = ''
+
+/** The API's field names → the form's. */
+const FIELD_OF: Record<string, keyof ShiftRequestValues> = {
+  employeeId: 'employeeId',
+  shiftDate: 'date',
+  fromDate: 'date',
+  timeSlotId: 'timeSlotId',
+  withEmployeeId: 'swapWithId',
+  description: 'description',
+}
 
 function startOfToday() {
   const today = new Date()
@@ -29,29 +46,35 @@ function startOfToday() {
 }
 
 /**
- * Shift Request as drawn: Employee Name, Date and Time Roster (labels on the
+ * Shift Request as drawn: Employee Name, Date and Time Slot (labels on the
  * left), then Swap From (the shift that day) and Swap To (a colleague), and
- * Description. Ask for another time roster, or to swap with a colleague.
+ * Description. Ask for another time slot for the day, or to swap with a
+ * colleague, who gives consent before the flow starts (`details { shiftDate,
+ * timeSlotId | withEmployeeId }`).
  */
 export function ShiftRequestForm({
   request,
   onDone,
   onCancel,
+  forOthers = true,
 }: {
   /** Edit this pending request; a new one when absent. */
   request?: ShiftRequest | undefined
   onDone?: () => void
   onCancel?: () => void
+  /** Show the Employee Name picker (the caller may file for others). */
+  forOthers?: boolean
 }) {
   const formId = useId()
   const create = useCreateRequest('shift')
   const update = useUpdateRequest('shift')
-  const lookups = useRequestLookups()
+  const slots = useTimeSlots()
+  const [file, setFile] = useState<FileRef | null>(null)
   const empty: ShiftRequestValues = {
     // Empty means the signed-in person.
     employeeId: '',
     date: '',
-    rosterGroupId: NONE,
+    timeSlotId: NONE,
     swapWithId: NONE,
     description: '',
   }
@@ -60,10 +83,10 @@ export function ShiftRequestForm({
     defaultValues: request
       ? {
           employeeId: request.employee.id,
-          date: request.payload.date,
-          rosterGroupId: request.payload.rosterGroupId ?? NONE,
-          swapWithId: request.payload.swapWith?.id ?? NONE,
-          description: request.payload.description,
+          date: request.payload.shiftDate ?? request.fromDate ?? '',
+          timeSlotId: request.payload.timeSlotId ?? NONE,
+          swapWithId: request.payload.withEmployeeId ?? NONE,
+          description: request.description ?? '',
         }
       : empty,
   })
@@ -72,39 +95,74 @@ export function ShiftRequestForm({
     control,
     name: ['employeeId', 'date', 'swapWithId'],
   })
-  const shift = useDayShift(employeeId || undefined, date)
-  const colleagues = shift.data?.colleagues ?? []
+  const who = employeeId || currentPerson()?.id
+  const shift = useDayShift(who, date)
+  const [colleagueSearch, setColleagueSearch] = useState('')
+  const colleagues = useSwapColleagueSearch(who, date, colleagueSearch)
+  // The chosen colleague keeps their name while a later search hides them.
+  const [chosenColleague, setChosenColleague] = useState<{ value: string; label: string } | null>(
+    request?.payload.withEmployeeId
+      ? {
+          value: request.payload.withEmployeeId,
+          label: request.payload.withEmployeeName ?? request.payload.withEmployeeId,
+        }
+      : null,
+  )
+  const colleagueOptions = colleagues.rows.map((colleague) => ({
+    value: colleague.person.id,
+    label: colleague.shift
+      ? `${colleague.person.name} · ${colleague.shift}`
+      : colleague.person.name,
+    hint: colleague.person.code,
+  }))
   const swapping = swapWithId !== NONE
 
   const current = shift.data
     ? shift.data.clockIn
       ? `${shift.data.slotName ?? ''} (${clock(shift.data.clockIn)} – ${clock(shift.data.clockOut)})`
-      : (shift.data.slotName ?? 'Not scheduled')
+      : shift.data.restDay
+        ? 'Rest Day'
+        : 'Not scheduled'
     : 'Choose a date'
 
   const submit = form.handleSubmit(async (values) => {
-    const input = {
-      ...(values.employeeId ? { employeeId: values.employeeId } : {}),
-      date: values.date,
-      rosterGroupId: values.swapWithId ? null : values.rosterGroupId || null,
-      swapWithId: values.swapWithId || null,
-      description: values.description.trim(),
+    const body: RequestBody = {
+      ...(values.employeeId && !request ? { employeeId: values.employeeId } : {}),
+      fromDate: values.date,
+      toDate: values.date,
+      description: values.description.trim() || null,
+      details: {
+        shiftDate: values.date,
+        timeSlotId: values.swapWithId ? null : values.timeSlotId || null,
+        withEmployeeId: values.swapWithId || null,
+      },
     }
     try {
-      if (request) await update.mutateAsync({ id: request.id, input })
-      else await create.mutateAsync(input)
+      if (request) {
+        await update.mutateAsync({
+          id: request.id,
+          body: { ...body, rowVersion: request.rowVersion },
+        })
+        if (file) await engineApi.addAttachment('shift', request.id, file.id)
+      } else {
+        await create.mutateAsync({ ...body, attachments: file ? [file.id] : [] })
+      }
     } catch (error) {
       if (error instanceof ApiError) {
-        const fields = Object.entries(error.fieldErrors)
-        for (const [field, message] of fields) {
-          const name = FIELDS.find((key) => key === field)
-          if (name) form.setError(name, { message })
+        let shown = false
+        for (const [field, message] of Object.entries(error.fieldErrors)) {
+          const name = FIELD_OF[field]
+          if (name) {
+            form.setError(name, { message })
+            shown = true
+          }
         }
-        if (fields.length === 0) form.setError('root', { message: error.message })
+        if (!shown) form.setError('root', { message: error.message })
       }
       return
     }
     form.reset(empty)
+    setFile(null)
     onDone?.()
   })
 
@@ -121,21 +179,24 @@ export function ShiftRequestForm({
     >
       <FieldLayoutContext value="horizontal">
         <div className="grid gap-5">
-          <SelectField
-            control={control}
-            name="employeeId"
-            label="Employee Name"
-            placeholder="Myself"
-            options={(lookups.data?.employees ?? []).map((employee) => ({
-              value: employee.id,
-              label: `${employee.code} | ${employee.name}`,
-            }))}
-            disabled={request !== undefined}
-            clearable="Myself"
-            onValueChange={() => {
-              form.setValue('swapWithId', NONE)
-            }}
-          />
+          {forOthers && (
+            <RequestEmployeeField
+              control={control}
+              name="employeeId"
+              label="Employee Name"
+              placeholder="Myself"
+              permission={typePermission('shift', 'create')}
+              current={request?.employee}
+              disabled={request !== undefined}
+              enabled={request === undefined}
+              clearable
+              onPick={(id) => {
+                if (!id) form.setValue('employeeId', '')
+                form.setValue('swapWithId', NONE)
+                setChosenColleague(null)
+              }}
+            />
+          )}
           <DatePickerField
             control={control}
             name="date"
@@ -143,17 +204,20 @@ export function ShiftRequestForm({
             minDate={startOfToday()}
             onValueChange={() => {
               form.setValue('swapWithId', NONE)
+              setChosenColleague(null)
             }}
             required
           />
           <SelectField
             control={control}
-            name="rosterGroupId"
-            label="Time Roster"
-            placeholder="Select Time Roster"
-            options={(lookups.data?.rosters ?? []).map((roster) => ({
-              value: roster.id,
-              label: roster.title,
+            name="timeSlotId"
+            label="Time Slot"
+            placeholder="Select Time Slot"
+            options={(slots.data ?? []).map((slot) => ({
+              value: slot.id,
+              label: slot.startTime
+                ? `${slot.name} (${clock(slot.startTime.slice(0, 5))} – ${clock(slot.endTime?.slice(0, 5) ?? null)})`
+                : slot.name,
             }))}
             disabled={swapping}
             description={swapping ? 'Swapping takes the colleague’s shift instead.' : undefined}
@@ -174,21 +238,36 @@ export function ShiftRequestForm({
               {current}
             </span>
           </div>
-          <SelectField
+          <SearchSelectField
             control={control}
             name="swapWithId"
             label="Swap To"
-            placeholder={
-              date ? (colleagues.length ? 'No swap' : 'Nobody to swap with') : 'Choose a date'
-            }
-            options={colleagues.map((colleague) => ({
-              value: colleague.person.id,
-              label: `${colleague.person.name} · ${colleague.shift}`,
-            }))}
-            clearable="No swap"
-            disabled={!date || colleagues.length === 0}
+            placeholder={date ? 'No swap' : 'Choose a date'}
+            options={[
+              ...(chosenColleague &&
+              !colleagueOptions.some((option) => option.value === chosenColleague.value)
+                ? [chosenColleague]
+                : []),
+              ...colleagueOptions,
+            ]}
+            clearable
+            disabled={!date}
+            onSearch={setColleagueSearch}
+            loading={colleagues.isFetching}
+            hasMore={colleagues.hasMore}
+            onLoadMore={colleagues.loadMore}
+            onValueChange={(next) => {
+              if (next) {
+                form.setValue('timeSlotId', NONE)
+                setChosenColleague(colleagueOptions.find((option) => option.value === next) ?? null)
+              } else {
+                form.setValue('swapWithId', NONE)
+                setChosenColleague(null)
+              }
+            }}
           />
         </div>
+        <RequestFileField value={file} onChange={setFile} />
         <TextareaField
           control={control}
           name="description"
@@ -220,6 +299,7 @@ export function ShiftRequestForm({
           size="lg"
           onClick={() => {
             form.reset(empty)
+            setFile(null)
             onCancel?.()
           }}
           className={dialogButtonClass}

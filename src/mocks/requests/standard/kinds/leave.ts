@@ -1,15 +1,25 @@
 import { addDays, differenceInCalendarDays, format, parse } from 'date-fns'
+import { http, HttpResponse } from 'msw'
 import { z } from 'zod'
 
 import { eachDay } from '@/features/scheduling'
 
 import { createMockCollection } from '../../../collection'
-import { DIRECTORY } from '../../../employees/seed'
+import { DIRECTORY, findEmployee } from '../../../employees/seed'
 import { leaveTypes } from '../../../leaves/db'
-import { entitlementFor } from '../../../leaves/rules'
-import { rosterGroups } from '../../../roster/handlers'
+import { entitlementFor, policyFor } from '../../../leaves/rules'
+import {
+  apiPath,
+  errorResponse,
+  latency,
+  paginate,
+  readPageParams,
+  requireAuth,
+} from '../../../utils'
+import type { RequestBodyIn } from '../../backend'
+import { fallbackGet } from '../../fallback'
 import { invalid } from '../../http'
-import { mustFind } from '../../people'
+import { ME, mustFind, requestEmployee } from '../../people'
 import {
   defineStandardKind,
   type PayloadContext,
@@ -18,7 +28,7 @@ import {
   type StandardKindServer,
   type StoredStandardRequest,
 } from '../engine'
-import { photos, rosterOf, scheduleDay, scheduleHandler } from './work-from-home-days'
+import { rosterOf, scheduleDay } from './work-from-home-days'
 
 /*
  * Leave: the person asks for days off of one leave type ("Leave Request
@@ -164,17 +174,137 @@ export function balanceOf(
 
 const shortTypeOf = (value: string | null) => SHORT_LEAVE_TYPES.find((item) => item.value === value)
 
+/** The API's short leave values (`half_day`) ↔ the stored ones (`half-day`). */
+const toApiShort = (value: string | null) => (value ? value.replace('-', '_') : null)
+const fromApiShort = (value: unknown) =>
+  typeof value === 'string' ? value.replace('_', '-') : null
+const hhmm = (value: unknown) => (typeof value === 'string' ? value.slice(0, 5) : null)
+
+/** A `RequestIn` body → the stored shape's input (times on the request's day). */
+function fromBody(body: RequestBodyIn): unknown {
+  const details = body.details
+  const short = details.isShort === true
+  const from = body.fromDate ?? ''
+  return {
+    leaveTypeId: details.leaveTypeId,
+    short,
+    shortType: short ? fromApiShort(details.shortLeaveType) : null,
+    from,
+    to: short ? from : (body.toDate ?? ''),
+    startDate: short ? from : null,
+    startTime: short ? hhmm(details.startTime) : null,
+    endDate: short ? from : null,
+    endTime: short ? hhmm(details.endTime) : null,
+    attachment: body.attachments.length > 0 ? 'Attachment' : null,
+    reason: body.reason ?? '',
+  }
+}
+
+/** `GET /leaves/balances` rows of one person (`BalanceOut`). */
+function balanceRows(employeeId: string) {
+  const employee = findEmployee(employeeId)
+  if (!employee) return []
+  const person = requestEmployee(employee)
+  return activeLeaveTypes().map((type) => {
+    const balance = balanceOf(employeeId, type.id, leaveRecords())
+    return {
+      employeeId,
+      employeeCode: person.code,
+      employeeName: person.name,
+      departmentName: person.department,
+      leaveTypeId: type.id,
+      leaveTypeTitle: type.title,
+      shortCode: type.shortCode,
+      fiscalYear: new Date().getFullYear(),
+      entitled: balance.total,
+      used: balance.availed,
+      pending: balance.pending,
+      available: balance.available,
+    }
+  })
+}
+
+/**
+ * The look-ups the Leave form reads from the Leaves module, answered only when
+ * the Leaves mock does not: `GET /leaves/types`, `GET /leaves/balances`.
+ */
+const leaveLookupHandlers = [
+  fallbackGet('/leaves/types', ({ request }) => {
+    const url = new URL(request.url)
+    const { page, pageSize } = readPageParams(url)
+    const rows = activeLeaveTypes().map((type) => ({
+      id: type.id,
+      title: type.title,
+      shortCode: type.shortCode,
+      isActive: type.isActive,
+      isShortLeave: type.isShortLeave,
+      isDeductible: type.isDeductible,
+      attachmentRequired: type.attachmentRequired,
+    }))
+    return HttpResponse.json(paginate(rows, page, pageSize))
+  }),
+  fallbackGet('/leaves/balances', ({ request }) => {
+    const url = new URL(request.url)
+    const { page, pageSize } = readPageParams(url)
+    const rows = balanceRows(url.searchParams.get('employeeId') ?? ME)
+    return HttpResponse.json(paginate(rows, page, pageSize))
+  }),
+]
+
+/**
+ * `GET /requests/options/leave-types?employeeId=` (`LeaveTypeOptionOut`): the active types the
+ * person (default the signed-in one) may apply for, with this year's balance and the form
+ * rules; half / short leave follow the person's "Half & Short" policy as the API does.
+ */
+export const leaveTypeOptionsHandler = http.get(
+  apiPath('/requests/options/leave-types'),
+  async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const employeeId = new URL(request.url).searchParams.get('employeeId') ?? ME
+    if (!findEmployee(employeeId)) {
+      return errorResponse(404, 'Employee not found.', { code: 'NOT_FOUND' })
+    }
+    const policy = policyFor(employeeId, 'half_short')
+    const rows = activeLeaveTypes().map((type) => {
+      const balance = balanceOf(employeeId, type.id, leaveRecords())
+      return {
+        id: type.id,
+        name: type.title,
+        code: type.shortCode,
+        isDeductible: type.isDeductible,
+        isShortLeave: type.isShortLeave,
+        allowHalfDay: type.isShortLeave && (policy?.allowHalfDay ?? true),
+        allowShortLeave: type.isShortLeave && (policy?.allowShortLeave ?? true),
+        attachmentRequired: type.attachmentRequired,
+        attachmentRule: type.attachmentRule ?? 'refuse',
+        allowBackDate: type.allowBackDate,
+        backDateLimitDays: type.backDateLimitDays,
+        futureLimitDays: type.hasFutureLimit ? type.futureLimitDays : null,
+        entitled: balance.total,
+        used: balance.availed,
+        pending: balance.pending,
+        available: balance.available,
+      }
+    })
+    return HttpResponse.json({ data: rows })
+  },
+)
+
 /** The short leave's checks: a shift that day, times inside it, no longer than its share. */
 function shortLeave(input: Input, employeeId: string, name: string) {
   const shortType = shortTypeOf(input.shortType)
   if (!shortType) {
-    return invalid('Choose the short leave type.', { shortType: 'Choose the short leave type' })
+    return invalid('Choose the short leave type.', {
+      shortLeaveType: 'Choose the short leave type',
+    })
   }
   if (input.to !== input.from) return invalid('A short leave is one day.')
   const shift = scheduleDay(employeeId, input.from)
   if (shift.status !== 'shift' || !shift.clockIn || !shift.clockOut) {
     return invalid(`${name} has no shift on ${longDay(input.from)}.`, {
-      requestDate: 'Choose a day with a shift',
+      fromDate: 'Choose a day with a shift',
     })
   }
   const { startDate, startTime, endDate, endTime } = input
@@ -214,7 +344,9 @@ function toPayload(input: Input, context: PayloadContext): Response | Record<str
   const type = leaveTypeOf(input.leaveTypeId)
   if (!type) return invalid('Choose the leave type.', { leaveTypeId: 'Choose the leave type' })
   if (input.to < input.from) {
-    return invalid('End Date comes before Start Date.', { to: 'Choose the Start Date or later' })
+    return invalid('End Date comes before Start Date.', {
+      toDate: 'Choose the Start Date or later',
+    })
   }
   if (input.from.slice(0, 4) !== input.to.slice(0, 4)) {
     return invalid('Ask for the days of one leave year at a time.', {
@@ -222,7 +354,7 @@ function toPayload(input: Input, context: PayloadContext): Response | Record<str
     })
   }
   if (differenceInCalendarDays(day(input.to), day(input.from)) > 60) {
-    return invalid('Ask for 61 days at most at a time.', { to: 'Ask for 61 days at most' })
+    return invalid('Ask for 61 days at most at a time.', { toDate: 'Ask for 61 days at most' })
   }
 
   let dates: string[]
@@ -237,7 +369,7 @@ function toPayload(input: Input, context: PayloadContext): Response | Record<str
     )
     if (dates.length === 0) {
       return invalid(`${employee.name} has no shift between these dates.`, {
-        from: 'Choose dates with working days',
+        fromDate: 'Choose dates with working days',
       })
     }
     count = dates.length
@@ -253,7 +385,7 @@ function toPayload(input: Input, context: PayloadContext): Response | Record<str
   if (clash) {
     const taken = stored(clash).dates.find((date) => dates.includes(date)) ?? input.from
     return invalid(`${clash.code} already asks for leave on ${longDay(taken)}.`, {
-      [input.short ? 'requestDate' : 'from']: 'These days are already asked for',
+      fromDate: 'These days are already asked for',
     })
   }
 
@@ -262,7 +394,7 @@ function toPayload(input: Input, context: PayloadContext): Response | Record<str
   if (type.deductible && count > balance.available) {
     return invalid(
       `${employee.name} has ${days(balance.available)} ${type.title} available; this asks for ${days(count)}.`,
-      { [input.short ? 'shortType' : 'to']: `Only ${days(balance.available)} available` },
+      { [input.short ? 'shortLeaveType' : 'toDate']: `Only ${days(balance.available)} available` },
     )
   }
 
@@ -287,44 +419,40 @@ function toPayload(input: Input, context: PayloadContext): Response | Record<str
 
 const def: StandardKindServer<Input> = {
   kind: 'leave',
+  typeCode: 'leave',
+  typeName: 'Leave',
   settingsType: 'leave',
   codePrefix: 'LV-',
   codeDigits: 4,
+  fromBody,
   schema,
   toPayload,
   dateOf: (payload) => String(payload.from),
-  present: (payload, record) => {
+  header: (payload) => {
     const value = payload as unknown as LeaveStored
-    const roster = value.rosterGroupId ? rosterGroups.find(value.rosterGroupId) : undefined
     return {
-      ...value,
-      leaveTypeName: leaveTypeOf(value.leaveTypeId)?.title ?? '—',
-      shortTypeLabel: shortTypeOf(value.shortType)?.label ?? null,
-      rosterTitle: roster?.title ?? '—',
-      balance: balanceOf(record.employeeId, value.leaveTypeId, leaveRecords()),
+      fromDate: value.from,
+      toDate: value.to,
+      days: value.count,
+      reason: value.reason || null,
+      description: null,
+      application: null,
     }
   },
-  filters: {
-    leaveTypeId: (record, value) => stored(record).leaveTypeId === value,
-  },
-  lookups: () => {
-    const records = leaveRecords()
+  // `req.fn_request_details` for leave: the type, short leave and the counted days.
+  toDetails: (payload) => {
+    const value = payload as unknown as LeaveStored
     return {
-      leaveTypes: activeLeaveTypes().map((item) => ({ id: item.id, name: item.title })),
-      shortTypes: SHORT_LEAVE_TYPES.map((item) => ({ ...item })),
-      photos: photos(),
-      /** Every person's balance of each type, for the card and the forms. */
-      balances: Object.fromEntries(
-        DIRECTORY.map((employee) => [
-          employee.id,
-          Object.fromEntries(
-            activeLeaveTypes().map((type) => [type.id, balanceOf(employee.id, type.id, records)]),
-          ),
-        ]),
-      ),
+      leaveTypeId: value.leaveTypeId,
+      leaveTypeName: leaveTypeOf(value.leaveTypeId)?.title ?? null,
+      isShort: value.short,
+      shortLeaveType: toApiShort(value.shortType),
+      startTime: value.startTime ? `${value.startTime}:00` : null,
+      endTime: value.endTime ? `${value.endTime}:00` : null,
+      days: value.count,
     }
   },
-  extraHandlers: [scheduleHandler('leave')],
+  extraHandlers: [leaveTypeOptionsHandler, ...leaveLookupHandlers],
   seed: () => {
     const ago = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString()
     /** The first `count` shift days from `offset` days from today. */

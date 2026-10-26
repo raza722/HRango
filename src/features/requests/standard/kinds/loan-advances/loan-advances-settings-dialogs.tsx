@@ -9,13 +9,8 @@ import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
 import { standardReadOnlyClass } from '../../standard-styles'
-import { useSaveLoanCategory, useSaveLoanType } from './loan-advances.api'
-import {
-  CONTRACT_TYPE_LABELS,
-  DEDUCTION_PAYITEMS,
-  FORMULA_VARIABLES,
-} from './loan-advances.constants'
-import type { LoanCategory, LoanContractType, LoanType, LoanTypeInput } from './loan-advances.types'
+import { useLoanSettingsLookups, useSaveLoanCategory, useSaveLoanType } from './loan-advances.api'
+import type { LoanCategory, LoanType, LoanTypeInput } from './loan-advances.types'
 
 export type SettingsDialogMode = 'create' | 'edit' | 'view'
 
@@ -28,32 +23,50 @@ const months = (message: string, min: number, max: number) =>
       message: `Enter a whole number from ${String(min)} to ${String(max)}`,
     })
 
-const chosen = (message: string) =>
-  z
-    .string()
-    .nullable()
-    .refine((value) => Boolean(value), { message })
-
-const typeSchema = z.object({
-  name: z.string().trim().min(1, 'Enter the name').max(60, 'Keep it under 60 characters'),
-  active: z.boolean(),
-  guarantorRequired: z.boolean(),
-  nonPayable: z.boolean(),
-  experienceMonths: months('Enter the months of service', 0, 600),
-  requestGapMonths: z
-    .string()
-    .trim()
-    .refine((value) => value === '' || (/^\d+$/.test(value) && Number(value) <= 120), {
-      message: 'Enter a whole number from 0 to 120',
-    }),
-  installments: months('Enter the number of installments', 1, 120),
-  installmentGapMonths: months('Enter the gap between installments', 1, 12),
-  formula: chosen('Choose the formula'),
-  contractTypes: z.array(z.string()).min(1, 'Choose at least one contract type'),
-  deductionPayitem: z.string().nullable(),
-  description: z.string().trim().max(500, 'Keep it under 500 characters'),
-})
+const typeSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Enter the name').max(200, 'Keep it under 200 characters'),
+    isActive: z.boolean(),
+    guarantorRequired: z.boolean(),
+    nonPayable: z.boolean(),
+    experienceMonths: months('Enter the months of service', 0, 600),
+    requestGapMonths: z
+      .string()
+      .trim()
+      .refine((value) => value === '' || (/^\d+$/.test(value) && Number(value) <= 120), {
+        message: 'Enter a whole number from 0 to 120',
+      }),
+    installments: months('Enter the number of installments', 1, 600),
+    installmentGapMonths: z
+      .string()
+      .trim()
+      .refine((value) => value === '' || (/^\d+$/.test(value) && Number(value) <= 120), {
+        message: 'Enter a whole number from 0 to 120',
+      }),
+    formulaId: z.string().nullable(),
+    employmentTypeIds: z.array(z.string()).min(1, 'Choose at least one contract type'),
+    deductionPayItemId: z.string().nullable(),
+    description: z.string().trim().max(500, 'Keep it under 500 characters'),
+  })
+  // The API asks for the deduction pay item unless the type is Non Payable.
+  .refine((values) => values.nonPayable || Boolean(values.deductionPayItemId), {
+    message: 'Choose the deduction pay item',
+    path: ['deductionPayItemId'],
+  })
 type TypeValues = z.infer<typeof typeSchema>
+
+/** The API's field names → the dialog's (`LoanTypeIn`). */
+const TYPE_FIELDS: Partial<Record<string, keyof TypeValues>> = {
+  name: 'name',
+  minExperienceMonths: 'experienceMonths',
+  gapBetweenRequestsMonths: 'requestGapMonths',
+  installments: 'installments',
+  gapBetweenInstallmentsMonths: 'installmentGapMonths',
+  formulaId: 'formulaId',
+  employmentTypeIds: 'employmentTypeIds',
+  deductionPayItemId: 'deductionPayItemId',
+  description: 'description',
+}
 
 const TYPE_TITLES: Record<SettingsDialogMode, string> = {
   create: 'Loan & Advance Type Create',
@@ -66,7 +79,10 @@ const TYPE_TITLES: Record<SettingsDialogMode, string> = {
  * Guarantor Required, Employee Experience (In Month), Gap Between Requests
  * (In Months), No of Installments, Gap Between Installments (In Months),
  * Formula, Employment Contract Type, Non Payable, Deduction Payitem and
- * Description.
+ * Description. Formula, contract types and pay items are the API's
+ * (`/payroll/formulas`, `/organisation/lookups/employment-types`,
+ * `/payroll/pay-items?itemType=deduction`); the formula is stored, not yet
+ * evaluated, so it is optional.
  */
 export function LoanTypeDialog({
   mode,
@@ -79,47 +95,72 @@ export function LoanTypeDialog({
 }) {
   const formId = useId()
   const save = useSaveLoanType()
+  const lookups = useLoanSettingsLookups()
   const readOnly = mode === 'view'
+  const optional = (value: number | null | undefined) =>
+    value === null || value === undefined ? '' : String(value)
   const form = useForm<TypeValues>({
     resolver: zodResolver(typeSchema),
     defaultValues: {
       name: type?.name ?? '',
-      active: type?.active ?? true,
+      isActive: type?.isActive ?? true,
       guarantorRequired: type?.guarantorRequired ?? false,
       nonPayable: type?.nonPayable ?? false,
-      experienceMonths: type ? String(type.experienceMonths) : '',
-      requestGapMonths:
-        type?.requestGapMonths === null || !type ? '' : String(type.requestGapMonths),
+      experienceMonths: type ? String(type.minExperienceMonths) : '',
+      requestGapMonths: optional(type?.gapBetweenRequestsMonths),
       installments: type ? String(type.installments) : '',
-      installmentGapMonths: type ? String(type.installmentGapMonths) : '',
-      formula: type?.formula ?? null,
-      contractTypes: type?.contractTypes ?? [],
-      deductionPayitem: type?.deductionPayitem ?? null,
+      installmentGapMonths: optional(type?.gapBetweenInstallmentsMonths),
+      formulaId: type?.formulaId ?? null,
+      employmentTypeIds: type?.employmentTypes.map((item) => item.id) ?? [],
+      deductionPayItemId: type?.deductionPayItemId ?? null,
       description: type?.description ?? '',
     },
   })
+  const options = (items: readonly { id: string; name: string }[] | undefined) =>
+    (items ?? []).map((item) => ({ value: item.id, label: item.name }))
+  // A saved type's choices stay listed even when the pickers cannot be read.
+  const withSaved = (
+    items: readonly { id: string; name: string }[] | undefined,
+    saved: readonly { id: string | null; name: string | null }[],
+  ) => {
+    const list = options(items)
+    for (const item of saved) {
+      if (item.id && !list.some((option) => option.value === item.id)) {
+        list.push({ value: item.id, label: item.name ?? item.id })
+      }
+    }
+    return list
+  }
 
   const submit = form.handleSubmit(async (values) => {
     const input: LoanTypeInput = {
       name: values.name,
-      active: values.active,
+      isActive: values.isActive,
       guarantorRequired: values.guarantorRequired,
       nonPayable: values.nonPayable,
-      experienceMonths: Number(values.experienceMonths),
-      requestGapMonths: values.requestGapMonths === '' ? null : Number(values.requestGapMonths),
+      minExperienceMonths: Number(values.experienceMonths),
+      gapBetweenRequestsMonths:
+        values.requestGapMonths === '' ? null : Number(values.requestGapMonths),
       installments: Number(values.installments),
-      installmentGapMonths: Number(values.installmentGapMonths),
-      formula: values.formula ?? '',
-      contractTypes: values.contractTypes as LoanContractType[],
-      deductionPayitem: values.deductionPayitem,
-      description: values.description,
+      gapBetweenInstallmentsMonths:
+        values.installmentGapMonths === '' ? null : Number(values.installmentGapMonths),
+      formulaId: values.formulaId,
+      deductionPayItemId: values.nonPayable ? null : values.deductionPayItemId,
+      employmentTypeIds: values.employmentTypeIds,
+      description: values.description || null,
+      ...(type ? { rowVersion: type.rowVersion } : {}),
     }
     try {
       await save.mutateAsync({ id: type?.id, input })
       onClose()
     } catch (failure) {
-      if (failure instanceof ApiError && failure.fieldErrors.name) {
-        form.setError('name', { message: failure.fieldErrors.name })
+      const field =
+        failure instanceof ApiError
+          ? Object.keys(failure.fieldErrors).find((name) => TYPE_FIELDS[name])
+          : undefined
+      const target = field ? TYPE_FIELDS[field] : undefined
+      if (failure instanceof ApiError && field && target) {
+        form.setError(target, { message: failure.fieldErrors[field] })
       } else {
         form.setError('root', {
           message: failure instanceof ApiError ? failure.message : 'Could not save the type.',
@@ -150,11 +191,11 @@ export function LoanTypeDialog({
           label="Name"
           required
           disabled={readOnly}
-          maxLength={60}
+          maxLength={200}
         />
         <CheckboxField
           control={form.control}
-          name="active"
+          name="isActive"
           label="Active"
           tone="navy"
           disabled={readOnly}
@@ -193,30 +234,27 @@ export function LoanTypeDialog({
           control={form.control}
           name="installmentGapMonths"
           label="Gap Between Installments (In Months)"
-          required
           inputMode="numeric"
           disabled={readOnly}
         />
         <SearchSelectField
           control={form.control}
-          name="formula"
+          name="formulaId"
           label="Formula"
-          required
           placeholder="Select Formula"
           disabled={readOnly}
-          options={FORMULA_VARIABLES.map((value) => ({ value, label: value }))}
+          options={withSaved(lookups.data?.formulas, [
+            { id: type?.formulaId ?? null, name: type?.formulaName ?? null },
+          ])}
         />
         <MultiSearchSelectField
           control={form.control}
-          name="contractTypes"
+          name="employmentTypeIds"
           label="Employment Contract Type"
           required
           placeholder="Select Employment Contract Type"
           disabled={readOnly}
-          options={(Object.keys(CONTRACT_TYPE_LABELS) as LoanContractType[]).map((value) => ({
-            value,
-            label: CONTRACT_TYPE_LABELS[value],
-          }))}
+          options={withSaved(lookups.data?.employmentTypes, type?.employmentTypes ?? [])}
         />
         <CheckboxField
           control={form.control}
@@ -227,11 +265,13 @@ export function LoanTypeDialog({
         />
         <SearchSelectField
           control={form.control}
-          name="deductionPayitem"
+          name="deductionPayItemId"
           label="Deduction Payitem"
           placeholder="Select Deduction Payitem"
           disabled={readOnly}
-          options={DEDUCTION_PAYITEMS.map((value) => ({ value, label: value }))}
+          options={withSaved(lookups.data?.deductionPayItems, [
+            { id: type?.deductionPayItemId ?? null, name: type?.deductionPayItemName ?? null },
+          ])}
         />
         <TextareaField
           control={form.control}
@@ -247,8 +287,8 @@ export function LoanTypeDialog({
 }
 
 const categorySchema = z.object({
-  name: z.string().trim().min(1, 'Enter the name').max(60, 'Keep it under 60 characters'),
-  active: z.boolean(),
+  name: z.string().trim().min(1, 'Enter the name').max(200, 'Keep it under 200 characters'),
+  isActive: z.boolean(),
   description: z.string().trim().max(500, 'Keep it under 500 characters'),
 })
 type CategoryValues = z.infer<typeof categorySchema>
@@ -276,13 +316,21 @@ export function LoanCategoryDialog({
     resolver: zodResolver(categorySchema),
     defaultValues: {
       name: category?.name ?? '',
-      active: category?.active ?? true,
+      isActive: category?.isActive ?? true,
       description: category?.description ?? '',
     },
   })
   const submit = form.handleSubmit(async (values) => {
     try {
-      await save.mutateAsync({ id: category?.id, input: values })
+      await save.mutateAsync({
+        id: category?.id,
+        input: {
+          name: values.name,
+          isActive: values.isActive,
+          description: values.description || null,
+          ...(category ? { rowVersion: category.rowVersion } : {}),
+        },
+      })
       onClose()
     } catch (failure) {
       if (failure instanceof ApiError && failure.fieldErrors.name) {
@@ -316,11 +364,11 @@ export function LoanCategoryDialog({
           label="Name"
           required
           disabled={readOnly}
-          maxLength={60}
+          maxLength={200}
         />
         <CheckboxField
           control={form.control}
-          name="active"
+          name="isActive"
           label="Active"
           tone="navy"
           disabled={readOnly}

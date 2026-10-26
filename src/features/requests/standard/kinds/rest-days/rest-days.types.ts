@@ -1,35 +1,33 @@
-/** A Rest Days request: days off on the roster's working days between two dates. */
+/**
+ * A Rest Day request's `details` (`GET /requests/rest-day/{id}`): the roster
+ * and department, whether the days are paid, and the days counted (the
+ * person's shift days between the header's `fromDate` and `toDate`, or every
+ * day when they have no schedule). The reason is the header's `reason`.
+ */
 export interface RestDayPayload {
-  department: string
+  departmentId: string
+  departmentName: string | null
   rosterGroupId: string
-  rosterTitle: string
-  /** "Morning Shift (10:00 am - 05:00 pm)". */
-  shift: string
-  /** "10:00 AM - 05:00 PM": the roster's day. */
-  time: string
-  /** "7h : 00m": one day of the roster. */
-  duration: string
-  from: string
-  to: string
-  /** The working days asked off. */
-  dates: string[]
-  days: number
-  payable: boolean
-  reason: string
+  rosterGroupName: string | null
+  isPayable: boolean
+  days: { requestDate: string; scheduleId: string | null }[]
 }
 
-export interface RestDayInput {
-  employeeId?: string
-  department: string
+/** What the form sends as `details`. */
+export interface RestDayDetailsIn {
+  departmentId: string | null
   rosterGroupId: string
-  from: string
-  to: string
-  reason: string
+  isPayable: boolean
+}
+
+/** A roster (`GET /scheduling/options/roster-groups`). */
+export interface RosterOption {
+  id: string
+  name: string
+  startTime: string | null
+  endTime: string | null
 }
 
 export interface RestDayLookups {
-  /** Working days are the roster's full lower-case weekday names ("monday" …). */
-  rosters: { id: string; title: string; shift: string; workingDays: string[] }[]
-  /** Each person's current roster. */
-  rosterOf: Record<string, string | null>
+  rosters: RosterOption[]
 }

@@ -1,16 +1,18 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
-import { differenceInCalendarMonths, format, isWeekend, subDays } from 'date-fns'
+import { addDays, differenceInCalendarMonths, format } from 'date-fns'
 import { describe, expect, it } from 'vitest'
 
-import { buildFlow, evaluateCondition, planFlow } from '@/mocks/requests/flow'
+import { buildFlow, planFlow } from '@/mocks/requests/flow'
 import { delegatorsOf } from '@/mocks/requests/people'
-import { requestRestrictions, restrictionFor } from '@/mocks/requests/settings-db'
+import { requestAuthorities, restrictionFor } from '@/mocks/requests/settings-db'
 import { renderApp } from '@/test/test-utils'
 
 async function choose(user: UserEvent, label: string | RegExp, option: string | RegExp) {
   await user.click(await screen.findByRole('combobox', { name: label }))
-  await user.click(await screen.findByRole('option', { name: option }))
+  // The search list (the node editor's own drop-downs have options of the same names).
+  const list = await screen.findByRole('listbox')
+  await user.click(await within(list).findByRole('option', { name: option }))
 }
 
 /** Opens a date field's calendar and picks the day, moving months if needed. */
@@ -25,13 +27,6 @@ async function pickDate(user: UserEvent, label: string | RegExp, date: Date) {
   await user.click(screen.getByRole('button', { name: new RegExp(format(date, 'MMMM do, yyyy')) }))
 }
 
-/** Today or the last weekday before it (a Morning Work shift day). */
-function lastWeekday(): Date {
-  let day = new Date()
-  while (isWeekend(day)) day = subDays(day, 1)
-  return day
-}
-
 const iso = (date: Date) => format(date, 'yyyy-MM-dd')
 
 describe('Request Restriction', () => {
@@ -42,6 +37,7 @@ describe('Request Restriction', () => {
       await screen.findByRole('heading', { name: 'Request Restriction', level: 1 }),
     ).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'December 15, 2023' })).toBeVisible()
+    expect(screen.getAllByRole('cell', { name: 'Top Edge Technologies' })[0]).toBeVisible()
     // The sub menu and the sidebar's Requests tree both link to it.
     expect(screen.getAllByRole('link', { name: 'Request Restriction' })[0]).toBeVisible()
 
@@ -51,10 +47,16 @@ describe('Request Restriction', () => {
     expect(await within(dialog).findByText('Choose the start date')).toBeVisible()
     expect(within(dialog).getByText('Choose the request type')).toBeVisible()
 
-    const day = lastWeekday()
+    // The start date must be in the future (the API says so on the field).
+    await pickDate(user, /^Start Date/, new Date())
+    await pickDate(user, /^End Date/, new Date())
+    await choose(user, /^Request Types/, 'Punch Request')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(dialog).findByText('Start date must be in the future.')).toBeVisible()
+
+    const day = addDays(new Date(), 7)
     await pickDate(user, /^Start Date/, day)
     await pickDate(user, /^End Date/, day)
-    await choose(user, /^Request Types/, 'Punch Request')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('Request restriction created')).toBeInTheDocument()
     expect(restrictionFor('punch', iso(day))).toMatch(/^Punch requests are closed from /)
@@ -62,13 +64,14 @@ describe('Request Restriction', () => {
       2,
     )
 
-    // Ticking rows brings up the red Delete.
+    // Ticking rows brings up the red Delete; each is deleted with its row version.
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('checkbox', { name: 'Select all restrictions on this page' }))
     await user.click(screen.getByRole('button', { name: 'Delete' }))
     await user.click(await screen.findByRole('button', { name: 'Yes' }))
     expect(await screen.findByText('3 restrictions deleted')).toBeInTheDocument()
     expect(await screen.findByText('No Record Found')).toBeVisible()
+    expect(restrictionFor('punch', iso(day))).toBeNull()
   })
 
   it('shows a restriction read-only', async () => {
@@ -90,31 +93,6 @@ describe('Request Restriction', () => {
     expect(within(dialog).queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeVisible()
   })
-
-  it('stops a punch request on a closed date', async () => {
-    const day = iso(lastWeekday())
-    requestRestrictions.insert({
-      id: 'rr_test',
-      companyId: 'co_topedge',
-      requestType: 'punch',
-      startDate: day,
-      endDate: day,
-      description: '',
-      createdAt: new Date().toISOString(),
-    })
-    const { user } = renderApp('/requests/punch')
-
-    await user.click(await screen.findByRole('button', { name: 'Create' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Punch Request Create' })
-    await pickDate(user, /^Date/, lastWeekday())
-    await choose(user, /^Punch Type/, 'Check Out')
-    fireEvent.change(within(dialog).getByLabelText(/^Punch Time/), { target: { value: '17:40' } })
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-
-    const closed = `Punch requests are closed from ${format(lastWeekday(), 'MMMM d, yyyy')}`
-    expect((await screen.findAllByText(new RegExp(closed))).length).toBeGreaterThan(0)
-    expect(screen.getByRole('dialog', { name: 'Punch Request Create' })).toBeVisible()
-  })
 })
 
 describe('Delegation', () => {
@@ -125,92 +103,63 @@ describe('Delegation', () => {
     expect(delegatorsOf('em_shelley', 'punch')).toEqual(['em_bilal'])
 
     await user.click(
-      await screen.findByRole('button', {
-        name: "Actions for Bilal Ahmed's Punch Request delegation",
-      }),
+      await screen.findByRole('button', { name: "Actions for Bilal Ahmed's Punch delegation" }),
     )
     await user.click(await screen.findByRole('menuitem', { name: 'Disable' }))
     await user.click(await screen.findByRole('button', { name: 'Yes' }))
     expect(await screen.findByText('1 delegation made in active')).toBeInTheDocument()
     // Bilal's punch approvals are no longer passed on; his shift approvals still are.
     expect(delegatorsOf('em_shelley', 'punch')).toEqual([])
-    expect(delegatorsOf('em_shelley', 'shift')).toEqual(['em_bilal'])
+    expect(delegatorsOf('em_shelley', 'shift_swap')).toEqual(['em_bilal'])
 
-    // Ticking rows swaps Create / Filters for the bulk Active / In Active.
+    // Ticking rows swaps Create / Filters for the bulk Active / In Active; only the
+    // in-active ones change.
     await user.click(screen.getByRole('checkbox', { name: 'Select all delegations on this page' }))
     expect(screen.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Active' }))
     await user.click(await screen.findByRole('button', { name: 'Yes' }))
-    expect(await screen.findByText('2 delegations made active')).toBeInTheDocument()
+    expect(await screen.findByText('1 delegation made active')).toBeInTheDocument()
     expect(delegatorsOf('em_shelley', 'punch')).toEqual(['em_bilal'])
 
     await user.click(await screen.findByRole('button', { name: 'Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Request Delegations Create' })
-    await choose(user, /^Delegator/, /^Ayesha Malik/)
-    await choose(user, /^Types/, 'Leave Request')
+    await choose(user, /^Delegator/, /^Bilal Ahmed/)
+    await choose(user, /^Types/, 'Punch Request')
     await choose(user, /^Delegatee/, /^Omar Siddiqui/)
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(
       await within(dialog).findByText(
-        'Ayesha Malik already delegates Leave Requests to Hina Raza.',
+        'This person already has an active delegation for this request type.',
       ),
     ).toBeVisible()
 
     await choose(user, /^Types/, 'Expense Request')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('Delegation created')).toBeInTheDocument()
-    expect(delegatorsOf('em_omar', 'expense')).toEqual(['em_ayesha'])
+    expect(delegatorsOf('em_omar', 'expense')).toEqual(['em_bilal'])
   })
 })
 
 describe('Request Flows', () => {
-  it('sets a chain of authorities for a person', async () => {
+  it('refuses a looping flow and saves a new version with an on-looker', async () => {
     const { user } = renderApp('/requests/settings/flows')
 
     expect(await screen.findByRole('heading', { name: 'Request Flows', level: 1 })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'Final Authority' })).toBeVisible()
-    const card = screen.getByRole('region', { name: 'Request Flow' })
-    const save = within(card).getByRole('button', { name: 'Save' })
-    expect(save).toBeDisabled()
 
-    await user.click(within(card).getByRole('combobox', { name: 'Authority' }))
-    await user.click(await screen.findByRole('option', { name: 'HOD' }))
-    await user.click(screen.getByRole('option', { name: 'Final Authority' }))
-    await user.keyboard('{Escape}')
-    expect(within(card).getByRole('button', { name: 'Remove HOD' })).toBeVisible()
-
-    await user.type(within(card).getByRole('searchbox', { name: 'Search employee' }), 'Haroon')
-    await user.click(await within(card).findByRole('checkbox', { name: 'Select Haroon Jalani' }))
-    expect(save).toBeEnabled()
-    await user.click(save)
-    expect(await screen.findByText('Authority set for 1 employee')).toBeInTheDocument()
-    expect(await within(card).findByRole('cell', { name: 'HOD → Final Authority' })).toBeVisible()
-
-    expect(buildFlow('em_haroon').map((step) => [step.authority, step.approverId])).toEqual([
-      ['HOD', 'em_bilal'],
-      ['HR Manager', 'em_shelley'],
-    ])
-    // Other types keep the General Flow.
-    expect(buildFlow('em_haroon', 'shift').map((step) => step.authority)).toEqual([
-      'Line Manager',
-      'HR Manager',
-    ])
-  })
-
-  it('refuses a looping flow and saves an on-looker node', async () => {
-    const { user } = renderApp('/requests/settings/flows')
-
-    await user.click(await screen.findByRole('button', { name: 'Edit' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Actions for General Flow (Company)' }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Edit' }))
     const dialog = await screen.findByRole('dialog', { name: 'Request Flow Edit' })
-    const nextOfTwo = within(dialog).getByRole('spinbutton', { name: 'Next, row 2' })
+    const nextOfTwo = await within(dialog).findByRole('spinbutton', { name: 'Next, row 2' })
     await user.type(nextOfTwo, '1')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(
-      await within(dialog).findByText('Row 1 leads back to itself; the flow would never end.'),
+      await within(dialog).findByText('The flow goes round in a loop through row 1.'),
     ).toBeVisible()
 
     await user.clear(nextOfTwo)
-    await user.type(nextOfTwo, '3')
     await user.click(within(dialog).getByRole('button', { name: 'Add Node' }))
     await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Node, row 3' }), [
       'Employee',
@@ -226,10 +175,60 @@ describe('Request Flows', () => {
     expect(plan.lookerIds).toEqual(['em_kaleem'])
   })
 
-  it('reads simple conditions', () => {
-    expect(evaluateCondition('punchType == missing-punch', { punchType: 'check-in' })).toBe(false)
-    expect(evaluateCondition('days > 3', { days: 5 })).toBe(true)
-    // A fact the request does not have passes.
-    expect(evaluateCondition('amount > 100', {})).toBe(true)
+  it('adds a flow for one employee', async () => {
+    const { user } = renderApp('/requests/settings/flows')
+
+    await user.click(await screen.findByRole('button', { name: 'Create' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Request Flow Create' })
+    await user.type(within(dialog).getByRole('textbox', { name: /^Name/ }), 'Haroon punch')
+    await choose(user, /^Applies To/, 'Employee')
+    await choose(user, /^Employee\s*\*?$/, /^Haroon Jalani/)
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Node, row 1' }), ['HOD'])
+    await user.click(within(dialog).getByRole('button', { name: 'Add Node' }))
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Node, row 2' }), [
+      'Final Authority',
+    ])
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Request flow saved')).toBeInTheDocument()
+    expect(await screen.findByRole('cell', { name: 'Employee: Haroon Jalani' })).toBeVisible()
+    expect(
+      buildFlow('em_haroon', 'punch').map((step) => [step.authority, step.approverId]),
+    ).toEqual([
+      ['HOD', 'em_bilal'],
+      ['HR Manager', 'em_shelley'],
+    ])
+    // Everyone else keeps the company's flow.
+    expect(buildFlow('em_omar', 'punch').map((step) => step.authority)).toEqual([
+      'Line Manager',
+      'HR Manager',
+    ])
+  })
+
+  it('keeps who holds each authority', async () => {
+    const { user } = renderApp('/requests/settings/flows?tab=authorities')
+
+    expect(await screen.findByRole('heading', { name: 'Authorities', level: 1 })).toBeVisible()
+    expect(await screen.findByRole('cell', { name: 'Finance Manager' })).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Authority Create' })
+    await choose(user, /^Authority/, 'Finance Manager')
+    await choose(user, /^Employee/, /^Bilal Ahmed/)
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(dialog).findByText(/Someone already holds this authority/)).toBeVisible()
+
+    await choose(user, /^Authority/, 'Team Lead')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Authority created')).toBeInTheDocument()
+    expect(requestAuthorities.all().some((row) => row.authority === 'team_lead')).toBe(true)
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Actions for Finance Manager held by Hina Raza' }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    await user.click(await screen.findByRole('button', { name: 'Yes' }))
+    expect(await screen.findByText('Authority deleted')).toBeInTheDocument()
+    expect(requestAuthorities.all().some((row) => row.authority === 'finance_manager')).toBe(false)
   })
 })

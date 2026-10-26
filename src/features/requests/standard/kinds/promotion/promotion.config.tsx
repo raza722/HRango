@@ -2,6 +2,8 @@ import { format, parse } from 'date-fns'
 
 import { type FilterField, formatAmount } from '@/features/payroll'
 
+import { typePermission } from '../../../api/backend'
+import { employeeFilterField } from '../../../components/shared/request-employee'
 import { REQUEST_STATUSES } from '../../../types/requests.types'
 import type {
   StandardFilterContext,
@@ -10,23 +12,24 @@ import type {
 } from '../../standard.types'
 import { nowrap, standardColumns as col } from '../../standard-columns'
 import { STANDARD_STATUS_META } from '../../standard-styles'
-import type { PromotionLookups, PromotionPayload } from './promotion.types'
+import type { PromotionPayload } from './promotion.types'
 import { PromotionDetail } from './promotion-detail'
 import { PromotionForm } from './promotion-form'
 
 /** "29 Aug 2024": short enough for the list's many columns. */
-const shortDay = (date: string) => format(parse(date, 'yyyy-MM-dd', new Date()), 'd MMM yyyy')
+const shortDay = (date: string | null) =>
+  date ? format(parse(date, 'yyyy-MM-dd', new Date()), 'd MMM yyyy') : '—'
 
 type Row = StandardRequest<PromotionPayload>
 
 /** The new designation, with the grade and level (and Demotion) under it. */
 const designationCell = (row: Row) => (
   <span className="grid">
-    <span>{row.payload.designation}</span>
+    <span>{row.payload.designationName ?? '—'}</span>
     <span className="text-[0.6875rem] whitespace-nowrap">
-      {row.payload.grade} · {row.payload.level}
+      {[row.payload.gradeName, row.payload.jobLevelName].filter(Boolean).join(' · ')}
     </span>
-    {row.payload.demotion && (
+    {row.payload.isDemotion && (
       <span className="text-[0.6875rem] text-[#D83838] dark:text-red-300">Demotion</span>
     )}
   </span>
@@ -35,48 +38,23 @@ const designationCell = (row: Row) => (
 /** The new salary, and the previous one under it. */
 const salaryCell = (row: Row) => (
   <span className="grid whitespace-nowrap">
-    <span>{formatAmount(row.payload.salary)}</span>
-    <span className="text-[0.6875rem]">from {formatAmount(row.payload.previousSalary)}</span>
+    <span>{formatAmount(row.payload.newSalary)}</span>
+    {row.payload.previousSalary !== null && (
+      <span className="text-[0.6875rem]">from {formatAmount(row.payload.previousSalary)}</span>
+    )}
   </span>
 )
 
-function filterFields({ tab, view, lookups }: StandardFilterContext): readonly FilterField[] {
-  const extra = lookups?.extra as PromotionLookups | undefined
-  const people = (lookups?.employees ?? []).map((person) => ({
-    value: person.id,
-    label: person.name,
-    hint: person.code,
-  }))
-  const list = (values: readonly string[] | undefined) =>
-    (values ?? []).map((value) => ({ value, label: value }))
+/** The Filters popup, cut to what the API filters on (designation and grade are not). */
+function filterFields({ kind, tab, view, lookups }: StandardFilterContext): readonly FilterField[] {
   const fields: FilterField[] = [
+    employeeFilterField(typePermission(kind, 'create')),
     {
       kind: 'select',
-      key: 'employeeId',
-      label: 'Employee',
-      placeholder: 'Select Employee',
-      options: people,
-    },
-    {
-      kind: 'select',
-      key: 'department',
+      key: 'departmentId',
       label: 'Department',
       placeholder: 'Select Department',
-      options: list(lookups?.departments),
-    },
-    {
-      kind: 'select',
-      key: 'designation',
-      label: 'Designation',
-      placeholder: 'Select Designation',
-      options: list(extra?.designations),
-    },
-    {
-      kind: 'select',
-      key: 'grade',
-      label: 'Grade',
-      placeholder: 'Select Grade',
-      options: list(extra?.grades),
+      options: (lookups?.departments ?? []).map((item) => ({ value: item.id, label: item.name })),
     },
     {
       kind: 'select',
@@ -88,6 +66,7 @@ function filterFields({ tab, view, lookups }: StandardFilterContext): readonly F
         label: STANDARD_STATUS_META[value].label,
       })),
     },
+    { kind: 'text', key: 'q', label: 'Code', placeholder: 'Code or name' },
     { kind: 'date', key: 'from', label: 'From' },
     { kind: 'date', key: 'to', label: 'To' },
   ]
@@ -100,7 +79,6 @@ function filterFields({ tab, view, lookups }: StandardFilterContext): readonly F
       options: (lookups?.delegators ?? []).map((person) => ({
         value: person.id,
         label: person.name,
-        hint: person.code,
       })),
     })
   }
@@ -122,9 +100,11 @@ export const promotionConfig: StandardKindConfig<PromotionPayload> = {
   noun: 'Promotion',
   requestsTitle: 'Promotion Requests',
   approvalsTitle: 'Promotion Approvals',
-  approvalViews: ['requested', 'delegates'],
+  approvalViews: ['requested', 'delegates', 'cancellations'],
   statusTabs: true,
   bulk: true,
+  // The FRD: "Approval remarks are required" (the API refuses an approval without them).
+  approveNeedsRemarks: true,
   requestColumns: () => [
     col.code(),
     col.employee('Employees'),

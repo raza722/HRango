@@ -26,45 +26,40 @@ import {
   useFilters,
 } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import {
   useDelegations,
-  useRequestSettingsLookups,
+  useDeleteDelegations,
   useSetDelegationsActive,
 } from '../../hooks/use-request-settings'
-import {
-  DELEGATION_STATUS_META,
-  MAROON_BUTTON,
-  SETTINGS_PAGE_SIZE,
-  SETTINGS_REQUEST_TYPE_LABELS,
-} from '../../settings.constants'
-import type { RequestDelegationRow } from '../../types/request-settings.types'
+import { DELEGATION_STATUS_META, MAROON_BUTTON, SETTINGS_PAGE_SIZE } from '../../settings.constants'
+import type { RequestDelegation } from '../../types/request-settings.types'
 import { DelegationDialog } from './delegation-dialog'
-import { REQUEST_TYPE_OPTIONS, useTicks } from './settings-helpers'
+import { ACTIVE_OPTIONS, REQUEST_TYPE_OPTIONS, useTicks } from './settings-helpers'
 import { CreateButton } from './settings-parts'
 
 const routeApi = getRouteApi('/_app/requests/settings/delegation')
 
 type Dialog =
-  | { type: 'create' | 'filters' }
+  | { type: 'create' | 'filters' | 'bulk-delete' }
   | { type: 'bulk'; active: boolean }
-  | { type: 'view' | 'toggle'; row: RequestDelegationRow }
+  | { type: 'view' | 'toggle' | 'delete'; row: RequestDelegation }
   | null
 
-const STATUS_OPTIONS = [
-  { value: 'active', label: 'Active' },
-  { value: 'inactive', label: 'In Active' },
-]
-
 /**
- * Delegations: whose approvals pass to whom, per request type. Tick rows to
- * make several Active or In Active at once.
+ * Delegations (`/requests/settings/delegations`): whose approvals pass to
+ * whom, per request type. Tick rows to make several Active or In Active at
+ * once (PATCHed one by one). There are no start / end dates.
  */
 export function DelegationsPage() {
   const { page } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
-  const lookups = useRequestSettingsLookups()
+  const canCreate = useCan('requests.settings.delegations.create')
+  const canEdit = useCan('requests.settings.delegations.edit')
+  const canDelete = useCan('requests.settings.delegations.delete')
+  const remove = useDeleteDelegations()
   const [filters, setFilters] = useFilters('request-delegations')
   const [dialog, setDialog] = useState<Dialog>(null)
   const { ticked, setTicked, toggle, clear } = useTicks()
@@ -74,7 +69,7 @@ export function DelegationsPage() {
     pageSize: SETTINGS_PAGE_SIZE,
     delegatorId: filters.delegatorId,
     delegateeId: filters.delegateeId,
-    status: filters.status,
+    isActive: filters.isActive,
     requestType: filters.requestType,
   })
   const rows = list.data?.data ?? []
@@ -87,12 +82,12 @@ export function DelegationsPage() {
     setDialog(null)
   }
   const allTicked = rows.length > 0 && rows.every((row) => ticked.has(row.id))
-  const describe = (row: RequestDelegationRow) =>
-    `${row.delegator.name}'s ${SETTINGS_REQUEST_TYPE_LABELS[row.requestType]} delegation`
+  const describe = (row: RequestDelegation) =>
+    `${row.delegatorName ?? 'Unknown'}'s ${row.requestTypeName} delegation`
 
-  const change = (ids: string[], active: boolean) => {
+  const change = (picked: readonly RequestDelegation[], active: boolean) => {
     setActive.mutate(
-      { ids, active },
+      { rows: picked, active },
       {
         onSuccess: () => {
           clear()
@@ -106,7 +101,18 @@ export function DelegationsPage() {
     )
   }
 
-  const columns: DataTableColumn<RequestDelegationRow>[] = [
+  const deleteRows = (picked: readonly RequestDelegation[]) => {
+    remove.mutate(picked, {
+      onSuccess: () => {
+        clear()
+      },
+      onError: (error) => {
+        toast.error(error instanceof ApiError ? error.message : 'Could not delete the delegation.')
+      },
+    })
+  }
+
+  const columns: DataTableColumn<RequestDelegation>[] = [
     {
       id: 'select',
       header: (
@@ -133,15 +139,20 @@ export function DelegationsPage() {
         />
       ),
     },
-    { id: 'delegator', header: 'Delegator', mobile: 'heading', cell: (row) => row.delegator.name },
-    { id: 'delegatee', header: 'Delegatee', cell: (row) => row.delegatee.name },
-    { id: 'type', header: 'Type', cell: (row) => SETTINGS_REQUEST_TYPE_LABELS[row.requestType] },
+    {
+      id: 'delegator',
+      header: 'Delegator',
+      mobile: 'heading',
+      cell: (row) => row.delegatorName ?? '—',
+    },
+    { id: 'delegatee', header: 'Delegatee', cell: (row) => row.delegateeName ?? '—' },
+    { id: 'type', header: 'Type', cell: (row) => row.requestTypeName },
     {
       id: 'description',
       header: 'Description',
       cell: (row) => (
-        <span className="block max-w-56 truncate" title={row.description}>
-          {row.description || '—'}
+        <span className="block max-w-56 truncate" title={row.description ?? undefined}>
+          {row.description === null || row.description === '' ? '—' : row.description}
         </span>
       ),
     },
@@ -149,36 +160,35 @@ export function DelegationsPage() {
       id: 'active',
       header: 'Active',
       align: 'center',
-      cell: (row) => <StatusChip {...DELEGATION_STATUS_META[row.active ? 'active' : 'inactive']} />,
+      cell: (row) => (
+        <StatusChip {...DELEGATION_STATUS_META[row.isActive ? 'active' : 'inactive']} />
+      ),
     },
   ]
 
-  const people = (lookups.data?.employees ?? []).map((person) => ({
-    value: person.id,
-    label: person.name,
-    hint: person.code,
-  }))
+  // People from `GET /employees/lookup` (searched on the server, paged), former staff too.
+  const people = { permission: 'requests.settings.delegations.view', includeInactive: true }
   const fields: FilterField[] = [
     {
-      kind: 'select',
+      kind: 'employee',
       key: 'delegatorId',
       label: 'Delegator',
       placeholder: 'Select Delegator',
-      options: people,
+      filters: people,
     },
     {
-      kind: 'select',
+      kind: 'employee',
       key: 'delegateeId',
       label: 'Delegatee',
       placeholder: 'Select Delegatee',
-      options: people,
+      filters: people,
     },
     {
       kind: 'select',
-      key: 'status',
+      key: 'isActive',
       label: 'Status',
       placeholder: 'Select an Option',
-      options: STATUS_OPTIONS,
+      options: ACTIVE_OPTIONS,
     },
     {
       kind: 'select',
@@ -193,34 +203,51 @@ export function DelegationsPage() {
     <PayrollCard
       title="Delegations"
       actions={
-        ticked.size > 0 ? (
+        (canEdit || canDelete) && ticked.size > 0 ? (
           <>
-            <Button
-              disabled={setActive.isPending}
-              onClick={() => {
-                setDialog({ type: 'bulk', active: true })
-              }}
-              className={cn(toolbarButton, btn.navy, 'min-w-20 text-sm')}
-            >
-              Active
-            </Button>
-            <Button
-              disabled={setActive.isPending}
-              onClick={() => {
-                setDialog({ type: 'bulk', active: false })
-              }}
-              className={cn(toolbarButton, MAROON_BUTTON, 'min-w-20 text-sm')}
-            >
-              In Active
-            </Button>
+            {canDelete && (
+              <Button
+                disabled={remove.isPending}
+                onClick={() => {
+                  setDialog({ type: 'bulk-delete' })
+                }}
+                className={cn(toolbarButton, btn.red, 'min-w-20 text-sm')}
+              >
+                Delete
+              </Button>
+            )}
+            {canEdit && (
+              <>
+                <Button
+                  disabled={setActive.isPending}
+                  onClick={() => {
+                    setDialog({ type: 'bulk', active: true })
+                  }}
+                  className={cn(toolbarButton, btn.navy, 'min-w-20 text-sm')}
+                >
+                  Active
+                </Button>
+                <Button
+                  disabled={setActive.isPending}
+                  onClick={() => {
+                    setDialog({ type: 'bulk', active: false })
+                  }}
+                  className={cn(toolbarButton, MAROON_BUTTON, 'min-w-20 text-sm')}
+                >
+                  In Active
+                </Button>
+              </>
+            )}
           </>
         ) : (
           <>
-            <CreateButton
-              onClick={() => {
-                setDialog({ type: 'create' })
-              }}
-            />
+            {canCreate && (
+              <CreateButton
+                onClick={() => {
+                  setDialog({ type: 'create' })
+                }}
+              />
+            )}
             <FiltersButton
               count={activeCount(filters)}
               onClick={() => {
@@ -252,12 +279,27 @@ export function DelegationsPage() {
                   setDialog({ type: 'view', row })
                 },
               },
-              {
-                label: row.active ? 'Disable' : 'Enable',
-                onSelect: () => {
-                  setDialog({ type: 'toggle', row })
-                },
-              },
+              ...(canEdit
+                ? [
+                    {
+                      label: row.isActive ? 'Disable' : 'Enable',
+                      onSelect: () => {
+                        setDialog({ type: 'toggle', row })
+                      },
+                    },
+                  ]
+                : []),
+              ...(canDelete
+                ? [
+                    {
+                      label: 'Delete',
+                      variant: 'destructive' as const,
+                      onSelect: () => {
+                        setDialog({ type: 'delete', row })
+                      },
+                    },
+                  ]
+                : []),
             ]}
           />
         )}
@@ -292,15 +334,34 @@ export function DelegationsPage() {
           (
             dialog?.type === 'bulk'
               ? dialog.active
-              : dialog?.type === 'toggle' && !dialog.row.active
+              : dialog?.type === 'toggle' && !dialog.row.isActive
           )
             ? 'Make the delegations active'
             : 'Make the delegations in active'
         }
         message="Are you sure you want to Perform this action?"
         onConfirm={() => {
-          if (dialog?.type === 'bulk') change([...ticked], dialog.active)
-          if (dialog?.type === 'toggle') change([dialog.row.id], !dialog.row.active)
+          if (dialog?.type === 'bulk') {
+            change(
+              rows.filter((row) => ticked.has(row.id)),
+              dialog.active,
+            )
+          }
+          if (dialog?.type === 'toggle') change([dialog.row], !dialog.row.isActive)
+        }}
+      />
+      <ConfirmAction
+        open={dialog?.type === 'delete' || dialog?.type === 'bulk-delete'}
+        onOpenChange={(open) => {
+          if (!open) close()
+        }}
+        title={
+          dialog?.type === 'bulk-delete' ? 'Delete the ticked delegations' : 'Delete delegation'
+        }
+        message="Are you sure you want to Delete this?"
+        onConfirm={() => {
+          if (dialog?.type === 'delete') deleteRows([dialog.row])
+          if (dialog?.type === 'bulk-delete') deleteRows(rows.filter((row) => ticked.has(row.id)))
         }}
       />
     </PayrollCard>

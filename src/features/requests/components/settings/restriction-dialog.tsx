@@ -9,9 +9,13 @@ import { DateField, PayrollDialog, SearchSelectField } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
-import { useCreateRestriction, useRestriction } from '../../hooks/use-request-settings'
 import {
-  type RequestRestrictionRow,
+  useCreateRestriction,
+  useRestriction,
+  useUpdateRestriction,
+} from '../../hooks/use-request-settings'
+import {
+  type RequestRestriction,
   SETTINGS_REQUEST_TYPES,
   type SettingsRequestType,
 } from '../../types/request-settings.types'
@@ -33,31 +37,49 @@ type Values = z.infer<typeof schema>
 const FIELDS = ['startDate', 'endDate', 'requestType', 'description'] as const
 
 /**
- * "Request Restriction Create" / View: Start Date, End Date, Request Types
- * and Description. View is the same form in grey with Cancel only.
+ * "Request Restriction Create" / View / Edit: Start Date (in the future), End Date,
+ * Request Types and Description. View is the same form in grey with Cancel only; Edit
+ * (`PUT /requests/settings/restrictions/{id}`, `requests.settings.restrictions.edit`) saves
+ * with the rowVersion just read.
  */
-export function RestrictionDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
+export function RestrictionDialog({
+  id,
+  edit = false,
+  onClose,
+}: {
+  id: string | null
+  /** Open the restriction `id` for editing (View otherwise). */
+  edit?: boolean
+  onClose: () => void
+}) {
   const restriction = useRestriction(id)
   if (id && !restriction.data) {
     return (
-      <PayrollDialog title="Request Restriction View" onClose={onClose} readOnly>
+      <PayrollDialog
+        title={edit ? 'Request Restriction Edit' : 'Request Restriction View'}
+        onClose={onClose}
+        readOnly
+      >
         <Skeleton className="h-56 w-full" />
       </PayrollDialog>
     )
   }
-  return <RestrictionForm restriction={restriction.data} onClose={onClose} />
+  return <RestrictionForm restriction={restriction.data} edit={edit} onClose={onClose} />
 }
 
 function RestrictionForm({
   restriction,
+  edit,
   onClose,
 }: {
-  restriction: RequestRestrictionRow | undefined
+  restriction: RequestRestriction | undefined
+  edit: boolean
   onClose: () => void
 }) {
   const formId = useId()
   const create = useCreateRestriction()
-  const readOnly = restriction !== undefined
+  const update = useUpdateRestriction()
+  const readOnly = restriction !== undefined && !edit
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -71,10 +93,20 @@ function RestrictionForm({
   const submit = form.handleSubmit(async (values) => {
     if (!SETTINGS_REQUEST_TYPES.includes(values.requestType as SettingsRequestType)) return
     try {
-      await create.mutateAsync({
-        ...values,
+      const input = {
+        startDate: values.startDate,
+        endDate: values.endDate,
         requestType: values.requestType as SettingsRequestType,
-      })
+        description: values.description === '' ? null : values.description,
+      }
+      if (restriction) {
+        await update.mutateAsync({
+          id: restriction.id,
+          input: { ...input, rowVersion: restriction.rowVersion },
+        })
+      } else {
+        await create.mutateAsync(input)
+      }
       onClose()
     } catch (error) {
       const field = FIELDS.find((name) => error instanceof ApiError && error.fieldErrors[name])
@@ -90,11 +122,17 @@ function RestrictionForm({
 
   return (
     <PayrollDialog
-      title={readOnly ? 'Request Restriction View' : 'Request Restriction Create'}
+      title={
+        readOnly
+          ? 'Request Restriction View'
+          : restriction
+            ? 'Request Restriction Edit'
+            : 'Request Restriction Create'
+      }
       onClose={onClose}
       formId={formId}
       readOnly={readOnly}
-      pending={create.isPending}
+      pending={create.isPending || update.isPending}
       error={form.formState.errors.root?.message}
     >
       <form

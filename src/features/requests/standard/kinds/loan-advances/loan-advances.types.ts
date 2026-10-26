@@ -1,131 +1,189 @@
+import type { OrgOption } from '../../../api/lookups.api'
+import type { NamedRef } from '../../../types/requests.types'
+
+/*
+ * Loan & Advances as the API speaks it: the request type `loan`
+ * (`/requests/loan`, `details` = LoanDetails) and the Loans module
+ * (`/loans/types`, `/loans/categories`, `/loans/installments`, `/loans/summary`).
+ */
+
 /** How the approved money is paid out ("Payment Method *" on the Approve popup). */
-export type LoanPaymentMethod = 'bank' | 'cash' | 'pay-order' | 'cheque'
+export type LoanPaymentMethod = 'bank' | 'cash' | 'pay_order' | 'cheque'
 
-/** The contract types a Loan & Advances type is offered on. */
-export type LoanContractType = 'management-trainee' | 'daily-wager' | 'permanent' | 'contractual'
-
-/** "Guarantor Create": a person who vouches for the loan. */
+/** A guarantor as the request's details give it (`fileUrl` is a signed link). */
 export interface LoanGuarantor {
+  id?: string
   name: string
   /** "12345-1234567-1". */
   cnic: string
-  attachment: string | null
   /** yyyy-MM-dd. */
   knownSince: string
   relationship: string
-  extensionNo: string
-  description: string
+  extensionNo?: string | null
+  description?: string | null
+  /** An uploaded file (POST /files): the guarantor's CNIC copy or similar. */
+  fileId?: string | null
+  fileName?: string | null
+  fileUrl?: string | null
 }
 
-/** A Loan & Advances request as the client sees it. */
+/** `details` of a loan request, as the API sends them. */
 export interface LoanAdvancePayload {
-  typeId: string
-  typeName: string
-  categoryId: string
-  categoryName: string
-  requiredAmount: number
+  loanTypeId: string
+  loanTypeName: string | null
+  loanCategoryId: string | null
+  loanCategoryName: string | null
+  amountRequested: number
   /** yyyy-MM-dd. */
-  requiredDate: string
-  extensionNo: string
-  attachment: string | null
-  reason: string
-  guarantors: LoanGuarantor[]
+  requiredDate: string | null
+  extensionNo: string | null
   /** The approver's fields; null until an approver fills them in. */
-  currency: 'PKR'
   approvedAmount: number | null
+  currency: string | null
   paymentMethod: LoanPaymentMethod | null
   repaymentDate: string | null
-  /** The type's terms when it was approved (they feed Settings → Repayment). */
-  installments: number | null
-  installmentGapMonths: number | null
-  nonPayable: boolean
-  deductionPayitem: string | null
-  /** The employee's approved loans so far: the Approve popup's three totals. */
-  totals: { approved: number; repaid: number; remaining: number }
-}
-
-export interface LoanAdvanceInput {
-  employeeId?: string
-  typeId: string
-  categoryId: string
-  requiredAmount: number
-  requiredDate: string
-  extensionNo: string
-  attachment: string | null
-  reason: string
   guarantors: LoanGuarantor[]
 }
 
-/** An active type as the Create form needs it. */
+/** `details` of POST / PUT /requests/loan. */
+export interface LoanAdvanceDetailsIn {
+  loanTypeId: string
+  loanCategoryId: string | null
+  amountRequested: number
+  requiredDate: string
+  extensionNo: string | null
+  guarantors: {
+    name: string
+    cnic: string
+    knownSince: string
+    relationship: string
+    extensionNo: string | null
+    description: string | null
+    fileId: string | null
+  }[]
+}
+
+/** The Create form's and filters' own look-ups. */
+/**
+ * A loan type the form offers (`GET /requests/options/loan-types?employeeId=`, held with
+ * `requests.loan.create`): active types with their terms.
+ */
 export interface LoanTypeOption {
   id: string
   name: string
   guarantorRequired: boolean
   nonPayable: boolean
-  experienceMonths: number
-  requestGapMonths: number | null
+  minExperienceMonths: number
+  gapBetweenRequestsMonths: number | null
   installments: number
-  installmentGapMonths: number
+  gapBetweenInstallmentsMonths: number | null
+  description: string | null
+  /** The employee's contract type may apply (null: not known, e.g. no employee). */
+  eligible: boolean | null
 }
 
 export interface LoanAdvanceLookups {
+  /** The signed-in person's types (`GET /requests/options/loan-types`). */
   types: LoanTypeOption[]
-  categories: { id: string; name: string }[]
-  locations: string[]
-  branches: string[]
+  /** Categories (`GET /requests/options/loan-categories`). */
+  categories: NamedRef[]
+  locations: OrgOption[]
+  branches: OrgOption[]
 }
 
 // --- Settings ---------------------------------------------------------------------------------------
 
-/** Settings → Types: "Loan & Advance Type Create". */
+/** Settings → Types (`LoanTypeOut`). */
 export interface LoanType {
   id: string
   name: string
-  active: boolean
+  isActive: boolean
   guarantorRequired: boolean
   nonPayable: boolean
-  experienceMonths: number
-  requestGapMonths: number | null
+  minExperienceMonths: number
+  gapBetweenRequestsMonths: number | null
   installments: number
-  installmentGapMonths: number
-  /** A payroll variable ("Gross Salary"). */
-  formula: string
-  contractTypes: LoanContractType[]
-  deductionPayitem: string | null
-  description: string
+  gapBetweenInstallmentsMonths: number | null
+  formulaId: string | null
+  formulaName: string | null
+  deductionPayItemId: string | null
+  deductionPayItemName: string | null
+  description: string | null
+  /** Employment Contract Type*: who may apply. */
+  employmentTypes: NamedRef[]
   createdAt: string
+  updatedAt: string | null
+  rowVersion: string
 }
 
-export type LoanTypeInput = Omit<LoanType, 'id' | 'createdAt'>
+/** `LoanTypeIn`. */
+export interface LoanTypeInput {
+  name: string
+  isActive: boolean
+  guarantorRequired: boolean
+  nonPayable: boolean
+  minExperienceMonths: number
+  gapBetweenRequestsMonths: number | null
+  installments: number
+  gapBetweenInstallmentsMonths: number | null
+  formulaId: string | null
+  deductionPayItemId: string | null
+  employmentTypeIds: string[]
+  description: string | null
+  rowVersion?: string
+}
 
-/** Settings → Categories. */
+/** Settings → Categories (`LoanCategoryOut`). */
 export interface LoanCategory {
   id: string
   name: string
-  active: boolean
-  description: string
+  isActive: boolean
+  description: string | null
   createdAt: string
+  updatedAt: string | null
+  rowVersion: string
 }
 
-export type LoanCategoryInput = Omit<LoanCategory, 'id' | 'createdAt'>
+export interface LoanCategoryInput {
+  name: string
+  isActive: boolean
+  description: string | null
+  rowVersion?: string
+}
 
-/** Settings → Repayment: one installment of an approved loan. */
-export interface LoanRepayment {
-  /** `<request id>-<installment>`. */
+/** Settings → Repayment: one installment of an approved loan (`InstallmentOut`). */
+export interface LoanInstallment {
   id: string
-  requestId: string
-  code: string
-  employee: { id: string; name: string; code: string; department: string; photoUrl: string | null }
-  typeName: string
-  approvedAmount: number
-  installment: number
-  installments: number
-  /** yyyy-MM-dd. */
-  date: string
-  amount: number
-  deductionPayitem: string | null
-  /** Deducted (on or before today) or still to come. */
-  status: 'repaid' | 'due'
+  loanId: string
+  installmentNo: number
+  /** yyyy-MM-dd, the 1st of the month payroll deducts it in. */
+  dueMonth: string
+  /** Decimals arrive as text ("16666.66"). */
+  amount: number | string
+  paidAmount: number | string | null
+  payslipId: string | null
+  paidAt: string | null
+  /** due, paid … */
+  status: string | null
+  employeeId: string | null
+  employeeCode: string | null
+  employeeName: string | null
+  loanTypeName: string | null
+}
+
+/** `GET /loans/summary?employeeId=`: the Approve popup's three totals (decimals as text). */
+export interface LoanSummary {
+  employeeId: string
+  totalApproved: number | string
+  totalRepaid: number | string
+  totalRemaining: number | string
+}
+
+/** The Type dialog's pickers. */
+export interface LoanSettingsLookups {
+  employmentTypes: NamedRef[]
+  formulas: NamedRef[]
+  deductionPayItems: NamedRef[]
 }
 
 export type LoanSettingsSection = 'types' | 'categories' | 'repayment'

@@ -20,28 +20,33 @@ import {
 } from '@/features/payroll'
 import { cn } from '@/lib/utils'
 
+import { typePermission } from '../../api/backend'
 import { ACTION_LABELS, REQUEST_PAGE_SIZE, TRANSFER_STATUS_META } from '../../constants'
 import {
+  permits,
+  useApprovalList,
   useBulkDecide,
-  useTransferApprovals,
-  useTransferList,
+  useRequestList,
+  useRequestPermissions,
   useTransferLookups,
 } from '../../hooks/use-requests'
 import type { RequestSearch } from '../../routing'
 import {
   REQUEST_STATUSES,
   type RequestAction,
+  type RequestFilters,
   type RequestPage,
-  type TransferFilters,
   type TransferRequest,
 } from '../../types/requests.types'
 import {
   CancelRequestDialog,
   DeleteRequestDialog,
+  ForwardRequestDialog,
   RequestFlowDialog,
   RequestHistoryDialog,
 } from '../dialogs/request-dialogs'
 import { RequestTabs } from '../shared/request-controls'
+import { employeeFilterField } from '../shared/request-employee'
 import { createButtonText, requestTitleClass, transferTableClass } from '../shared/request-styles'
 import { selectColumn, transferApprovalColumns, transferRequestColumns } from './transfer-columns'
 import { TransferDecisionDialog } from './transfer-decision-dialog'
@@ -54,31 +59,31 @@ const routeApi = getRouteApi('/_app/requests/transfer')
 type Dialog =
   | { type: 'create' | 'filters' | 'approve' | 'unapprove' }
   | {
-      type: 'edit' | 'view' | 'decide' | 'review' | 'flow' | 'history' | 'cancel' | 'delete'
+      type:
+        'edit' | 'view' | 'decide' | 'review' | 'flow' | 'history' | 'cancel' | 'delete' | 'forward'
       request: TransferRequest
     }
   | null
 
-/** Requests tab: pending requests can be edited or deleted; decided ones have History and Cancel. */
+/** Requests tab: pending requests can be edited, deleted or withdrawn; decided ones have History and Cancel. */
 const REQUEST_ACTIONS: readonly RequestAction[] = ['edit', 'view', 'delete', 'history', 'cancel']
-/** Approvals: Approve/Reject, Flow, View, as drawn. */
-const APPROVAL_ACTIONS: readonly RequestAction[] = ['decide', 'flow', 'view']
+/** Approvals: Approve/Reject, Flow, View, as drawn; Forward passes the step on. */
+const APPROVAL_ACTIONS: readonly RequestAction[] = ['decide', 'forward', 'flow', 'view']
 
+/** The filters the API reads (`from` / `to` match the effective date). */
 const FILTER_KEYS = [
+  'q',
   'employeeId',
   'locationId',
   'branchId',
-  'department',
-  'effectiveDate',
-  'employmentStatus',
+  'departmentId',
   'delegatorId',
-  'nextRequesteeId',
   'from',
   'to',
-] as const satisfies readonly (keyof TransferFilters)[]
+] as const
 
-const toFilters = (values: FilterValues) =>
-  Object.fromEntries(FILTER_KEYS.map((key) => [key, values[key]])) as TransferFilters
+const toFilters = (values: FilterValues): RequestFilters =>
+  Object.fromEntries(FILTER_KEYS.map((key) => [key, values[key]]))
 
 const statusOf = (value: string | undefined) => REQUEST_STATUSES.find((status) => status === value)
 
@@ -161,41 +166,38 @@ function UnapproveDialog({
 export function TransferRequestsPage() {
   const search = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
+  const can = useRequestPermissions('transfer')
   const lookups = useTransferLookups()
-  const bulk = useBulkDecide('transfer')
+  const bulk = useBulkDecide()
   const [dialog, setDialog] = useState<Dialog>(null)
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [requestFilters, setRequestFilters] = useFilters('transfer-requests')
   const [requestedFilters, setRequestedFilters] = useFilters('transfer-requested')
   const [delegateFilters, setDelegateFilters] = useFilters('transfer-delegates')
 
-  const isRequest = search.tab === 'request'
-  // Transfer's Approvals have Requested and Delegates only.
-  const view = search.view === 'delegates' ? 'delegates' : 'requested'
+  const isRequest = search.tab === 'request' || !can.approvals
+  // Transfer's Approvals: Requested, Delegates and Cancellations (no consent steps are drawn).
+  const view =
+    search.view === 'delegates' || search.view === 'cancellations' ? search.view : 'requested'
   const status = search.status
   const update = (patch: Partial<RequestSearch>) => {
     setSelected(new Set())
     void navigate({ search: (prev) => ({ ...prev, ...patch }) })
   }
 
-  const delegates = {
-    ...toFilters(delegateFilters),
-    // "Active" is the design's default.
-    employmentStatus: delegateFilters.employmentStatus ?? 'active',
-  }
-  const requests = useTransferList({
+  const requests = useRequestList('transfer', {
     scope: 'all',
     page: search.page,
     pageSize: REQUEST_PAGE_SIZE,
-    ...(status ? { status } : {}),
-    ...toFilters(requestFilters),
+    status,
+    filters: toFilters(requestFilters),
   })
-  const approvals = useTransferApprovals({
+  const approvals = useApprovalList('transfer', {
     view,
     page: search.page,
     pageSize: REQUEST_PAGE_SIZE,
-    ...(status ? { status } : {}),
-    ...(view === 'delegates' ? delegates : toFilters(requestedFilters)),
+    status,
+    filters: toFilters(view === 'delegates' ? delegateFilters : requestedFilters),
   })
   const list = isRequest ? requests : approvals
   const page: RequestPage<TransferRequest> | undefined = list.data
@@ -211,11 +213,7 @@ export function TransferRequestsPage() {
       ? setDelegateFilters
       : setRequestedFilters
 
-  const people = (lookups.data?.employees ?? []).map((person) => ({
-    value: person.id,
-    label: person.name,
-    hint: person.code,
-  }))
+  const permission = typePermission('transfer', 'create')
   const statusField: FilterField = {
     kind: 'select',
     key: 'status',
@@ -227,13 +225,8 @@ export function TransferRequestsPage() {
     })),
   }
   const placeFields: FilterField[] = [
-    {
-      kind: 'select',
-      key: 'employeeId',
-      label: 'Employee',
-      placeholder: 'Select Employee',
-      options: people,
-    },
+    { kind: 'text', key: 'q', label: 'Search', placeholder: 'Code or employee' },
+    employeeFilterField(permission),
     {
       kind: 'select',
       key: 'locationId',
@@ -255,54 +248,28 @@ export function TransferRequestsPage() {
         hint: lookups.data?.locations.find((location) => location.id === item.locationId)?.name,
       })),
     },
-    { kind: 'date', key: 'effectiveDate', label: 'Effective Date' },
     {
       kind: 'select',
-      key: 'department',
+      key: 'departmentId',
       label: 'Department',
       placeholder: 'Select Department',
-      options: (lookups.data?.departments ?? []).map((name) => ({ value: name, label: name })),
+      options: (lookups.data?.departments ?? []).map((item) => ({
+        value: item.id,
+        label: item.name,
+      })),
     },
+    { kind: 'date', key: 'from', label: 'Effective From' },
+    { kind: 'date', key: 'to', label: 'Effective To' },
     statusField,
   ]
   const delegateFields: FilterField[] = [
-    {
-      kind: 'select',
-      key: 'employeeId',
-      label: 'Employee',
-      placeholder: 'Select Employee',
-      options: people,
-    },
-    {
-      kind: 'select',
-      key: 'employmentStatus',
-      label: 'Employment Status',
-      placeholder: 'Select Employment Status',
-      options: [
-        { value: 'active', label: 'Active' },
-        { value: 'inactive', label: 'Inactive' },
-        { value: 'all', label: 'All' },
-      ],
-    },
+    employeeFilterField(permission),
     statusField,
-    {
-      kind: 'select',
+    employeeFilterField(permission, {
       key: 'delegatorId',
       label: 'Delegator',
       placeholder: 'Select Delegator',
-      options: (lookups.data?.delegators ?? []).map((person) => ({
-        value: person.id,
-        label: person.name,
-        hint: person.code,
-      })),
-    },
-    {
-      kind: 'select',
-      key: 'nextRequesteeId',
-      label: 'Next Requestee',
-      placeholder: 'Select Next Requestee',
-      options: people,
-    },
+    }),
     { kind: 'date', key: 'from', label: 'From' },
     { kind: 'date', key: 'to', label: 'To' },
   ]
@@ -317,7 +284,11 @@ export function TransferRequestsPage() {
   }
   const runBulk = (decision: 'approve' | 'reject', remarks: string) => {
     bulk.mutate(
-      { ids: decidable.map((row) => row.id), input: { decision, remarks } },
+      {
+        items: decidable.map((row) => ({ id: row.id, rowVersion: row.rowVersion })),
+        decision,
+        remarks,
+      },
       {
         onSuccess: ({ done, failed }) => {
           const verb = decision === 'approve' ? 'approved' : 'rejected'
@@ -327,8 +298,8 @@ export function TransferRequestsPage() {
           setSelected(new Set())
           setDialog(null)
         },
-        onError: () => {
-          toast.error('The requests could not be updated.')
+        onError: (failure) => {
+          toast.error(failure.message || 'The requests could not be updated.')
         },
       },
     )
@@ -349,7 +320,8 @@ export function TransferRequestsPage() {
         Transfer {isRequest ? 'Requests' : 'Approvals'}
       </h1>
       <RequestTabs
-        value={search.tab}
+        value={isRequest ? 'request' : 'approvals'}
+        approvals={can.approvals}
         onChange={(tab) => {
           update({ tab, page: 1, status: undefined })
         }}
@@ -366,28 +338,19 @@ export function TransferRequestsPage() {
                     setDialog({ type: 'filters' })
                   }}
                 />
-                <Button
-                  onClick={() => {
-                    setDialog({ type: 'create' })
-                  }}
-                  className={cn(toolbarButton, btn.navy, 'min-w-24 gap-1', createButtonText)}
-                >
-                  <Plus aria-hidden="true" className="size-3.5" /> Create
-                </Button>
+                {can.create && (
+                  <Button
+                    onClick={() => {
+                      setDialog({ type: 'create' })
+                    }}
+                    className={cn(toolbarButton, btn.navy, 'min-w-24 gap-1', createButtonText)}
+                  >
+                    <Plus aria-hidden="true" className="size-3.5" /> Create
+                  </Button>
+                )}
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h3 className="text-sm font-medium text-sidebar dark:text-heading">All Request</h3>
-              <BulkButtons
-                disabled={bulk.isPending}
-                onApprove={() => {
-                  askBulk('approve')
-                }}
-                onUnapprove={() => {
-                  askBulk('unapprove')
-                }}
-              />
-            </div>
+            <h3 className="text-sm font-medium text-sidebar dark:text-heading">All Request</h3>
           </>
         ) : (
           <>
@@ -406,15 +369,17 @@ export function TransferRequestsPage() {
                     setDialog({ type: 'filters' })
                   }}
                 />
-                <BulkButtons
-                  disabled={bulk.isPending}
-                  onApprove={() => {
-                    askBulk('approve')
-                  }}
-                  onUnapprove={() => {
-                    askBulk('unapprove')
-                  }}
-                />
+                {(can.approve || can.reject) && (
+                  <BulkButtons
+                    disabled={bulk.isPending}
+                    onApprove={() => {
+                      askBulk('approve')
+                    }}
+                    onUnapprove={() => {
+                      askBulk('unapprove')
+                    }}
+                  />
+                )}
               </div>
             </div>
           </>
@@ -448,7 +413,9 @@ export function TransferRequestsPage() {
           rowActions={(row) => {
             const actions = allowed.filter(
               (action) =>
-                row.actions.includes(action) && !(action === 'history' && row.status === 'pending'),
+                row.actions.includes(action) &&
+                permits(action, can) &&
+                !(action === 'history' && row.status === 'pending'),
             )
             return (
               <RowActionsMenu
@@ -458,7 +425,9 @@ export function TransferRequestsPage() {
                   label:
                     action === 'decide' && row.status === 'cancelling'
                       ? 'Approve/Reject Cancellation'
-                      : ACTION_LABELS[action],
+                      : action === 'cancel' && row.status === 'pending'
+                        ? 'Withdraw'
+                        : ACTION_LABELS[action],
                   variant: action === 'delete' ? 'destructive' : 'default',
                   onSelect: () => {
                     // Requests → View is the greyed form; Approvals → View is the Approve popup.
@@ -494,12 +463,28 @@ export function TransferRequestsPage() {
         <TransferDecisionDialog
           id={dialog.request.id}
           mode={dialog.type === 'decide' ? 'decide' : 'view'}
+          via={isRequest ? 'request' : 'approvals'}
           onClose={close}
         />
       )}
-      {dialog?.type === 'flow' && <RequestFlowDialog request={dialog.request} onClose={close} />}
+      {dialog?.type === 'flow' && (
+        <RequestFlowDialog
+          kind="transfer"
+          id={dialog.request.id}
+          via={isRequest ? 'request' : 'approvals'}
+          onClose={close}
+        />
+      )}
       {dialog?.type === 'history' && (
-        <RequestHistoryDialog kind="transfer" id={dialog.request.id} onClose={close} />
+        <RequestHistoryDialog
+          kind="transfer"
+          id={dialog.request.id}
+          via={isRequest ? 'request' : 'approvals'}
+          onClose={close}
+        />
+      )}
+      {dialog?.type === 'forward' && (
+        <ForwardRequestDialog request={dialog.request} onClose={close} />
       )}
       {dialog?.type === 'cancel' && (
         <CancelRequestDialog request={dialog.request} onClose={close} />
@@ -510,13 +495,7 @@ export function TransferRequestsPage() {
       {dialog?.type === 'filters' && (
         <FiltersDialog
           fields={isRequest || view === 'requested' ? placeFields : delegateFields}
-          value={{
-            ...filters,
-            ...(view === 'delegates' && !isRequest
-              ? { employmentStatus: delegates.employmentStatus }
-              : {}),
-            status,
-          }}
+          value={{ ...filters, status }}
           preset={isRequest ? 'transfer-requests' : `transfer-${view}`}
           onApply={(next) => {
             const { status: picked, ...rest } = next

@@ -1,14 +1,15 @@
 import { addDays, differenceInCalendarDays, format, parse } from 'date-fns'
 import { z } from 'zod'
 
-import { type ScheduleEntry, weekdayOf } from '@/features/scheduling'
+import { eachDay, type ScheduleEntry, weekdayOf } from '@/features/scheduling'
 
 import { scheduleEntries } from '../../../scheduling/handlers'
 import { slotFor } from '../../../scheduling/seed'
 import { createId } from '../../../utils'
+import type { RequestBodyIn } from '../../backend'
 import { entryOn, rosterTimes } from '../../effects'
 import { invalid, today } from '../../http'
-import { mustFind } from '../../people'
+import { ME, mustFind } from '../../people'
 import {
   defineStandardKind,
   type PayloadContext,
@@ -16,7 +17,7 @@ import {
   type StandardKindServer,
   type StoredStandardRequest,
 } from '../engine'
-import { photos, rosterOf, scheduleDay, scheduleHandler } from './work-from-home-days'
+import { rosterOf, scheduleBoardHandler, scheduleDay } from './work-from-home-days'
 
 /*
  * Work From Home: the person picks a Start Date and an End Date, and in the
@@ -52,13 +53,15 @@ const longDay = (date: string) => format(day(date), 'EEEE, MMMM d')
 function toPayload(input: Input, context: PayloadContext): Response | Record<string, unknown> {
   const employee = mustFind(context.employeeId)
   if (input.from < today()) {
-    return invalid('Choose today or a later day.', { from: 'Choose today or a later day' })
+    return invalid('Choose today or a later day.', { fromDate: 'Choose today or a later day' })
   }
   if (input.to < input.from) {
-    return invalid('End Date comes before Start Date.', { to: 'Choose the Start Date or later' })
+    return invalid('End Date comes before Start Date.', {
+      toDate: 'Choose the Start Date or later',
+    })
   }
   if (differenceInCalendarDays(day(input.to), day(input.from)) > 30) {
-    return invalid('Ask for 31 days at most at a time.', { to: 'Ask for 31 days at most' })
+    return invalid('Ask for 31 days at most at a time.', { toDate: 'Ask for 31 days at most' })
   }
   const dates = [...new Set(input.dates)].filter((date) => date >= input.from && date <= input.to)
   dates.sort()
@@ -158,18 +161,58 @@ function revertWorkFromHome(record: StoredStandardRequest): void {
   }
 }
 
+/** A `RequestIn` body → the stored shape's input (`details.dates`: the ticked shift days). */
+function fromBody(body: RequestBodyIn): unknown {
+  const dates = body.details.dates
+  const from = body.fromDate ?? ''
+  const to = body.toDate ?? from
+  return {
+    from,
+    to,
+    // No dates: every shift day between the dates, as the API counts them.
+    dates: Array.isArray(dates)
+      ? dates
+      : from && to && to >= from
+        ? eachDay(from, to)
+            .slice(0, 62)
+            .filter((date) => scheduleDay(ME, date).status === 'shift')
+        : [],
+    reason: body.reason ?? '',
+  }
+}
+
 const def: StandardKindServer<Input> = {
   kind: 'work-from-home',
-  settingsType: 'work-from-home',
+  typeCode: 'work_from_home',
+  typeName: 'Work From Home',
+  settingsType: 'work_from_home',
   codePrefix: 'WFH-',
   codeDigits: 4,
+  fromBody,
   schema,
   toPayload,
   dateOf: (payload) => String(payload.from),
+  header: (payload) => {
+    const value = payload as unknown as WorkFromHomeStored
+    return {
+      fromDate: value.dates[0] ?? value.from,
+      toDate: value.dates.at(-1) ?? value.to,
+      days: value.count,
+      reason: value.reason || null,
+      description: null,
+      application: null,
+    }
+  },
+  // `req.fn_request_details` for work from home: the days asked, with their shift.
+  toDetails: (payload, record) => ({
+    days: (payload as unknown as WorkFromHomeStored).dates.map((date) => ({
+      requestDate: date,
+      scheduleId: entryOn(record.employeeId, date)?.id ?? null,
+    })),
+  }),
   onCompleted: applyWorkFromHome,
   onCancelled: revertWorkFromHome,
-  lookups: () => ({ photos: photos() }),
-  extraHandlers: [scheduleHandler('work-from-home')],
+  extraHandlers: [scheduleBoardHandler],
   seed: () => {
     const ago = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString()
     /**

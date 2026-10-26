@@ -1,7 +1,11 @@
+import { airTicketsConfig } from './kinds/air-tickets/air-tickets.config'
+import { expenseConfig } from './kinds/expense/expense.config'
 import { leaveConfig } from './kinds/leave/leave.config'
 import { loanAdvancesConfig } from './kinds/loan-advances/loan-advances.config'
+import { officialVisitsConfig } from './kinds/official-visits/official-visits.config'
 import { promotionConfig } from './kinds/promotion/promotion.config'
 import { relaxationConfig } from './kinds/relaxation/relaxation.config'
+import { requisitionConfig } from './kinds/requisition/requisition.config'
 import { resignationConfig } from './kinds/resignation/resignation.config'
 import { restDaysConfig } from './kinds/rest-days/rest-days.config'
 import { travelConfig } from './kinds/travel/travel.config'
@@ -14,10 +18,14 @@ import type { StandardKind, StandardKindConfig } from './standard.types'
  * placeholder.
  */
 export const STANDARD_CONFIGS: Partial<Record<StandardKind, StandardKindConfig<never>>> = {
+  'air-tickets': airTicketsConfig as unknown as StandardKindConfig<never>,
+  expense: expenseConfig as unknown as StandardKindConfig<never>,
   leave: leaveConfig as unknown as StandardKindConfig<never>,
   'loan-advances': loanAdvancesConfig as unknown as StandardKindConfig<never>,
+  'official-visits': officialVisitsConfig as unknown as StandardKindConfig<never>,
   promotion: promotionConfig as unknown as StandardKindConfig<never>,
   relaxation: relaxationConfig as unknown as StandardKindConfig<never>,
+  requisition: requisitionConfig as unknown as StandardKindConfig<never>,
   resignation: resignationConfig as unknown as StandardKindConfig<never>,
   'rest-days': restDaysConfig as unknown as StandardKindConfig<never>,
   travel: travelConfig as unknown as StandardKindConfig<never>,
