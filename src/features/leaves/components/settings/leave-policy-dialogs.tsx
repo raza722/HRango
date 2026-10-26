@@ -1,17 +1,23 @@
 import { useId, useState } from 'react'
-import { type Control, useController, useForm } from 'react-hook-form'
+import { type Control, useController, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
 import { SelectField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
-import { MultiSearchSelect, PayrollDialog } from '@/features/payroll'
+import { EmployeeMultiSearchSelect, PayrollDialog, SearchSelect } from '@/features/payroll'
+import { useEmployeeLookupSearch } from '@/hooks/use-employee-lookup'
 import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
-import { POLICY_KIND_LABELS, POLICY_LEVEL_LABELS } from '../../constants'
-import { useEnrollEmployees, useLeavesLookups, useSaveLeavePolicy } from '../../hooks/use-leaves'
+import { LEAVE_CODES, POLICY_KIND_LABELS, POLICY_LEVEL_LABELS } from '../../constants'
+import {
+  useAllLeaveTypes,
+  useEnrolledEmployees,
+  useEnrollEmployees,
+  useSaveLeavePolicy,
+} from '../../hooks/use-leaves'
 import {
   leavePolicyFormSchema,
   type LeavePolicyFormValues,
@@ -27,7 +33,10 @@ import {
   policyDialogClass,
   policyDialogTitleClass,
   policySaveButtonClass,
+  slabAddButtonClass,
+  slabInputClass,
 } from '../../utils/styles'
+import { CancelCircleIcon } from '../leave-icons'
 
 export type PolicyDialogMode = 'create' | 'edit'
 
@@ -45,7 +54,7 @@ const LEVEL_HELP: Record<PolicyLevel, string> = {
 function PolicyLevelField({ control }: { control: Control<LeavePolicyFormValues> }) {
   const {
     field: { value, onChange },
-  } = useController({ control, name: 'level' })
+  } = useController({ control, name: 'policyLevel' })
   return (
     <fieldset className="grid gap-3">
       <legend className="pb-3 text-base font-medium text-[#202020] dark:text-heading">
@@ -105,6 +114,70 @@ function PolicySwitch({
   )
 }
 
+/** One leave type of a distribution policy: the type and its allowance (days). */
+function PolicyTypeRow({
+  control,
+  index,
+  options,
+  onRemove,
+}: {
+  control: Control<LeavePolicyFormValues>
+  index: number
+  options: { value: string; label: string; hint?: string }[]
+  onRemove: () => void
+}) {
+  const type = useController({ control, name: `types.${index}.leaveTypeId` })
+  const {
+    field: { ref, name, value, onChange, onBlur },
+    fieldState: { error: allowanceError },
+  } = useController({ control, name: `types.${index}.allowance` })
+  const label = `Leave type ${String(index + 1)}`
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_7rem_auto] items-start gap-3">
+      <div>
+        <SearchSelect
+          value={type.field.value || null}
+          onChange={(next) => {
+            type.field.onChange(next ?? '')
+          }}
+          options={options}
+          placeholder="Select Leave Type"
+          aria-label={label}
+          aria-invalid={Boolean(type.fieldState.error)}
+        />
+        {type.fieldState.error && (
+          <p className="pt-1 text-xs text-destructive">{type.fieldState.error.message}</p>
+        )}
+      </div>
+      <div>
+        <input
+          ref={ref}
+          name={name}
+          value={value}
+          onChange={onChange}
+          onBlur={onBlur}
+          aria-label={`${label} allowance`}
+          aria-invalid={Boolean(allowanceError)}
+          placeholder="Allowance"
+          inputMode="decimal"
+          className={slabInputClass}
+        />
+        {allowanceError && (
+          <p className="pt-1 text-xs text-destructive">{allowanceError.message}</p>
+        )}
+      </div>
+      <button
+        type="button"
+        aria-label={`Remove ${label.toLowerCase()}`}
+        onClick={onRemove}
+        className="mt-1 inline-flex size-[1.875rem] items-center justify-center rounded-full text-[#D83838] outline-none hover:bg-[#D83838]/10 focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        <CancelCircleIcon className="size-[1.875rem]" />
+      </button>
+    </div>
+  )
+}
+
 /**
  * "Add Policy" (frame 4428:90498): a 667px Poppins popup with Policy * and
  * Title * side by side, "Select Policy level?", Allow half day leave, Allow
@@ -129,21 +202,32 @@ export function LeavePolicyDialog({
     defaultValues: leavePolicyToForm(policy),
   })
   const errors = form.formState.errors
+  const kind = useWatch({ control: form.control, name: 'policyKind' })
+  const typeRows = useFieldArray({ control: form.control, name: 'types' })
+  const leaveTypes = useAllLeaveTypes()
+  const typeOptions = (leaveTypes.data?.data ?? []).map((type) => ({
+    value: type.id,
+    label: type.title,
+    hint: `${type.shortCode} · ${String(type.allowance ?? 0)} days`,
+  }))
 
   const submit = form.handleSubmit(async (values) => {
     try {
       await save.mutateAsync({ id: policy?.id, input: leavePolicyToInput(values, policy) })
     } catch (failure) {
       if (failure instanceof ApiError) {
-        const { title, level } = failure.fieldErrors
+        const { title, policyLevel, policyKind, types } = failure.fieldErrors
         if (title) form.setError('title', { message: title })
-        else if (level) form.setError('level', { message: level })
+        else if (policyLevel) form.setError('policyLevel', { message: policyLevel })
+        else if (policyKind) form.setError('policyKind', { message: policyKind })
+        else if (types) form.setError('types', { message: types })
         else form.setError('root', { message: failure.message })
       }
       return
     }
     onClose()
   })
+  const typesError = errors.types?.message ?? errors.types?.root?.message
 
   return (
     <Dialog
@@ -168,7 +252,7 @@ export function LeavePolicyDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <SelectField
               control={form.control}
-              name="kind"
+              name="policyKind"
               label="Policy *"
               placeholder="Select"
               options={POLICY_KINDS.map((value) => ({ value, label: POLICY_KIND_LABELS[value] }))}
@@ -182,10 +266,48 @@ export function LeavePolicyDialog({
             />
           </div>
           <PolicyLevelField control={form.control} />
-          {errors.level && (
+          {errors.policyLevel && (
             <p role="alert" className="-mt-4 text-xs text-destructive">
-              {errors.level.message}
+              {errors.policyLevel.message}
             </p>
+          )}
+          {kind === 'distribution' && (
+            <fieldset className="grid gap-3">
+              <legend className="pb-3 text-base font-medium text-[#202020] dark:text-heading">
+                Leave Types
+              </legend>
+              <p className="-mt-2 text-xs text-muted-foreground">
+                The leave types this policy gives. Allowance left empty: the type's own No of Leaves
+                Allowed.
+              </p>
+              {typeRows.fields.map((row, index) => (
+                <PolicyTypeRow
+                  key={row.id}
+                  control={form.control}
+                  index={index}
+                  options={typeOptions}
+                  onRemove={() => {
+                    typeRows.remove(index)
+                  }}
+                />
+              ))}
+              {typesError && (
+                <p role="alert" className="text-xs text-destructive">
+                  {typesError}
+                </p>
+              )}
+              <div>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    typeRows.append({ leaveTypeId: '', allowance: '' })
+                  }}
+                  className={slabAddButtonClass}
+                >
+                  Add Leave Type
+                </Button>
+              </div>
+            </fieldset>
           )}
           <div className="grid gap-4">
             <PolicySwitch control={form.control} name="allowHalfDay" label="Allow half day leave" />
@@ -225,9 +347,15 @@ export function LeavePolicyDialog({
 }
 
 /**
- * "Enroll Employee" (no frame; opened from the Enroll Employee count of an
- * employee-level policy): pick the people; saving replaces who is enrolled.
+ * "Enroll Employee" (no frame; opened from the Enroll Employee count of an employee-level
+ * policy): the people enrolled now (`GET /leaves/policies/{id}/employees`) and a picker of
+ * the people you may enroll (`GET /employees/lookup?permission=leaves.settings.policies.enroll`).
+ * Saving enrols the added people (`POST …/employees`) and removes the dropped ones
+ * (`DELETE …/employees/{employeeId}`).
  */
+/** Whom the Enroll picker offers (searched on the server, paged). */
+const ENROLL_FILTERS = { permission: LEAVE_CODES.policiesEnroll }
+
 export function EnrollEmployeesDialog({
   policy,
   onClose,
@@ -235,25 +363,53 @@ export function EnrollEmployeesDialog({
   policy: LeavePolicy
   onClose: () => void
 }) {
-  const lookups = useLeavesLookups()
+  const enrolled = useEnrolledEmployees(policy.id)
+  // Names of the people picked from `GET /employees/lookup` (any page the picker read).
+  const lookup = useEmployeeLookupSearch(ENROLL_FILTERS, { enabled: false })
   const enroll = useEnrollEmployees()
-  const [ids, setIds] = useState<string[]>(() => policy.enrolled.map((person) => person.id))
+  const [picked, setPicked] = useState<string[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const fieldId = useId()
-  const people = (lookups.data?.employees ?? []).filter(
-    (person) => person.active || ids.includes(person.id),
-  )
+  const current = enrolled.data?.data.map((row) => row.employeeId)
+  const chosen = picked ?? current ?? []
+  const names = new Map<string, { name: string; hint: string }>()
+  for (const row of enrolled.data?.data ?? []) {
+    names.set(row.employeeId, {
+      name: row.employeeName,
+      hint: [row.employeeCode, row.departmentName].filter(Boolean).join(' · '),
+    })
+  }
+  for (const id of chosen) {
+    const person = lookup.find(id)
+    if (person) {
+      names.set(id, {
+        name: person.name,
+        hint: [person.code, person.departmentName].filter(Boolean).join(' · '),
+      })
+    }
+  }
+  const known = [...names.entries()].map(([value, person]) => ({
+    value,
+    label: person.name,
+    hint: person.hint,
+  }))
 
   return (
     <PayrollDialog
       title="Enroll Employee"
       onClose={onClose}
       saveLabel="Enroll"
-      pending={enroll.isPending}
-      error={error}
+      pending={enroll.isPending || !current}
+      error={error ?? enrolled.error?.message}
       onSave={() => {
+        const before = new Set(current ?? [])
+        const after = new Set(chosen)
         enroll.mutate(
-          { id: policy.id, employeeIds: ids },
+          {
+            id: policy.id,
+            add: chosen.filter((id) => !before.has(id)),
+            remove: [...before].filter((id) => !after.has(id)),
+          },
           {
             onSuccess: onClose,
             onError: (failure) => {
@@ -267,35 +423,34 @@ export function EnrollEmployeesDialog({
     >
       <div className="grid gap-5">
         <p className="font-inter text-sm text-heading">
-          <span className="font-medium">{policy.title}</span> · {POLICY_KIND_LABELS[policy.kind]}
+          <span className="font-medium">{policy.title}</span> ·{' '}
+          {POLICY_KIND_LABELS[policy.policyKind]}
           {' · '}
-          {POLICY_LEVEL_LABELS[policy.level]}
+          {POLICY_LEVEL_LABELS[policy.policyLevel]}
         </p>
         <div className="grid gap-2">
           <label htmlFor={fieldId} className="font-inter text-sm text-heading @xl:text-base">
             Employees
           </label>
-          <MultiSearchSelect
+          <EmployeeMultiSearchSelect
             id={fieldId}
-            value={ids}
-            onChange={setIds}
-            options={people.map((person) => ({
-              value: person.id,
-              label: person.name,
-              hint: `${person.code} · ${person.department}`,
-            }))}
+            value={chosen}
+            onChange={setPicked}
+            filters={ENROLL_FILTERS}
+            known={known}
+            hint={(person) => [person.code, person.departmentName].filter(Boolean).join(' · ')}
             placeholder="Select Employees"
           />
           <p className="text-xs text-muted-foreground">
-            {ids.length === 0
-              ? 'Nobody is enrolled: the company level policy applies to everyone.'
-              : `${String(ids.length)} enrolled. Someone already in another employee level policy of this kind moves to this one.`}
+            {chosen.length === 0
+              ? 'Nobody is enrolled: the company level policy of this kind applies to them.'
+              : `${String(chosen.length)} enrolled. Someone already in another active employee level policy of this kind is refused.`}
           </p>
         </div>
-        {ids.length > 0 && (
+        {chosen.length > 0 && (
           <ul className="flex flex-wrap gap-2" aria-label="Enrolled employees">
-            {ids.map((id) => {
-              const person = people.find((item) => item.id === id)
+            {chosen.map((id) => {
+              const person = names.get(id)
               return (
                 <li
                   key={id}
@@ -306,7 +461,7 @@ export function EnrollEmployeesDialog({
                     type="button"
                     aria-label={`Remove ${person?.name ?? id}`}
                     onClick={() => {
-                      setIds((current) => current.filter((item) => item !== id))
+                      setPicked(chosen.filter((item) => item !== id))
                     }}
                     className="ml-1 rounded-full px-1 text-field-value hover:text-destructive"
                   >

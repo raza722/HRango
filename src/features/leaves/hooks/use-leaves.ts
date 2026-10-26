@@ -2,48 +2,102 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import {
+  leaveApplicationCountsQueryOptions,
   leaveApplicationQueryOptions,
   leaveApplicationsQueryOptions,
+  leaveBalancesQueryOptions,
   leavePoliciesQueryOptions,
+  leaveRequestQueryOptions,
   leavesApi,
   leaveSettingsQueryOptions,
   leavesKeys,
-  leavesLookupsQueryOptions,
   leaveTypesQueryOptions,
 } from '../api/leaves.api'
 import type {
+  AllotmentInput,
+  CarryForwardInput,
   LeaveApplicationListParams,
-  LeaveApplyInput,
+  LeaveBalanceParams,
   LeaveDecisionInput,
   LeavePolicyInput,
-  LeaveSettings,
+  LeavePolicyListParams,
+  LeaveRequestInput,
+  LeaveSettingsInput,
   LeaveTypeInput,
   LeaveTypeListParams,
 } from '../types/leaves.types'
 
-export const useLeavesLookups = () => useQuery(leavesLookupsQueryOptions())
-
 export const useLeaveApplications = (params: LeaveApplicationListParams) =>
   useQuery(leaveApplicationsQueryOptions(params))
 
+export const useLeaveApplicationCounts = (
+  params: Pick<LeaveApplicationListParams, 'tab' | 'filters'>,
+) => useQuery(leaveApplicationCountsQueryOptions(params))
+
 export const useLeaveApplication = (id: string) => useQuery(leaveApplicationQueryOptions(id))
+
+/** The request behind an application (steps, attachments, actions, rowVersion). */
+export const useLeaveRequest = (id: string, enabled = true) =>
+  useQuery({ ...leaveRequestQueryOptions(id), enabled })
 
 export const useLeaveSettings = () => useQuery(leaveSettingsQueryOptions())
 
 export const useLeaveTypes = (params: LeaveTypeListParams) =>
   useQuery(leaveTypesQueryOptions(params))
 
-export const useLeavePolicies = (params: { page: number; pageSize: number }) =>
+/** Every leave type (pickers and filters): the list endpoint's largest page. */
+export const useAllLeaveTypes = (enabled = true) =>
+  useQuery({ ...leaveTypesQueryOptions({ page: 1, pageSize: 100 }), enabled })
+
+export const useLeavePolicies = (params: LeavePolicyListParams) =>
   useQuery(leavePoliciesQueryOptions(params))
 
+export const useLeaveBalances = (params: LeaveBalanceParams, enabled = true) =>
+  useQuery({ ...leaveBalancesQueryOptions(params), enabled })
+
+export const useEnrolledEmployees = (policyId: string) =>
+  useQuery({
+    queryKey: leavesKeys.enrolled(policyId),
+    queryFn: ({ signal }) => leavesApi.enrolled(policyId, signal),
+  })
+
+/** The people a picker offers: those the caller reaches through `permission`. */
+export const useEmployeeLookup = (permission: string, enabled = true) =>
+  useQuery({
+    queryKey: leavesKeys.employees(permission),
+    queryFn: ({ signal }) => leavesApi.employees(permission, undefined, signal),
+    staleTime: 60_000,
+    enabled,
+  })
+
+/** The Apply form's leave types for a person (`GET /requests/options/leave-types`). */
+export const useLeaveTypeOptions = (
+  employeeId: string | undefined,
+  asOf: string | undefined,
+  enabled = true,
+) =>
+  useQuery({
+    queryKey: leavesKeys.typeOptions(employeeId, asOf),
+    queryFn: ({ signal }) => leavesApi.leaveTypeOptions(employeeId, asOf, signal),
+    enabled,
+  })
+
+export const useDepartmentLookup = (enabled = true) =>
+  useQuery({
+    queryKey: leavesKeys.departments(),
+    queryFn: ({ signal }) => leavesApi.departments(signal),
+    staleTime: 60_000,
+    enabled,
+  })
+
 /**
- * A Leaves mutation: toasts its own success, leaves errors to the form
- * (inline), and refetches everything on success, since a leave decision also
- * changes Requests → Leave and the balances.
+ * A mutation of leave requests: toasts its own success, leaves errors to the form (inline),
+ * and refetches everything on success, since a leave request also changes Requests → Leave,
+ * the approvals and the balances.
  */
-function useLeavesMutation<TVariables, TResult>(
+function useRequestMutation<TVariables, TResult>(
   mutationFn: (variables: TVariables) => Promise<TResult>,
-  successMessage: string,
+  successMessage: string | undefined,
 ) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -55,40 +109,46 @@ function useLeavesMutation<TVariables, TResult>(
   })
 }
 
-/** "+ Apply Leave". */
+/** "+ Apply Leave": `POST /requests/leave`. */
 export const useApplyLeave = () =>
-  useLeavesMutation((input: LeaveApplyInput) => leavesApi.apply(input), 'Leave applied')
+  useRequestMutation((input: LeaveRequestInput) => leavesApi.apply(input), 'Leave applied')
 
-/** Approve / Reject on Leave Applications (also decides a cancellation). */
-export function useDecideLeave() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, input }: { id: string; input: LeaveDecisionInput }) =>
-      leavesApi.decide(id, input),
-    meta: { suppressErrorToast: true },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries()
-    },
-  })
-}
+/** Approve / Reject on Leave Applications: `POST /requests/approvals/{id}/approve|reject`. */
+export const useDecideLeave = () =>
+  useRequestMutation(
+    ({ id, input }: { id: string; input: LeaveDecisionInput }) => leavesApi.decide(id, input),
+    undefined,
+  )
 
-/** Cancel on My Leaves: withdraws a pending application, or asks to cancel an approved one. */
+/** Cancel: `POST /requests/leave/{id}/cancel` (withdraws a pending one, asks to cancel an approved one). */
 export const useCancelLeave = () =>
-  useLeavesMutation(
-    ({ id, reason }: { id: string; reason: string }) => leavesApi.cancel(id, reason),
+  useRequestMutation(
+    ({ id, reason, rowVersion }: { id: string; reason: string; rowVersion: string }) =>
+      leavesApi.cancel(id, reason, rowVersion),
     'Cancellation recorded',
   )
 
-export function useSaveLeaveSettings() {
+/** A Settings mutation: refetches the Leaves queries on success. */
+function useSettingsMutation<TVariables, TResult>(
+  mutationFn: (variables: TVariables) => Promise<TResult>,
+  successMessage: string | undefined,
+  suppressErrorToast = true,
+) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (input: LeaveSettings) => leavesApi.saveSettings(input),
-    meta: { successMessage: 'Settings saved', suppressErrorToast: true },
+    mutationFn,
+    meta: { successMessage, suppressErrorToast },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: leavesKeys.all })
     },
   })
 }
+
+export const useSaveLeaveSettings = () =>
+  useSettingsMutation(
+    (input: LeaveSettingsInput) => leavesApi.saveSettings(input),
+    'Settings saved',
+  )
 
 export function useSaveLeaveType() {
   const queryClient = useQueryClient()
@@ -104,16 +164,13 @@ export function useSaveLeaveType() {
 }
 
 /** Delete on Leave Types: refused by the server while the type is in use. */
-export function useDeleteLeaveType() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => leavesApi.deleteType(id),
-    meta: { successMessage: 'Leave type deleted' },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: leavesKeys.all })
-    },
-  })
-}
+export const useDeleteLeaveType = () =>
+  useSettingsMutation(
+    ({ id, rowVersion }: { id: string; rowVersion: string }) =>
+      leavesApi.deleteType(id, rowVersion),
+    'Leave type deleted',
+    false,
+  )
 
 export function useSaveLeavePolicy() {
   const queryClient = useQueryClient()
@@ -128,26 +185,26 @@ export function useSaveLeavePolicy() {
   })
 }
 
-export function useDeleteLeavePolicy() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => leavesApi.deletePolicy(id),
-    meta: { successMessage: 'Policy deleted' },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: leavesKeys.all })
-    },
-  })
-}
+export const useDeleteLeavePolicy = () =>
+  useSettingsMutation(
+    ({ id, rowVersion }: { id: string; rowVersion: string }) =>
+      leavesApi.deletePolicy(id, rowVersion),
+    'Policy deleted',
+    false,
+  )
 
-/** Enroll Employee on an employee-level policy: replaces who is enrolled. */
-export function useEnrollEmployees() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, employeeIds }: { id: string; employeeIds: string[] }) =>
-      leavesApi.enroll(id, employeeIds),
-    meta: { successMessage: 'Enrollment saved', suppressErrorToast: true },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: leavesKeys.all })
+/** Enroll Employee: adds the new people (`POST`) and removes the dropped ones (`DELETE` each). */
+export const useEnrollEmployees = () =>
+  useSettingsMutation(
+    async ({ id, add, remove }: { id: string; add: string[]; remove: string[] }) => {
+      if (add.length > 0) await leavesApi.enrol(id, add)
+      for (const employeeId of remove) await leavesApi.unenrol(id, employeeId)
     },
-  })
-}
+    'Enrollment saved',
+  )
+
+export const useProcessAllotment = () =>
+  useSettingsMutation((input: AllotmentInput) => leavesApi.processAllotment(input), undefined)
+
+export const useProcessCarryForward = () =>
+  useSettingsMutation((input: CarryForwardInput) => leavesApi.processCarryForward(input), undefined)

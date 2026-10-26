@@ -5,6 +5,7 @@ import {
   APPROVE_ON_STATUSES,
   ATTACHMENT_RULES,
   BALANCE_BASES,
+  type EnrolledEmployee,
   FINAL_APPROVAL_AUTHORITIES,
   LEAVE_GENDER_RULES,
   LEAVE_MARITAL_RULES,
@@ -14,14 +15,10 @@ import {
   type LeaveType,
   POLICY_KINDS,
   POLICY_LEVELS,
-  SHORT_SLAB_UNITS,
-} from '@/features/leaves'
+  SHORT_SLAB_VALUE_TYPES,
+} from '@/features/leaves/types/leaves.types'
 import type { ApiItem, Paginated } from '@/types/api'
 
-import { DIRECTORY, findEmployee } from '../employees/seed'
-import { invalid, notFound, readBody } from '../requests/http'
-import { ref } from '../requests/people'
-import { standardRequests } from '../requests/standard'
 import {
   apiPath,
   createId,
@@ -31,383 +28,482 @@ import {
   readPageParams,
   requireAuth,
 } from '../utils'
-import { leavePolicies, leaveSettingsStore, leaveTypes, publicLeaveSettings } from './db'
-import { isLeave, leaveStored } from './rules'
-import type { StoredLeavePolicy, StoredLeaveType } from './seed'
+import { currentLeaveSettings, leavePolicies, leaveSettingsStore, leaveTypeStore } from './db'
+import { inUseCount, personOf, policyOut, typeOut } from './rules'
+import { nextRowVersion, type StoredLeavePolicy, type StoredLeaveType } from './seed'
 
 /*
- * Settings → General Settings, Leave Types and Leave Policies:
- *   GET/PUT  /leaves/settings
- *   GET/POST /leaves/types            PUT/DELETE /leaves/types/:id
- *   GET/POST /leaves/policies         PUT/DELETE /leaves/policies/:id
- *   PUT      /leaves/policies/:id/enrollments   { employeeIds }
+ * Settings → General Settings, Leave Types and Leave Policies with enrolment
+ * (`/api/leaves/settings`, `/types`, `/policies`), as backend/app/routers/leaves.py answers.
  */
 
-const path = (suffix = '') => apiPath(`/leaves${suffix}`)
-const conflict = (message: string, fieldErrors?: Record<string, string>) =>
-  errorResponse(409, message, { code: 'CONFLICT', ...(fieldErrors ? { fieldErrors } : {}) })
+const invalid = (
+  fieldErrors: Record<string, string>,
+  message = 'Some fields need your attention.',
+) => errorResponse(422, message, { code: 'VALIDATION_FAILED', fieldErrors })
 
-const guard = async (request: Request) => {
-  await latency()
-  return requireAuth(request)
+const conflict = () =>
+  errorResponse(409, 'Someone else changed this record. Reload it and try again.', {
+    code: 'CONFLICT',
+  })
+
+/** A 409 with the field it is about, as the procedures THROW them. */
+const refuse = (code: string, field: string, message: string) =>
+  errorResponse(409, message, { code, fieldErrors: { [field]: message } })
+
+const notFound = (what: string) => errorResponse(404, `${what} not found.`, { code: 'NOT_FOUND' })
+
+/** Turns a Zod failure into the backend's `fieldErrors` (first message per top-level field). */
+function zodErrors(error: z.ZodError): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const issue of error.issues) {
+    const key = String(issue.path[0] ?? 'body')
+    out[key] ??= issue.message
+  }
+  return out
 }
 
-const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+const days = z.number().min(0).max(366)
+const id = z.union([z.string(), z.number()]).transform(String)
 
-// --- General Settings -----------------------------------------------------------------------------
-
-const settingsSchema = z.object({
+const settingsIn = z.object({
   finalApprovalBy: z.enum(FINAL_APPROVAL_AUTHORITIES),
   approveOnStatus: z.enum(APPROVE_ON_STATUSES),
-  postDeadline: z.boolean(),
+  postDeadline: z.boolean().default(false),
+  rowVersion: z.string().nullable().optional(),
 })
 
-// --- Leave Types ----------------------------------------------------------------------------------
-
-const whole = (max: number) => z.number().int().min(0).max(max)
-const daysNumber = z.number().min(0).max(365)
-
-const typeSchema = z.object({
-  title: z.string().trim().min(1).max(60),
+const typeIn = z.object({
+  title: z.string().trim().min(1).max(200),
   shortCode: z.string().trim().min(1).max(10),
-  leavesAllowed: daysNumber,
-  probationType: z.boolean(),
-  active: z.boolean(),
-  autoAllotment: z.boolean(),
-  autoBalanceOnJoiningMonth: z.boolean(),
-  composite: z.boolean(),
-  shortLeave: z.boolean(),
-  showInPayslip: z.boolean(),
-  deductible: z.boolean(),
-  sandwich: z.boolean(),
-  sandwichAcrossTypes: z.boolean(),
-  earnedBalance: z.boolean(),
-  backDate: z.boolean(),
-  backDateLimitDays: whole(365).nullable(),
-  futureDateLimit: z.boolean(),
-  attachmentRequired: z.boolean(),
-  attachmentRule: z.enum(ATTACHMENT_RULES).nullable(),
-  encashment: z.boolean(),
-  encashmentMin: daysNumber.nullable(),
-  encashmentMax: daysNumber.nullable(),
-  carryForward: z.boolean(),
-  proRated: z.boolean(),
-  gender: z.enum(LEAVE_GENDER_RULES),
-  maritalStatus: z.enum(LEAVE_MARITAL_RULES),
-  applyInProbation: z.boolean(),
-  minExperienceMonths: whole(600),
-  maxApplications: whole(999).nullable(),
-  gapMonths: whole(120).nullable(),
-  tenure: z.enum(LEAVE_TENURES),
-  balanceBasis: z.enum(BALANCE_BASES),
-  accumulativeCount: whole(99).nullable(),
+  allowance: days,
+  isActive: z.boolean().default(true),
+  isProbationType: z.boolean().default(false),
+  autoAllotment: z.boolean().default(false),
+  autoBalanceOnJoining: z.boolean().default(false),
+  isComposite: z.boolean().default(false),
+  isShortLeave: z.boolean().default(false),
+  showInPayslip: z.boolean().default(false),
+  isDeductible: z.boolean().default(true),
+  isSandwich: z.boolean().default(false),
+  sandwichAcrossTypes: z.boolean().default(false),
+  isEarned: z.boolean().default(false),
+  allowBackDate: z.boolean().default(false),
+  backDateLimitDays: z.number().int().min(0).max(366).nullable().default(null),
+  hasFutureLimit: z.boolean().default(false),
+  futureLimitDays: z.number().int().min(0).max(366).nullable().default(null),
+  attachmentRequired: z.boolean().default(false),
+  attachmentRule: z.enum(ATTACHMENT_RULES).nullable().default(null),
+  allowEncashment: z.boolean().default(false),
+  encashmentMin: days.nullable().default(null),
+  encashmentMax: days.nullable().default(null),
+  carryForward: z.boolean().default(false),
+  proRated: z.boolean().default(false),
+  gender: z.enum(LEAVE_GENDER_RULES).default('any'),
+  maritalStatus: z.enum(LEAVE_MARITAL_RULES).default('any'),
+  allowedInProbation: z.boolean().default(false),
+  minExperienceMonths: z.number().int().min(0).max(600).nullable().default(null),
+  maxApplications: z.number().int().min(1).max(1000).nullable().default(null),
+  gapBetweenApplicationsMonths: z.number().int().min(0).max(600).nullable().default(null),
+  tenure: z.enum(LEAVE_TENURES).default('yearly'),
+  balanceBasis: z.enum(BALANCE_BASES).default('flat'),
+  accumulativeCount: z.number().int().min(1).max(50).nullable().default(null),
   experienceSlabs: z
-    .array(z.object({ minMonths: whole(600), maxMonths: whole(600), balance: daysNumber }))
-    .max(12),
-  shortLeaveSlabs: z
     .array(
       z.object({
-        name: z.string().trim().min(1).max(40),
-        balance: z.number().min(0).max(1),
-        unit: z.enum(SHORT_SLAB_UNITS),
-        value: z.number().min(0).max(1440),
+        minMonths: z.number().int().min(0),
+        maxMonths: z.number().int().min(0).nullable().default(null),
+        balance: days,
       }),
     )
-    .max(12),
+    .max(50)
+    .default([]),
+  shortSlabs: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(200),
+        balance: days.nullable().default(null),
+        valueType: z.enum(SHORT_SLAB_VALUE_TYPES),
+        value: z.number().min(0).nullable().default(null),
+      }),
+    )
+    .max(20)
+    .default([]),
+  rowVersion: z.string().nullable().optional(),
 })
-type TypeInput = z.infer<typeof typeSchema>
 
-/** How many leave applications (of any status) use the type. */
-function usageOf(typeId: string): number {
-  return standardRequests
-    .all()
-    .filter((record) => isLeave(record) && leaveStored(record).leaveTypeId === typeId).length
-}
+const policyIn = z.object({
+  title: z.string().trim().min(1).max(200),
+  policyKind: z.enum(POLICY_KINDS),
+  policyLevel: z.enum(POLICY_LEVELS),
+  allowHalfDay: z.boolean().default(false),
+  allowShortLeave: z.boolean().default(false),
+  isActive: z.boolean().default(true),
+  types: z
+    .array(z.object({ leaveTypeId: id, allowance: days.nullable().default(null) }))
+    .max(100)
+    .default([]),
+  rowVersion: z.string().nullable().optional(),
+})
 
-const presentType = (type: StoredLeaveType): LeaveType => ({ ...type, inUse: usageOf(type.id) })
-
-/** The rules between the fields; the field errors land on the form. */
-function checkType(input: TypeInput, ignoreId: string | null): Response | null {
-  const others = leaveTypes.all().filter((type) => type.id !== ignoreId)
-  if (others.some((type) => same(type.title, input.title))) {
-    return conflict('A leave type with this title already exists.', {
-      title: 'A leave type with this title already exists',
-    })
+/** The checks the procedures make: unique title and code, slabs that do not overlap. */
+function checkType(input: z.infer<typeof typeIn>, ownId: string | null) {
+  const others = leaveTypeStore.all().filter((type) => type.id !== ownId)
+  if (others.some((type) => type.title.toLowerCase() === input.title.toLowerCase())) {
+    return refuse('LEAVE_TYPE_DUPLICATE', 'title', 'A leave type with this title already exists.')
   }
-  if (others.some((type) => same(type.shortCode, input.shortCode))) {
-    return conflict('A leave type with this short code already exists.', {
-      shortCode: 'This short code is taken',
-    })
+  if (others.some((type) => type.shortCode.toLowerCase() === input.shortCode.toLowerCase())) {
+    return refuse(
+      'LEAVE_TYPE_DUPLICATE',
+      'shortCode',
+      'A leave type with this short code already exists.',
+    )
   }
-  if (input.attachmentRequired && !input.attachmentRule) {
-    return invalid('Say what to do when the attachment is missing.', {
-      attachmentRule: 'Choose what to do',
-    })
-  }
-  if (
-    input.encashment &&
-    input.encashmentMin !== null &&
-    input.encashmentMax !== null &&
-    input.encashmentMin > input.encashmentMax
-  ) {
-    return invalid('Encashment Min Limit is above the Max Limit.', {
-      encashmentMax: 'Enter at least the Min Limit',
-    })
-  }
-  if (input.balanceBasis === 'experience') {
-    if (input.experienceSlabs.length === 0) {
-      return invalid('Add at least one experience slab.', {
-        experienceSlabs: 'Add at least one slab',
-      })
-    }
-    const sorted = [...input.experienceSlabs].sort((a, b) => a.minMonths - b.minMonths)
-    for (const [index, slab] of sorted.entries()) {
-      if (slab.maxMonths < slab.minMonths) {
-        return invalid('An experience slab ends before it starts.', {
-          experienceSlabs: 'Maximum Months must be at least Minimum Months',
-        })
-      }
-      const previous = sorted[index - 1]
-      if (previous && slab.minMonths <= previous.maxMonths) {
-        return invalid('The experience slabs overlap.', {
-          experienceSlabs: 'The slabs overlap',
-        })
-      }
+  const slabs = [...input.experienceSlabs].sort((a, b) => a.minMonths - b.minMonths)
+  for (let index = 1; index < slabs.length; index += 1) {
+    const previous = slabs[index - 1]
+    const slab = slabs[index]
+    if (previous && slab && (previous.maxMonths === null || previous.maxMonths >= slab.minMonths)) {
+      return invalid({ experienceSlabs: 'Experience slabs overlap.' })
     }
   }
   return null
 }
 
-/** The stored shape: the dependent fields of a switch that is off are cleared. */
-function normaliseType(input: TypeInput): TypeInput {
-  return {
-    ...input,
-    backDateLimitDays: input.backDate ? input.backDateLimitDays : null,
-    attachmentRule: input.attachmentRequired ? input.attachmentRule : null,
-    encashmentMin: input.encashment ? input.encashmentMin : null,
-    encashmentMax: input.encashment ? input.encashmentMax : null,
-    experienceSlabs: input.balanceBasis === 'experience' ? input.experienceSlabs : [],
-    shortLeaveSlabs: input.shortLeave ? input.shortLeaveSlabs : [],
+function checkPolicy(input: z.infer<typeof policyIn>, ownId: string | null) {
+  const others = leavePolicies.all().filter((policy) => policy.id !== ownId)
+  if (input.policyKind === 'distribution' && input.types.length === 0) {
+    return invalid({ types: 'Choose at least one leave type.' })
   }
-}
-
-// --- Leave Policies -------------------------------------------------------------------------------
-
-const policySchema = z.object({
-  title: z.string().trim().min(1).max(80),
-  kind: z.enum(POLICY_KINDS),
-  level: z.enum(POLICY_LEVELS),
-  allowHalfDay: z.boolean(),
-  allowShortLeave: z.boolean(),
-  enforced: z.boolean(),
-  active: z.boolean(),
-})
-type PolicyInput = z.infer<typeof policySchema>
-
-const enrollSchema = z.object({ employeeIds: z.array(z.string().min(1)).max(200) })
-
-const presentPolicy = (policy: StoredLeavePolicy): LeavePolicy => ({
-  id: policy.id,
-  title: policy.title,
-  kind: policy.kind,
-  level: policy.level,
-  allowHalfDay: policy.allowHalfDay,
-  allowShortLeave: policy.allowShortLeave,
-  enforced: policy.enforced,
-  active: policy.active,
-  enrolled: policy.enrolledIds.map(ref),
-  enrolledCount: policy.level === 'company' ? DIRECTORY.length : policy.enrolledIds.length,
-  createdAt: policy.createdAt,
-})
-
-/** One company level policy of each kind; titles unique. */
-function checkPolicy(input: PolicyInput, ignoreId: string | null): Response | null {
-  const others = leavePolicies.all().filter((policy) => policy.id !== ignoreId)
-  if (others.some((policy) => same(policy.title, input.title))) {
-    return conflict('A policy with this title already exists.', {
-      title: 'A policy with this title already exists',
-    })
+  if (others.some((policy) => policy.title.toLowerCase() === input.title.toLowerCase())) {
+    return refuse(
+      'LEAVE_POLICY_DUPLICATE',
+      'title',
+      'A leave policy with this title already exists.',
+    )
   }
-  const company = others.find((policy) => policy.level === 'company' && policy.kind === input.kind)
-  if (input.level === 'company' && company) {
-    return conflict(
-      `"${company.title}" is already the company level policy of this kind; edit it or make this an employee level policy.`,
-      { level: 'There is already a company level policy of this kind' },
+  if (input.types.some((row) => !leaveTypeStore.find(row.leaveTypeId))) {
+    return invalid({ types: 'Leave type not found.' }, 'Leave type not found.')
+  }
+  if (
+    input.isActive &&
+    input.policyLevel === 'company' &&
+    others.some(
+      (policy) =>
+        policy.isActive &&
+        policy.policyLevel === 'company' &&
+        policy.policyKind === input.policyKind,
+    )
+  ) {
+    return refuse(
+      'LEAVE_POLICY_COMPANY_EXISTS',
+      'policyLevel',
+      'Another active company-level policy of this kind exists. Make it inactive first.',
     )
   }
   return null
 }
 
+const typePath = apiPath('/leaves/types/:id')
+const policyPath = apiPath('/leaves/policies/:id')
+
 export const leaveSettingsHandlers: HttpHandler[] = [
-  // --- General Settings ---
-  http.get(path('/settings'), async ({ request }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
-    return HttpResponse.json<ApiItem<LeaveSettings>>({ data: publicLeaveSettings() })
+  // --- General settings ---------------------------------------------------------------------------
+  http.get(apiPath('/leaves/settings'), async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const { id: _id, ...settings } = currentLeaveSettings()
+    return HttpResponse.json<ApiItem<LeaveSettings>>({ data: settings })
   }),
 
-  http.put(path('/settings'), async ({ request }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(request, settingsSchema)
-    if (!parsed.success) return invalid('Some fields are not valid.')
-    leaveSettingsStore.update('settings', { id: 'settings', ...parsed.data })
-    return HttpResponse.json<ApiItem<LeaveSettings>>({ data: publicLeaveSettings() })
+  http.put(apiPath('/leaves/settings'), async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const parsed = settingsIn.safeParse(await request.json())
+    if (!parsed.success) return invalid(zodErrors(parsed.error))
+    const current = currentLeaveSettings()
+    if (
+      current.rowVersion &&
+      parsed.data.rowVersion &&
+      parsed.data.rowVersion !== current.rowVersion
+    ) {
+      return conflict()
+    }
+    const next = {
+      id: 'settings' as const,
+      finalApprovalBy: parsed.data.finalApprovalBy,
+      approveOnStatus: parsed.data.approveOnStatus,
+      postDeadline: parsed.data.postDeadline,
+      rowVersion: nextRowVersion(),
+    }
+    if (!leaveSettingsStore.update('settings', next)) leaveSettingsStore.insert(next)
+    const { id: _id, ...settings } = next
+    return HttpResponse.json<ApiItem<LeaveSettings>>({ data: settings })
   }),
 
-  // --- Leave Types ---
-  http.get(path('/types'), async ({ request }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
+  // --- Leave types ----------------------------------------------------------------------------------
+  http.get(apiPath('/leaves/types'), async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
     const url = new URL(request.url)
-    const query = (url.searchParams.get('q') ?? '').trim().toLowerCase()
-    const status = url.searchParams.get('status')
     const { page, pageSize } = readPageParams(url)
-    const list = leaveTypes
+    const q = url.searchParams.get('q')?.trim().toLowerCase()
+    const isActive = url.searchParams.get('isActive')
+    const rows = leaveTypeStore
       .all()
-      .filter(
-        (type) =>
-          (!query ||
-            type.title.toLowerCase().includes(query) ||
-            type.shortCode.toLowerCase().includes(query)) &&
-          (!status || (status === 'active') === type.active),
-      )
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    const result = paginate(list, page, pageSize)
-    return HttpResponse.json<Paginated<LeaveType>>({
-      ...result,
-      data: result.data.map(presentType),
-    })
+      .filter((type) => !q || `${type.title} ${type.shortCode}`.toLowerCase().includes(q))
+      .filter((type) => isActive === null || String(type.isActive) === isActive)
+      .sort((a, b) => a.title.localeCompare(b.title))
+      .map(typeOut)
+    return HttpResponse.json<Paginated<LeaveType>>(paginate(rows, page, pageSize))
   }),
 
-  http.post(path('/types'), async ({ request }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(request, typeSchema)
-    if (!parsed.success) return invalid('Some fields are not valid.')
+  http.get(typePath, async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const type = leaveTypeStore.find(String(params.id))
+    if (!type) return notFound('Leave type')
+    return HttpResponse.json<ApiItem<LeaveType>>({ data: typeOut(type) })
+  }),
+
+  http.post(apiPath('/leaves/types'), async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const parsed = typeIn.safeParse(await request.json())
+    if (!parsed.success) return invalid(zodErrors(parsed.error))
     const refused = checkType(parsed.data, null)
     if (refused) return refused
-    const type: StoredLeaveType = {
-      ...normaliseType(parsed.data),
+    const { rowVersion: _rowVersion, ...input } = parsed.data
+    const stored: StoredLeaveType = {
+      ...input,
       id: createId('lt'),
       createdAt: new Date().toISOString(),
+      updatedAt: null,
+      rowVersion: nextRowVersion(),
     }
-    leaveTypes.insert(type)
-    return HttpResponse.json<ApiItem<LeaveType>>({ data: presentType(type) }, { status: 201 })
+    leaveTypeStore.insert(stored)
+    return HttpResponse.json<ApiItem<LeaveType>>({ data: typeOut(stored) }, { status: 201 })
   }),
 
-  http.put(path('/types/:id'), async ({ request, params }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
-    const type = typeof params.id === 'string' ? leaveTypes.find(params.id) : undefined
-    if (!type) return notFound()
-    const parsed = await readBody(request, typeSchema)
-    if (!parsed.success) return invalid('Some fields are not valid.')
-    const refused = checkType(parsed.data, type.id)
+  http.put(typePath, async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const current = leaveTypeStore.find(String(params.id))
+    if (!current) return notFound('Leave type')
+    const parsed = typeIn.safeParse(await request.json())
+    if (!parsed.success) return invalid(zodErrors(parsed.error))
+    if (parsed.data.rowVersion && parsed.data.rowVersion !== current.rowVersion) return conflict()
+    const refused = checkType(parsed.data, current.id)
     if (refused) return refused
-    const next: StoredLeaveType = { ...type, ...normaliseType(parsed.data) }
-    leaveTypes.update(type.id, next)
-    return HttpResponse.json<ApiItem<LeaveType>>({ data: presentType(next) })
+    const { rowVersion: _rowVersion, ...input } = parsed.data
+    const next: StoredLeaveType = {
+      ...current,
+      ...input,
+      updatedAt: new Date().toISOString(),
+      rowVersion: nextRowVersion(),
+    }
+    leaveTypeStore.update(current.id, next)
+    return HttpResponse.json<ApiItem<LeaveType>>({ data: typeOut(next) })
   }),
 
-  http.delete(path('/types/:id'), async ({ request, params }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
-    const type = typeof params.id === 'string' ? leaveTypes.find(params.id) : undefined
-    if (!type) return notFound()
-    const used = usageOf(type.id)
-    if (used > 0) {
-      return conflict(
-        `"${type.title}" is used by ${String(used)} leave application${used === 1 ? '' : 's'} and cannot be deleted. Switch Is Active off to stop offering it.`,
+  http.delete(typePath, async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const current = leaveTypeStore.find(String(params.id))
+    if (!current) return notFound('Leave type')
+    const rowVersion = new URL(request.url).searchParams.get('rowVersion')
+    if (rowVersion && rowVersion !== current.rowVersion) return conflict()
+    if (inUseCount(current.id) > 0) {
+      return errorResponse(
+        409,
+        'This leave type has balances or leave requests. Make it inactive instead',
+        { code: 'CONFLICT' },
       )
     }
-    leaveTypes.remove(type.id)
+    leaveTypeStore.remove(current.id)
     return new HttpResponse(null, { status: 204 })
   }),
 
-  // --- Leave Policies ---
-  http.get(path('/policies'), async ({ request }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
+  // --- Leave policies -----------------------------------------------------------------------------
+  http.get(apiPath('/leaves/policies'), async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
     const url = new URL(request.url)
     const { page, pageSize } = readPageParams(url)
-    const list = [...leavePolicies.all()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    const result = paginate(list, page, pageSize)
-    return HttpResponse.json<Paginated<LeavePolicy>>({
-      ...result,
-      data: result.data.map(presentPolicy),
-    })
+    const q = url.searchParams.get('q')?.trim().toLowerCase()
+    const kind = url.searchParams.get('kind')
+    const rows = leavePolicies
+      .all()
+      .filter((policy) => !q || policy.title.toLowerCase().includes(q))
+      .filter((policy) => !kind || policy.policyKind === kind)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(policyOut)
+    return HttpResponse.json<Paginated<LeavePolicy>>(paginate(rows, page, pageSize))
   }),
 
-  http.post(path('/policies'), async ({ request }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(request, policySchema)
-    if (!parsed.success) return invalid('Some fields are not valid.')
+  http.get(policyPath, async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const policy = leavePolicies.find(String(params.id))
+    if (!policy) return notFound('Leave policy')
+    return HttpResponse.json<ApiItem<LeavePolicy>>({ data: policyOut(policy) })
+  }),
+
+  http.post(apiPath('/leaves/policies'), async ({ request }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const parsed = policyIn.safeParse(await request.json())
+    if (!parsed.success) return invalid(zodErrors(parsed.error))
     const refused = checkPolicy(parsed.data, null)
     if (refused) return refused
-    const policy: StoredLeavePolicy = {
-      ...parsed.data,
+    const { rowVersion: _rowVersion, ...input } = parsed.data
+    const stored: StoredLeavePolicy = {
+      ...input,
+      types: input.policyKind === 'distribution' ? input.types : [],
+      enrolled: [],
       id: createId('lp'),
-      enrolledIds: [],
       createdAt: new Date().toISOString(),
+      updatedAt: null,
+      rowVersion: nextRowVersion(),
     }
-    leavePolicies.insert(policy)
-    return HttpResponse.json<ApiItem<LeavePolicy>>({ data: presentPolicy(policy) }, { status: 201 })
+    leavePolicies.insert(stored)
+    return HttpResponse.json<ApiItem<LeavePolicy>>({ data: policyOut(stored) }, { status: 201 })
   }),
 
-  http.put(path('/policies/:id'), async ({ request, params }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
-    const policy = typeof params.id === 'string' ? leavePolicies.find(params.id) : undefined
-    if (!policy) return notFound()
-    const parsed = await readBody(request, policySchema)
-    if (!parsed.success) return invalid('Some fields are not valid.')
-    const refused = checkPolicy(parsed.data, policy.id)
+  http.put(policyPath, async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const current = leavePolicies.find(String(params.id))
+    if (!current) return notFound('Leave policy')
+    const parsed = policyIn.safeParse(await request.json())
+    if (!parsed.success) return invalid(zodErrors(parsed.error))
+    if (parsed.data.rowVersion && parsed.data.rowVersion !== current.rowVersion) return conflict()
+    const refused = checkPolicy(parsed.data, current.id)
     if (refused) return refused
+    const { rowVersion: _rowVersion, ...input } = parsed.data
     const next: StoredLeavePolicy = {
-      ...policy,
-      ...parsed.data,
-      // A company level policy applies to everyone: nobody is enrolled by name.
-      enrolledIds: parsed.data.level === 'company' ? [] : policy.enrolledIds,
+      ...current,
+      ...input,
+      types: input.policyKind === 'distribution' ? input.types : [],
+      enrolled: input.policyLevel === 'employee' ? current.enrolled : [],
+      updatedAt: new Date().toISOString(),
+      rowVersion: nextRowVersion(),
     }
-    leavePolicies.update(policy.id, next)
-    return HttpResponse.json<ApiItem<LeavePolicy>>({ data: presentPolicy(next) })
+    leavePolicies.update(current.id, next)
+    return HttpResponse.json<ApiItem<LeavePolicy>>({ data: policyOut(next) })
   }),
 
-  http.delete(path('/policies/:id'), async ({ request, params }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
-    const policy = typeof params.id === 'string' ? leavePolicies.find(params.id) : undefined
-    if (!policy) return notFound()
-    leavePolicies.remove(policy.id)
+  http.delete(policyPath, async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const current = leavePolicies.find(String(params.id))
+    if (!current) return notFound('Leave policy')
+    const rowVersion = new URL(request.url).searchParams.get('rowVersion')
+    if (rowVersion && rowVersion !== current.rowVersion) return conflict()
+    leavePolicies.remove(current.id)
     return new HttpResponse(null, { status: 204 })
   }),
 
-  http.put(path('/policies/:id/enrollments'), async ({ request, params }) => {
-    const unauthorized = await guard(request)
-    if (unauthorized) return unauthorized
-    const policy = typeof params.id === 'string' ? leavePolicies.find(params.id) : undefined
-    if (!policy) return notFound()
-    if (policy.level === 'company') {
-      return invalid('A company level policy applies to every employee; nobody is enrolled in it.')
-    }
-    const parsed = await readBody(request, enrollSchema)
-    if (!parsed.success) return invalid('Choose the employees.')
-    const ids = [...new Set(parsed.data.employeeIds)]
-    if (ids.some((id) => !findEmployee(id))) return invalid('Choose employees from the directory.')
-    // One employee level policy per person: enrolling here takes them out of another.
-    for (const other of leavePolicies.all()) {
-      if (other.id === policy.id || other.level !== 'employee') continue
-      if (other.enrolledIds.some((id) => ids.includes(id))) {
-        leavePolicies.update(other.id, {
-          ...other,
-          enrolledIds: other.enrolledIds.filter((id) => !ids.includes(id)),
-        })
-      }
-    }
-    const next: StoredLeavePolicy = { ...policy, enrolledIds: ids }
-    leavePolicies.update(policy.id, next)
-    return HttpResponse.json<ApiItem<LeavePolicy>>({ data: presentPolicy(next) })
+  // --- Enrolment ----------------------------------------------------------------------------------
+  http.get(apiPath('/leaves/policies/:id/employees'), async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const policy = leavePolicies.find(String(params.id))
+    if (!policy) return notFound('Leave policy')
+    const { page, pageSize } = readPageParams(new URL(request.url))
+    const rows: EnrolledEmployee[] = policy.enrolled.flatMap((row) => {
+      const person = personOf(row.employeeId)
+      return person
+        ? [
+            {
+              employeeId: person.id,
+              employeeCode: person.code,
+              employeeName: person.name,
+              departmentName: person.departmentName,
+              enrolledAt: row.enrolledAt,
+            },
+          ]
+        : []
+    })
+    return HttpResponse.json<Paginated<EnrolledEmployee>>(paginate(rows, page, pageSize))
   }),
+
+  http.post(apiPath('/leaves/policies/:id/employees'), async ({ request, params }) => {
+    await latency()
+    const denied = requireAuth(request)
+    if (denied) return denied
+    const policy = leavePolicies.find(String(params.id))
+    if (!policy) return notFound('Leave policy')
+    const parsed = z
+      .object({ employeeIds: z.array(id).min(1).max(1000) })
+      .safeParse(await request.json())
+    if (!parsed.success) return invalid(zodErrors(parsed.error))
+    if (policy.policyLevel !== 'employee') {
+      return invalid(
+        { employeeIds: 'A company-level policy covers everyone; nobody needs enrolling.' },
+        'A company-level policy covers everyone; nobody needs enrolling.',
+      )
+    }
+    if (parsed.data.employeeIds.some((employeeId) => !personOf(employeeId))) {
+      return invalid({ employeeIds: 'Employee not found.' })
+    }
+    // A person is in at most one active employee-level policy of a kind.
+    const taken = leavePolicies
+      .all()
+      .some(
+        (other) =>
+          other.id !== policy.id &&
+          other.isActive &&
+          other.policyKind === policy.policyKind &&
+          other.enrolled.some((row) => parsed.data.employeeIds.includes(row.employeeId)),
+      )
+    if (taken) {
+      return refuse(
+        'LEAVE_POLICY_ALREADY_ENROLLED',
+        'employeeIds',
+        'Someone chosen is already enrolled in another active policy of this kind.',
+      )
+    }
+    const now = new Date().toISOString()
+    const added = parsed.data.employeeIds
+      .filter((employeeId) => !policy.enrolled.some((row) => row.employeeId === employeeId))
+      .map((employeeId) => ({ employeeId, enrolledAt: now }))
+    const next = {
+      ...policy,
+      enrolled: [...policy.enrolled, ...added],
+      rowVersion: nextRowVersion(),
+    }
+    leavePolicies.update(policy.id, next)
+    return HttpResponse.json<ApiItem<LeavePolicy>>({ data: policyOut(next) })
+  }),
+
+  http.delete(
+    apiPath('/leaves/policies/:id/employees/:employeeId'),
+    async ({ request, params }) => {
+      await latency()
+      const denied = requireAuth(request)
+      if (denied) return denied
+      const policy = leavePolicies.find(String(params.id))
+      if (!policy) return notFound('Leave policy')
+      leavePolicies.update(policy.id, {
+        ...policy,
+        enrolled: policy.enrolled.filter((row) => row.employeeId !== String(params.employeeId)),
+        rowVersion: nextRowVersion(),
+      })
+      return new HttpResponse(null, { status: 204 })
+    },
+  ),
 ]

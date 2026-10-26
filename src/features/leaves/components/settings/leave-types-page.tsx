@@ -5,23 +5,26 @@ import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import { ErrorState } from '@/components/feedback/error-state'
 import { DataTable, type DataTableColumn, Pagination } from '@/components/layout'
 import { Switch } from '@/components/ui/switch'
+import { useCan } from '@/lib/permissions'
 
-import { LEAVES_PAGE_SIZE } from '../../constants'
+import { LEAVE_CODES, LEAVES_PAGE_SIZE } from '../../constants'
 import { useDeleteLeaveType, useLeaveTypes, useSaveLeaveType } from '../../hooks/use-leaves'
 import { leaveTypeInput } from '../../schemas/leave-forms.schema'
-import type { LeaveType } from '../../types/leaves.types'
+import type { LeaveType, LeaveTypeInput } from '../../types/leaves.types'
 import { balanceDays, serial } from '../../utils/format'
 import { leaveTableClass, listSwitchClass } from '../../utils/styles'
 import { EditPencilIcon } from '../leave-icons'
+import { AllotmentDialog } from './allotment-dialog'
 import { LeaveTypeDialog } from './leave-type-dialog'
 
 const routeApi = getRouteApi('/_app/leaves/settings/leave-types')
 
 /**
- * Settings → Leave Types (frame 4428:90291): the list under the tabs with
- * Sr#., Type, No. of Leaves, Leave Encashment and Status as navy switches,
- * and the pencil in Actions that opens the type; "+ Add New" in the title row
- * opens "Add Leave Types". A type in use cannot be deleted.
+ * Settings → Leave Types (frame 4428:90291, `/leaves/types`): the list under the tabs with
+ * Sr#., Type, No. of Leaves, Leave Encashment and Status as navy switches, and the pencil in
+ * Actions that opens the type; "+ Add New" in the title row opens "Add Leave Types" and
+ * "Allotment" the allotment / carry forward run. A type in use cannot be deleted. Buttons
+ * follow `leaves.settings.types.*` and `leaves.allotment.process`.
  */
 export function LeaveTypesPage() {
   const { page, dialog } = routeApi.useSearch()
@@ -31,10 +34,14 @@ export function LeaveTypesPage() {
   const list = useLeaveTypes({ page, pageSize: LEAVES_PAGE_SIZE })
   const save = useSaveLeaveType()
   const remove = useDeleteLeaveType()
+  const canCreate = useCan(LEAVE_CODES.typesCreate)
+  const canEdit = useCan(LEAVE_CODES.typesEdit)
+  const canDelete = useCan(LEAVE_CODES.typesDelete)
+  const canAllot = useCan(LEAVE_CODES.allotment)
   const closeAdd = () => {
     void navigate({ search: (prev) => ({ ...prev, dialog: undefined }) })
   }
-  const toggle = (row: LeaveType, patch: Partial<LeaveType>) => {
+  const toggle = (row: LeaveType, patch: Partial<LeaveTypeInput>) => {
     save.mutate({ id: row.id, input: { ...leaveTypeInput(row), ...patch } })
   }
 
@@ -46,17 +53,17 @@ export function LeaveTypesPage() {
       cell: (_row, index) => serial(list.data?.meta.page ?? page, LEAVES_PAGE_SIZE, index),
     },
     { id: 'type', header: 'Type', mobile: 'heading', cell: (row) => row.title },
-    { id: 'leaves', header: 'No. of Leaves', cell: (row) => balanceDays(row.leavesAllowed) },
+    { id: 'leaves', header: 'No. of Leaves', cell: (row) => balanceDays(row.allowance) },
     {
       id: 'encashment',
       header: 'Leave Encashment',
       cell: (row) => (
         <Switch
           aria-label={`Leave encashment for ${row.title}`}
-          checked={row.encashment}
-          disabled={save.isPending}
+          checked={row.allowEncashment}
+          disabled={save.isPending || !canEdit}
           onCheckedChange={(checked) => {
-            toggle(row, { encashment: checked })
+            toggle(row, { allowEncashment: checked })
           }}
           className={listSwitchClass}
         />
@@ -68,10 +75,10 @@ export function LeaveTypesPage() {
       cell: (row) => (
         <Switch
           aria-label={`Status of ${row.title}`}
-          checked={row.active}
-          disabled={save.isPending}
+          checked={row.isActive}
+          disabled={save.isPending || !canEdit}
           onCheckedChange={(checked) => {
-            toggle(row, { active: checked })
+            toggle(row, { isActive: checked })
           }}
           className={listSwitchClass}
         />
@@ -100,18 +107,20 @@ export function LeaveTypesPage() {
           isFetching={list.isFetching}
           rowActionsHeader="Actions"
           emptyState={<p className="py-10 text-center text-sm text-grey">No leave types yet.</p>}
-          rowActions={(row) => (
-            <button
-              type="button"
-              aria-label={`Edit ${row.title}`}
-              onClick={() => {
-                setEditing(row)
-              }}
-              className="inline-flex size-7 items-center justify-center rounded-sm text-sidebar outline-none hover:bg-sidebar/10 focus-visible:ring-2 focus-visible:ring-ring/50 dark:text-heading"
-            >
-              <EditPencilIcon className="size-5" />
-            </button>
-          )}
+          rowActions={(row) =>
+            canEdit && (
+              <button
+                type="button"
+                aria-label={`Edit ${row.title}`}
+                onClick={() => {
+                  setEditing(row)
+                }}
+                className="inline-flex size-7 items-center justify-center rounded-sm text-sidebar outline-none hover:bg-sidebar/10 focus-visible:ring-2 focus-visible:ring-ring/50 dark:text-heading"
+              >
+                <EditPencilIcon className="size-5" />
+              </button>
+            )
+          }
         />
       )}
       {list.data && list.data.meta.total > 0 && (
@@ -126,7 +135,10 @@ export function LeaveTypesPage() {
         />
       )}
 
-      {dialog === 'add' && <LeaveTypeDialog mode="create" type={null} onClose={closeAdd} />}
+      {dialog === 'add' && canCreate && (
+        <LeaveTypeDialog mode="create" type={null} onClose={closeAdd} />
+      )}
+      {dialog === 'allotment' && canAllot && <AllotmentDialog onClose={closeAdd} />}
       {editing && (
         <LeaveTypeDialog
           mode="edit"
@@ -134,9 +146,13 @@ export function LeaveTypesPage() {
           onClose={() => {
             setEditing(null)
           }}
-          onDelete={() => {
-            setDeleting(editing)
-          }}
+          onDelete={
+            canDelete
+              ? () => {
+                  setDeleting(editing)
+                }
+              : undefined
+          }
         />
       )}
       <ConfirmDialog
@@ -147,7 +163,7 @@ export function LeaveTypesPage() {
         title={deleting ? `Delete ${deleting.title}` : 'Delete'}
         description={
           deleting && deleting.inUse > 0
-            ? `${deleting.title} is used by ${String(deleting.inUse)} leave application${deleting.inUse === 1 ? '' : 's'}; the server will refuse this. Are you sure you want to Delete this?`
+            ? `${deleting.title} is in use (${String(deleting.inUse)} ledger entr${deleting.inUse === 1 ? 'y' : 'ies'}, requests or policies); the server will refuse this. Are you sure you want to Delete this?`
             : 'Are you sure you want to Delete this?'
         }
         confirmLabel="Yes"
@@ -155,14 +171,17 @@ export function LeaveTypesPage() {
         variant="destructive"
         onConfirm={() => {
           if (deleting) {
-            remove.mutate(deleting.id, {
-              onSuccess: () => {
-                setEditing(null)
+            remove.mutate(
+              { id: deleting.id, rowVersion: deleting.rowVersion },
+              {
+                onSuccess: () => {
+                  setEditing(null)
+                },
+                onSettled: () => {
+                  setDeleting(null)
+                },
               },
-              onSettled: () => {
-                setDeleting(null)
-              },
-            })
+            )
           }
         }}
       />

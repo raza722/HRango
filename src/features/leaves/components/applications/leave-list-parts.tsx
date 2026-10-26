@@ -10,11 +10,14 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { REQUEST_STATUSES, type RequestCounts, type RequestStatus } from '@/features/requests'
 import { cn } from '@/lib/utils'
 
 import { LEAVE_STATUS_META } from '../../constants'
-import type { LeaveApplicationEmployee } from '../../types/leaves.types'
+import {
+  LEAVE_STATUSES,
+  type LeaveApplicationCounts,
+  type LeaveStatus,
+} from '../../types/leaves.types'
 import {
   leaveNavyButtonClass,
   leaveOutlineButtonClass,
@@ -22,7 +25,7 @@ import {
 } from '../../utils/styles'
 
 /** "Approved", "Pending" …: 59 × 20, 3px corners, Poppins Medium 10 in the status colour. */
-export function LeaveStatusChip({ status }: { status: RequestStatus }) {
+export function LeaveStatusChip({ status }: { status: LeaveStatus }) {
   const meta = LEAVE_STATUS_META[status]
   return (
     <span
@@ -36,7 +39,7 @@ export function LeaveStatusChip({ status }: { status: RequestStatus }) {
   )
 }
 
-const statusLabel = (status: RequestStatus | undefined) =>
+const statusLabel = (status: LeaveStatus | undefined) =>
   status ? LEAVE_STATUS_META[status].menuLabel : 'All Requests'
 
 /**
@@ -49,11 +52,11 @@ export function LeaveStatusDropdown({
   counts,
   onChange,
 }: {
-  value: RequestStatus | undefined
-  counts: RequestCounts | undefined
-  onChange: (status: RequestStatus | undefined) => void
+  value: LeaveStatus | undefined
+  counts: LeaveApplicationCounts | undefined
+  onChange: (status: LeaveStatus | undefined) => void
 }) {
-  const count = (key: RequestStatus | 'all') => (counts ? ` (${String(counts[key])})` : '')
+  const count = (key: LeaveStatus | 'all') => (counts ? ` (${String(counts[key])})` : '')
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
@@ -71,13 +74,13 @@ export function LeaveStatusDropdown({
         <DropdownMenuRadioGroup
           value={value ?? 'all'}
           onValueChange={(picked) => {
-            onChange(REQUEST_STATUSES.find((status) => status === picked))
+            onChange(LEAVE_STATUSES.find((status) => status === picked))
           }}
         >
           <DropdownMenuRadioItem value="all" className="text-[0.8125rem] text-title">
             All Requests{count('all')}
           </DropdownMenuRadioItem>
-          {REQUEST_STATUSES.map((status) => (
+          {LEAVE_STATUSES.map((status) => (
             <DropdownMenuRadioItem
               key={status}
               value={status}
@@ -150,12 +153,16 @@ export function ApplyLeaveButton({ onClick }: { onClick: () => void }) {
  * the name Poppins Medium and the code Regular under it (drawn 10 / 8 px;
  * 11 / 9 per the readability rule).
  */
-export function LeavePersonCell({ person }: { person: LeaveApplicationEmployee }) {
+export function LeavePersonCell({
+  person,
+}: {
+  person: { name: string; code: string; photoUrl?: string | null }
+}) {
   return (
     <span className="flex min-w-0 items-center gap-1">
       <EmployeeAvatar
         name={person.name}
-        photoUrl={person.photoUrl}
+        photoUrl={person.photoUrl ?? null}
         className="size-7 shrink-0 ring-1 ring-[#B9B9B9] dark:ring-border"
       />
       <span className="min-w-0">

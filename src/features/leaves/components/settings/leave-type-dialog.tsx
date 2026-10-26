@@ -33,7 +33,7 @@ import {
   GENDER_RULE_LABELS,
   LEAVE_TYPE_SWITCHES,
   MARITAL_RULE_LABELS,
-  SHORT_UNIT_LABELS,
+  SHORT_SLAB_VALUE_TYPE_LABELS,
   TENURE_LABELS,
 } from '../../constants'
 import { useSaveLeaveType } from '../../hooks/use-leaves'
@@ -50,7 +50,7 @@ import {
   LEAVE_MARITAL_RULES,
   LEAVE_TENURES,
   type LeaveType,
-  SHORT_SLAB_UNITS,
+  SHORT_SLAB_VALUE_TYPES,
 } from '../../types/leaves.types'
 import { slabAddButtonClass, slabInputClass, typeCheckboxesClass } from '../../utils/styles'
 import { CancelCircleIcon } from '../leave-icons'
@@ -113,8 +113,8 @@ function SlabInput({
   )
 }
 
-/** "Select Type" of a short leave slab. */
-function SlabUnitSelect({
+/** "Select Type" of a short leave slab: Percentage (of a day) or Flat (days). */
+function SlabValueTypeSelect({
   control,
   index,
   disabled,
@@ -125,7 +125,7 @@ function SlabUnitSelect({
 }) {
   const {
     field: { value, onChange },
-  } = useController({ control, name: `shortLeaveSlabs.${index}.unit` })
+  } = useController({ control, name: `shortSlabs.${index}.valueType` })
   return (
     <Select value={value} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger
@@ -135,9 +135,9 @@ function SlabUnitSelect({
         <SelectValue placeholder="Select Type" />
       </SelectTrigger>
       <SelectContent>
-        {SHORT_SLAB_UNITS.map((unit) => (
-          <SelectItem key={unit} value={unit}>
-            {SHORT_UNIT_LABELS[unit]}
+        {SHORT_SLAB_VALUE_TYPES.map((valueType) => (
+          <SelectItem key={valueType} value={valueType}>
+            {SHORT_SLAB_VALUE_TYPE_LABELS[valueType]}
           </SelectItem>
         ))}
       </SelectContent>
@@ -214,8 +214,8 @@ function RemoveSlabButton({ label, onClick }: { label: string; onClick: () => vo
  * "Add Leave Types" (frames 4428:90632, 4428:90731, 4428:90852): a 1078px
  * Inter popup with the labels on the left. Title, Short Code and No of Leaves
  * Allowed; the checkboxes in the frames' order, each dependent field right
- * under its box (Back Date Leave Limit in Days, Do When Attachment is
- * Required, Encashment Min / Max Limit); Pre Condition (Gender, Marital
+ * under its box (Back Date Leave Limit in Days, Future Date Limit in Days, Do
+ * When Attachment is Required, Encashment Min / Max Limit); Pre Condition (Gender, Marital
  * Status, Can Apply in Probation, Pro Rated, Minimum Experience to Apply,
  * Maximum Application in Employment, Gap Between Application in Months);
  * Balance Settings (Tenure, Balance According to Flat / Experience,
@@ -240,19 +240,32 @@ export function LeaveTypeDialog({
     resolver: zodResolver(leaveTypeFormSchema),
     defaultValues: type ? leaveTypeToForm(type) : EMPTY_LEAVE_TYPE,
   })
-  const [backDate, attachmentRequired, encashment, shortLeave, balanceBasis] = useWatch({
-    control: form.control,
-    name: ['backDate', 'attachmentRequired', 'encashment', 'shortLeave', 'balanceBasis'],
-  })
+  const [backDate, futureLimit, attachmentRequired, encashment, shortLeave, balanceBasis] =
+    useWatch({
+      control: form.control,
+      name: [
+        'allowBackDate',
+        'hasFutureLimit',
+        'attachmentRequired',
+        'allowEncashment',
+        'isShortLeave',
+        'balanceBasis',
+      ],
+    })
   const experienceSlabs = useFieldArray({ control: form.control, name: 'experienceSlabs' })
-  const shortSlabs = useFieldArray({ control: form.control, name: 'shortLeaveSlabs' })
+  const shortSlabs = useFieldArray({ control: form.control, name: 'shortSlabs' })
   const errors = form.formState.errors
   const slabsError =
     errors.experienceSlabs?.message ?? errors.experienceSlabs?.root?.message ?? undefined
+  const shortSlabsError =
+    errors.shortSlabs?.message ?? errors.shortSlabs?.root?.message ?? undefined
 
   const submit = form.handleSubmit(async (values) => {
     try {
-      await save.mutateAsync({ id: type?.id, input: leaveTypeToInput(values) })
+      await save.mutateAsync({
+        id: type?.id,
+        input: leaveTypeToInput(values, type?.rowVersion ?? null),
+      })
     } catch (failure) {
       if (failure instanceof ApiError) {
         let placed = false
@@ -301,14 +314,14 @@ export function LeaveTypeDialog({
         <TextField control={form.control} name="shortCode" label="Short Code" maxLength={10} />
         <TextField
           control={form.control}
-          name="leavesAllowed"
+          name="allowance"
           label="No of Leaves Allowed"
           inputMode="decimal"
         />
 
         {LEAVE_TYPE_SWITCHES.map(({ name, label }) => {
           switch (name) {
-            case 'backDate':
+            case 'allowBackDate':
               return (
                 <div key={name} className="contents">
                   {box(name, label)}
@@ -342,7 +355,22 @@ export function LeaveTypeDialog({
                   )}
                 </div>
               )
-            case 'encashment':
+            case 'hasFutureLimit':
+              return (
+                <div key={name} className="contents">
+                  {box(name, label)}
+                  {futureLimit && (
+                    <TextField
+                      control={form.control}
+                      name="futureLimitDays"
+                      label="Future Date Limit in Days"
+                      required
+                      inputMode="numeric"
+                    />
+                  )}
+                </div>
+              )
+            case 'allowEncashment':
               return (
                 <div key={name} className="contents">
                   {box(name, label)}
@@ -391,7 +419,7 @@ export function LeaveTypeDialog({
         />
         <CheckboxField
           control={form.control}
-          name="applyInProbation"
+          name="allowedInProbation"
           label="Can Apply in Probation"
           tone="navy"
         />
@@ -410,7 +438,7 @@ export function LeaveTypeDialog({
         />
         <TextField
           control={form.control}
-          name="gapMonths"
+          name="gapBetweenApplicationsMonths"
           label="Gap Between Application in Months"
           inputMode="numeric"
         />
@@ -450,10 +478,7 @@ export function LeaveTypeDialog({
                 Minimum Months
                 <Required />
               </>,
-              <>
-                Maximum Months
-                <Required />
-              </>,
+              'Maximum Months',
               <>
                 Balance
                 <Required />
@@ -482,7 +507,7 @@ export function LeaveTypeDialog({
                     control={form.control}
                     name={`experienceSlabs.${index}.maxMonths`}
                     label={`Slab ${String(index + 1)} maximum months`}
-                    placeholder="Maximum Months"
+                    placeholder="No limit"
                     inputMode="numeric"
                     disabled={false}
                   />
@@ -522,10 +547,10 @@ export function LeaveTypeDialog({
               'Type',
               'Value',
             ]}
-            error={undefined}
+            error={shortSlabsError}
             readOnly={false}
             onAdd={() => {
-              shortSlabs.append({ name: '', balance: '', unit: 'hours', value: '' })
+              shortSlabs.append({ name: '', balance: '', valueType: 'percentage', value: '' })
             }}
           >
             {shortSlabs.fields.map((slab, index) => (
@@ -533,7 +558,7 @@ export function LeaveTypeDialog({
                 <td>
                   <SlabInput
                     control={form.control}
-                    name={`shortLeaveSlabs.${index}.name`}
+                    name={`shortSlabs.${index}.name`}
                     label={`Short leave ${String(index + 1)} name`}
                     placeholder="Name"
                     disabled={false}
@@ -542,7 +567,7 @@ export function LeaveTypeDialog({
                 <td>
                   <SlabInput
                     control={form.control}
-                    name={`shortLeaveSlabs.${index}.balance`}
+                    name={`shortSlabs.${index}.balance`}
                     label={`Short leave ${String(index + 1)} balance`}
                     placeholder="Balance"
                     inputMode="decimal"
@@ -550,15 +575,15 @@ export function LeaveTypeDialog({
                   />
                 </td>
                 <td>
-                  <SlabUnitSelect control={form.control} index={index} disabled={false} />
+                  <SlabValueTypeSelect control={form.control} index={index} disabled={false} />
                 </td>
                 <td>
                   <SlabInput
                     control={form.control}
-                    name={`shortLeaveSlabs.${index}.value`}
+                    name={`shortSlabs.${index}.value`}
                     label={`Short leave ${String(index + 1)} value`}
                     placeholder="Value"
-                    inputMode="numeric"
+                    inputMode="decimal"
                     disabled={false}
                   />
                 </td>
