@@ -5,7 +5,77 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { formatLong, NoRecord, PayrollDialog } from '@/features/payroll'
 import { cn } from '@/lib/utils'
 
-import { useAssetHistory } from '../../hooks/use-assets'
+import {
+  ASSET_ACTION_LABELS,
+  ASSET_CONDITION_LABELS,
+  ASSET_FIELD_LABELS,
+  ASSET_STATUS_LABELS,
+  RETURN_STATUS_LABELS,
+} from '../../constants'
+import { useAssetHistory, useAssetTypeOptions } from '../../hooks/use-assets'
+import type { AssetHistoryRow } from '../../types/assets.types'
+
+interface Change {
+  field: string
+  oldValue: string
+  newValue: string
+}
+
+/** One line of the popup: an action at a moment by someone, with the fields it changed. */
+interface Entry {
+  id: string
+  action: string
+  performedAt: string
+  performedBy: string
+  changes: Change[]
+}
+
+const RETURN_LABELS: Partial<Record<string, string>> = RETURN_STATUS_LABELS
+
+const LABEL_MAPS: Partial<Record<string, Partial<Record<string, string>>>> = {
+  asset_condition: ASSET_CONDITION_LABELS,
+  status: ASSET_STATUS_LABELS,
+  is_taxable: { '0': 'No', '1': 'Yes', false: 'No', true: 'Yes' },
+}
+
+/**
+ * The server sends one row per changed field; rows of the same action, moment and person
+ * become one line. Type ids read as names, codes as labels.
+ */
+function toEntries(rows: readonly AssetHistoryRow[], typeNames: ReadonlyMap<string, string>) {
+  const show = (field: string | null, value: string | null) => {
+    if (value === null || value === '') return ''
+    if (field === 'asset_type_id') return typeNames.get(value) ?? value
+    if (field === 'file_id') return 'Attached'
+    if (field === 'holder') return RETURN_LABELS[value] ?? value
+    return (field && LABEL_MAPS[field]?.[value]) ?? value
+  }
+  const entries: Entry[] = []
+  const byKey = new Map<string, Entry>()
+  for (const row of rows) {
+    const key = `${row.action}|${row.performedAt}|${row.performedByUserId ?? ''}`
+    let entry = byKey.get(key)
+    if (!entry) {
+      entry = {
+        id: row.id,
+        action: ASSET_ACTION_LABELS[row.action] ?? row.action,
+        performedAt: row.performedAt,
+        performedBy: row.performedByName ?? 'System',
+        changes: [],
+      }
+      byKey.set(key, entry)
+      entries.push(entry)
+    }
+    if (row.fieldName) {
+      entry.changes.push({
+        field: ASSET_FIELD_LABELS[row.fieldName] ?? row.fieldName,
+        oldValue: show(row.fieldName, row.oldValue),
+        newValue: show(row.fieldName, row.newValue),
+      })
+    }
+  }
+  return entries
+}
 
 /** Figma "Company Assets History": headings Poppins Medium 16 #303030, rows Poppins Medium 18 #303030. */
 const headText = 'text-base text-title'
@@ -25,7 +95,9 @@ export function AssetHistoryDialog({
   onClose: () => void
 }) {
   const history = useAssetHistory(assetId)
-  const entries = history.data ?? []
+  const types = useAssetTypeOptions()
+  const typeNames = new Map((types.data ?? []).map((type) => [type.id, type.name]))
+  const entries = toEntries(history.data ?? [], typeNames)
   const [open, setOpen] = useState<Set<string> | null>(null)
   // Until the person toggles a line, the newest one is open.
   const expanded = open ?? new Set(entries.slice(0, 1).map((entry) => entry.id))
@@ -49,7 +121,7 @@ export function AssetHistoryDialog({
             <thead>
               <tr className={cn('bg-[#17263A]/[0.06] dark:bg-muted', headText)}>
                 <th scope="col" className="py-3 pr-3 pl-12 font-medium">
-                  Employee
+                  Performed By
                 </th>
                 <th scope="col" className="px-3 py-3 font-medium">
                   Action
@@ -62,7 +134,7 @@ export function AssetHistoryDialog({
             <tbody>
               {entries.map((entry) => {
                 const isOpen = expanded.has(entry.id)
-                const label = `${entry.performedBy.name} - ${entry.performedBy.code}`
+                const label = entry.performedBy
                 return (
                   <Fragment key={entry.id}>
                     <tr className={cn('border-b last:border-b-0', cellText)}>

@@ -4,26 +4,23 @@ import { apiClient } from '@/lib/axios'
 import type { ApiItem, Paginated } from '@/types/api'
 
 import type {
-  AllocationDetail,
+  Allocation,
   AllocationInput,
-  AllocationRow,
-  AssetDetail,
+  Asset,
   AssetHistoryRow,
-  AssetImportRow,
   AssetInput,
-  AssetLookups,
-  AssetRow,
   AssetType,
   AssetTypeInput,
-  ClearanceDetail,
+  Clearance,
   ClearanceInput,
   ClearancePrefill,
+  ClearanceRef,
   ClearanceRow,
-  ListParams,
+  DeallocateInput,
 } from '../types/assets.types'
 
 /** Query values: only what is set, so keys and URLs stay short. */
-function compact<T extends object>(params: T): Partial<T> {
+export function compact<T extends object>(params: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(params).filter(
       ([, value]) => value !== undefined && value !== '' && value !== null,
@@ -46,54 +43,59 @@ async function getPage<T>(url: string, params: object, signal?: AbortSignal) {
   return data
 }
 
-async function send<T>(method: 'post' | 'put', url: string, body?: unknown) {
+async function send<T>(method: 'post' | 'put' | 'patch', url: string, body?: unknown) {
   const { data } = await apiClient[method]<ApiItem<T>>(path(url), body ?? {})
   return data.data
 }
 
-async function remove(url: string) {
-  await apiClient.delete(path(url))
+async function remove(url: string, rowVersion: string) {
+  await apiClient.delete(path(url), { params: { rowVersion } })
+}
+
+export interface ListParams {
+  page: number
+  pageSize: number
 }
 
 export type PageQuery<F> = ListParams & F
 
-export interface AssetFilters {
-  status?: string | undefined
-  name?: string | undefined
-  code?: string | undefined
-  identificationNumber?: string | undefined
-  assetTypeId?: string | undefined
+export interface AssetTypeFilters {
+  q?: string | undefined
+  isActive?: boolean | undefined
 }
 
-export interface AssetTypeFilters {
+export interface AssetFilters {
+  q?: string | undefined
   status?: string | undefined
-  name?: string | undefined
+  availability?: string | undefined
+  assetTypeId?: string | undefined
 }
 
 export interface AllocationFilters {
+  q?: string | undefined
   employeeId?: string | undefined
   assetTypeId?: string | undefined
-  status?: string | undefined
   assetId?: string | undefined
+  status?: string | undefined
   from?: string | undefined
   to?: string | undefined
 }
 
 export interface ClearanceFilters {
-  code?: string | undefined
-  name?: string | undefined
-  department?: string | undefined
-  clearanceDate?: string | undefined
+  q?: string | undefined
+  status?: string | undefined
+  employeeId?: string | undefined
+  departmentId?: string | undefined
+  endOfEmploymentId?: string | undefined
 }
 
-export interface ImportResult {
-  created: number
-  errors: string[]
+/** A record and the rowVersion it was read with (edits and deletes send it back). */
+export interface Versioned {
+  id: string
+  rowVersion: string
 }
 
 export const assetsApi = {
-  lookups: (signal?: AbortSignal) => getData<AssetLookups>('/lookups', undefined, signal),
-
   // Asset Types
   assetTypes: (params: PageQuery<AssetTypeFilters>, signal?: AbortSignal) =>
     getPage<AssetType>('/types', params, signal),
@@ -102,66 +104,60 @@ export const assetsApi = {
   createAssetType: (input: AssetTypeInput) => send<AssetType>('post', '/types', input),
   updateAssetType: (id: string, input: AssetTypeInput) =>
     send<AssetType>('put', `/types/${id}`, input),
-  deleteAssetType: (id: string) => remove(`/types/${id}`),
+  deleteAssetType: ({ id, rowVersion }: Versioned) => remove(`/types/${id}`, rowVersion),
 
   // Company Assets
   assets: (params: PageQuery<AssetFilters>, signal?: AbortSignal) =>
-    getPage<AssetRow>('/items', params, signal),
+    getPage<Asset>('/company-assets', params, signal),
   asset: (id: string, signal?: AbortSignal) =>
-    getData<AssetDetail>(`/items/${id}`, undefined, signal),
+    getData<Asset>(`/company-assets/${id}`, undefined, signal),
   assetHistory: (id: string, signal?: AbortSignal) =>
-    getData<AssetHistoryRow[]>(`/items/${id}/history`, undefined, signal),
-  createAsset: (input: AssetInput) => send<AssetDetail>('post', '/items', input),
-  updateAsset: (id: string, input: AssetInput) => send<AssetDetail>('put', `/items/${id}`, input),
-  deleteAsset: (id: string) => remove(`/items/${id}`),
-  /** Deactivate, or Activate again. */
-  setAssetActive: (id: string, active: boolean) =>
-    send<AssetDetail>('post', `/items/${id}/${active ? 'activate' : 'deactivate'}`),
-  importAssets: (rows: AssetImportRow[]) => send<ImportResult>('post', '/items/import', { rows }),
+    getData<AssetHistoryRow[]>(`/company-assets/${id}/history`, undefined, signal),
+  createAsset: (input: AssetInput) => send<Asset>('post', '/company-assets', input),
+  updateAsset: (id: string, input: AssetInput) =>
+    send<Asset>('put', `/company-assets/${id}`, input),
+  deleteAsset: ({ id, rowVersion }: Versioned) => remove(`/company-assets/${id}`, rowVersion),
+  /** Deactivate (decommissioned), or Activate again. */
+  setAssetActive: ({ id, rowVersion }: Versioned, active: boolean) =>
+    send<Asset>('patch', `/company-assets/${id}/${active ? 'activate' : 'deactivate'}`, {
+      rowVersion,
+    }),
 
   // Asset Allocations
   allocations: (params: PageQuery<AllocationFilters>, signal?: AbortSignal) =>
-    getPage<AllocationRow>('/allocations', params, signal),
+    getPage<Allocation>('/allocations', params, signal),
   allocation: (id: string, signal?: AbortSignal) =>
-    getData<AllocationDetail>(`/allocations/${id}`, undefined, signal),
-  allocate: (input: AllocationInput) => send<AllocationDetail>('post', '/allocations', input),
-  deallocate: (id: string, deallocationDate: string) =>
-    send<AllocationDetail>('post', `/allocations/${id}/deallocate`, { deallocationDate }),
+    getData<Allocation>(`/allocations/${id}`, undefined, signal),
+  allocate: (input: AllocationInput) => send<Allocation>('post', '/allocations', input),
+  deallocate: (id: string, input: DeallocateInput) =>
+    send<Allocation>('patch', `/allocations/${id}/deallocate`, input),
 
   // Asset Clearance Form
   clearances: (params: PageQuery<ClearanceFilters>, signal?: AbortSignal) =>
-    getPage<ClearanceRow>('/clearances', params, signal),
+    getPage<ClearanceRow>('/clearance-forms', params, signal),
   clearance: (id: string, signal?: AbortSignal) =>
-    getData<ClearanceDetail>(`/clearances/${id}`, undefined, signal),
+    getData<Clearance>(`/clearance-forms/${id}`, undefined, signal),
   clearancePrefill: (employeeId: string, signal?: AbortSignal) =>
-    getData<ClearancePrefill>(`/clearances/prefill/${employeeId}`, undefined, signal),
-  createClearance: (input: ClearanceInput) => send<ClearanceDetail>('post', '/clearances', input),
+    getData<ClearancePrefill>('/clearance-forms/prefill', { employeeId }, signal),
+  createClearance: (input: ClearanceInput) => send<Clearance>('post', '/clearance-forms', input),
   updateClearance: (id: string, input: ClearanceInput) =>
-    send<ClearanceDetail>('put', `/clearances/${id}`, input),
-  deleteClearance: (id: string) => remove(`/clearances/${id}`),
-  /** Bulk "Approved" / "Unapproved" on the ticked rows. */
-  setClearancesApproved: (ids: string[], approved: boolean) =>
-    send<{ changed: number }>('post', `/clearances/${approved ? 'approve' : 'unapprove'}`, {
-      ids,
+    send<Clearance>('put', `/clearance-forms/${id}`, input),
+  deleteClearance: ({ id, rowVersion }: Versioned) => remove(`/clearance-forms/${id}`, rowVersion),
+  /** Bulk Approve / Unapprove on the ticked rows: all or nothing. */
+  setClearancesApproved: (forms: ClearanceRef[], approved: boolean) =>
+    send<ClearanceRow[]>('patch', `/clearance-forms/${approved ? 'approve' : 'unapprove'}`, {
+      forms,
     }),
 }
 
 export const assetKeys = {
   all: ['assets'] as const,
-  lookups: () => [...assetKeys.all, 'lookups'] as const,
   list: (name: string, params?: object) =>
     params
       ? ([...assetKeys.all, name, compact(params)] as const)
       : ([...assetKeys.all, name] as const),
   detail: (name: string, id: string) => [...assetKeys.all, name, 'detail', id] as const,
 }
-
-export const assetLookupsQueryOptions = () =>
-  queryOptions({
-    queryKey: assetKeys.lookups(),
-    queryFn: ({ signal }) => assetsApi.lookups(signal),
-    staleTime: 30_000,
-  })
 
 /** A paginated list; `fetch` is the matching `assetsApi` call. */
 export const assetListQueryOptions = <TRow, TParams extends object>(
@@ -174,3 +170,6 @@ export const assetListQueryOptions = <TRow, TParams extends object>(
     queryFn: ({ signal }) => fetch(params, signal),
     placeholderData: keepPreviousData,
   })
+
+/** Rows for a picker (the API's page maximum). */
+export const PICKER_PAGE = { page: 1, pageSize: 100 } as const

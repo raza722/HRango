@@ -1,9 +1,10 @@
 import type {
   AllocationStatus,
+  AssetAvailability,
   AssetCondition,
   AssetStatus,
-  ClearanceCondition,
   ClearanceStatus,
+  ReturnCondition,
   ReturnStatus,
 } from './types/assets.types'
 
@@ -17,11 +18,19 @@ const RED = 'bg-[#FFE1E7] text-[#EF493E]'
 const ORANGE = 'bg-[#FFF1DE] text-[#F08035]/90'
 const GREY = 'bg-muted text-field-foreground'
 
-/** Company Assets status (the frames draw red "Unavailable" and green "Allocated"). */
-export const ASSET_STATUS_META: Record<AssetStatus, ChipMeta> = {
+/** Company Assets "Status" column: the server's availability (red "Unavailable", green "Allocated"). */
+export const ASSET_AVAILABILITY_META: Record<AssetAvailability, ChipMeta> = {
   available: { label: 'Available', className: GREEN },
   allocated: { label: 'Allocated', className: GREEN },
   unavailable: { label: 'Unavailable', className: RED },
+}
+
+/** The asset record's own status. */
+export const ASSET_STATUS_LABELS: Record<AssetStatus, string> = {
+  active: 'Active',
+  damaged: 'Damaged',
+  lost: 'Lost',
+  decommissioned: 'Decommissioned',
 }
 
 export const ASSET_TYPE_STATUS_META: Record<'active' | 'inactive', ChipMeta> = {
@@ -36,16 +45,17 @@ export const ALLOCATION_STATUS_META: Record<AllocationStatus, ChipMeta> = {
 }
 
 export const CLEARANCE_STATUS_META: Record<ClearanceStatus, ChipMeta> = {
-  pending: { label: 'Pending by HR', className: ORANGE },
+  in_progress: { label: 'In Progress', className: ORANGE },
   approved: { label: 'Approved', className: GREEN },
 }
 
 export const ASSET_CONDITION_LABELS: Record<AssetCondition, string> = {
-  old: 'Old',
   new: 'New',
+  old: 'Old',
+  fair: 'Fair',
 }
 
-export const CLEARANCE_CONDITION_LABELS: Record<ClearanceCondition, string> = {
+export const RETURN_CONDITION_LABELS: Record<ReturnCondition, string> = {
   good: 'Good',
   fair: 'Fair',
   damaged: 'Damaged',
@@ -54,24 +64,37 @@ export const CLEARANCE_CONDITION_LABELS: Record<ClearanceCondition, string> = {
 export const RETURN_STATUS_LABELS: Record<ReturnStatus, string> = {
   complete: 'Complete Return',
   partial: 'Partial Return',
-  'not-returned': 'Not Returned',
+  not_returned: 'Not Returned',
 }
 
-/** Field names as Asset History shows them. */
+/** Asset History: the server's column names as the popup shows them. */
 export const ASSET_FIELD_LABELS: Record<string, string> = {
   name: 'Name',
-  assetTypeId: 'Asset Type',
-  identificationNumber: 'Identification Number',
-  taxable: 'Is Taxable',
-  condition: 'Condition',
+  asset_type_id: 'Asset Type',
+  identification_no: 'Identification Number',
+  is_taxable: 'Is Taxable',
+  asset_condition: 'Condition',
   manufacturer: 'Manufacturer',
   model: 'Model',
-  attachmentName: 'Attachment',
-  currentValue: 'Current Value',
-  acquiredDate: 'Acquired Date',
+  file_id: 'Attachment',
+  current_value: 'Current Value',
+  acquired_date: 'Acquired Date',
   description: 'Description',
-  active: 'Active',
+  status: 'Status',
   holder: 'Allocated To',
+}
+
+/** Asset History: the server's action names as the popup shows them. */
+export const ASSET_ACTION_LABELS: Record<string, string> = {
+  create: 'Create',
+  update: 'Update',
+  activate: 'Activate',
+  deactivate: 'Deactivate',
+  allocate: 'Allocate',
+  deallocate: 'Deallocate',
+  clearance: 'Clearance',
+  'unapprove clearance': 'Unapprove Clearance',
+  delete: 'Delete',
 }
 
 /** Rows per page on the Assets lists. */

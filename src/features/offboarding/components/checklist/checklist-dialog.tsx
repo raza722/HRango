@@ -34,7 +34,7 @@ const TITLES: Record<Mode, string> = {
 }
 
 const schema = z.object({
-  name: z.string().trim().min(1, 'Enter the name').max(80, 'Keep it under 80 characters'),
+  name: z.string().trim().min(1, 'Enter the name').max(200, 'Keep it under 200 characters'),
   status: z.enum(['inactive', 'active']),
   description: z.string().trim().max(500, 'Keep it under 500 characters'),
 })
@@ -89,12 +89,15 @@ function ChecklistForm({
     resolver: zodResolver(schema),
     defaultValues: {
       name: checklist?.name ?? '',
-      status: checklist && !checklist.active ? 'inactive' : 'active',
+      status: checklist && !checklist.isActive ? 'inactive' : 'active',
       description: checklist?.description ?? '',
     },
   })
   const [fields, setFields] = useState<DraftField[]>(() =>
-    (checklist?.fields ?? []).map((field) => ({ ...field, key: nextKey() })),
+    (checklist?.fields ?? []).map(({ sortOrder: _sortOrder, ...field }) => ({
+      ...field,
+      key: nextKey(),
+    })),
   )
   const [fieldDialog, setFieldDialog] = useState<FieldDialog>(null)
   const [deleting, setDeleting] = useState<DraftField | null>(null)
@@ -105,15 +108,18 @@ function ChecklistForm({
         id: checklist?.id,
         input: {
           name: values.name,
-          active: values.status === 'active',
-          description: values.description,
+          isActive: values.status === 'active',
+          description: values.description || null,
           fields: fields.map(({ key: _key, ...field }) => field),
+          rowVersion: checklist?.rowVersion,
         },
       })
       onClose()
     } catch (error) {
       if (error instanceof ApiError && error.fieldErrors.name) {
         form.setError('name', { message: error.fieldErrors.name })
+      } else if (error instanceof ApiError && error.fieldErrors.fields) {
+        form.setError('root', { message: error.fieldErrors.fields })
       } else {
         form.setError('root', {
           message: error instanceof ApiError ? error.message : 'Could not save the checklist.',
@@ -215,7 +221,9 @@ function ChecklistForm({
                         className="border-b font-inter text-field-value last:border-b-0"
                       >
                         <td className="h-12 px-6 sm:px-12">{field.name}</td>
-                        <td className="h-12 px-3">{CHECKLIST_FIELD_TYPE_LABELS[field.type]}</td>
+                        <td className="h-12 px-3">
+                          {CHECKLIST_FIELD_TYPE_LABELS[field.fieldType]}
+                        </td>
                         {!readOnly && (
                           <td className="h-12 px-3">
                             <span className="flex items-center gap-2">

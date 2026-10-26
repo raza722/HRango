@@ -4,34 +4,57 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { format, parseISO } from 'date-fns'
 import { z } from 'zod'
 
+import { SelectField, TextareaField } from '@/components/form'
 import { DateField, PayrollDialog } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
 
+import { RETURN_CONDITION_LABELS } from '../../constants'
 import { useDeallocate } from '../../hooks/use-assets'
-import type { AllocationRow } from '../../types/assets.types'
+import { type Allocation, RETURN_CONDITIONS } from '../../types/assets.types'
 
-const schema = z.object({ deallocationDate: z.string().min(1, 'Choose the deallocation date') })
+const schema = z.object({
+  deallocatedOn: z.string().min(1, 'Choose the deallocation date'),
+  returnCondition: z.string(),
+  remarks: z.string().trim().max(500, 'Keep it under 500 characters'),
+})
 type Values = z.infer<typeof schema>
+
+const FIELDS = ['deallocatedOn', 'returnCondition', 'remarks'] as const
 
 /**
  * "Asset Deallocate" (not drawn): the asset comes back from the person on a
- * date, and is free to allocate again.
+ * date, with how it came back (Damaged marks the asset damaged) and remarks.
  */
-export function DeallocateDialog({ row, onClose }: { row: AllocationRow; onClose: () => void }) {
+export function DeallocateDialog({ row, onClose }: { row: Allocation; onClose: () => void }) {
   const formId = useId()
   const deallocate = useDeallocate()
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { deallocationDate: format(new Date(), 'yyyy-MM-dd') },
+    defaultValues: {
+      deallocatedOn: format(new Date(), 'yyyy-MM-dd'),
+      returnCondition: '',
+      remarks: '',
+    },
   })
 
   const submit = form.handleSubmit(async (values) => {
     try {
-      await deallocate.mutateAsync({ id: row.id, deallocationDate: values.deallocationDate })
+      await deallocate.mutateAsync({
+        id: row.id,
+        input: {
+          deallocatedOn: values.deallocatedOn,
+          returnCondition:
+            RETURN_CONDITIONS.find((item) => item === values.returnCondition) ?? null,
+          remarks: values.remarks || null,
+          rowVersion: row.rowVersion,
+        },
+      })
       onClose()
     } catch (error) {
-      if (error instanceof ApiError && error.fieldErrors.deallocationDate) {
-        form.setError('deallocationDate', { message: error.fieldErrors.deallocationDate })
+      const field =
+        error instanceof ApiError ? FIELDS.find((name) => error.fieldErrors[name]) : undefined
+      if (error instanceof ApiError && field) {
+        form.setError(field, { message: error.fieldErrors[field] })
       } else {
         form.setError('root', {
           message: error instanceof ApiError ? error.message : 'Could not deallocate the asset.',
@@ -56,16 +79,30 @@ export function DeallocateDialog({ row, onClose }: { row: AllocationRow; onClose
         className="grid gap-5"
       >
         <p className="font-inter text-sm text-field-value">
-          {row.asset} ({row.identificationNumber}) back from {row.employee.name}.
+          {row.assetName}
+          {row.identificationNo ? ` (${row.identificationNo})` : ''} back from{' '}
+          {row.employeeName ?? 'the employee'}.
         </p>
         <DateField
           control={form.control}
-          name="deallocationDate"
+          name="deallocatedOn"
           label="Deallocation Date"
           required
-          minDate={parseISO(row.allocationDate)}
+          minDate={parseISO(row.allocatedOn)}
           display="MMMM d, yyyy"
         />
+        <SelectField
+          control={form.control}
+          name="returnCondition"
+          label="Return Condition"
+          placeholder="Select Condition"
+          options={RETURN_CONDITIONS.map((value) => ({
+            value,
+            label: RETURN_CONDITION_LABELS[value],
+          }))}
+          clearable
+        />
+        <TextareaField control={form.control} name="remarks" label="Remarks" maxLength={500} />
       </form>
     </PayrollDialog>
   )

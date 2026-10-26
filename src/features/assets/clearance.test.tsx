@@ -25,7 +25,7 @@ describe('Asset Clearance Form', () => {
       await screen.findByRole('heading', { name: 'Asset Clearance Form', level: 1 }),
     ).toBeVisible()
     const talha = await rowOf('Talha Aziz')
-    expect(within(talha).getByText('Pending by HR')).toBeVisible()
+    expect(within(talha).getByText('In Progress')).toBeVisible()
     const nida = await rowOf('Nida Hassan')
     expect(within(nida).getByText('Approved')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Approved' })).toBeVisible()
@@ -46,8 +46,8 @@ describe('Asset Clearance Form', () => {
     await waitFor(() => {
       expect(clearances.find('cf_2')?.status).toBe('approved')
     })
-    expect(allocations.find('al_3')?.deallocationDate).not.toBeNull()
-    expect(allocations.find('al_4')?.deallocationDate).not.toBeNull()
+    expect(allocations.find('al_3')?.deallocatedOn).not.toBeNull()
+    expect(allocations.find('al_4')?.assetClearanceId).toBe('cf_2')
     expect(await within(await rowOf('Talha Aziz')).findByText('Approved')).toBeVisible()
 
     await user.click(screen.getByRole('checkbox', { name: "Select Talha Aziz's clearance form" }))
@@ -56,10 +56,10 @@ describe('Asset Clearance Form', () => {
     await user.click(within(undo).getByRole('button', { name: 'Yes' }))
     expect(await screen.findByText('1 form unapproved')).toBeInTheDocument()
     await waitFor(() => {
-      expect(clearances.find('cf_2')?.status).toBe('pending')
+      expect(clearances.find('cf_2')?.status).toBe('in_progress')
     })
-    expect(allocations.find('al_3')?.deallocationDate).toBeNull()
-    expect(allocations.find('al_4')?.deallocationDate).toBeNull()
+    expect(allocations.find('al_3')?.deallocatedOn).toBeNull()
+    expect(allocations.find('al_4')?.deallocatedOn).toBeNull()
   })
 
   it('refuses to delete an approved form', async () => {
@@ -73,7 +73,7 @@ describe('Asset Clearance Form', () => {
     const confirm = await screen.findByRole('alertdialog', { name: 'Delete clearance form' })
     await user.click(within(confirm).getByRole('button', { name: 'Yes' }))
     expect(
-      await screen.findByText('An approved clearance form cannot be deleted. Unapprove it first.'),
+      await screen.findByText('This clearance form is approved. Unapprove it first.'),
     ).toBeInTheDocument()
     expect(clearances.find('cf_1')).toBeDefined()
   })
@@ -90,6 +90,10 @@ describe('Asset Clearance Form', () => {
     const block = await within(dialog).findByRole('region', { name: 'Asset 1, Car' })
     expect(within(block).getByRole('textbox', { name: /^Asset ID/ })).toHaveValue('LEB-21-4410')
     expect(within(dialog).getByRole('textbox', { name: /^Department/ })).toHaveValue('Operations')
+
+    // The return status is required.
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(block).findByText('Choose the return status')).toBeVisible()
     await user.click(within(block).getByRole('radio', { name: 'Complete Return' }))
     await choose(user, /^Checked By/, /Hina Raza/)
     await choose(user, /^Clearance Approved By/, /Shelley Kannes/)
@@ -97,9 +101,13 @@ describe('Asset Clearance Form', () => {
 
     expect(await screen.findByText('Clearance form created')).toBeInTheDocument()
     const created = clearances.all().find((form) => form.employeeId === 'em_ayesha')
-    expect(created?.status).toBe('pending')
-    expect(created?.lines).toEqual([
-      expect.objectContaining({ assetId: 'as_4', allocationId: 'al_2', returnStatus: 'complete' }),
+    expect(created).toMatchObject({ status: 'in_progress', checkedById: 'em_hina' })
+    expect(created?.items).toEqual([
+      expect.objectContaining({
+        assetAllocationId: 'al_2',
+        conditionAtClearance: 'good',
+        returnStatus: 'complete',
+      }),
     ])
   })
 })

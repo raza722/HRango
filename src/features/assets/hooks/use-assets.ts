@@ -6,27 +6,34 @@ import {
   type AssetFilters,
   assetKeys,
   assetListQueryOptions,
-  assetLookupsQueryOptions,
   assetsApi,
   type AssetTypeFilters,
   type ClearanceFilters,
-  type ImportResult,
   type PageQuery,
+  PICKER_PAGE,
+  type Versioned,
 } from '../api/assets.api'
 import type {
   AllocationInput,
-  AssetImportRow,
   AssetInput,
   AssetTypeInput,
   ClearanceInput,
+  ClearanceRef,
+  DeallocateInput,
 } from '../types/assets.types'
 
 // --- queries ------------------------------------------------------------------------------------
 
-export const useAssetLookups = () => useQuery(assetLookupsQueryOptions())
-
 export const useAssetTypes = (params: PageQuery<AssetTypeFilters>) =>
   useQuery(assetListQueryOptions('types', params, assetsApi.assetTypes))
+
+/** Every asset type (up to the page maximum), for pickers and filters. */
+export const useAssetTypeOptions = () =>
+  useQuery({
+    ...assetListQueryOptions('types', PICKER_PAGE, assetsApi.assetTypes),
+    staleTime: 30_000,
+    select: (page) => page.data,
+  })
 
 export const useAssetType = (id: string | null) =>
   useQuery({
@@ -36,11 +43,19 @@ export const useAssetType = (id: string | null) =>
   })
 
 export const useAssets = (params: PageQuery<AssetFilters>) =>
-  useQuery(assetListQueryOptions('items', params, assetsApi.assets))
+  useQuery(assetListQueryOptions('company-assets', params, assetsApi.assets))
+
+/** Assets for a picker, e.g. the available ones of a type; `enabled: false` skips the call. */
+export const useAssetOptions = (filters: AssetFilters, enabled = true) =>
+  useQuery({
+    ...assetListQueryOptions('company-assets', { ...PICKER_PAGE, ...filters }, assetsApi.assets),
+    enabled,
+    select: (page) => page.data,
+  })
 
 export const useAsset = (id: string | null) =>
   useQuery({
-    queryKey: assetKeys.detail('item', id ?? ''),
+    queryKey: assetKeys.detail('company-asset', id ?? ''),
     queryFn: ({ signal }) => assetsApi.asset(id ?? '', signal),
     enabled: id !== null,
   })
@@ -104,11 +119,6 @@ export function useAssetsMutation<TVariables, TResult>(
   })
 }
 
-const importMessage = (_variables: unknown, result: ImportResult) =>
-  result.errors.length > 0
-    ? `${String(result.created)} imported, ${String(result.errors.length)} with errors`
-    : `${String(result.created)} imported`
-
 export const useSaveAssetType = () =>
   useAssetsMutation(
     ({ id, input }: { id?: string | undefined; input: AssetTypeInput }) =>
@@ -118,7 +128,7 @@ export const useSaveAssetType = () =>
 
 export const useDeleteAssetType = () =>
   useAssetsMutation(
-    (id: string) => assetsApi.deleteAssetType(id),
+    (record: Versioned) => assetsApi.deleteAssetType(record),
     () => 'Asset type deleted',
   )
 
@@ -131,18 +141,16 @@ export const useSaveAsset = () =>
 
 export const useDeleteAsset = () =>
   useAssetsMutation(
-    (id: string) => assetsApi.deleteAsset(id),
+    (record: Versioned) => assetsApi.deleteAsset(record),
     () => 'Asset deleted',
   )
 
 export const useSetAssetActive = () =>
   useAssetsMutation(
-    ({ id, active }: { id: string; active: boolean }) => assetsApi.setAssetActive(id, active),
+    ({ record, active }: { record: Versioned; active: boolean }) =>
+      assetsApi.setAssetActive(record, active),
     ({ active }) => (active ? 'Asset activated' : 'Asset deactivated'),
   )
-
-export const useImportAssets = () =>
-  useAssetsMutation((rows: AssetImportRow[]) => assetsApi.importAssets(rows), importMessage)
 
 export const useAllocate = () =>
   useAssetsMutation(
@@ -152,8 +160,7 @@ export const useAllocate = () =>
 
 export const useDeallocate = () =>
   useAssetsMutation(
-    ({ id, deallocationDate }: { id: string; deallocationDate: string }) =>
-      assetsApi.deallocate(id, deallocationDate),
+    ({ id, input }: { id: string; input: DeallocateInput }) => assetsApi.deallocate(id, input),
     () => 'Asset deallocated',
   )
 
@@ -166,14 +173,14 @@ export const useSaveClearance = () =>
 
 export const useDeleteClearance = () =>
   useAssetsMutation(
-    (id: string) => assetsApi.deleteClearance(id),
+    (record: Versioned) => assetsApi.deleteClearance(record),
     () => 'Clearance form deleted',
   )
 
 export const useSetClearancesApproved = () =>
   useAssetsMutation(
-    ({ ids, approved }: { ids: string[]; approved: boolean }) =>
-      assetsApi.setClearancesApproved(ids, approved),
+    ({ forms, approved }: { forms: ClearanceRef[]; approved: boolean }) =>
+      assetsApi.setClearancesApproved(forms, approved),
     ({ approved }, result) =>
-      `${String(result.changed)} ${result.changed === 1 ? 'form' : 'forms'} ${approved ? 'approved' : 'unapproved'}`,
+      `${String(result.length)} ${result.length === 1 ? 'form' : 'forms'} ${approved ? 'approved' : 'unapproved'}`,
   )

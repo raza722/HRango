@@ -1,6 +1,9 @@
-import type { EmployeeRef } from '@/features/payroll'
+import type { FileRef } from '@/lib/files'
 
-export type { EmployeeRef }
+/*
+ * Shapes of the backend's /api/offboarding routes (backend/app/schemas/offboarding.py),
+ * camelCase, ids as strings. Edits and deletes send the `rowVersion` last read.
+ */
 
 // --- Settings → Off Boarding Checklist -------------------------------------------------------
 
@@ -8,45 +11,65 @@ export const CHECKLIST_FIELD_TYPES = ['number', 'string', 'date', 'boolean'] as 
 export type ChecklistFieldType = (typeof CHECKLIST_FIELD_TYPES)[number]
 
 /**
- * One "Additional Information" field. `min` / `max` are the value range for a
- * Number and the length range for a String; Date and Boolean have none.
+ * One "Additional Information" field: a value range for a Number, a length
+ * range for a String; Date and Boolean have none.
  */
 export interface ChecklistField {
   id: string
   name: string
-  type: ChecklistFieldType
-  required: boolean
-  min: number | null
-  max: number | null
+  fieldType: ChecklistFieldType
+  isRequired: boolean
+  minValue: number | null
+  maxValue: number | null
+  minLength: number | null
+  maxLength: number | null
+  sortOrder: number | null
 }
-export type ChecklistFieldInput = Omit<ChecklistField, 'id'> & { id?: string | undefined }
+
+export interface ChecklistFieldInput {
+  /** Kept on an edited field, so its answers stay with it. */
+  id?: string | undefined
+  name: string
+  fieldType: ChecklistFieldType
+  isRequired: boolean
+  minValue: number | null
+  maxValue: number | null
+  minLength: number | null
+  maxLength: number | null
+}
 
 export interface OffboardingChecklist {
   id: string
   /** `ECL-00001`. */
   code: string
   name: string
-  active: boolean
-  description: string
-  fields: ChecklistField[]
+  description: string | null
+  isActive: boolean
+  fieldCount: number
   createdAt: string
+  updatedAt: string | null
+  rowVersion: string
+  /** Filled on a single checklist; empty in lists. */
+  fields: ChecklistField[]
 }
+
 export interface ChecklistInput {
   name: string
-  active: boolean
-  description: string
+  description: string | null
+  isActive: boolean
   fields: ChecklistFieldInput[]
+  rowVersion?: string | undefined
+}
+
+/** A field of an active checklist, as the End of Employment Checklist tab asks it. */
+export interface ActiveChecklistField extends ChecklistField {
+  offboardingChecklistId: string
+  checklistName: string
 }
 
 // --- End of Employment -----------------------------------------------------------------------
 
-export const EOE_REASONS = [
-  'termination',
-  'resignation',
-  'retirement',
-  'transfer',
-  'other',
-] as const
+export const EOE_REASONS = ['resignation', 'termination', 'retirement', 'other'] as const
 export type EoeReason = (typeof EOE_REASONS)[number]
 
 export const EOE_STATUSES = ['pending', 'completed'] as const
@@ -56,63 +79,101 @@ export type EoeStatus = (typeof EOE_STATUSES)[number]
 export const EOE_SCOPES = ['all', 'completed', 'pending'] as const
 export type EoeScope = (typeof EOE_SCOPES)[number]
 
-export type ChecklistValue = string | number | boolean | null
-
-export interface EndOfEmployment {
+export interface EndOfEmploymentRow {
   id: string
   employeeId: string
+  employeeCode: string | null
+  employeeName: string | null
+  branchName: string | null
+  locationName: string | null
+  departmentName: string | null
+  designationName: string | null
   reason: EoeReason
-  noticePeriod: boolean
-  /** Set with a notice period; without one the person leaves on the day it is made. */
-  lastWorkingDate: string | null
-  finalSettlement: boolean
-  assetClearance: boolean
-  attachmentName: string | null
-  description: string
-  delegateeId: string | null
-  /** Checklist tab answers, by field id. */
-  checklist: Record<string, ChecklistValue>
+  /** The Notice Period tick. */
+  serveNotice: boolean
+  /** Without a notice period, the day the record was made. */
+  lastWorkingDate: string
   status: EoeStatus
-  createdAt: string
   completedAt: string | null
-  /** The Payroll Final Settlement it made (Final Settlement ticked). */
+  isRehired: boolean
+  createdAt: string
+  updatedAt: string | null
+  rowVersion: string
+}
+
+export interface ChecklistAnswer {
+  checklistFieldId: string
+  fieldName: string
+  fieldType: ChecklistFieldType
+  checklistId: string
+  checklistName: string
+  /** Text: numbers as digits, dates as yyyy-mm-dd, booleans as true / false. */
+  answer: string | null
+}
+
+/** What keeps a pending record from completing. */
+export interface WaitingItem {
+  /** final_settlement, asset_clearance, assets, checklist, last_working_date */
+  item: string
+  label: string
+}
+
+export interface EndOfEmployment extends EndOfEmploymentRow {
+  employeeEmail: string | null
+  employeePhone: string | null
+  dateOfBirth: string | null
+  photoFileId: string | null
+  /** Signed link to the employee's photo (expires). */
+  photoUrl: string | null
+  joiningDate: string | null
+  resignationRequestId: string | null
+  noticePeriodDays: number | null
+  needsFinalSettlement: boolean
+  needsAssetClearance: boolean
+  assetClearByDate: string | null
+  replacementId: string | null
+  replacementName: string | null
+  delegateeId: string | null
+  delegateeName: string | null
+  description: string | null
+  fileId: string | null
+  file: FileRef | null
   finalSettlementId: string | null
-  /** The Asset Clearance Form for it (Asset Clearance ticked). */
+  /** pending / closed (Payroll closes it). */
+  finalSettlementStatus: string | null
   clearanceId: string | null
-  rehire: { joiningDate: string; at: string } | null
+  /** in_progress / approved. */
+  clearanceStatus: string | null
+  rehireJoiningDate: string | null
+  answers: ChecklistAnswer[]
+  waitingFor: WaitingItem[]
 }
 
 export interface EndOfEmploymentInput {
   employeeId: string
   reason: EoeReason
-  noticePeriod: boolean
+  serveNotice: boolean
+  noticePeriodDays: number | null
   lastWorkingDate: string | null
-  finalSettlement: boolean
-  assetClearance: boolean
-  attachmentName: string | null
-  description: string
+  needsFinalSettlement: boolean
+  needsAssetClearance: boolean
+  assetClearByDate: string | null
+  replacementId: string | null
   delegateeId: string | null
-  checklist: Record<string, ChecklistValue>
+  description: string | null
+  fileId: string | null
+  rowVersion?: string | undefined
 }
 
-export interface EndOfEmploymentRow {
-  id: string
-  employee: EmployeeRef
-  branch: string | null
-  location: string | null
-  department: string
-  designation: string
-  /** The last working date (the day it was made, without a notice period). */
-  date: string
-  createdAt: string
-  completedAt: string | null
-  status: EoeStatus
-  rehired: boolean
+export type ChecklistAnswerValue = string | number | boolean | null
+
+export interface ChecklistAnswersInput {
+  answers: { checklistFieldId: string; answer: ChecklistAnswerValue }[]
+  rowVersion: string
 }
 
 /** The card at the top of the End of Employment dialogs. */
 export interface EmployeeCardInfo {
-  id: string
   name: string
   designation: string
   code: string
@@ -123,43 +184,4 @@ export interface EmployeeCardInfo {
   phone: string
   /** "4 Year 9 Month 25 Days". */
   experience: string
-}
-
-export interface EndOfEmploymentDetail extends EndOfEmployment {
-  card: EmployeeCardInfo
-  delegatee: EmployeeRef | null
-  /** What still keeps it pending (empty once completed). */
-  waitingFor: string[]
-  finalSettlementStatus: 'pending' | 'completed' | null
-  clearanceStatus: 'pending' | 'approved' | null
-}
-
-export interface EoeImportRow {
-  employeeCode: string
-  reason: string
-  lastWorkingDate: string
-  noticePeriod: boolean
-  finalSettlement: boolean
-  assetClearance: boolean
-}
-
-// --- Lookups ---------------------------------------------------------------------------------
-
-export interface OffboardingLookups {
-  employees: (EmployeeRef & {
-    status: 'active' | 'inactive'
-    branchId: string | null
-    locationId: string | null
-  })[]
-  departments: string[]
-  designations: string[]
-  branches: { id: string; name: string }[]
-  locations: { id: string; name: string }[]
-  /** Fields of the active checklists, for the Checklist tab. */
-  checklistFields: (ChecklistField & { checklist: string })[]
-}
-
-export interface ListParams {
-  page: number
-  pageSize: number
 }

@@ -1,6 +1,5 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
-import { format } from 'date-fns'
 import { toast } from 'sonner'
 
 import {
@@ -10,43 +9,40 @@ import {
   rowMenuItemClass,
 } from '@/components/layout'
 import { Button } from '@/components/ui/button'
-import { assetsApi, ClearanceFormDialog, type ClearancePrefillProps } from '@/features/assets'
+import {
+  assetsApi,
+  ClearanceFormDialog,
+  type ClearancePrefillProps,
+  useOrgLookup,
+} from '@/features/assets'
 import {
   activeCount,
   btn,
   ConfirmAction,
-  downloadText,
   type FilterField,
   FiltersButton,
   FiltersDialog,
   formatWeekday,
   ListFooter,
   NoRecord,
-  parseCsv,
   PayrollCard,
   payrollTableClass,
   PersonCell,
   StatusChip,
-  toBoolean,
-  toCsv,
   toolbarButton,
   useFilters,
 } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { EOE_SCOPE_LABELS, EOE_STATUS_META, OFFBOARDING_PAGE_SIZE } from '../../constants'
 import {
+  useCompleteEndOfEmployment,
   useDeleteEndOfEmployment,
   useEndOfEmployments,
-  useImportEndOfEmployments,
-  useOffboardingLookups,
 } from '../../hooks/use-offboarding'
-import type {
-  EndOfEmploymentDetail,
-  EndOfEmploymentRow,
-  EoeScope,
-} from '../../types/offboarding.types'
+import type { EndOfEmployment, EndOfEmploymentRow, EoeScope } from '../../types/offboarding.types'
 import { EndOfEmploymentDialog } from './end-of-employment-dialog'
 import { RehireDialog } from './rehire-dialog'
 
@@ -62,29 +58,21 @@ type Dialog =
   | { type: 'clearance'; prefill: ClearancePrefillProps }
   | null
 
-const IMPORT_HEADER = [
-  'Employee Code',
-  'Reason',
-  'Last Working Date',
-  'Notice Period',
-  'Final Settlement',
-  'Asset Clearance',
-] as const
-
 const day = (iso: string) => formatWeekday(iso.slice(0, 10))
+const nameOf = (row: EndOfEmploymentRow) => row.employeeName ?? row.employeeCode ?? row.employeeId
 
 const columns: DataTableColumn<EndOfEmploymentRow>[] = [
   {
     id: 'employee',
     header: 'Employee',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={row.employee} />,
+    cell: (row) => <PersonCell person={{ name: nameOf(row), photoUrl: null }} />,
   },
-  { id: 'branch', header: 'Branch', cell: (row) => row.branch ?? '—' },
-  { id: 'location', header: 'Location', cell: (row) => row.location ?? '—' },
-  { id: 'department', header: 'Department', cell: (row) => row.department },
-  { id: 'designation', header: 'Designation', cell: (row) => row.designation },
-  { id: 'date', header: 'Date', cell: (row) => formatWeekday(row.date) },
+  { id: 'branch', header: 'Branch', cell: (row) => row.branchName ?? '—' },
+  { id: 'location', header: 'Location', cell: (row) => row.locationName ?? '—' },
+  { id: 'department', header: 'Department', cell: (row) => row.departmentName ?? '—' },
+  { id: 'designation', header: 'Designation', cell: (row) => row.designationName ?? '—' },
+  { id: 'date', header: 'Date', cell: (row) => formatWeekday(row.lastWorkingDate) },
   { id: 'created', header: 'Creation Date', cell: (row) => day(row.createdAt) },
   {
     id: 'completed',
@@ -99,6 +87,9 @@ const columns: DataTableColumn<EndOfEmploymentRow>[] = [
   },
 ]
 
+const orgOptions = (items: readonly { id: string; name: string }[] | undefined) =>
+  (items ?? []).map((item) => ({ value: item.id, label: item.name }))
+
 /**
  * End of Employment (All / Completed / Pending in the sidebar): who is
  * leaving, and whether their settlement, clearance and checklist are done.
@@ -107,23 +98,30 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
   const route = ROUTES[scope]
   const { page } = route.useSearch()
   const navigate = route.useNavigate()
-  const lookups = useOffboardingLookups()
-  const [filters, setFilters] = useFilters('end-of-employment')
+  const canCreate = useCan('offboarding.end_of_employment.create')
+  const canEdit = useCan('offboarding.end_of_employment.edit')
+  const canDelete = useCan('offboarding.end_of_employment.delete')
+  const canRehire = useCan('offboarding.rehire.process')
+  const canClear = useCan('assets.clearance.create')
+  const [filters, setFilters] = useFilters('end-of-employment-v2')
   const [dialog, setDialog] = useState<Dialog>(null)
-  const fileInput = useRef<HTMLInputElement>(null)
+  const locations = useOrgLookup('locations')
+  const branches = useOrgLookup('branches')
+  const departments = useOrgLookup('departments')
+  const designations = useOrgLookup('designations')
   const remove = useDeleteEndOfEmployment()
-  const importFile = useImportEndOfEmployments()
+  const complete = useCompleteEndOfEmployment()
   const list = useEndOfEmployments({
     page,
     pageSize: OFFBOARDING_PAGE_SIZE,
-    scope,
+    q: filters.q,
+    status: scope === 'all' ? filters.status : scope,
     locationId: filters.locationId,
     branchId: filters.branchId,
-    department: filters.department,
+    departmentId: filters.departmentId,
     employeeId: filters.employeeId,
-    designation: filters.designation,
-    status: filters.status,
-    noticePeriod: filters.noticePeriod,
+    designationId: filters.designationId,
+    serveNotice: filters.serveNotice ? filters.serveNotice === 'yes' : undefined,
     from: filters.from,
     to: filters.to,
   })
@@ -133,60 +131,64 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
   const close = () => {
     setDialog(null)
   }
-  const data = lookups.data
   const fields: FilterField[] = [
     {
       kind: 'select',
       key: 'locationId',
       label: 'Location',
       placeholder: 'Select Location',
-      options: (data?.locations ?? []).map((item) => ({ value: item.id, label: item.name })),
+      options: orgOptions(locations.data),
     },
     {
       kind: 'select',
       key: 'branchId',
       label: 'Branch',
       placeholder: 'Select Branch',
-      options: (data?.branches ?? []).map((item) => ({ value: item.id, label: item.name })),
+      options: orgOptions(branches.data),
     },
     {
       kind: 'select',
-      key: 'department',
+      key: 'departmentId',
       label: 'Department',
       placeholder: 'Select Department',
-      options: (data?.departments ?? []).map((value) => ({ value, label: value })),
+      options: orgOptions(departments.data),
     },
     {
-      kind: 'select',
+      kind: 'employee',
       key: 'employeeId',
       label: 'Employees',
       placeholder: 'Select Employee',
-      options: (data?.employees ?? []).map((item) => ({
-        value: item.id,
-        label: item.name,
-        hint: item.code,
+      filters: { permission: 'offboarding.end_of_employment.view', includeInactive: true },
+      // The listed people, so a saved filter keeps its name before the lookup reads them.
+      known: (list.data?.data ?? []).map((row) => ({
+        value: row.employeeId,
+        label: row.employeeName ?? row.employeeId,
       })),
     },
     {
       kind: 'select',
-      key: 'designation',
+      key: 'designationId',
       label: 'Designation',
       placeholder: 'Select Designation',
-      options: (data?.designations ?? []).map((value) => ({ value, label: value })),
+      options: orgOptions(designations.data),
     },
+    ...(scope === 'all'
+      ? [
+          {
+            kind: 'select' as const,
+            key: 'status',
+            label: 'Status',
+            placeholder: 'Select Status',
+            options: [
+              { value: 'pending', label: 'Pending' },
+              { value: 'completed', label: 'Completed' },
+            ],
+          },
+        ]
+      : []),
     {
       kind: 'select',
-      key: 'status',
-      label: 'Status',
-      placeholder: 'Select Status',
-      options: [
-        { value: 'pending', label: 'Pending' },
-        { value: 'completed', label: 'Completed' },
-      ],
-    },
-    {
-      kind: 'select',
-      key: 'noticePeriod',
+      key: 'serveNotice',
       label: 'Notice Period',
       placeholder: 'Notice Period',
       options: [
@@ -196,54 +198,18 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
     },
     { kind: 'date', key: 'from', label: 'From' },
     { kind: 'date', key: 'to', label: 'To' },
+    { kind: 'text', key: 'q', label: 'Search', placeholder: 'Employee name or code' },
   ]
 
-  const downloadSample = () => {
-    const code = data?.employees.find((item) => item.status === 'active')?.code ?? 'RI-00001'
-    downloadText(
-      toCsv(IMPORT_HEADER, [
-        [code, 'Resignation', format(new Date(), 'yyyy-MM-dd'), 'Yes', 'Yes', 'No'],
-      ]),
-      'end-of-employment-sample.csv',
-    )
-  }
-
-  const importText = async (text: string) => {
-    const rows = parseCsv(text, 'employee').map((cells) => ({
-      employeeCode: cells[0] ?? '',
-      reason: cells[1] ?? '',
-      lastWorkingDate: cells[2] ?? '',
-      noticePeriod: toBoolean(cells[3]),
-      finalSettlement: toBoolean(cells[4]),
-      assetClearance: toBoolean(cells[5]),
-    }))
-    if (rows.length === 0) {
-      toast.error('The file has no rows.', {
-        action: { label: 'Sample file', onClick: downloadSample },
-      })
-      return
-    }
-    try {
-      const result = await importFile.mutateAsync(rows)
-      if (result.errors.length > 0) {
-        toast.error(result.errors.slice(0, 3).join('\n'), {
-          description: `Columns: ${IMPORT_HEADER.join(', ')}`,
-          action: { label: 'Sample file', onClick: downloadSample },
-        })
-      }
-    } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : 'The file could not be imported.')
-    }
-  }
-
   /** Asset Clearance ticked: open the person's clearance form next, filled in with what they hold. */
-  const afterSave = (record: EndOfEmploymentDetail) => {
-    if (!record.assetClearance || record.clearanceId) return
+  const afterSave = (record: EndOfEmployment) => {
+    if (!record.needsAssetClearance || record.clearanceId || !canClear) return
+    const name = record.employeeName ?? 'This employee'
     void assetsApi
       .clearancePrefill(record.employeeId)
       .then((prefill) => {
-        if (prefill.lines.length === 0) {
-          toast.info(`${record.card.name} holds no company assets; nothing to clear.`)
+        if (prefill.items.length === 0) {
+          toast.info(`${name} holds no company assets; nothing to clear.`)
           return
         }
         setDialog({
@@ -251,13 +217,17 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
           prefill: {
             employeeId: record.employeeId,
             endOfEmploymentId: record.id,
-            clearanceDate: record.lastWorkingDate ?? format(new Date(), 'yyyy-MM-dd'),
+            clearanceDate: record.lastWorkingDate,
           },
         })
       })
       .catch(() => {
         toast.error('The clearance form could not be opened.')
       })
+  }
+
+  const failed = (fallback: string) => (error: unknown) => {
+    toast.error(error instanceof ApiError ? error.message : fallback)
   }
 
   return (
@@ -270,34 +240,16 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
       }
       actions={
         <>
-          <Button
-            onClick={() => {
-              setDialog({ type: 'create' })
-            }}
-            className={cn(toolbarButton, btn.blue, 'min-w-28')}
-          >
-            Create
-          </Button>
-          <Button
-            disabled={importFile.isPending}
-            onClick={() => fileInput.current?.click()}
-            className={cn(toolbarButton, btn.green, 'min-w-24')}
-          >
-            Import File
-          </Button>
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".csv,text/csv"
-            aria-label="Import File (CSV)"
-            className="sr-only"
-            tabIndex={-1}
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              event.target.value = ''
-              if (file) void file.text().then(importText)
-            }}
-          />
+          {canCreate && (
+            <Button
+              onClick={() => {
+                setDialog({ type: 'create' })
+              }}
+              className={cn(toolbarButton, btn.blue, 'min-w-28')}
+            >
+              Create
+            </Button>
+          )}
           <FiltersButton
             count={activeCount(filters)}
             onClick={() => {
@@ -320,29 +272,49 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
         rowActions={(row) => (
           <RowActionsMenu
             itemClassName={rowMenuItemClass.inter}
-            label={`Actions for ${row.employee.name}`}
+            label={`Actions for ${nameOf(row)}`}
             actions={
               row.status === 'pending'
                 ? [
-                    {
-                      label: 'Edit',
-                      onSelect: () => {
-                        setDialog({ type: 'edit', row })
-                      },
-                    },
+                    ...(canEdit
+                      ? [
+                          {
+                            label: 'Edit',
+                            onSelect: () => {
+                              setDialog({ type: 'edit', row })
+                            },
+                          },
+                        ]
+                      : []),
                     {
                       label: 'View',
                       onSelect: () => {
                         setDialog({ type: 'view', row })
                       },
                     },
-                    {
-                      label: 'Delete',
-                      variant: 'destructive',
-                      onSelect: () => {
-                        setDialog({ type: 'delete', row })
-                      },
-                    },
+                    ...(canEdit
+                      ? [
+                          {
+                            label: 'Complete',
+                            onSelect: () => {
+                              complete.mutate(row, {
+                                onError: failed('Could not complete the record.'),
+                              })
+                            },
+                          },
+                        ]
+                      : []),
+                    ...(canDelete
+                      ? [
+                          {
+                            label: 'Delete',
+                            variant: 'destructive' as const,
+                            onSelect: () => {
+                              setDialog({ type: 'delete', row })
+                            },
+                          },
+                        ]
+                      : []),
                   ]
                 : [
                     {
@@ -351,7 +323,7 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
                         setDialog({ type: 'view', row })
                       },
                     },
-                    ...(row.rehired
+                    ...(row.isRehired || !canRehire
                       ? []
                       : [
                           {
@@ -392,7 +364,7 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
         <FiltersDialog
           fields={fields}
           value={filters}
-          preset="end-of-employment"
+          preset="end-of-employment-v2"
           onApply={(next) => {
             setFilters(next)
             goTo(1)
@@ -409,13 +381,7 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
         message="Are you sure you want to Delete this?"
         onConfirm={() => {
           if (dialog?.type !== 'delete') return
-          remove.mutate(dialog.row.id, {
-            onError: (error) => {
-              toast.error(
-                error instanceof ApiError ? error.message : 'Could not delete the record.',
-              )
-            },
-          })
+          remove.mutate(dialog.row, { onError: failed('Could not delete the record.') })
         }}
       />
     </PayrollCard>

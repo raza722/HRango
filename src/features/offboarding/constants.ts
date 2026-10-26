@@ -4,7 +4,6 @@ export const EOE_REASON_LABELS: Record<EoeReason, string> = {
   termination: 'Termination',
   resignation: 'Resignation',
   retirement: 'Retirement',
-  transfer: 'Transfer',
   other: 'Other',
 }
 

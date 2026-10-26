@@ -4,16 +4,13 @@ import { apiClient } from '@/lib/axios'
 import type { ApiItem, Paginated } from '@/types/api'
 
 import type {
+  ActiveChecklistField,
+  ChecklistAnswersInput,
   ChecklistInput,
-  EmployeeCardInfo,
-  EndOfEmploymentDetail,
+  EndOfEmployment,
   EndOfEmploymentInput,
   EndOfEmploymentRow,
-  EoeImportRow,
-  EoeScope,
-  ListParams,
   OffboardingChecklist,
-  OffboardingLookups,
 } from '../types/offboarding.types'
 
 function compact<T extends object>(params: T): Partial<T> {
@@ -26,11 +23,8 @@ function compact<T extends object>(params: T): Partial<T> {
 
 const path = (rest: string) => `/offboarding${rest}`
 
-async function getData<T>(url: string, params?: object, signal?: AbortSignal) {
-  const { data } = await apiClient.get<ApiItem<T>>(path(url), {
-    ...(params ? { params: compact(params) } : {}),
-    signal,
-  })
+async function getData<T>(url: string, signal?: AbortSignal) {
+  const { data } = await apiClient.get<ApiItem<T>>(path(url), { signal })
   return data.data
 }
 
@@ -39,88 +33,92 @@ async function getPage<T>(url: string, params: object, signal?: AbortSignal) {
   return data
 }
 
-async function send<T>(method: 'post' | 'put', url: string, body?: unknown) {
+async function send<T>(method: 'post' | 'put' | 'patch', url: string, body?: unknown) {
   const { data } = await apiClient[method]<ApiItem<T>>(path(url), body ?? {})
   return data.data
 }
 
-async function remove(url: string) {
-  await apiClient.delete(path(url))
+async function remove(url: string, rowVersion: string) {
+  await apiClient.delete(path(url), { params: { rowVersion } })
+}
+
+export interface ListParams {
+  page: number
+  pageSize: number
 }
 
 export type PageQuery<F> = ListParams & F
 
 export interface EoeFilters {
-  scope: EoeScope
-  locationId?: string | undefined
-  branchId?: string | undefined
-  department?: string | undefined
-  employeeId?: string | undefined
-  designation?: string | undefined
+  q?: string | undefined
+  /** pending / completed; the sidebar scope, or the Status filter on All. */
   status?: string | undefined
-  /** `yes` / `no`. */
-  noticePeriod?: string | undefined
+  employeeId?: string | undefined
+  departmentId?: string | undefined
+  branchId?: string | undefined
+  locationId?: string | undefined
+  designationId?: string | undefined
+  serveNotice?: boolean | undefined
   from?: string | undefined
   to?: string | undefined
 }
 
 export interface ChecklistFilters {
-  name?: string | undefined
-  code?: string | undefined
+  q?: string | undefined
+  isActive?: boolean | undefined
 }
 
-export interface ImportResult {
-  created: number
-  errors: string[]
+/** A record and the rowVersion it was read with. */
+export interface Versioned {
+  id: string
+  rowVersion: string
 }
 
 export const offboardingApi = {
-  lookups: (signal?: AbortSignal) => getData<OffboardingLookups>('/lookups', undefined, signal),
-  employeeCard: (employeeId: string, signal?: AbortSignal) =>
-    getData<EmployeeCardInfo>(`/employees/${employeeId}/card`, undefined, signal),
-
   // End of Employment
   endOfEmployments: (params: PageQuery<EoeFilters>, signal?: AbortSignal) =>
     getPage<EndOfEmploymentRow>('/end-of-employment', params, signal),
   endOfEmployment: (id: string, signal?: AbortSignal) =>
-    getData<EndOfEmploymentDetail>(`/end-of-employment/${id}`, undefined, signal),
+    getData<EndOfEmployment>(`/end-of-employment/${id}`, signal),
+  /** Fields of the active checklists: what the Checklist tab asks. */
+  checklistFields: (signal?: AbortSignal) =>
+    getData<ActiveChecklistField[]>('/end-of-employment/checklist-fields', signal),
   createEndOfEmployment: (input: EndOfEmploymentInput) =>
-    send<EndOfEmploymentDetail>('post', '/end-of-employment', input),
+    send<EndOfEmployment>('post', '/end-of-employment', input),
   updateEndOfEmployment: (id: string, input: EndOfEmploymentInput) =>
-    send<EndOfEmploymentDetail>('put', `/end-of-employment/${id}`, input),
-  deleteEndOfEmployment: (id: string) => remove(`/end-of-employment/${id}`),
-  rehire: (id: string, joiningDate: string) =>
-    send<EndOfEmploymentDetail>('post', `/end-of-employment/${id}/rehire`, { joiningDate }),
-  importEndOfEmployments: (rows: EoeImportRow[]) =>
-    send<ImportResult>('post', '/end-of-employment/import', { rows }),
+    send<EndOfEmployment>('put', `/end-of-employment/${id}`, input),
+  saveChecklistAnswers: (id: string, input: ChecklistAnswersInput) =>
+    send<EndOfEmployment>('put', `/end-of-employment/${id}/checklist`, input),
+  /** Completes it now; 409 names what it still waits for. */
+  completeEndOfEmployment: ({ id, rowVersion }: Versioned) =>
+    send<EndOfEmployment>('patch', `/end-of-employment/${id}/complete`, { rowVersion }),
+  rehire: ({ id, rowVersion }: Versioned, joiningDate: string) =>
+    send<EndOfEmployment>('patch', `/end-of-employment/${id}/rehire`, { joiningDate, rowVersion }),
+  deleteEndOfEmployment: ({ id, rowVersion }: Versioned) =>
+    remove(`/end-of-employment/${id}`, rowVersion),
 
   // Settings → Off Boarding Checklist
   checklists: (params: PageQuery<ChecklistFilters>, signal?: AbortSignal) =>
-    getPage<OffboardingChecklist>('/checklists', params, signal),
+    getPage<OffboardingChecklist>('/settings/checklists', params, signal),
   checklist: (id: string, signal?: AbortSignal) =>
-    getData<OffboardingChecklist>(`/checklists/${id}`, undefined, signal),
+    getData<OffboardingChecklist>(`/settings/checklists/${id}`, signal),
   createChecklist: (input: ChecklistInput) =>
-    send<OffboardingChecklist>('post', '/checklists', input),
+    send<OffboardingChecklist>('post', '/settings/checklists', input),
   updateChecklist: (id: string, input: ChecklistInput) =>
-    send<OffboardingChecklist>('put', `/checklists/${id}`, input),
+    send<OffboardingChecklist>('put', `/settings/checklists/${id}`, input),
+  deleteChecklist: ({ id, rowVersion }: Versioned) =>
+    remove(`/settings/checklists/${id}`, rowVersion),
 }
 
 export const offboardingKeys = {
   all: ['offboarding'] as const,
-  lookups: () => [...offboardingKeys.all, 'lookups'] as const,
+  checklistFields: () => [...offboardingKeys.all, 'checklist-fields'] as const,
   list: (name: string, params?: object) =>
     params
       ? ([...offboardingKeys.all, name, compact(params)] as const)
       : ([...offboardingKeys.all, name] as const),
   detail: (name: string, id: string) => [...offboardingKeys.all, name, 'detail', id] as const,
 }
-
-export const offboardingLookupsQueryOptions = () =>
-  queryOptions({
-    queryKey: offboardingKeys.lookups(),
-    queryFn: ({ signal }) => offboardingApi.lookups(signal),
-    staleTime: 30_000,
-  })
 
 export const offboardingListQueryOptions = <TRow, TParams extends object>(
   name: string,

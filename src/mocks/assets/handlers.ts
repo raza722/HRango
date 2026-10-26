@@ -3,545 +3,515 @@ import { http } from 'msw'
 import { z } from 'zod'
 
 import {
+  type Allocation,
   type Asset,
   ASSET_CONDITIONS,
-  type AssetChange,
-  type AssetDetail,
-  type AssetHistoryEntry,
-  type AssetRow,
-  type AssetStatus,
-  CLEARANCE_CONDITIONS,
-  type ClearanceDetail,
-  type ClearanceForm,
-  type ClearanceInput,
+  type AssetHistoryRow,
+  type AssetType,
+  type Clearance,
+  type ClearancePrefill,
   type ClearanceRow,
-  RETURN_STATUS_LABELS,
+  RETURN_CONDITIONS,
   RETURN_STATUSES,
 } from '@/features/assets'
 
-import { DIRECTORY, findEmployee } from '../employees/seed'
 import { endOfEmployments } from '../offboarding/db'
-import { employeeProfile, employeeRef, isActive } from '../payroll/engine'
+import { apiPath, createId } from '../utils'
 import {
+  allocations,
+  assets,
+  assetTypes,
+  clearances,
+  openAllocationOf,
+  type StoredAllocation,
+  type StoredAsset,
+  type StoredAssetType,
+  type StoredClearance,
+} from './db'
+import {
+  authed,
   conflict,
+  created,
   day,
+  fileIdSchema,
+  fileRef,
+  idSchema,
   invalid,
-  ME,
-  money,
+  matches,
   nextCode,
+  nextVersion,
+  noContent,
   notFound,
+  now,
   ok,
+  optionalId,
+  optionalText,
   page,
   param,
   readBody,
   rejected,
-} from '../payroll/http'
-import { apiPath, createId, latency, requireAuth } from '../utils'
-import { allocations, assets, assetTypes, clearances, openAllocationOf } from './db'
+  stale,
+} from './http'
+import { isActive, personOf, sameUnit } from './people'
+
+/*
+ * The backend's /api/assets routes (backend/app/routers/assets.py) over the mock tables.
+ */
 
 const base = (path: string) => apiPath(`/assets${path}`)
 
-const authed = async (request: Request) => {
-  await latency()
-  return requireAuth(request)
+const today = () => format(new Date(), 'yyyy-MM-dd')
+const nameOf = (id: string) => personOf(id)?.name ?? id
+/** How audit rows name a holder: "Name - CODE". */
+const holderText = (id: string) => {
+  const person = personOf(id)
+  return person ? `${person.name} - ${person.code}` : id
+}
+const ME = { performedByUserId: '1', performedByName: 'Shelley Kannes' }
+
+/** Adds core.audit_log rows for the asset (one per changed field, or one without a field). */
+function addHistory(
+  assetId: string,
+  action: string,
+  changes: { fieldName: string | null; oldValue: string | null; newValue: string | null }[],
+) {
+  const asset = assets.find(assetId)
+  if (!asset) return
+  const at = now()
+  const rows: AssetHistoryRow[] = (
+    changes.length > 0 ? changes : [{ fieldName: null, oldValue: null, newValue: null }]
+  ).map((change) => ({ id: createId('ah'), action, performedAt: at, ...ME, ...change }))
+  assets.update(asset.id, { ...asset, history: [...rows, ...asset.history] })
 }
 
-const today = () => format(new Date(), 'yyyy-MM-dd')
-const now = () => new Date().toISOString()
-const nameOf = (id: string) => findEmployee(id)?.name ?? id
-const typeName = (id: string) => assetTypes.find(id)?.name ?? '—'
-const yesNo = (value: boolean) => (value ? 'Yes' : 'No')
-const contains = (value: string, wanted: string | undefined) =>
-  !wanted || value.toLowerCase().includes(wanted.trim().toLowerCase())
+// --- shapes out ---------------------------------------------------------------------------------
 
-const employeeId = z
-  .string()
-  .min(1, 'Choose the employee')
-  .refine((id) => Boolean(findEmployee(id)), { message: 'Choose the employee' })
+const typeOut = (type: StoredAssetType): AssetType => ({
+  id: type.id,
+  code: type.code,
+  name: type.name,
+  description: type.description,
+  isActive: type.isActive,
+  assetCount: assets.all().filter((asset) => asset.assetTypeId === type.id).length,
+  createdAt: type.createdAt,
+  updatedAt: type.updatedAt,
+  rowVersion: type.rowVersion,
+})
 
-// --- helpers ------------------------------------------------------------------------------------
-
-function statusOf(asset: Asset): AssetStatus {
-  if (!asset.active) return 'unavailable'
+function availabilityOf(asset: StoredAsset): Asset['availability'] {
+  if (asset.status !== 'active') return 'unavailable'
   return openAllocationOf(asset.id) ? 'allocated' : 'available'
 }
 
-function holderOf(assetId: string) {
-  const open = openAllocationOf(assetId)
-  return open ? employeeRef(open.employeeId) : null
-}
-
-const assetRow = (asset: Asset): AssetRow => ({
-  id: asset.id,
-  code: asset.code,
-  name: asset.name,
-  identificationNumber: asset.identificationNumber,
-  assetTypeId: asset.assetTypeId,
-  assetType: typeName(asset.assetTypeId),
-  status: statusOf(asset),
-  holder: holderOf(asset.id),
-})
-
-const assetDetail = (asset: Asset): AssetDetail => ({
-  ...asset,
-  assetType: typeName(asset.assetTypeId),
-  status: statusOf(asset),
-  holder: holderOf(asset.id),
-})
-
-function addHistory(assetId: string, action: AssetHistoryEntry['action'], changes: AssetChange[]) {
-  const asset = assets.find(assetId)
-  if (!asset) return
-  const entry: AssetHistoryEntry = {
-    id: createId('ah'),
-    action,
-    performedById: ME,
-    performedAt: now(),
-    changes,
+function assetOut(asset: StoredAsset): Asset {
+  const holder = openAllocationOf(asset.id)
+  const person = holder ? personOf(holder.employeeId) : undefined
+  const { fileName, history: _history, ...fields } = asset
+  return {
+    ...fields,
+    assetTypeName: assetTypes.find(asset.assetTypeId)?.name ?? '',
+    file: fileRef(asset.fileId, fileName),
+    availability: availabilityOf(asset),
+    holderId: holder?.employeeId ?? null,
+    holderCode: person?.code ?? null,
+    holderName: person?.name ?? null,
   }
-  assets.update(asset.id, { ...asset, history: [entry, ...asset.history] })
 }
 
-/** The fields an edit changed, as Asset History shows them. */
-function diff(before: Asset, after: Asset): AssetChange[] {
-  const show: [string, (asset: Asset) => string][] = [
-    ['Name', (asset) => asset.name],
-    ['Asset Type', (asset) => typeName(asset.assetTypeId)],
-    ['Identification Number', (asset) => asset.identificationNumber],
-    ['Is Taxable', (asset) => yesNo(asset.taxable)],
-    ['Condition', (asset) => (asset.condition === 'new' ? 'New' : 'Old')],
-    ['Manufacturer', (asset) => asset.manufacturer],
-    ['Model', (asset) => asset.model],
-    ['Attachment', (asset) => asset.attachmentName ?? ''],
-    ['Current Value', (asset) => String(asset.currentValue)],
-    ['Acquired Date', (asset) => asset.acquiredDate],
-    ['Description', (asset) => asset.description],
-  ]
-  return show
-    .map(([field, read]) => ({ field, oldValue: read(before), newValue: read(after) }))
-    .filter((change) => change.oldValue !== change.newValue)
+function allocationOut(allocation: StoredAllocation): Allocation {
+  const asset = assets.find(allocation.assetId)
+  const person = personOf(allocation.employeeId)
+  const { fileName, ...fields } = allocation
+  return {
+    ...fields,
+    employeeCode: person?.code ?? null,
+    employeeName: person?.name ?? null,
+    companyName: person?.companyName ?? 'TopEdge Technologies',
+    assetCode: asset?.code ?? '',
+    assetName: asset?.name ?? '',
+    identificationNo: asset?.identificationNo ?? null,
+    assetTypeId: asset?.assetTypeId ?? '',
+    assetTypeName: asset ? (assetTypes.find(asset.assetTypeId)?.name ?? '') : '',
+    status: allocation.deallocatedOn ? 'deallocated' : 'allocated',
+    file: fileRef(allocation.fileId, fileName),
+  }
 }
 
-// --- lookups ------------------------------------------------------------------------------------
+const departmentIdOf = (name: string) => `dep_${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
 
-const lookupHandlers = [
-  http.get(base('/lookups'), async ({ request }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    return ok({
-      employees: DIRECTORY.map((employee) => ({
-        ...employeeRef(employee.id),
-        status: isActive(employee.id) ? ('active' as const) : ('inactive' as const),
-      })),
-      departments: [...new Set(DIRECTORY.map((employee) => employee.department))].sort(),
-      assetTypes: assetTypes
-        .all()
-        .map((type) => ({ id: type.id, name: type.name, active: type.active })),
-      assets: assets.all().map((asset) => ({
-        id: asset.id,
-        name: asset.name,
-        code: asset.code,
-        identificationNumber: asset.identificationNumber,
-        assetTypeId: asset.assetTypeId,
-        status: statusOf(asset),
-      })),
-    })
-  }),
-]
+function clearanceRow(form: StoredClearance): ClearanceRow {
+  const person = personOf(form.employeeId)
+  return {
+    id: form.id,
+    employeeId: form.employeeId,
+    employeeCode: person?.code ?? null,
+    employeeName: person?.name ?? null,
+    departmentId: person ? departmentIdOf(person.departmentName) : null,
+    departmentName: person?.departmentName ?? null,
+    endOfEmploymentId: form.endOfEmploymentId,
+    clearanceDate: form.clearanceDate,
+    approvalDate: form.approvalDate,
+    status: form.status,
+    itemCount: form.items.length,
+    createdAt: form.createdAt,
+    updatedAt: form.updatedAt,
+    rowVersion: form.rowVersion,
+  }
+}
+
+function clearanceOut(form: StoredClearance): Clearance {
+  return {
+    ...clearanceRow(form),
+    checkedById: form.checkedById,
+    checkedByName: form.checkedById ? nameOf(form.checkedById) : null,
+    approvedById: form.approvedById,
+    approvedByName: form.approvedById ? nameOf(form.approvedById) : null,
+    fileId: form.fileId,
+    file: fileRef(form.fileId, form.fileName),
+    items: form.items.map((item) => {
+      const allocation = allocations.find(item.assetAllocationId)
+      const asset = allocation ? assets.find(allocation.assetId) : undefined
+      return {
+        ...item,
+        assetId: allocation?.assetId ?? '',
+        assetCode: asset?.code ?? '',
+        assetName: asset?.name ?? '',
+        identificationNo: asset?.identificationNo ?? null,
+        allocatedOn: allocation?.allocatedOn ?? '',
+      }
+    }),
+  }
+}
 
 // --- Asset Types --------------------------------------------------------------------------------
 
 const typeSchema = z.object({
-  name: z.string().trim().min(1, 'Enter the name').max(60, 'Keep it under 60 characters'),
-  description: z.string().trim().max(500, 'Keep it under 500 characters'),
-  active: z.boolean(),
+  name: z.string().trim().min(1, 'Asset type name is required.').max(200),
+  description: optionalText(4000),
+  isActive: z.boolean().default(true),
+  rowVersion: z.string().nullish(),
 })
+
+const nameTaken = (name: string, id?: string) =>
+  assetTypes.all().some((type) => type.id !== id && type.name.toLowerCase() === name.toLowerCase())
+
+const DUPLICATE_TYPE = 'An asset type with this name already exists.'
 
 const typeHandlers = [
   http.get(base('/types'), async ({ request }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const url = new URL(request.url)
-    const status = param(url, 'status')
+    const active = param(url, 'isActive')
     const list = assetTypes
       .all()
       .filter(
         (type) =>
-          contains(type.name, param(url, 'name')) &&
-          (!status || (status === 'active') === type.active),
+          matches(url, type.name, type.code) &&
+          (active === undefined || String(type.isActive) === active),
       )
       .sort((a, b) => a.code.localeCompare(b.code))
-    return page(url, list)
+    return page(url, list.map(typeOut))
   }),
   http.get(base('/types/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const type = assetTypes.find(String(params.id))
-    return type ? ok(type) : notFound('asset type')
+    return type ? ok(typeOut(type)) : notFound('Asset type')
   }),
   http.post(base('/types'), async ({ request }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const parsed = await readBody(request, typeSchema)
     if (!parsed.success) return rejected(parsed.error)
-    const clash = assetTypes
-      .all()
-      .some((type) => type.name.toLowerCase() === parsed.data.name.toLowerCase())
-    if (clash) {
-      return conflict('An asset type with this name already exists', 'DUPLICATE', {
-        name: 'An asset type with this name already exists',
-      })
-    }
-    const type = {
+    if (nameTaken(parsed.data.name)) return conflict(DUPLICATE_TYPE, 'ASSET_TYPE_DUPLICATE', 'name')
+    const type: StoredAssetType = {
       id: createId('at'),
       code: nextCode(
-        'ATP-',
+        'AITP-',
         assetTypes.all().map((item) => item.code),
       ),
-      ...parsed.data,
+      name: parsed.data.name,
+      description: parsed.data.description,
+      isActive: parsed.data.isActive,
       createdAt: now(),
+      updatedAt: null,
+      rowVersion: nextVersion(),
     }
     assetTypes.insert(type)
-    return ok(type)
+    return created(typeOut(type))
   }),
   http.put(base('/types/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const existing = assetTypes.find(String(params.id))
-    if (!existing) return notFound('asset type')
+    if (!existing) return notFound('Asset type')
     const parsed = await readBody(request, typeSchema)
     if (!parsed.success) return rejected(parsed.error)
-    const clash = assetTypes
-      .all()
-      .some(
-        (type) =>
-          type.id !== existing.id && type.name.toLowerCase() === parsed.data.name.toLowerCase(),
-      )
-    if (clash) {
-      return conflict('An asset type with this name already exists', 'DUPLICATE', {
-        name: 'An asset type with this name already exists',
-      })
+    const old = stale(existing, parsed.data.rowVersion, 'asset type')
+    if (old) return old
+    if (nameTaken(parsed.data.name, existing.id)) {
+      return conflict(DUPLICATE_TYPE, 'ASSET_TYPE_DUPLICATE', 'name')
     }
-    const type = { ...existing, ...parsed.data }
+    const type: StoredAssetType = {
+      ...existing,
+      name: parsed.data.name,
+      description: parsed.data.description,
+      isActive: parsed.data.isActive,
+      updatedAt: now(),
+      rowVersion: nextVersion(),
+    }
     assetTypes.update(existing.id, type)
-    return ok(type)
+    return ok(typeOut(type))
   }),
   http.delete(base('/types/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const type = assetTypes.find(String(params.id))
-    if (!type) return notFound('asset type')
+    if (!type) return notFound('Asset type')
+    const old = stale(type, new URL(request.url).searchParams.get('rowVersion'), 'asset type')
+    if (old) return old
     const used = assets.all().filter((asset) => asset.assetTypeId === type.id).length
     if (used > 0) {
-      return conflict(
-        `${type.name} is the type of ${String(used)} ${used === 1 ? 'asset' : 'assets'}; it cannot be deleted.`,
-        'IN_USE',
-      )
+      return conflict('Assets of this type exist. Deactivate the type instead.')
     }
     assetTypes.remove(type.id)
-    return ok({ id: type.id })
+    return noContent()
   }),
 ]
 
 // --- Company Assets -----------------------------------------------------------------------------
 
 const assetSchema = z.object({
-  name: z.string().trim().min(1, 'Enter the name').max(80, 'Keep it under 80 characters'),
-  assetTypeId: z.string().min(1, 'Choose the asset type'),
-  identificationNumber: z
-    .string()
-    .trim()
-    .min(1, 'Enter the identification number')
-    .max(40, 'Keep it under 40 characters'),
-  taxable: z.boolean(),
-  condition: z.enum(ASSET_CONDITIONS),
-  manufacturer: z.string().trim().max(60, 'Keep it under 60 characters'),
-  model: z.string().trim().max(60, 'Keep it under 60 characters'),
-  attachmentName: z.string().max(200).nullable(),
-  currentValue: money.refine((value) => value > 0, { message: 'Enter the current value' }),
-  acquiredDate: day.refine((value) => value <= today(), {
-    message: 'The acquired date cannot be in the future',
-  }),
-  description: z.string().trim().max(500, 'Keep it under 500 characters'),
+  name: z.string().trim().min(1, 'Asset name is required.').max(200),
+  assetTypeId: idSchema('Asset type not found.'),
+  identificationNo: optionalText(100),
+  isTaxable: z.boolean().default(false),
+  assetCondition: z.enum(ASSET_CONDITIONS, { error: 'Condition must be old, new or fair.' }),
+  manufacturer: optionalText(100),
+  model: optionalText(100),
+  currentValue: z.number().min(0, 'Current value cannot be negative.').nullish(),
+  acquiredDate: day.nullish(),
+  description: optionalText(4000),
+  fileId: fileIdSchema,
+  rowVersion: z.string().nullish(),
 })
+type AssetBody = z.infer<typeof assetSchema>
 
-function assetProblem(input: z.infer<typeof assetSchema>, id?: string) {
+function assetProblem(input: AssetBody, current?: StoredAsset) {
   const type = assetTypes.find(input.assetTypeId)
-  if (!type) return invalid('Choose the asset type', { assetTypeId: 'Choose the asset type' })
-  const current = id ? assets.find(id) : undefined
-  if (!type.active && current?.assetTypeId !== type.id) {
-    return invalid(`${type.name} is not active`, { assetTypeId: `${type.name} is not active` })
+  if (!type) return invalid('Asset type not found.', { assetTypeId: 'Asset type not found.' })
+  if (!type.isActive && current?.assetTypeId !== type.id) {
+    return invalid('This asset type is inactive.', { assetTypeId: 'This asset type is inactive.' })
   }
-  const clash = assets
-    .all()
-    .some(
-      (asset) =>
-        asset.id !== id &&
-        asset.identificationNumber.toLowerCase() === input.identificationNumber.toLowerCase(),
+  const number = input.identificationNo?.toLowerCase()
+  if (
+    number &&
+    assets
+      .all()
+      .some((asset) => asset.id !== current?.id && asset.identificationNo?.toLowerCase() === number)
+  ) {
+    return conflict(
+      'Another asset has this identification number.',
+      'ASSET_DUPLICATE',
+      'identificationNo',
     )
-  if (clash) {
-    return conflict('Another asset has this identification number', 'DUPLICATE', {
-      identificationNumber: 'Another asset has this identification number',
-    })
   }
   return null
 }
 
-const importSchema = z.object({
-  rows: z
-    .array(
-      z.object({
-        name: z.string(),
-        assetType: z.string(),
-        identificationNumber: z.string(),
-        currentValue: z.number(),
-        acquiredDate: z.string(),
-        manufacturer: z.string(),
-        model: z.string(),
-      }),
-    )
-    .min(1, 'The file has no rows')
-    .max(2000),
+/** What an edit changed, as core.audit_log rows (column names, values as text). */
+function diff(before: StoredAsset, after: StoredAsset) {
+  const text = (value: string | number | boolean | null) =>
+    value === null ? null : typeof value === 'boolean' ? (value ? '1' : '0') : String(value)
+  type Column =
+    | 'name'
+    | 'assetTypeId'
+    | 'identificationNo'
+    | 'isTaxable'
+    | 'assetCondition'
+    | 'manufacturer'
+    | 'model'
+    | 'currentValue'
+    | 'acquiredDate'
+    | 'description'
+    | 'fileId'
+  const columns: [string, Column][] = [
+    ['name', 'name'],
+    ['asset_type_id', 'assetTypeId'],
+    ['identification_no', 'identificationNo'],
+    ['is_taxable', 'isTaxable'],
+    ['asset_condition', 'assetCondition'],
+    ['manufacturer', 'manufacturer'],
+    ['model', 'model'],
+    ['current_value', 'currentValue'],
+    ['acquired_date', 'acquiredDate'],
+    ['description', 'description'],
+    ['file_id', 'fileId'],
+  ]
+  return columns
+    .map(([fieldName, key]) => ({
+      fieldName,
+      oldValue: text(before[key]),
+      newValue: text(after[key]),
+    }))
+    .filter((change) => change.oldValue !== change.newValue)
+}
+
+const fields = (input: AssetBody) => ({
+  name: input.name,
+  assetTypeId: input.assetTypeId,
+  identificationNo: input.identificationNo,
+  isTaxable: input.isTaxable,
+  assetCondition: input.assetCondition,
+  manufacturer: input.manufacturer,
+  model: input.model,
+  currentValue: input.currentValue ?? null,
+  acquiredDate: input.acquiredDate ?? null,
+  description: input.description,
+  fileId: input.fileId,
 })
 
 const itemHandlers = [
-  http.get(base('/items'), async ({ request }) => {
+  http.get(base('/company-assets'), async ({ request }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const url = new URL(request.url)
     const status = param(url, 'status')
+    const availability = param(url, 'availability')
     const assetTypeId = param(url, 'assetTypeId')
     const list = assets
       .all()
       .filter(
         (asset) =>
-          contains(asset.name, param(url, 'name')) &&
-          contains(asset.code, param(url, 'code')) &&
-          contains(asset.identificationNumber, param(url, 'identificationNumber')) &&
+          matches(url, asset.name, asset.code, asset.identificationNo) &&
           (!assetTypeId || asset.assetTypeId === assetTypeId) &&
-          (!status || statusOf(asset) === status),
+          (!status || asset.status === status) &&
+          (!availability || availabilityOf(asset) === availability),
       )
       .sort((a, b) => a.code.localeCompare(b.code))
-    return page(url, list.map(assetRow))
+    return page(url, list.map(assetOut))
   }),
-  http.get(base('/items/:id'), async ({ request, params }) => {
+  http.get(base('/company-assets/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const asset = assets.find(String(params.id))
-    return asset ? ok(assetDetail(asset)) : notFound('asset')
+    return asset ? ok(assetOut(asset)) : notFound('Asset')
   }),
-  http.get(base('/items/:id/history'), async ({ request, params }) => {
+  http.get(base('/company-assets/:id/history'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const asset = assets.find(String(params.id))
-    if (!asset) return notFound('asset')
-    return ok(
-      asset.history.map(({ performedById, ...entry }) => ({
-        ...entry,
-        performedBy: employeeRef(performedById),
-      })),
-    )
+    return asset ? ok(asset.history) : notFound('Asset')
   }),
-  http.post(base('/items'), async ({ request }) => {
+  http.post(base('/company-assets'), async ({ request }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const parsed = await readBody(request, assetSchema)
     if (!parsed.success) return rejected(parsed.error)
     const problem = assetProblem(parsed.data)
     if (problem) return problem
-    const blank: Asset = {
+    const asset: StoredAsset = {
       id: createId('as'),
       code: nextCode(
         'AST-',
         assets.all().map((item) => item.code),
       ),
-      name: '',
-      assetTypeId: '',
-      identificationNumber: '',
-      taxable: false,
-      condition: 'new',
-      manufacturer: '',
-      model: '',
-      attachmentName: null,
-      currentValue: 0,
-      acquiredDate: '',
-      description: '',
-      active: true,
+      ...fields(parsed.data),
+      fileName: null,
+      status: 'active',
       createdAt: now(),
+      updatedAt: null,
+      rowVersion: nextVersion(),
       history: [],
     }
-    const asset: Asset = { ...blank, ...parsed.data }
-    const changes = diff({ ...blank, assetTypeId: '__none__' }, asset).map((change) =>
-      change.field === 'Asset Type' ? { ...change, oldValue: '' } : change,
-    )
-    assets.insert({
-      ...asset,
-      history: [
-        { id: createId('ah'), action: 'Create', performedById: ME, performedAt: now(), changes },
-      ],
-    })
-    return ok(assetDetail(asset))
+    assets.insert(asset)
+    addHistory(asset.id, 'create', [])
+    return created(assetOut(asset))
   }),
-  http.put(base('/items/:id'), async ({ request, params }) => {
+  http.put(base('/company-assets/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const existing = assets.find(String(params.id))
-    if (!existing) return notFound('asset')
+    if (!existing) return notFound('Asset')
     const parsed = await readBody(request, assetSchema)
     if (!parsed.success) return rejected(parsed.error)
-    const problem = assetProblem(parsed.data, existing.id)
+    const old = stale(existing, parsed.data.rowVersion, 'asset')
+    if (old) return old
+    const problem = assetProblem(parsed.data, existing)
     if (problem) return problem
-    const next: Asset = { ...existing, ...parsed.data }
+    const next: StoredAsset = {
+      ...existing,
+      ...fields(parsed.data),
+      fileName: parsed.data.fileId === existing.fileId ? existing.fileName : null,
+      updatedAt: now(),
+      rowVersion: nextVersion(),
+    }
     const changes = diff(existing, next)
     assets.update(existing.id, next)
-    if (changes.length > 0) addHistory(existing.id, 'Update', changes)
-    return ok(assetDetail(assets.find(existing.id) ?? next))
+    if (changes.length > 0) addHistory(existing.id, 'update', changes)
+    return ok(assetOut(assets.find(existing.id) ?? next))
   }),
-  http.delete(base('/items/:id'), async ({ request, params }) => {
+  http.delete(base('/company-assets/:id'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const asset = assets.find(String(params.id))
-    if (!asset) return notFound('asset')
+    if (!asset) return notFound('Asset')
+    const old = stale(asset, new URL(request.url).searchParams.get('rowVersion'), 'asset')
+    if (old) return old
     if (allocations.all().some((item) => item.assetId === asset.id)) {
-      return conflict(
-        'This asset has been allocated, so its record is kept. Deactivate it instead.',
-        'IN_USE',
-      )
+      return conflict('This asset has been allocated before. Deactivate it instead.')
     }
     assets.remove(asset.id)
-    return ok({ id: asset.id })
+    return noContent()
   }),
-  http.post(base('/items/:id/deactivate'), async ({ request, params }) => {
+  http.patch(base('/company-assets/:id/:action'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
+    const action = String(params.action)
+    if (action !== 'activate' && action !== 'deactivate') return notFound('Route')
     const asset = assets.find(String(params.id))
-    if (!asset) return notFound('asset')
-    if (!asset.active) return conflict('This asset is already deactivated.')
-    const open = openAllocationOf(asset.id)
-    if (open) {
-      return conflict(
-        `This asset is allocated to ${nameOf(open.employeeId)}. Deallocate it first.`,
-        'ALLOCATED',
-      )
-    }
-    assets.update(asset.id, { ...asset, active: false })
-    addHistory(asset.id, 'Deactivate', [{ field: 'Active', oldValue: 'Yes', newValue: 'No' }])
-    return ok(assetDetail(assets.find(asset.id) ?? asset))
-  }),
-  http.post(base('/items/:id/activate'), async ({ request, params }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const asset = assets.find(String(params.id))
-    if (!asset) return notFound('asset')
-    if (asset.active) return conflict('This asset is already active.')
-    assets.update(asset.id, { ...asset, active: true })
-    addHistory(asset.id, 'Activate', [{ field: 'Active', oldValue: 'No', newValue: 'Yes' }])
-    return ok(assetDetail(assets.find(asset.id) ?? asset))
-  }),
-  http.post(base('/items/import'), async ({ request }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(request, importSchema)
+    if (!asset) return notFound('Asset')
+    const parsed = await readBody(request, z.object({ rowVersion: z.string().nullish() }))
     if (!parsed.success) return rejected(parsed.error)
-    const errors: string[] = []
-    let created = 0
-    parsed.data.rows.forEach((row, index) => {
-      const line = index + 2
-      const type = assetTypes
-        .all()
-        .find((item) => item.name.toLowerCase() === row.assetType.trim().toLowerCase())
-      const input = {
-        name: row.name.trim(),
-        assetTypeId: type?.id ?? '',
-        identificationNumber: row.identificationNumber.trim(),
-        taxable: true,
-        condition: 'new' as const,
-        manufacturer: row.manufacturer.trim(),
-        model: row.model.trim(),
-        attachmentName: null,
-        currentValue: row.currentValue,
-        acquiredDate: row.acquiredDate.trim(),
-        description: '',
-      }
-      const result = assetSchema.safeParse(input)
-      if (!type) {
-        errors.push(`Line ${String(line)}: no asset type called ${row.assetType}`)
-      } else if (!result.success) {
-        errors.push(`Line ${String(line)}: ${result.error.issues[0]?.message ?? 'not valid'}`)
-      } else if (
-        assets
-          .all()
-          .some(
-            (asset) =>
-              asset.identificationNumber.toLowerCase() === input.identificationNumber.toLowerCase(),
-          )
-      ) {
-        errors.push(
-          `Line ${String(line)}: an asset with number ${input.identificationNumber} exists`,
-        )
-      } else {
-        const id = createId('as')
-        assets.insert({
-          id,
-          code: nextCode(
-            'AST-',
-            assets.all().map((item) => item.code),
-          ),
-          ...result.data,
-          active: true,
-          createdAt: now(),
-          history: [
-            {
-              id: createId('ah'),
-              action: 'Create',
-              performedById: ME,
-              performedAt: now(),
-              changes: [
-                { field: 'Name', oldValue: '', newValue: result.data.name },
-                { field: 'Asset Type', oldValue: '', newValue: type.name },
-                {
-                  field: 'Identification Number',
-                  oldValue: '',
-                  newValue: result.data.identificationNumber,
-                },
-              ],
-            },
-          ],
-        })
-        created += 1
-      }
-    })
-    return ok({ created, errors })
+    const old = stale(asset, parsed.data.rowVersion, 'asset')
+    if (old) return old
+    const next = action === 'activate' ? 'active' : 'decommissioned'
+    if (action === 'deactivate' && openAllocationOf(asset.id)) {
+      return conflict('This asset is allocated. Deallocate it first.', 'ASSET_ALLOCATED', 'status')
+    }
+    if (asset.status !== next) {
+      assets.update(asset.id, {
+        ...asset,
+        status: next,
+        updatedAt: now(),
+        rowVersion: nextVersion(),
+      })
+      addHistory(asset.id, action, [
+        { fieldName: 'status', oldValue: asset.status, newValue: next },
+      ])
+    }
+    return ok(assetOut(assets.find(asset.id) ?? asset))
   }),
 ]
 
 // --- Asset Allocations --------------------------------------------------------------------------
 
-const allocationRow = (id: string) => {
-  const allocation = allocations.find(id)
-  if (!allocation) return undefined
-  const asset = assets.find(allocation.assetId)
-  return {
-    id: allocation.id,
-    company: employeeProfile(allocation.employeeId).company ?? '—',
-    employee: employeeRef(allocation.employeeId),
-    assetId: allocation.assetId,
-    asset: asset?.name ?? '—',
-    assetTypeId: asset?.assetTypeId ?? '',
-    assetType: asset ? typeName(asset.assetTypeId) : '—',
-    identificationNumber: asset?.identificationNumber ?? '—',
-    allocationDate: allocation.allocationDate,
-    deallocationDate: allocation.deallocationDate,
-    status: allocation.deallocationDate ? ('deallocated' as const) : ('allocated' as const),
-  }
-}
-
 const allocationSchema = z.object({
-  employeeId,
-  assetId: z.string().min(1, 'Choose the asset'),
-  allocationDate: day,
-  attachmentName: z.string().max(200).nullable(),
-  description: z.string().trim().max(500, 'Keep it under 500 characters'),
+  assetId: idSchema('Asset not found.'),
+  employeeId: idSchema('Employee not found.'),
+  allocatedOn: day,
+  description: optionalText(4000),
+  fileId: fileIdSchema,
+})
+
+const deallocateSchema = z.object({
+  deallocatedOn: day,
+  returnCondition: z
+    .enum(RETURN_CONDITIONS, { error: 'Condition must be good, fair or damaged.' })
+    .nullish(),
+  remarks: optionalText(500),
+  rowVersion: z.string().nullish(),
 })
 
 const allocationHandlers = [
@@ -552,8 +522,8 @@ const allocationHandlers = [
     const wanted = {
       employeeId: param(url, 'employeeId'),
       assetTypeId: param(url, 'assetTypeId'),
-      status: param(url, 'status'),
       assetId: param(url, 'assetId'),
+      status: param(url, 'status'),
       from: param(url, 'from'),
       to: param(url, 'to'),
     }
@@ -561,19 +531,25 @@ const allocationHandlers = [
       .all()
       .sort(
         (a, b) =>
-          b.allocationDate.localeCompare(a.allocationDate) ||
-          b.createdAt.localeCompare(a.createdAt),
+          b.allocatedOn.localeCompare(a.allocatedOn) || b.createdAt.localeCompare(a.createdAt),
       )
-      .map((item) => allocationRow(item.id))
-      .filter((row): row is NonNullable<typeof row> => row !== undefined)
+      .map(allocationOut)
       .filter(
         (row) =>
-          (!wanted.employeeId || row.employee.id === wanted.employeeId) &&
+          matches(
+            url,
+            row.employeeName,
+            row.employeeCode,
+            row.assetName,
+            row.assetCode,
+            row.identificationNo,
+          ) &&
+          (!wanted.employeeId || row.employeeId === wanted.employeeId) &&
           (!wanted.assetTypeId || row.assetTypeId === wanted.assetTypeId) &&
           (!wanted.status || row.status === wanted.status) &&
           (!wanted.assetId || row.assetId === wanted.assetId) &&
-          (!wanted.from || row.allocationDate >= wanted.from) &&
-          (!wanted.to || row.allocationDate <= wanted.to),
+          (!wanted.from || row.allocatedOn >= wanted.from) &&
+          (!wanted.to || row.allocatedOn <= wanted.to),
       )
     return page(url, list)
   }),
@@ -581,13 +557,7 @@ const allocationHandlers = [
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const allocation = allocations.find(String(params.id))
-    const row = allocationRow(String(params.id))
-    if (!allocation || !row) return notFound('allocation')
-    return ok({
-      ...row,
-      attachmentName: allocation.attachmentName,
-      description: allocation.description,
-    })
+    return allocation ? ok(allocationOut(allocation)) : notFound('Allocation')
   }),
   http.post(base('/allocations'), async ({ request }) => {
     const unauthorized = await authed(request)
@@ -596,349 +566,465 @@ const allocationHandlers = [
     if (!parsed.success) return rejected(parsed.error)
     const input = parsed.data
     const asset = assets.find(input.assetId)
-    if (!asset) return invalid('Choose the asset', { assetId: 'Choose the asset' })
+    if (!asset) return invalid('Asset not found.', { assetId: 'Asset not found.' })
+    if (!personOf(input.employeeId)) {
+      return invalid('Employee not found.', { employeeId: 'Employee not found.' })
+    }
     if (!isActive(input.employeeId)) {
-      return invalid(`${nameOf(input.employeeId)} no longer works here`, {
-        employeeId: `${nameOf(input.employeeId)} no longer works here`,
-      })
+      return invalid('This employee has left.', { employeeId: 'This employee has left.' })
     }
-    if (!asset.active) {
-      return invalid('This asset is deactivated', { assetId: 'This asset is deactivated' })
+    if (asset.status !== 'active') {
+      return conflict(
+        'This asset is not active and cannot be allocated.',
+        'ASSET_UNAVAILABLE',
+        'assetId',
+      )
     }
-    const open = openAllocationOf(asset.id)
-    if (open) {
-      const message = `This asset is allocated to ${nameOf(open.employeeId)}`
-      return conflict(message, 'ALLOCATED', { assetId: message })
+    if (openAllocationOf(asset.id)) {
+      return conflict(
+        'The asset was still with someone else on that date.',
+        'ASSET_ALLOCATED',
+        'assetId',
+      )
     }
-    if (input.allocationDate < asset.acquiredDate) {
-      const message = 'The allocation date is before the asset was acquired'
-      return invalid(message, { allocationDate: message })
+    if (asset.acquiredDate && input.allocatedOn < asset.acquiredDate) {
+      const message = 'The allocation date is before the asset was acquired.'
+      return invalid(message, { allocatedOn: message })
     }
-    const allocation = {
+    const allocation: StoredAllocation = {
       id: createId('al'),
-      ...input,
-      deallocationDate: null,
+      employeeId: input.employeeId,
+      assetId: asset.id,
+      allocatedOn: input.allocatedOn,
+      deallocatedOn: null,
+      description: input.description,
+      returnCondition: null,
+      deallocationRemarks: null,
+      fileId: input.fileId,
+      fileName: null,
+      assetClearanceId: null,
       createdAt: now(),
+      updatedAt: null,
+      rowVersion: nextVersion(),
     }
     allocations.insert(allocation)
-    addHistory(asset.id, 'Allocate', [
-      { field: 'Allocated To', oldValue: '', newValue: nameOf(input.employeeId) },
+    addHistory(asset.id, 'allocate', [
+      { fieldName: 'holder', oldValue: null, newValue: holderText(input.employeeId) },
     ])
-    return ok({
-      ...allocationRow(allocation.id),
-      attachmentName: allocation.attachmentName,
-      description: allocation.description,
-    })
+    return created(allocationOut(allocation))
   }),
-  http.post(base('/allocations/:id/deallocate'), async ({ request, params }) => {
+  http.patch(base('/allocations/:id/deallocate'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const allocation = allocations.find(String(params.id))
-    if (!allocation) return notFound('allocation')
-    if (allocation.deallocationDate) return conflict('This asset is already deallocated.')
-    const parsed = await readBody(request, z.object({ deallocationDate: day }))
+    if (!allocation) return notFound('Allocation')
+    const parsed = await readBody(request, deallocateSchema)
     if (!parsed.success) return rejected(parsed.error)
-    if (parsed.data.deallocationDate < allocation.allocationDate) {
-      const message = 'The deallocation date is before the allocation date'
-      return invalid(message, { deallocationDate: message })
+    const old = stale(allocation, parsed.data.rowVersion, 'allocation')
+    if (old) return old
+    if (allocation.deallocatedOn) {
+      return conflict(
+        'This asset has already been deallocated.',
+        'ALLOCATION_CLOSED',
+        'deallocatedOn',
+      )
     }
-    allocations.update(allocation.id, {
+    if (parsed.data.deallocatedOn < allocation.allocatedOn) {
+      const message = 'The deallocation date is before the allocation date.'
+      return invalid(message, { deallocatedOn: message })
+    }
+    const next: StoredAllocation = {
       ...allocation,
-      deallocationDate: parsed.data.deallocationDate,
-    })
-    addHistory(allocation.assetId, 'Deallocate', [
-      { field: 'Allocated To', oldValue: nameOf(allocation.employeeId), newValue: '' },
+      deallocatedOn: parsed.data.deallocatedOn,
+      returnCondition: parsed.data.returnCondition ?? null,
+      deallocationRemarks: parsed.data.remarks,
+      updatedAt: now(),
+      rowVersion: nextVersion(),
+    }
+    allocations.update(allocation.id, next)
+    addHistory(allocation.assetId, 'deallocate', [
+      { fieldName: 'holder', oldValue: holderText(allocation.employeeId), newValue: null },
     ])
-    return ok({
-      ...allocationRow(allocation.id),
-      attachmentName: allocation.attachmentName,
-      description: allocation.description,
-    })
+    const asset = assets.find(allocation.assetId)
+    if (parsed.data.returnCondition === 'damaged' && asset?.status === 'active') {
+      assets.update(asset.id, { ...asset, status: 'damaged', rowVersion: nextVersion() })
+      addHistory(asset.id, 'deallocate', [
+        { fieldName: 'status', oldValue: 'active', newValue: 'damaged' },
+      ])
+    }
+    return ok(allocationOut(next))
   }),
 ]
 
 // --- Asset Clearance Form -----------------------------------------------------------------------
 
-const clearanceRow = (form: ClearanceForm): ClearanceRow => ({
-  id: form.id,
-  employee: employeeRef(form.employeeId),
-  clearanceDate: form.clearanceDate,
-  status: form.status,
+const clearanceSchema = z.object({
+  employeeId: idSchema('Employee not found.'),
+  endOfEmploymentId: optionalId,
+  clearanceDate: day,
+  checkedById: optionalId,
+  approvedById: optionalId,
+  approvalDate: day.nullish(),
+  fileId: fileIdSchema,
+  items: z
+    .array(
+      z.object({
+        assetAllocationId: idSchema('Choose the asset'),
+        conditionAtClearance: z.enum(RETURN_CONDITIONS, { error: 'Choose the condition' }),
+        reason: optionalText(4000),
+        returnStatus: z.enum(RETURN_STATUSES, { error: 'Choose the return status' }),
+        comments: optionalText(4000),
+      }),
+    )
+    .default([]),
+  rowVersion: z.string().nullish(),
 })
+type ClearanceBody = z.infer<typeof clearanceSchema>
 
-const clearanceDetail = (form: ClearanceForm): ClearanceDetail => ({
-  ...form,
-  employee: employeeRef(form.employeeId),
-  lines: form.lines.map((line) => {
-    const asset = assets.find(line.assetId)
-    return {
-      ...line,
-      asset: asset?.name ?? '—',
-      identificationNumber: asset?.identificationNumber ?? '—',
-    }
-  }),
-})
+/** The person's pending end of employment, which a form made from the Assets menu links to. */
+const pendingRecordOf = (employeeId: string) =>
+  endOfEmployments.all().find((item) => item.employeeId === employeeId && item.status === 'pending')
 
-const clearanceSchema = z
-  .object({
-    employeeId,
-    clearanceDate: day,
-    lines: z
-      .array(
-        z.object({
-          assetId: z.string().min(1, 'Choose the asset'),
-          allocationId: z.string().nullable(),
-          dateAllocated: day,
-          condition: z.enum(CLEARANCE_CONDITIONS),
-          reason: z.string().trim().max(500, 'Keep it under 500 characters'),
-          returnStatus: z.enum(RETURN_STATUSES).nullable(),
-          comments: z.string().trim().max(1000, 'Keep it under 1000 characters'),
-        }),
-      )
-      .min(1, 'Add the assets being cleared'),
-    checkedById: employeeId,
-    approvedById: employeeId,
-    approvalDate: day,
-    attachmentName: z.string().max(200).nullable(),
-    endOfEmploymentId: z.string().nullable(),
-  })
-  .refine((value) => new Set(value.lines.map((line) => line.assetId)).size === value.lines.length, {
-    message: 'Each asset can be cleared once',
-    path: ['lines'],
-  })
-
-function clearanceProblem(input: ClearanceInput, id?: string) {
-  for (const [index, line] of input.lines.entries()) {
-    const asset = assets.find(line.assetId)
-    if (!asset) {
-      return invalid('Choose the asset', { [`lines.${String(index)}.assetId`]: 'Choose the asset' })
-    }
-    if (line.allocationId) {
-      const allocation = allocations.find(line.allocationId)
-      if (allocation?.employeeId !== input.employeeId || allocation.assetId !== asset.id) {
-        const message = `${asset.name} (${asset.identificationNumber}) is not allocated to ${nameOf(input.employeeId)}`
-        return invalid(message, { [`lines.${String(index)}.assetId`]: message })
-      }
-    }
+function clearanceProblem(input: ClearanceBody, current?: StoredClearance) {
+  if (!personOf(input.employeeId)) {
+    return invalid('Employee not found.', { employeeId: 'Employee not found.' })
   }
-  const pending = clearances
+  if (current && current.employeeId !== input.employeeId) {
+    const message = 'The employee of a clearance form cannot be changed.'
+    return invalid(message, { employeeId: message })
+  }
+  for (const key of ['checkedById', 'approvedById'] as const) {
+    const id = input[key]
+    if (id && !personOf(id)) return invalid('Employee not found.', { [key]: 'Employee not found.' })
+  }
+  const seen = new Set<string>()
+  for (const [index, item] of input.items.entries()) {
+    const allocation = allocations.find(item.assetAllocationId)
+    const field = `items.${String(index)}.assetAllocationId`
+    if (seen.has(item.assetAllocationId) || allocation?.employeeId !== input.employeeId) {
+      return invalid('Items are not valid.', {
+        [field]: 'This asset is not allocated to the employee.',
+      })
+    }
+    seen.add(item.assetAllocationId)
+  }
+  const open = clearances
     .all()
     .find(
-      (form) => form.id !== id && form.employeeId === input.employeeId && form.status === 'pending',
+      (form) =>
+        form.id !== current?.id &&
+        form.employeeId === input.employeeId &&
+        form.status === 'in_progress',
     )
-  if (pending) {
-    return conflict(`${nameOf(input.employeeId)} already has a clearance form pending with HR.`)
+  if (open) {
+    return conflict(
+      'This employee already has a clearance form in progress.',
+      'CLEARANCE_OPEN',
+      'employeeId',
+    )
   }
   if (input.endOfEmploymentId) {
     const record = endOfEmployments.find(input.endOfEmploymentId)
-    if (!record) return invalid('That end of employment record could not be found.')
-    if (record.clearanceId && record.clearanceId !== id) {
-      return conflict('That end of employment record already has a clearance form.')
+    if (record?.employeeId !== input.employeeId || record.status !== 'pending') {
+      const message = 'No pending end of employment for this employee.'
+      return invalid(message, { endOfEmploymentId: message })
     }
   }
   return null
 }
 
-function linkToEndOfEmployment(form: ClearanceForm | undefined, linked: boolean) {
-  if (!form?.endOfEmploymentId) return
+function linkToEndOfEmployment(form: StoredClearance, linked: boolean) {
+  if (!form.endOfEmploymentId) return
   const record = endOfEmployments.find(form.endOfEmploymentId)
   if (!record) return
   endOfEmployments.update(record.id, { ...record, clearanceId: linked ? form.id : null })
 }
 
 /**
- * Approving frees the assets: each line's allocation ends on the clearance
- * date. An asset not returned, or returned damaged, becomes Unavailable.
+ * Approving ends each listed allocation on the clearance date with the condition at
+ * clearance; damaged marks the asset damaged, not returned marks it lost.
  */
-function approve(form: ClearanceForm) {
-  const deallocated: string[] = []
-  const deactivated: string[] = []
-  for (const line of form.lines) {
-    const allocation = line.allocationId ? allocations.find(line.allocationId) : undefined
-    if (allocation?.deallocationDate === null) {
-      const date =
-        form.clearanceDate < allocation.allocationDate
-          ? allocation.allocationDate
-          : form.clearanceDate
-      allocations.update(allocation.id, { ...allocation, deallocationDate: date })
-      deallocated.push(allocation.id)
+function approve(form: StoredClearance) {
+  const statusChanges: StoredClearance['statusChanges'] = []
+  for (const item of form.items) {
+    const allocation = allocations.find(item.assetAllocationId)
+    if (!allocation) continue
+    if (allocation.deallocatedOn === null) {
+      allocations.update(allocation.id, {
+        ...allocation,
+        deallocatedOn:
+          form.clearanceDate < allocation.allocatedOn ? allocation.allocatedOn : form.clearanceDate,
+        returnCondition: item.conditionAtClearance,
+        assetClearanceId: form.id,
+        rowVersion: nextVersion(),
+      })
     }
-    const changes: AssetChange[] = [
-      { field: 'Allocated To', oldValue: nameOf(form.employeeId), newValue: '' },
-      {
-        field: 'Return Status',
-        oldValue: '',
-        newValue: line.returnStatus ? RETURN_STATUS_LABELS[line.returnStatus] : '',
-      },
-    ]
-    const asset = assets.find(line.assetId)
-    if (asset?.active && (line.returnStatus === 'not-returned' || line.condition === 'damaged')) {
-      assets.update(asset.id, { ...asset, active: false })
-      deactivated.push(asset.id)
-      changes.push({ field: 'Active', oldValue: 'Yes', newValue: 'No' })
+    addHistory(allocation.assetId, 'clearance', [
+      { fieldName: 'holder', oldValue: holderText(form.employeeId), newValue: item.returnStatus },
+    ])
+    const asset = assets.find(allocation.assetId)
+    const lost = item.returnStatus === 'not_returned'
+    if (asset?.status === 'active' && (lost || item.conditionAtClearance === 'damaged')) {
+      const next = lost ? 'lost' : 'damaged'
+      assets.update(asset.id, { ...asset, status: next, rowVersion: nextVersion() })
+      addHistory(asset.id, 'clearance', [
+        { fieldName: 'status', oldValue: 'active', newValue: next },
+      ])
+      statusChanges.push({ assetId: asset.id, from: 'active' })
     }
-    addHistory(line.assetId, 'Clearance', changes)
   }
-  clearances.update(form.id, { ...form, status: 'approved', effects: { deallocated, deactivated } })
+  clearances.update(form.id, {
+    ...form,
+    status: 'approved',
+    approvalDate: form.approvalDate ?? today(),
+    statusChanges,
+    updatedAt: now(),
+    rowVersion: nextVersion(),
+  })
 }
 
-/** Unapproved: back to Pending by HR, with the assets given back as they were. */
-function unapprove(form: ClearanceForm) {
-  for (const id of form.effects?.deallocated ?? []) {
-    const allocation = allocations.find(id)
-    // Only if nobody has been given the asset since.
-    if (allocation && !openAllocationOf(allocation.assetId)) {
-      allocations.update(id, { ...allocation, deallocationDate: null })
-      addHistory(allocation.assetId, 'Clearance', [
-        { field: 'Allocated To', oldValue: '', newValue: nameOf(allocation.employeeId) },
-      ])
-    }
+/** Unapprove: back in progress, with the allocations it closed reopened and asset statuses back. */
+function unapprove(form: StoredClearance) {
+  for (const allocation of allocations.all().filter((item) => item.assetClearanceId === form.id)) {
+    allocations.update(allocation.id, {
+      ...allocation,
+      deallocatedOn: null,
+      returnCondition: null,
+      assetClearanceId: null,
+      rowVersion: nextVersion(),
+    })
   }
-  for (const id of form.effects?.deactivated ?? []) {
-    const asset = assets.find(id)
-    if (asset && !asset.active) {
-      assets.update(id, { ...asset, active: true })
-      addHistory(id, 'Clearance', [{ field: 'Active', oldValue: 'No', newValue: 'Yes' }])
-    }
+  for (const change of form.statusChanges) {
+    const asset = assets.find(change.assetId)
+    if (!asset) continue
+    assets.update(asset.id, { ...asset, status: change.from, rowVersion: nextVersion() })
+    addHistory(asset.id, 'unapprove clearance', [
+      { fieldName: 'status', oldValue: asset.status, newValue: change.from },
+    ])
   }
-  clearances.update(form.id, { ...form, status: 'pending', effects: null })
+  clearances.update(form.id, {
+    ...form,
+    status: 'in_progress',
+    statusChanges: [],
+    updatedAt: now(),
+    rowVersion: nextVersion(),
+  })
 }
+
+const bulkSchema = z.object({
+  forms: z
+    .array(z.object({ id: idSchema('Choose a form'), rowVersion: z.string() }))
+    .min(1, 'Choose at least one clearance form.'),
+})
 
 const clearanceHandlers = [
-  http.get(base('/clearances'), async ({ request }) => {
+  http.get(base('/clearance-forms'), async ({ request }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const url = new URL(request.url)
-    const department = param(url, 'department')
-    const clearanceDate = param(url, 'clearanceDate')
+    const status = param(url, 'status')
+    const employeeId = param(url, 'employeeId')
+    const departmentId = param(url, 'departmentId')
+    const eoe = param(url, 'endOfEmploymentId')
     const list = clearances
       .all()
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map(clearanceRow)
       .filter(
         (row) =>
-          contains(row.employee.code, param(url, 'code')) &&
-          contains(row.employee.name, param(url, 'name')) &&
-          (!department || row.employee.department === department) &&
-          (!clearanceDate || row.clearanceDate === clearanceDate),
+          matches(url, row.employeeName, row.employeeCode) &&
+          (!status || row.status === status) &&
+          (!employeeId || row.employeeId === employeeId) &&
+          (!departmentId || sameUnit(departmentId, row.departmentName)) &&
+          (!eoe || row.endOfEmploymentId === eoe),
       )
     return page(url, list)
   }),
-  http.get(base('/clearances/prefill/:employeeId'), async ({ request, params }) => {
+  http.get(base('/clearance-forms/prefill'), async ({ request }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
-    const id = String(params.employeeId)
-    if (!findEmployee(id)) return notFound('employee')
-    const lines = allocations
-      .all()
-      .filter((item) => item.employeeId === id && item.deallocationDate === null)
-      .map((item) => ({
-        assetId: item.assetId,
-        allocationId: item.id,
-        dateAllocated: item.allocationDate,
-        condition: 'good' as const,
-        reason: '',
-        returnStatus: null,
-        comments: '',
-      }))
-    return ok({ employee: employeeRef(id), lines })
-  }),
-  http.get(base('/clearances/:id'), async ({ request, params }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const form = clearances.find(String(params.id))
-    return form ? ok(clearanceDetail(form)) : notFound('clearance form')
-  }),
-  http.post(base('/clearances'), async ({ request }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(request, clearanceSchema)
-    if (!parsed.success) return rejected(parsed.error)
-    const problem = clearanceProblem(parsed.data)
-    if (problem) return problem
-    const form: ClearanceForm = {
-      id: createId('cf'),
-      ...parsed.data,
-      lines: parsed.data.lines.map((line) => ({ id: createId('cl'), ...line })),
-      status: 'pending',
-      createdAt: now(),
-      effects: null,
+    const employeeId = new URL(request.url).searchParams.get('employeeId') ?? ''
+    const person = personOf(employeeId)
+    if (!person) return notFound('Employee')
+    const prefill: ClearancePrefill = {
+      employeeId,
+      employeeCode: person.code,
+      employeeName: person.name,
+      departmentId: departmentIdOf(person.departmentName),
+      departmentName: person.departmentName,
+      endOfEmploymentId: pendingRecordOf(employeeId)?.id ?? null,
+      items: allocations
+        .all()
+        .filter((item) => item.employeeId === employeeId && item.deallocatedOn === null)
+        .map((item) => {
+          const asset = assets.find(item.assetId)
+          return {
+            assetAllocationId: item.id,
+            assetId: item.assetId,
+            assetCode: asset?.code ?? '',
+            assetName: asset?.name ?? '',
+            identificationNo: asset?.identificationNo ?? null,
+            allocatedOn: item.allocatedOn,
+          }
+        }),
     }
-    clearances.insert(form)
-    linkToEndOfEmployment(form, true)
-    return ok(clearanceDetail(form))
+    return ok(prefill)
   }),
-  http.put(base('/clearances/:id'), async ({ request, params }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const existing = clearances.find(String(params.id))
-    if (!existing) return notFound('clearance form')
-    if (existing.status === 'approved') {
-      return conflict('An approved clearance form cannot be changed. Unapprove it first.')
-    }
-    const parsed = await readBody(request, clearanceSchema)
-    if (!parsed.success) return rejected(parsed.error)
-    const input = { ...parsed.data, endOfEmploymentId: existing.endOfEmploymentId }
-    const problem = clearanceProblem(input, existing.id)
-    if (problem) return problem
-    const form: ClearanceForm = {
-      ...existing,
-      ...input,
-      lines: input.lines.map((line, index) => ({
-        id: existing.lines[index]?.id ?? createId('cl'),
-        ...line,
-      })),
-    }
-    clearances.update(existing.id, form)
-    return ok(clearanceDetail(form))
-  }),
-  http.delete(base('/clearances/:id'), async ({ request, params }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const form = clearances.find(String(params.id))
-    if (!form) return notFound('clearance form')
-    if (form.status === 'approved') {
-      return conflict('An approved clearance form cannot be deleted. Unapprove it first.')
-    }
-    linkToEndOfEmployment(form, false)
-    clearances.remove(form.id)
-    return ok({ id: form.id })
-  }),
-  http.post(base('/clearances/:action'), async ({ request, params }) => {
+  http.patch(base('/clearance-forms/:action'), async ({ request, params }) => {
     const unauthorized = await authed(request)
     if (unauthorized) return unauthorized
     const action = String(params.action)
-    if (action !== 'approve' && action !== 'unapprove') return notFound('action')
-    const parsed = await readBody(
-      request,
-      z.object({ ids: z.array(z.string()).min(1, 'Tick the forms first') }),
-    )
+    if (action !== 'approve' && action !== 'unapprove') return notFound('Route')
+    const parsed = await readBody(request, bulkSchema)
     if (!parsed.success) return rejected(parsed.error)
-    let changed = 0
-    for (const id of parsed.data.ids) {
-      const form = clearances.find(id)
-      if (!form) continue
-      if (action === 'approve' && form.status === 'pending') {
-        approve(form)
-        changed += 1
-      } else if (action === 'unapprove' && form.status === 'approved') {
-        unapprove(form)
-        changed += 1
+    // All or nothing: check every form first.
+    const forms: StoredClearance[] = []
+    for (const ref of parsed.data.forms) {
+      const form = clearances.find(ref.id)
+      if (!form) return notFound('Clearance form')
+      const old = stale(form, ref.rowVersion, 'clearance form')
+      if (old) return old
+      if (action === 'approve' && form.status === 'approved') {
+        return conflict(
+          'A chosen clearance form is already approved.',
+          'CLEARANCE_APPROVED',
+          'status',
+        )
       }
+      if (action === 'unapprove' && form.status !== 'approved') {
+        return conflict(
+          'A chosen clearance form is not approved.',
+          'CLEARANCE_NOT_APPROVED',
+          'status',
+        )
+      }
+      const record = form.endOfEmploymentId
+        ? endOfEmployments.find(form.endOfEmploymentId)
+        : undefined
+      const reallocated = allocations
+        .all()
+        .filter((item) => item.assetClearanceId === form.id)
+        .some((closed) =>
+          allocations
+            .all()
+            .some(
+              (other) =>
+                other.assetId === closed.assetId &&
+                other.id !== closed.id &&
+                other.createdAt > closed.createdAt,
+            ),
+        )
+      if (action === 'unapprove' && reallocated) {
+        return conflict('An asset on a chosen form has been allocated again since.')
+      }
+      if (action === 'unapprove' && record?.status === 'completed') {
+        return conflict(
+          'The end of employment for a chosen form is completed.',
+          'END_OF_EMPLOYMENT_COMPLETED',
+          'status',
+        )
+      }
+      forms.push(form)
     }
-    if (changed === 0) {
-      return invalid(
-        action === 'approve'
-          ? 'None of the ticked forms is pending.'
-          : 'None of the ticked forms is approved.',
+    for (const form of forms) {
+      if (action === 'approve') approve(form)
+      else unapprove(form)
+    }
+    return ok(forms.map((form) => clearanceRow(clearances.find(form.id) ?? form)))
+  }),
+  http.get(base('/clearance-forms/:id'), async ({ request, params }) => {
+    const unauthorized = await authed(request)
+    if (unauthorized) return unauthorized
+    const form = clearances.find(String(params.id))
+    return form ? ok(clearanceOut(form)) : notFound('Clearance form')
+  }),
+  http.post(base('/clearance-forms'), async ({ request }) => {
+    const unauthorized = await authed(request)
+    if (unauthorized) return unauthorized
+    const parsed = await readBody(request, clearanceSchema)
+    if (!parsed.success) return rejected(parsed.error)
+    const input = parsed.data
+    const problem = clearanceProblem(input)
+    if (problem) return problem
+    const form: StoredClearance = {
+      id: createId('cf'),
+      employeeId: input.employeeId,
+      endOfEmploymentId: input.endOfEmploymentId ?? pendingRecordOf(input.employeeId)?.id ?? null,
+      clearanceDate: input.clearanceDate,
+      checkedById: input.checkedById,
+      approvedById: input.approvedById,
+      approvalDate: input.approvalDate ?? null,
+      fileId: input.fileId,
+      fileName: null,
+      status: 'in_progress',
+      items: input.items.map((item) => ({ id: createId('cl'), ...item })),
+      createdAt: now(),
+      updatedAt: null,
+      rowVersion: nextVersion(),
+      statusChanges: [],
+    }
+    clearances.insert(form)
+    linkToEndOfEmployment(form, true)
+    return created(clearanceOut(form))
+  }),
+  http.put(base('/clearance-forms/:id'), async ({ request, params }) => {
+    const unauthorized = await authed(request)
+    if (unauthorized) return unauthorized
+    const existing = clearances.find(String(params.id))
+    if (!existing) return notFound('Clearance form')
+    const parsed = await readBody(request, clearanceSchema)
+    if (!parsed.success) return rejected(parsed.error)
+    const old = stale(existing, parsed.data.rowVersion, 'clearance form')
+    if (old) return old
+    if (existing.status === 'approved') {
+      return conflict(
+        'This clearance form is approved. Unapprove it first.',
+        'CLEARANCE_APPROVED',
+        'status',
       )
     }
-    return ok({ changed })
+    const input = { ...parsed.data, endOfEmploymentId: existing.endOfEmploymentId }
+    const problem = clearanceProblem(input, existing)
+    if (problem) return problem
+    const form: StoredClearance = {
+      ...existing,
+      clearanceDate: input.clearanceDate,
+      checkedById: input.checkedById,
+      approvedById: input.approvedById,
+      approvalDate: input.approvalDate ?? null,
+      fileId: input.fileId,
+      fileName: input.fileId === existing.fileId ? existing.fileName : null,
+      items: input.items.map((item, index) => ({
+        id: existing.items[index]?.id ?? createId('cl'),
+        ...item,
+      })),
+      updatedAt: now(),
+      rowVersion: nextVersion(),
+    }
+    clearances.update(existing.id, form)
+    return ok(clearanceOut(form))
+  }),
+  http.delete(base('/clearance-forms/:id'), async ({ request, params }) => {
+    const unauthorized = await authed(request)
+    if (unauthorized) return unauthorized
+    const form = clearances.find(String(params.id))
+    if (!form) return notFound('Clearance form')
+    const old = stale(form, new URL(request.url).searchParams.get('rowVersion'), 'clearance form')
+    if (old) return old
+    if (form.status === 'approved') {
+      return conflict(
+        'This clearance form is approved. Unapprove it first.',
+        'CLEARANCE_APPROVED',
+        'status',
+      )
+    }
+    linkToEndOfEmployment(form, false)
+    clearances.remove(form.id)
+    return noContent()
   }),
 ]
 
 export const assetHandlers = [
-  ...lookupHandlers,
   ...typeHandlers,
   ...itemHandlers,
   ...allocationHandlers,

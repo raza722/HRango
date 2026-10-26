@@ -1,41 +1,42 @@
 import { format, subDays } from 'date-fns'
 
-import type {
-  Asset,
-  AssetAllocation,
-  AssetHistoryEntry,
-  AssetType,
-  ClearanceForm,
-} from '@/features/assets'
+import type { AssetCondition, AssetHistoryRow, AssetStatus } from '@/features/assets'
 
 import { findEmployee } from '../employees/seed'
+import type { StoredAllocation, StoredAsset, StoredAssetType, StoredClearance } from './db'
 
-const nameOf = (id: string) => findEmployee(id)?.name ?? id
+/** How audit rows name a holder: "Name - CODE" (the seed uses the directory id as the code). */
+const holderText = (id: string) => `${findEmployee(id)?.name ?? id} - ${id}`
 const day = (back: number) => format(subDays(new Date(), back), 'yyyy-MM-dd')
 const stamp = (back: number, time = '10:30') => `${day(back)}T${time}:00.000Z`
-const HR = 'em_shelley'
+const version = (id: string) => `seed${id.replace(/\W/g, '')}`.padEnd(16, '0').slice(0, 16)
 
-export function seedAssetTypes(): AssetType[] {
+/** Who did it, as Asset History names them (a user, not an employee). */
+const HR_USER = { performedByUserId: '1', performedByName: 'Shelley Kannes' }
+
+export function seedAssetTypes(): StoredAssetType[] {
   const type = (
     id: string,
     index: number,
     name: string,
-    description: string,
-    active = true,
-  ): AssetType => ({
+    description: string | null,
+    isActive = true,
+  ): StoredAssetType => ({
     id,
-    code: `ATP-${String(index).padStart(5, '0')}`,
+    code: `AITP-${String(index).padStart(5, '0')}`,
     name,
     description,
-    active,
+    isActive,
     createdAt: stamp(600 - index * 10),
+    updatedAt: null,
+    rowVersion: version(id),
   })
   return [
     type('at_laptop', 1, 'Laptop', 'Laptops and notebooks.'),
     type('at_car', 2, 'Car', 'Company cars.'),
     type('at_mobile', 3, 'Mobile Phone', 'Phones on the company plan.'),
     type('at_storage', 4, 'Hard Drive', 'External drives.'),
-    type('at_monitor', 5, 'Monitor', ''),
+    type('at_monitor', 5, 'Monitor', null),
     type('at_printer', 6, 'Printer', 'No longer issued.', false),
   ]
 }
@@ -44,13 +45,13 @@ interface AssetSeed {
   id: string
   name: string
   assetTypeId: string
-  identificationNumber: string
+  identificationNo: string
   manufacturer: string
   model: string
   currentValue: number
   acquired: number
-  condition?: Asset['condition']
-  active?: boolean
+  condition?: AssetCondition
+  status?: AssetStatus
 }
 
 const ASSETS: AssetSeed[] = [
@@ -58,7 +59,7 @@ const ASSETS: AssetSeed[] = [
     id: 'as_1',
     name: 'Laptop',
     assetTypeId: 'at_laptop',
-    identificationNumber: '123456789',
+    identificationNo: '123456789',
     manufacturer: 'Dell',
     model: 'TM-4356',
     currentValue: 100_000,
@@ -68,7 +69,7 @@ const ASSETS: AssetSeed[] = [
     id: 'as_2',
     name: 'Hard Drive',
     assetTypeId: 'at_storage',
-    identificationNumber: 'SG-2TB-7781',
+    identificationNo: 'SG-2TB-7781',
     manufacturer: 'Seagate',
     model: 'Expansion 2TB',
     currentValue: 18_000,
@@ -78,7 +79,7 @@ const ASSETS: AssetSeed[] = [
     id: 'as_3',
     name: 'Laptop',
     assetTypeId: 'at_laptop',
-    identificationNumber: 'HP-840-55120',
+    identificationNo: 'HP-840-55120',
     manufacturer: 'HP',
     model: 'EliteBook 840',
     currentValue: 145_000,
@@ -89,7 +90,7 @@ const ASSETS: AssetSeed[] = [
     id: 'as_4',
     name: 'Car',
     assetTypeId: 'at_car',
-    identificationNumber: 'LEB-21-4410',
+    identificationNo: 'LEB-21-4410',
     manufacturer: 'Toyota',
     model: 'Corolla Altis',
     currentValue: 5_800_000,
@@ -99,7 +100,7 @@ const ASSETS: AssetSeed[] = [
     id: 'as_5',
     name: 'Mobile Phone',
     assetTypeId: 'at_mobile',
-    identificationNumber: '356789104455120',
+    identificationNo: '356789104455120',
     manufacturer: 'Samsung',
     model: 'Galaxy A54',
     currentValue: 95_000,
@@ -109,30 +110,30 @@ const ASSETS: AssetSeed[] = [
     id: 'as_6',
     name: 'Monitor',
     assetTypeId: 'at_monitor',
-    identificationNumber: 'LG-27-90031',
+    identificationNo: 'LG-27-90031',
     manufacturer: 'LG',
     model: '27UL500',
     currentValue: 65_000,
     acquired: 700,
     condition: 'old',
-    active: false,
+    status: 'decommissioned',
   },
   {
     id: 'as_7',
     name: 'Laptop',
     assetTypeId: 'at_laptop',
-    identificationNumber: 'LN-E14-33017',
+    identificationNo: 'LN-E14-33017',
     manufacturer: 'Lenovo',
     model: 'ThinkPad E14',
     currentValue: 150_000,
     acquired: 560,
-    condition: 'old',
+    condition: 'fair',
   },
   {
     id: 'as_8',
     name: 'Mobile Phone',
     assetTypeId: 'at_mobile',
-    identificationNumber: '353211087761204',
+    identificationNo: '353211087761204',
     manufacturer: 'Apple',
     model: 'iPhone 13',
     currentValue: 180_000,
@@ -142,7 +143,7 @@ const ASSETS: AssetSeed[] = [
     id: 'as_9',
     name: 'Monitor',
     assetTypeId: 'at_monitor',
-    identificationNumber: 'DL-P24-11908',
+    identificationNo: 'DL-P24-11908',
     manufacturer: 'Dell',
     model: 'P2422H',
     currentValue: 55_000,
@@ -150,85 +151,82 @@ const ASSETS: AssetSeed[] = [
   },
 ]
 
-/** [id, person, asset, allocated days ago, deallocated days ago]. */
-const ALLOCATIONS: [string, string, string, number, number | null][] = [
-  ['al_1', 'em_hina', 'as_1', 300, null],
-  ['al_2', 'em_ayesha', 'as_4', 200, null],
-  ['al_3', 'em_talha', 'as_3', 380, null],
-  ['al_4', 'em_talha', 'as_5', 250, null],
+/** [id, person, asset, allocated days ago, deallocated days ago, clearance that closed it]. */
+const ALLOCATIONS: [string, string, string, number, number | null, string | null][] = [
+  ['al_1', 'em_hina', 'as_1', 300, null, null],
+  ['al_2', 'em_ayesha', 'as_4', 200, null, null],
+  ['al_3', 'em_talha', 'as_3', 380, null, null],
+  ['al_4', 'em_talha', 'as_5', 250, null, null],
   // Nida Hassan returned hers at her clearance (approved), on her last working day.
-  ['al_5', 'em_nida', 'as_7', 500, 50],
-  ['al_6', 'em_shelley', 'as_8', 120, null],
+  ['al_5', 'em_nida', 'as_7', 500, 50, 'cf_1'],
+  ['al_6', 'em_shelley', 'as_8', 120, null, null],
 ]
 
-export function seedAllocations(): AssetAllocation[] {
-  return ALLOCATIONS.map(([id, employeeId, assetId, from, to]) => ({
+export function seedAllocations(): StoredAllocation[] {
+  return ALLOCATIONS.map(([id, employeeId, assetId, from, to, clearance]) => ({
     id,
     employeeId,
     assetId,
-    allocationDate: day(from),
-    deallocationDate: to === null ? null : day(to),
-    attachmentName: null,
-    description: '',
+    allocatedOn: day(from),
+    deallocatedOn: to === null ? null : day(to),
+    description: null,
+    returnCondition: to === null ? null : 'good',
+    deallocationRemarks: null,
+    fileId: null,
+    fileName: null,
+    assetClearanceId: clearance,
     createdAt: stamp(from),
+    updatedAt: to === null ? null : stamp(to),
+    rowVersion: version(id),
   }))
 }
 
-const yesNo = (value: boolean) => (value ? 'Yes' : 'No')
-
-export function seedAssets(): Asset[] {
-  const typeName = (id: string) => seedAssetTypes().find((type) => type.id === id)?.name ?? id
+export function seedAssets(): StoredAsset[] {
   return ASSETS.map((seed) => {
-    const condition = seed.condition ?? 'new'
-    const active = seed.active ?? true
-    const history: AssetHistoryEntry[] = [
+    const status = seed.status ?? 'active'
+    const history: AssetHistoryRow[] = [
       {
         id: `ah_${seed.id}_create`,
-        action: 'Create',
-        performedById: HR,
+        action: 'create',
+        fieldName: null,
+        oldValue: null,
+        newValue: null,
         performedAt: stamp(seed.acquired, '09:15'),
-        changes: [
-          { field: 'Name', oldValue: '', newValue: seed.name },
-          { field: 'Asset Type', oldValue: '', newValue: typeName(seed.assetTypeId) },
-          { field: 'Identification Number', oldValue: '', newValue: seed.identificationNumber },
-          { field: 'Is Taxable', oldValue: '', newValue: 'Yes' },
-          { field: 'Condition', oldValue: '', newValue: condition === 'new' ? 'New' : 'Old' },
-          { field: 'Manufacturer', oldValue: '', newValue: seed.manufacturer },
-          { field: 'Model', oldValue: '', newValue: seed.model },
-          { field: 'Current Value', oldValue: '', newValue: String(seed.currentValue) },
-          { field: 'Acquired Date', oldValue: '', newValue: day(seed.acquired) },
-        ],
+        ...HR_USER,
       },
     ]
     for (const [id, employeeId, assetId, from, to] of ALLOCATIONS) {
       if (assetId !== seed.id) continue
       history.push({
         id: `ah_${id}_allocate`,
-        action: 'Allocate',
-        performedById: HR,
+        action: 'allocate',
+        fieldName: 'holder',
+        oldValue: null,
+        newValue: holderText(employeeId),
         performedAt: stamp(from, '11:00'),
-        changes: [{ field: 'Allocated To', oldValue: '', newValue: nameOf(employeeId) }],
+        ...HR_USER,
       })
       if (to !== null) {
         history.push({
           id: `ah_${id}_clearance`,
-          action: 'Clearance',
-          performedById: HR,
+          action: 'clearance',
+          fieldName: 'holder',
+          oldValue: holderText(employeeId),
+          newValue: 'complete',
           performedAt: stamp(to - 1, '15:40'),
-          changes: [
-            { field: 'Allocated To', oldValue: nameOf(employeeId), newValue: '' },
-            { field: 'Return Status', oldValue: '', newValue: 'Complete Return' },
-          ],
+          ...HR_USER,
         })
       }
     }
-    if (!active) {
+    if (status !== 'active') {
       history.push({
         id: `ah_${seed.id}_deactivate`,
-        action: 'Deactivate',
-        performedById: HR,
+        action: 'deactivate',
+        fieldName: 'status',
+        oldValue: 'active',
+        newValue: status,
         performedAt: stamp(40, '12:05'),
-        changes: [{ field: 'Active', oldValue: yesNo(true), newValue: yesNo(false) }],
+        ...HR_USER,
       })
     }
     return {
@@ -236,17 +234,20 @@ export function seedAssets(): Asset[] {
       code: `AST-${seed.id.replace('as_', '').padStart(5, '0')}`,
       name: seed.name,
       assetTypeId: seed.assetTypeId,
-      identificationNumber: seed.identificationNumber,
-      taxable: true,
-      condition,
+      identificationNo: seed.identificationNo,
+      isTaxable: true,
+      assetCondition: seed.condition ?? 'new',
       manufacturer: seed.manufacturer,
       model: seed.model,
-      attachmentName: null,
       currentValue: seed.currentValue,
       acquiredDate: day(seed.acquired),
-      description: '',
-      active,
+      description: null,
+      fileId: null,
+      fileName: null,
+      status,
       createdAt: stamp(seed.acquired, '09:15'),
+      updatedAt: null,
+      rowVersion: version(seed.id),
       history: history.sort((a, b) => b.performedAt.localeCompare(a.performedAt)),
     }
   })
@@ -254,69 +255,69 @@ export function seedAssets(): Asset[] {
 
 /**
  * The two leavers Payroll's Final Settlement already has: Nida Hassan's form
- * approved on her last day, Talha Aziz's pending with HR (laptop and phone).
+ * approved on her last day, Talha Aziz's in progress with HR (laptop and phone).
  */
-export function seedClearances(): ClearanceForm[] {
+export function seedClearances(): StoredClearance[] {
   return [
     {
       id: 'cf_1',
       employeeId: 'em_nida',
+      endOfEmploymentId: 'eoe_2',
       clearanceDate: day(50),
-      lines: [
+      checkedById: 'em_hina',
+      approvedById: 'em_shelley',
+      approvalDate: day(49),
+      fileId: null,
+      fileName: null,
+      status: 'approved',
+      items: [
         {
           id: 'cl_1',
-          assetId: 'as_7',
-          allocationId: 'al_5',
-          dateAllocated: day(500),
-          condition: 'good',
+          assetAllocationId: 'al_5',
+          conditionAtClearance: 'good',
           reason: 'Resignation',
           returnStatus: 'complete',
-          comments: '',
+          comments: null,
         },
       ],
-      checkedById: 'em_hina',
-      approvedById: HR,
-      approvalDate: day(49),
-      attachmentName: null,
-      status: 'approved',
-      endOfEmploymentId: 'eoe_2',
       createdAt: stamp(52),
-      effects: { deallocated: ['al_5'], deactivated: [] },
+      updatedAt: stamp(49),
+      rowVersion: version('cf_1'),
+      statusChanges: [],
     },
     {
       id: 'cf_2',
       employeeId: 'em_talha',
+      endOfEmploymentId: 'eoe_1',
       clearanceDate: day(15),
-      lines: [
+      checkedById: 'em_hina',
+      approvedById: 'em_shelley',
+      approvalDate: day(14),
+      fileId: null,
+      fileName: null,
+      status: 'in_progress',
+      items: [
         {
           id: 'cl_2',
-          assetId: 'as_3',
-          allocationId: 'al_3',
-          dateAllocated: day(380),
-          condition: 'good',
+          assetAllocationId: 'al_3',
+          conditionAtClearance: 'good',
           reason: 'Resignation',
           returnStatus: 'complete',
-          comments: '',
+          comments: null,
         },
         {
           id: 'cl_3',
-          assetId: 'as_5',
-          allocationId: 'al_4',
-          dateAllocated: day(250),
-          condition: 'fair',
+          assetAllocationId: 'al_4',
+          conditionAtClearance: 'fair',
           reason: 'Resignation',
           returnStatus: 'partial',
           comments: 'Charger not returned.',
         },
       ],
-      checkedById: 'em_hina',
-      approvedById: HR,
-      approvalDate: day(14),
-      attachmentName: null,
-      status: 'pending',
-      endOfEmploymentId: 'eoe_1',
       createdAt: stamp(16),
-      effects: null,
+      updatedAt: null,
+      rowVersion: version('cf_2'),
+      statusChanges: [],
     },
   ]
 }
