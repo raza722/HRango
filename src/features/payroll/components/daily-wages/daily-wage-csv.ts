@@ -1,8 +1,16 @@
-import type { DailyWageDetail } from '../../types/payroll.types'
+import type { DailyWageDetail, TimeSlotOption } from '../../types/payroll.types'
 import { downloadText, toCsv } from '../../utils/csv'
-import { clock, hours, slotLabel } from '../../utils/format'
+import { clock, hours } from '../../utils/format'
 
-/** "Download Excel": the batch's people as a CSV file (opens in Excel). */
+/** "TS-0001-Morning (09:00 AM to 05:00 PM)" from the scheduling picker's slot. */
+export function timeSlotLabel(slot: TimeSlotOption) {
+  const name = slot.code ? `${slot.code}-${slot.name}` : slot.name
+  return slot.startTime && slot.endTime
+    ? `${name} (${clock(slot.startTime.slice(0, 5))} to ${clock(slot.endTime.slice(0, 5))})`
+    : name
+}
+
+/** "Download Excel": the run's people as a CSV file (opens in Excel). */
 export function downloadDailyWage(detail: DailyWageDetail) {
   const text = toCsv(
     [
@@ -16,20 +24,23 @@ export function downloadDailyWage(detail: DailyWageDetail) {
       'Total Earnings',
       'Total Deductions',
       'Net Payable',
+      'Voucher',
     ],
     detail.rows.map((row) => [
-      row.employee.name,
-      row.employee.code,
+      row.employeeName,
+      row.employeeCode,
       row.checkIn ? clock(row.checkIn) : '',
       row.checkOut ? clock(row.checkOut) : '',
-      row.wage,
+      row.wage ?? '',
       row.workedMinutes === null ? '' : hours(row.workedMinutes),
       hours(row.expectedMinutes),
-      row.totalEarnings,
-      row.totalDeductions,
-      row.netPayable,
+      row.totalEarnings ?? '',
+      row.totalDeductions ?? '',
+      row.netPayable ?? '',
+      row.voucherNo ?? '',
     ]),
   )
-  const header = `${detail.name} — ${slotLabel(detail.timeSlot)} — ${detail.date}\n`
-  downloadText(header + text, `daily-wages-${detail.code}-${detail.date}.csv`)
+  const day = detail.workDate ?? ''
+  const header = `${detail.name} — ${detail.timeSlotName ?? ''} — ${day}\n`
+  downloadText(header + text, `daily-wages-${detail.code}-${day}.csv`)
 }

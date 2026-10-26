@@ -15,14 +15,19 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import { CONFIGURATION_ITEMS, LEAVE_TYPE_LABELS } from '../../constants'
-import { usePayrollSettings, useSavePayrollSettings } from '../../hooks/use-payroll'
-import { LEAVE_TYPES, type PayrollSettings } from '../../types/payroll.types'
+import { CONFIGURATION_ITEMS, PAYROLL_CODES } from '../../constants'
+import {
+  useLeaveTypeLookup,
+  usePayrollSettings,
+  useSavePayrollSettings,
+} from '../../hooks/use-payroll'
+import type { PayrollSettings } from '../../types/payroll.types'
 import { btn, toolbarButton } from '../../utils/styles'
 import { SearchSelect } from '../shared/search-select'
-import { errorMessage } from './settings-helpers'
+import { errorMessage, orNull } from './settings-helpers'
 import { ViewHeader } from './settings-list'
 import type { SettingsView } from './settings-nav'
 
@@ -57,6 +62,8 @@ const selectText = cn(
 )
 
 function SaveChanges({ pending }: { pending: boolean }) {
+  const canEdit = useCan(`${PAYROLL_CODES.general}.edit`)
+  if (!canEdit) return null
   return (
     <div className="flex justify-end">
       <Button
@@ -70,13 +77,25 @@ function SaveChanges({ pending }: { pending: boolean }) {
   )
 }
 
-/** "Payroll Configurations": the 22 numbered settings with their controls. */
+/** Blank text boxes go to the API as `null`. */
+const cleaned = (values: PayrollSettings): PayrollSettings => ({
+  ...values,
+  revisionFixedDate: orNull(values.revisionFixedDate),
+  payslipColor: orNull(values.payslipColor),
+  notesEnglish: orNull(values.notesEnglish),
+  notesOtherLanguage: orNull(values.notesOtherLanguage),
+})
+
+/**
+ * "Payroll Configurations": the numbered options with their controls, one per key of
+ * `GET/PUT /payroll/settings/general` (the whole object is saved with its `rowVersion`).
+ */
 function ConfigurationForm({ settings }: { settings: PayrollSettings }) {
   const save = useSavePayrollSettings()
   const baseId = useId()
   const form = useForm<PayrollSettings>({ defaultValues: settings })
   const submit = form.handleSubmit((values) => {
-    save.mutate(values, {
+    save.mutate(cleaned(values), {
       onError: (error) => {
         toast.error(errorMessage(error, 'Could not save the settings.'))
       },
@@ -100,7 +119,7 @@ function ConfigurationForm({ settings }: { settings: PayrollSettings }) {
               </label>
               <Controller
                 control={form.control}
-                name={`configuration.${item.key}`}
+                name={item.key}
                 render={({ field }) => {
                   if (item.control.kind === 'checkbox') {
                     return (
@@ -113,6 +132,23 @@ function ConfigurationForm({ settings }: { settings: PayrollSettings }) {
                           }}
                         />
                       </span>
+                    )
+                  }
+                  if (item.control.kind === 'number') {
+                    const { min, max } = item.control
+                    return (
+                      <Input
+                        id={id}
+                        inputMode="numeric"
+                        value={typeof field.value === 'number' ? String(field.value) : ''}
+                        onChange={(event) => {
+                          const text = event.target.value.replace(/\D/g, '')
+                          field.onChange(
+                            text === '' ? null : Math.max(min, Math.min(max, Number(text))),
+                          )
+                        }}
+                        className={valueText}
+                      />
                     )
                   }
                   if (item.control.kind === 'text') {
@@ -173,34 +209,38 @@ function ConfigurationForm({ settings }: { settings: PayrollSettings }) {
 /** The year's last month: December for a calendar year, the month before the start for a fiscal one. */
 const endMonthOf = (fiscal: boolean, start: number) => (fiscal ? ((start + 10) % 12) + 1 : 12)
 
+const LEAVE_DEDUCTIONS = [
+  ['deductCasualLeaves', 'Casual Leaves'],
+  ['deductSickLeaves', 'Sick Leaves'],
+] as const
+
 /** "Leave Configuration": CPL, the order leave is deducted in, and the leave year. */
 function LeaveForm({ settings }: { settings: PayrollSettings }) {
   const save = useSavePayrollSettings()
+  const leaveTypes = useLeaveTypeLookup()
   const ids = {
     cpl: useId(),
     max: useId(),
     start: useId(),
     end: useId(),
-    casual: useId(),
-    sick: useId(),
+    deductCasualLeaves: useId(),
+    deductSickLeaves: useId(),
   }
   const form = useForm<PayrollSettings>({ defaultValues: settings })
   const [fiscalYear, startMonth] = useWatch({
     control: form.control,
-    name: ['leave.fiscalYear', 'leave.yearStartMonth'],
+    name: ['leaveYearBasis', 'fiscalYearStartMonth'],
   })
   const fiscal = fiscalYear === 'fiscal'
   const submit = form.handleSubmit((values) => {
-    const start = values.leave.fiscalYear === 'calendar' ? 1 : values.leave.yearStartMonth
+    const isFiscal = values.leaveYearBasis === 'fiscal'
+    const start = isFiscal ? (values.fiscalYearStartMonth ?? 7) : null
     save.mutate(
-      {
+      cleaned({
         ...values,
-        leave: {
-          ...values.leave,
-          yearStartMonth: start,
-          yearEndMonth: endMonthOf(values.leave.fiscalYear === 'fiscal', start),
-        },
-      },
+        fiscalYearStartMonth: start,
+        fiscalYearEndMonth: start === null ? null : endMonthOf(true, start),
+      }),
       {
         onError: (error) => {
           toast.error(errorMessage(error, 'Could not save the settings.'))
@@ -219,15 +259,18 @@ function LeaveForm({ settings }: { settings: PayrollSettings }) {
         </label>
         <Controller
           control={form.control}
-          name="leave.cplLeaveType"
+          name="cplLeaveTypeId"
           render={({ field }) => (
             <SearchSelect
               id={ids.cpl}
               value={field.value}
               onChange={(next) => {
-                field.onChange(LEAVE_TYPES.find((item) => item === next) ?? null)
+                field.onChange(next)
               }}
-              options={LEAVE_TYPES.map((value) => ({ value, label: LEAVE_TYPE_LABELS[value] }))}
+              options={(leaveTypes.data ?? []).map((type) => ({
+                value: type.id,
+                label: type.name,
+              }))}
               placeholder="Select"
               clearable
               className={selectText}
@@ -241,7 +284,7 @@ function LeaveForm({ settings }: { settings: PayrollSettings }) {
         </label>
         <Controller
           control={form.control}
-          name="leave.maximumEarnedCpl"
+          name="maxEarnedCpl"
           render={({ field }) => (
             <Input
               id={ids.max}
@@ -258,18 +301,18 @@ function LeaveForm({ settings }: { settings: PayrollSettings }) {
       </div>
 
       <h2 className={heading}>Leave Deduction (Leave Type Order)</h2>
-      {LEAVE_TYPES.map((type) => (
-        <div key={type} className={row}>
-          <label htmlFor={ids[type]} className={labelText}>
-            {LEAVE_TYPE_LABELS[type]}
+      {LEAVE_DEDUCTIONS.map(([key, text]) => (
+        <div key={key} className={row}>
+          <label htmlFor={ids[key]} className={labelText}>
+            {text}
           </label>
           <Controller
             control={form.control}
-            name={`leave.deductionOrder.${type}`}
+            name={key}
             render={({ field }) => (
               <span className="flex h-6 items-center">
                 <Checkbox
-                  id={ids[type]}
+                  id={ids[key]}
                   checked={field.value}
                   onCheckedChange={(checked) => {
                     field.onChange(checked === true)
@@ -284,7 +327,7 @@ function LeaveForm({ settings }: { settings: PayrollSettings }) {
       <h2 className={heading}>Leave Fiscal Year (Leave Type Order)</h2>
       <Controller
         control={form.control}
-        name="leave.fiscalYear"
+        name="leaveYearBasis"
         render={({ field }) => (
           <div className="flex flex-wrap items-center gap-x-16 gap-y-3 text-sm text-title">
             <label className="flex items-center gap-6">
@@ -316,11 +359,11 @@ function LeaveForm({ settings }: { settings: PayrollSettings }) {
         </label>
         <Controller
           control={form.control}
-          name="leave.yearStartMonth"
+          name="fiscalYearStartMonth"
           render={({ field }) => (
             <SearchSelect
               id={ids.start}
-              value={fiscal ? String(field.value) : '1'}
+              value={fiscal ? String(field.value ?? 7) : '1'}
               onChange={(next) => {
                 if (next) field.onChange(Number(next))
               }}
@@ -339,7 +382,7 @@ function LeaveForm({ settings }: { settings: PayrollSettings }) {
         <Input
           id={ids.end}
           readOnly
-          value={MONTH_NAMES[endMonthOf(fiscal, fiscal ? startMonth : 1) - 1] ?? ''}
+          value={MONTH_NAMES[endMonthOf(fiscal, fiscal ? (startMonth ?? 7) : 1) - 1] ?? ''}
           className={cn('bg-muted', valueText)}
         />
       </div>
@@ -361,9 +404,9 @@ export function GeneralView({ view }: { view: SettingsView | null }) {
           ))}
         </div>
       ) : view === 'leave-configuration' ? (
-        <LeaveForm settings={settings.data} />
+        <LeaveForm key={settings.data.rowVersion ?? 'new'} settings={settings.data} />
       ) : (
-        <ConfigurationForm settings={settings.data} />
+        <ConfigurationForm key={settings.data.rowVersion ?? 'new'} settings={settings.data} />
       )}
     </>
   )

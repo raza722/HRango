@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 
-import { FORMULA_VARIABLES } from '../../constants'
+import { useExpressionVariables } from '../../hooks/use-payroll'
 import { btn, toolbarButton } from '../../utils/styles'
 import { ConfirmAction } from '../shared/confirm-action'
 import { errorMessage } from './settings-helpers'
@@ -56,16 +56,19 @@ export function SettingsRowMenu({
 }
 
 /** "Are you sure you want to Perform this action?" before a delete; errors become a toast. */
-export function DeleteConfirm<T>({
+export function DeleteConfirm({
   record,
   onClose,
   remove,
-  idOf,
 }: {
-  record: T | null
+  record: { id: string; rowVersion: string } | null
   onClose: () => void
-  remove: { mutate: (id: string, options: { onError: (error: unknown) => void }) => void }
-  idOf: (record: T) => string
+  remove: {
+    mutate: (
+      variables: { id: string; rowVersion: string },
+      options: { onError: (error: unknown) => void },
+    ) => void
+  }
 }) {
   return (
     <ConfirmAction
@@ -77,11 +80,14 @@ export function DeleteConfirm<T>({
       message="Are you sure you want to Perform this action?"
       onConfirm={() => {
         if (record === null) return
-        remove.mutate(idOf(record), {
-          onError: (error) => {
-            toast.error(errorMessage(error, 'Could not delete it.'))
+        remove.mutate(
+          { id: record.id, rowVersion: record.rowVersion },
+          {
+            onError: (error) => {
+              toast.error(errorMessage(error, 'Could not delete it.'))
+            },
           },
-        })
+        )
         onClose()
       }}
     />
@@ -106,6 +112,7 @@ export function ExpressionInput({
   'aria-invalid'?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const variables = useExpressionVariables()
   return (
     <div className="relative">
       <Input
@@ -132,22 +139,27 @@ export function ExpressionInput({
         </PopoverTrigger>
         <PopoverContent align="end" className="w-80 p-2">
           <p className="px-2 pb-1.5 text-xs text-muted-foreground">
-            Use numbers, + − × ÷, brackets and these values:
+            Use numbers, + − × ÷, brackets, if(), min(), max(), round() and these values:
           </p>
+          {variables.isPending && (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</p>
+          )}
           <ul className="grid scrollbar-thin max-h-64 gap-0.5 overflow-y-auto">
-            {FORMULA_VARIABLES.map(([name, hint]) => (
-              <li key={name}>
+            {(variables.data ?? []).map((variable) => (
+              <li key={`${variable.kind}-${variable.reference}`}>
                 <button
                   type="button"
                   onClick={() => {
                     const spacer = value && !value.endsWith(' ') ? ' ' : ''
-                    onChange(`${value}${spacer}{${name}}`)
+                    onChange(`${value}${spacer}${variable.reference}`)
                     setOpen(false)
                   }}
                   className="grid w-full rounded-sm px-2 py-1.5 text-left outline-none hover:bg-muted focus-visible:bg-muted"
                 >
-                  <span className="font-mono text-xs text-heading">{`{${name}}`}</span>
-                  <span className="text-xs text-muted-foreground">{hint}</span>
+                  <span className="font-mono text-xs text-heading">{variable.reference}</span>
+                  {variable.description && (
+                    <span className="text-xs text-muted-foreground">{variable.description}</span>
+                  )}
                 </button>
               </li>
             ))}

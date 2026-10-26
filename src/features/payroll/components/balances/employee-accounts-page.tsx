@@ -1,33 +1,48 @@
 import { useState } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
+import { toast } from 'sonner'
 
 import {
   DataTable,
   type DataTableColumn,
+  type RowAction,
   RowActionsMenu,
   rowMenuItemClass,
 } from '@/components/layout'
 import { Button } from '@/components/ui/button'
+import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
-import { useEmployeeAccounts, useImportEmployeeAccounts } from '../../hooks/use-payroll'
+import { PAYROLL_CODES } from '../../constants'
+import {
+  useDeleteEmployeeAccount,
+  useEmployeeAccounts,
+  useImportEmployeeAccounts,
+} from '../../hooks/use-payroll'
 import { usePayrollOptions } from '../../hooks/use-payroll-records'
 import type { EmployeeAccountRow } from '../../types/payroll.types'
 import { activeCount, type FilterField, useFilters } from '../../utils/filters'
-import { formatMonthShort, formatRs } from '../../utils/format'
+import { formatMonthShort, formatRs, monthStart } from '../../utils/format'
 import { btn, payrollTableClass, toolbarButton } from '../../utils/styles'
+import { ConfirmAction } from '../shared/confirm-action'
 import { FiltersDialog } from '../shared/filters-dialog'
-import { ImportButton } from '../shared/menu-button'
 import { NoRecord } from '../shared/no-record'
 import { PayrollCard } from '../shared/payroll-card'
-import { BALANCE_KINDS, parseAccountFile } from './balance-csv'
+import { downloadImportTemplate } from './balance-csv'
+import { CsvImportButton } from './csv-import-button'
 import { EmployeeAccountDialog } from './employee-account-dialog'
 import { FiltersButton, ListFooter, PersonCell } from './list-parts'
 
 const routeApi = getRouteApi('/_app/payroll/balances/employee-accounts')
 const PAGE_SIZE = 10
+const CODE = PAYROLL_CODES.employeeAccounts
 
-type Dialog = { type: 'create' | 'filters' } | { type: 'edit' | 'view'; id: string } | null
+type Dialog =
+  | { type: 'create' | 'filters' }
+  | { type: 'edit' | 'view'; id: string }
+  | { type: 'delete'; row: EmployeeAccountRow }
+  | null
 
 const rs = (value: number) => formatRs(value).replace('Rs', 'RS')
 
@@ -36,43 +51,83 @@ const columns: DataTableColumn<EmployeeAccountRow>[] = [
     id: 'employee',
     header: 'Employee',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={row.employee} />,
+    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null }} />,
   },
-  { id: 'account', header: 'Account', cell: (row) => row.account },
-  { id: 'month', header: 'Month', cell: (row) => formatMonthShort(row.month) },
+  { id: 'account', header: 'Account', cell: (row) => row.accountName },
+  { id: 'month', header: 'Month', cell: (row) => formatMonthShort(row.entryMonth) },
   { id: 'credit', header: 'Credit', cell: (row) => rs(row.credit) },
   { id: 'debit', header: 'Debit', cell: (row) => rs(row.debit) },
+  { id: 'processed', header: 'Processed', cell: (row) => (row.isProcessed ? 'Yes' : 'No') },
 ]
 
-/** Balances → Employee Accounts: credits and debits on a person's accounts (provident fund, loans…). */
+/** Balances → Employee Accounts (`/payroll/employee-accounts`): credits and debits on people's accounts. */
 export function EmployeeAccountsPage() {
   const { page } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
-  const options = usePayrollOptions()
+  const options = usePayrollOptions('payroll.employee_accounts.view')
+  const can = {
+    create: useCan(`${CODE}.create`),
+    edit: useCan(`${CODE}.edit`),
+    delete: useCan(`${CODE}.delete`),
+    import: useCan(`${CODE}.import`),
+  }
   const [filters, setFilters] = useFilters('employee-accounts')
   const [dialog, setDialog] = useState<Dialog>(null)
   const importFile = useImportEmployeeAccounts()
+  const remove = useDeleteEmployeeAccount()
   const list = useEmployeeAccounts({
     page,
     pageSize: PAGE_SIZE,
     employeeId: filters.employeeId,
-    month: filters.month,
+    accountTypeId: filters.accountTypeId,
+    month: filters.month ? monthStart(filters.month) : undefined,
   })
   const goTo = (next: number) => {
     void navigate({ search: (prev) => ({ ...prev, page: next }) })
   }
   const fields: FilterField[] = [
     {
-      kind: 'select',
+      kind: 'employee',
       key: 'employeeId',
       label: 'Employees',
       placeholder: 'Select Employee',
-      options: options.employees,
+      filters: options.employeeFilters,
+    },
+    {
+      kind: 'select',
+      key: 'accountTypeId',
+      label: 'Account',
+      placeholder: 'Select Account',
+      options: options.accountTypes,
     },
     { kind: 'month', key: 'month', label: 'Month' },
   ]
   const close = () => {
     setDialog(null)
+  }
+  const actions = (row: EmployeeAccountRow): RowAction[] => {
+    const items: (RowAction | false)[] = [
+      can.edit && {
+        label: 'Edit',
+        onSelect: () => {
+          setDialog({ type: 'edit', id: row.id })
+        },
+      },
+      {
+        label: 'View',
+        onSelect: () => {
+          setDialog({ type: 'view', id: row.id })
+        },
+      },
+      can.delete && {
+        label: 'Delete',
+        variant: 'destructive',
+        onSelect: () => {
+          setDialog({ type: 'delete', row })
+        },
+      },
+    ]
+    return items.filter((item): item is RowAction => item !== false)
   }
 
   return (
@@ -80,20 +135,31 @@ export function EmployeeAccountsPage() {
       title="Employee Accounts"
       actions={
         <>
-          <Button
-            onClick={() => {
-              setDialog({ type: 'create' })
-            }}
-            className={cn(toolbarButton, btn.blue, 'min-w-24')}
-          >
-            Create
-          </Button>
-          <ImportButton
-            choices={BALANCE_KINDS}
-            onFile={(kind, text) =>
-              importFile.mutateAsync({ kind, rows: parseAccountFile(kind, text) })
-            }
-          />
+          {can.create && (
+            <Button
+              onClick={() => {
+                setDialog({ type: 'create' })
+              }}
+              className={cn(toolbarButton, btn.blue, 'min-w-24')}
+            >
+              Create
+            </Button>
+          )}
+          {can.import && (
+            <>
+              <Button
+                onClick={() => {
+                  void options.sampleEmployeeCode().then((code) => {
+                    downloadImportTemplate('employee-account', code)
+                  })
+                }}
+                className={cn(toolbarButton, btn.green)}
+              >
+                Sample Import
+              </Button>
+              <CsvImportButton onImport={(fileId) => importFile.mutateAsync({ fileId })} />
+            </>
+          )}
           <FiltersButton
             count={activeCount(filters)}
             onClick={() => {
@@ -115,21 +181,8 @@ export function EmployeeAccountsPage() {
         rowActions={(row) => (
           <RowActionsMenu
             itemClassName={rowMenuItemClass.inter}
-            label={`Actions for ${row.employee.name}, ${row.account} ${formatMonthShort(row.month)}`}
-            actions={[
-              {
-                label: 'Edit',
-                onSelect: () => {
-                  setDialog({ type: 'edit', id: row.id })
-                },
-              },
-              {
-                label: 'View',
-                onSelect: () => {
-                  setDialog({ type: 'view', id: row.id })
-                },
-              },
-            ]}
+            label={`Actions for ${row.employeeName}, ${row.accountName} ${formatMonthShort(row.entryMonth)}`}
+            actions={actions(row)}
           />
         )}
       />
@@ -158,6 +211,27 @@ export function EmployeeAccountsPage() {
           onClose={close}
         />
       )}
+      <ConfirmAction
+        open={dialog?.type === 'delete'}
+        onOpenChange={(open) => {
+          if (!open) close()
+        }}
+        title="Delete employee account entry"
+        message="Are you sure you want to Delete this?"
+        onConfirm={() => {
+          if (dialog?.type !== 'delete') return
+          remove.mutate(
+            { id: dialog.row.id, rowVersion: dialog.row.rowVersion },
+            {
+              onError: (error) => {
+                toast.error(
+                  error instanceof ApiError ? error.message : 'Could not delete the entry.',
+                )
+              },
+            },
+          )
+        }}
+      />
     </PayrollCard>
   )
 }

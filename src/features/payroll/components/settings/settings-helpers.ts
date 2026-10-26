@@ -56,6 +56,12 @@ export const toOptionalNumber = (value: string) => (value.trim() === '' ? null :
 export const numberText = (value: number | null | undefined) =>
   value === null || value === undefined ? '' : String(value)
 
+/** Blank (or only spaces) becomes `null`, as the API stores it. */
+export const orNull = (value: string | null | undefined) => {
+  const text = value?.trim() ?? ''
+  return text === '' ? null : text
+}
+
 export const yesNo = (value: boolean) => (value ? 'Yes' : 'No')
 
 /** A section heading inside a settings dialog (Conditions, Additional Information, Slabs): Poppins SemiBold 20 #202020. */

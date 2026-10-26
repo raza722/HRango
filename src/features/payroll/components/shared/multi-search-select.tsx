@@ -25,6 +25,16 @@ interface MultiSearchSelectProps {
   'aria-describedby'?: string | undefined
   'aria-invalid'?: boolean
   'aria-label'?: string
+  /**
+   * Search on the server: called with the typed text (the caller debounces and passes the
+   * matches as `options`), and the list is not filtered here.
+   */
+  onSearch?: ((text: string) => void) | undefined
+  /** The server is answering (a search or the next page). */
+  loading?: boolean | undefined
+  /** More matches than shown: offers "Load more", which calls `onLoadMore`. */
+  hasMore?: boolean | undefined
+  onLoadMore?: (() => void) | undefined
 }
 
 /**
@@ -39,6 +49,10 @@ export function MultiSearchSelect({
   placeholder,
   disabled = false,
   className,
+  onSearch,
+  loading = false,
+  hasMore = false,
+  onLoadMore,
   ...aria
 }: MultiSearchSelectProps) {
   const listId = useId()
@@ -47,12 +61,12 @@ export function MultiSearchSelect({
   const chosen = options.filter((option) => value.includes(option.value))
   const shown = useMemo(() => {
     const text = query.trim().toLowerCase()
-    return text
+    return text && !onSearch
       ? options.filter((option) =>
           `${option.label} ${option.hint ?? ''}`.toLowerCase().includes(text),
         )
       : options
-  }, [options, query])
+  }, [options, query, onSearch])
   const summary =
     chosen.length <= 2
       ? chosen.map((option) => option.label).join(', ')
@@ -67,7 +81,10 @@ export function MultiSearchSelect({
       open={open}
       onOpenChange={(next) => {
         setOpen(next)
-        if (!next) setQuery('')
+        if (!next && query) {
+          setQuery('')
+          onSearch?.('')
+        }
       }}
     >
       <PopoverTrigger asChild>
@@ -101,6 +118,7 @@ export function MultiSearchSelect({
             value={query}
             onChange={(event) => {
               setQuery(event.target.value)
+              onSearch?.(event.target.value)
             }}
             className="h-8 w-full rounded-sm border border-input bg-card pr-8 pl-2.5 text-sm text-field-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25"
           />
@@ -117,7 +135,7 @@ export function MultiSearchSelect({
         >
           {shown.length === 0 ? (
             <p className="px-2.5 py-3 text-center text-sm text-muted-foreground">
-              Nothing matches.
+              {loading ? 'Searching…' : 'Nothing matches.'}
             </p>
           ) : (
             shown.map((option) => {
@@ -154,6 +172,16 @@ export function MultiSearchSelect({
                 </button>
               )
             })
+          )}
+          {hasMore && onLoadMore && (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={onLoadMore}
+              className="rounded-sm px-2.5 py-1.5 text-center text-sm font-medium text-primary outline-none hover:bg-muted focus-visible:bg-muted disabled:opacity-60"
+            >
+              {loading ? 'Loading…' : 'Load more'}
+            </button>
           )}
         </div>
       </PopoverContent>

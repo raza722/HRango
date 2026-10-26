@@ -9,27 +9,23 @@ import { EmployeeAvatar } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { EmployeeSelector } from '@/features/scheduling'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
+import { PAYSLIP_STATUS_META, VOUCHER_STATUS_LABELS } from '../../constants'
 import {
   useCreateDailyWage,
   useDailyWage,
+  useDailyWageErrors,
   useDailyWageVouchers,
+  useSetDailyWageEmployees,
+  useTimeSlotLookup,
   useUpdateDailyWage,
 } from '../../hooks/use-payroll'
-import { usePayrollOptions } from '../../hooks/use-payroll-records'
+import { personHint } from '../../hooks/use-payroll-records'
 import type { DailyWageDetail } from '../../types/payroll.types'
-import {
-  amountInWords,
-  clock,
-  formatAmount,
-  formatLong,
-  formatRs,
-  hours,
-  slotLabel,
-} from '../../utils/format'
+import { amountInWords, clock, formatAmount, formatLong, formatRs, hours } from '../../utils/format'
 import {
   btn,
   dialogFieldType,
@@ -38,10 +34,12 @@ import {
   personNameText,
 } from '../../utils/styles'
 import { RsInput, SectionTitle } from '../balances/list-parts'
+import { RunErrorsTable } from '../monthly/payroll-dialogs'
 import { DateField } from '../shared/date-input'
+import { EmployeeMultiSearchSelect } from '../shared/employee-search-select'
 import { NoRecord } from '../shared/no-record'
 import { SearchSelectField } from '../shared/search-select'
-import { downloadDailyWage } from './daily-wage-csv'
+import { downloadDailyWage, timeSlotLabel } from './daily-wage-csv'
 
 /** The Edit dialog's values and the Create form's required mark, as Daily Wages draws them. */
 const editValue = 'font-inter text-sm text-grey sm:text-base'
@@ -53,6 +51,9 @@ const createType = cn(
 const editPrefix = 'text-base font-medium text-heading sm:text-base'
 /** Details table: Inter Medium 14 #000000 headings, Inter Regular 14 #000000 cells. */
 const detailsTable = '[&_td]:font-inter [&_td]:text-heading [&_th]:font-inter [&_th]:text-heading'
+
+const failure = (reason: unknown, fallback: string) =>
+  reason instanceof ApiError ? reason.message : fallback
 
 /** The wizard's two progress bars: green once a step is reached. */
 function Steps({ step }: { step: 1 | 2 }) {
@@ -67,8 +68,8 @@ function Steps({ step }: { step: 1 | 2 }) {
 }
 
 const stepOneSchema = z.object({
-  name: z.string().trim().min(1, 'Enter a name').max(80, 'Keep it under 80 characters'),
-  date: z.string().min(1, 'Choose the date'),
+  name: z.string().trim().min(1, 'Enter a name').max(200, 'Keep it under 200 characters'),
+  workDate: z.string().min(1, 'Choose the date'),
   timeSlotId: z
     .string()
     .nullable()
@@ -77,19 +78,19 @@ const stepOneSchema = z.object({
 type StepOne = z.infer<typeof stepOneSchema>
 
 /**
- * "Create" in Payrolls Daily Wages: step 1 Name, Date and Time Slot (Next),
- * step 2 "Select Employee" (Save).
+ * "Create" in Payrolls Daily Wages (`POST /daily-wages`): step 1 Name, Date and Time Slot
+ * (Next), step 2 "Select Employee" (Save). Wages are worked out on Process.
  */
 export function DailyWageCreateDialog({ onClose }: { onClose: () => void }) {
   const formId = useId()
-  const options = usePayrollOptions()
+  const slots = useTimeSlotLookup()
   const create = useCreateDailyWage()
   const [step, setStep] = useState<1 | 2>(1)
   const [employeeIds, setEmployeeIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const form = useForm<StepOne>({
     resolver: zodResolver(stepOneSchema),
-    defaultValues: { name: '', date: '', timeSlotId: null },
+    defaultValues: { name: '', workDate: '', timeSlotId: null },
   })
 
   const next = form.handleSubmit(() => {
@@ -106,13 +107,13 @@ export function DailyWageCreateDialog({ onClose }: { onClose: () => void }) {
     try {
       await create.mutateAsync({
         name: values.name.trim(),
-        date: values.date,
+        workDate: values.workDate,
         timeSlotId: values.timeSlotId ?? '',
         employeeIds,
       })
       onClose()
-    } catch (failure) {
-      setError(failure instanceof ApiError ? failure.message : 'Could not create the payroll.')
+    } catch (reason) {
+      setError(failure(reason, 'Could not create the payroll.'))
     }
   }
 
@@ -121,7 +122,7 @@ export function DailyWageCreateDialog({ onClose }: { onClose: () => void }) {
       title={step === 1 ? 'Create Daily Wage Payroll' : 'Select Employee'}
       hideTitle={step === 1}
       onRequestClose={onClose}
-      className={step === 1 ? cn('max-w-3xl', createType) : 'max-w-5xl'}
+      className={step === 1 ? cn('max-w-3xl', createType) : 'max-w-3xl'}
       footer={
         <>
           {error && (
@@ -178,7 +179,7 @@ export function DailyWageCreateDialog({ onClose }: { onClose: () => void }) {
               />
               <DateField
                 control={form.control}
-                name="date"
+                name="workDate"
                 label="Date"
                 required
                 maxDate={new Date()}
@@ -188,30 +189,108 @@ export function DailyWageCreateDialog({ onClose }: { onClose: () => void }) {
                 name="timeSlotId"
                 label="Time Slot"
                 placeholder="Select Time Slot"
-                options={options.timeSlots.map((slot) => ({
+                options={(slots.data ?? []).map((slot) => ({
                   value: slot.id,
-                  label: slotLabel(slot),
+                  label: timeSlotLabel(slot),
                 }))}
                 required
               />
             </form>
           </FieldLayoutContext>
         ) : (
-          <EmployeeSelector
-            value={employeeIds}
-            onChange={(ids) => {
-              setEmployeeIds(ids)
-              setError(null)
-            }}
-            filters={['employee', 'location', 'branch', 'department', 'grade', 'group']}
-          />
+          <div className="grid gap-2">
+            <EmployeeMultiSearchSelect
+              aria-label="Employees"
+              value={employeeIds}
+              onChange={(ids) => {
+                setEmployeeIds(ids)
+                setError(null)
+              }}
+              filters={{ permission: 'payroll.daily_wages.create' }}
+              hint={personHint}
+              placeholder="Select Employees"
+            />
+            <p className="text-xs text-muted-foreground">{employeeIds.length} selected</p>
+          </div>
         )}
       </div>
     </AppDialog>
   )
 }
 
-/** "Daily Wage Payroll Edit": the name, then per person earnings, deductions and wage. */
+/** "Employees" of a daily-wage run (`PUT /daily-wages/{id}/employees`), before it is closed. */
+export function DailyWageEmployeesDialog({ id, onClose }: { id: string; onClose: () => void }) {
+  const detail = useDailyWage(id)
+  return detail.data ? (
+    <EmployeesForm detail={detail.data} onClose={onClose} />
+  ) : (
+    <AppDialog title="Employees" onRequestClose={onClose} className="max-w-3xl">
+      <Skeleton className="h-24 w-full" />
+    </AppDialog>
+  )
+}
+
+function EmployeesForm({ detail, onClose }: { detail: DailyWageDetail; onClose: () => void }) {
+  const save = useSetDailyWageEmployees()
+  const [ids, setIds] = useState(() => detail.rows.map((row) => row.employeeId))
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <AppDialog
+      title="Employees"
+      onRequestClose={onClose}
+      className="max-w-3xl"
+      footer={
+        <>
+          {error && (
+            <p role="alert" className="mr-auto self-center text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <Button
+            disabled={save.isPending}
+            onClick={() => {
+              setError(null)
+              save.mutate(
+                { id: detail.id, employeeIds: ids },
+                {
+                  onSuccess: onClose,
+                  onError: (reason) => {
+                    setError(failure(reason, 'The employees could not be saved.'))
+                  },
+                },
+              )
+            }}
+            className={cn(footerButton, btn.green)}
+          >
+            Save
+          </Button>
+          <Button onClick={onClose} className={cn(footerButton, btn.red)}>
+            Cancel
+          </Button>
+        </>
+      }
+    >
+      <EmployeeMultiSearchSelect
+        aria-label="Employees"
+        value={ids}
+        onChange={setIds}
+        filters={{ permission: 'payroll.daily_wages.edit' }}
+        known={detail.rows.map((row) => ({
+          value: row.employeeId,
+          label: row.employeeName,
+          hint: row.employeeCode,
+        }))}
+        hint={personHint}
+        placeholder="Select Employees"
+      />
+    </AppDialog>
+  )
+}
+
+/**
+ * "Daily Wage Payroll Edit" (`PUT /daily-wages/{id}`): the name, then per person earnings and
+ * deductions (wage slips must have been processed). The wage itself is not editable on the API.
+ */
 export function DailyWageEditDialog({ id, onClose }: { id: string; onClose: () => void }) {
   const detail = useDailyWage(id)
   return detail.data ? (
@@ -228,17 +307,18 @@ function EditForm({ detail, onClose }: { detail: DailyWageDetail; onClose: () =>
   const update = useUpdateDailyWage()
   const [name, setName] = useState(detail.name)
   const [rows, setRows] = useState(() =>
-    detail.rows.map((row) => ({
-      employeeId: row.employee.id,
-      name: row.employee.name,
-      totalEarnings: String(row.totalEarnings),
-      totalDeductions: String(row.totalDeductions),
-      wage: String(row.wage),
-    })),
+    detail.rows
+      .filter((row) => row.payslipId !== null)
+      .map((row) => ({
+        employeeId: row.employeeId,
+        name: row.employeeName,
+        totalEarnings: String(row.totalEarnings ?? 0),
+        totalDeductions: String(row.totalDeductions ?? 0),
+      })),
   )
   const [error, setError] = useState<string | null>(null)
 
-  const set = (index: number, key: 'totalEarnings' | 'totalDeductions' | 'wage', value: string) => {
+  const set = (index: number, key: 'totalEarnings' | 'totalDeductions', value: string) => {
     setRows((current) => current.map((row, at) => (at === index ? { ...row, [key]: value } : row)))
     setError(null)
   }
@@ -252,11 +332,10 @@ function EditForm({ detail, onClose }: { detail: DailyWageDetail; onClose: () =>
       employeeId: row.employeeId,
       totalEarnings: Number(row.totalEarnings.replace(/,/g, '')),
       totalDeductions: Number(row.totalDeductions.replace(/,/g, '')),
-      wage: Number(row.wage.replace(/,/g, '')),
     }))
     if (
       parsed.some((row) =>
-        [row.totalEarnings, row.totalDeductions, row.wage].some(
+        [row.totalEarnings, row.totalDeductions].some(
           (value) => !Number.isFinite(value) || value < 0,
         ),
       )
@@ -265,10 +344,13 @@ function EditForm({ detail, onClose }: { detail: DailyWageDetail; onClose: () =>
       return
     }
     try {
-      await update.mutateAsync({ id: detail.id, input: { name: name.trim(), rows: parsed } })
+      await update.mutateAsync({
+        id: detail.id,
+        input: { name: name.trim(), rows: parsed, rowVersion: detail.rowVersion },
+      })
       onClose()
-    } catch (failure) {
-      setError(failure instanceof ApiError ? failure.message : 'Could not save the payroll.')
+    } catch (reason) {
+      setError(failure(reason, 'Could not save the payroll.'))
     }
   }
 
@@ -313,55 +395,75 @@ function EditForm({ detail, onClose }: { detail: DailyWageDetail; onClose: () =>
           />
         </div>
         <SectionTitle>Details</SectionTitle>
-        <div className="grid gap-3">
-          <div className="hidden grid-cols-[minmax(0,1.2fr)_repeat(3,minmax(0,1fr))] gap-4 font-inter text-sm font-medium text-heading sm:text-base @3xl:grid">
-            <span>Employee Name</span>
-            <span>Total Earnings</span>
-            <span>Total Deductions</span>
-            <span>Total Wage</span>
-          </div>
-          {rows.map((row, index) => (
-            <div
-              key={row.employeeId}
-              className="grid gap-3 rounded-md border p-3 @3xl:grid-cols-[minmax(0,1.2fr)_repeat(3,minmax(0,1fr))] @3xl:gap-4 @3xl:border-0 @3xl:p-0"
-            >
-              <Input
-                value={row.name}
-                readOnly
-                aria-label="Employee Name"
-                className={cn('bg-card', editValue)}
-              />
-              <RsInput
-                aria-label={`Total Earnings, ${row.name}`}
-                value={row.totalEarnings}
-                onChange={(value) => {
-                  set(index, 'totalEarnings', value)
-                }}
-                prefixClassName={editPrefix}
-                inputClassName={editValue}
-              />
-              <RsInput
-                aria-label={`Total Deductions, ${row.name}`}
-                value={row.totalDeductions}
-                onChange={(value) => {
-                  set(index, 'totalDeductions', value)
-                }}
-                prefixClassName={editPrefix}
-                inputClassName={editValue}
-              />
-              <RsInput
-                aria-label={`Total Wage, ${row.name}`}
-                value={row.wage}
-                onChange={(value) => {
-                  set(index, 'wage', value)
-                }}
-                prefixClassName={editPrefix}
-                inputClassName={editValue}
-              />
+        {rows.length === 0 ? (
+          <NoRecord>Process the payroll first: there are no wage slips to edit yet.</NoRecord>
+        ) : (
+          <div className="grid gap-3">
+            <div className="hidden grid-cols-[minmax(0,1.2fr)_repeat(2,minmax(0,1fr))] gap-4 font-inter text-sm font-medium text-heading sm:text-base @3xl:grid">
+              <span>Employee Name</span>
+              <span>Total Earnings</span>
+              <span>Total Deductions</span>
             </div>
-          ))}
-        </div>
+            {rows.map((row, index) => (
+              <div
+                key={row.employeeId}
+                className="grid gap-3 rounded-md border p-3 @3xl:grid-cols-[minmax(0,1.2fr)_repeat(2,minmax(0,1fr))] @3xl:gap-4 @3xl:border-0 @3xl:p-0"
+              >
+                <Input
+                  value={row.name}
+                  readOnly
+                  aria-label="Employee Name"
+                  className={cn('bg-card', editValue)}
+                />
+                <RsInput
+                  aria-label={`Total Earnings, ${row.name}`}
+                  value={row.totalEarnings}
+                  onChange={(value) => {
+                    set(index, 'totalEarnings', value)
+                  }}
+                  prefixClassName={editPrefix}
+                  inputClassName={editValue}
+                />
+                <RsInput
+                  aria-label={`Total Deductions, ${row.name}`}
+                  value={row.totalDeductions}
+                  onChange={(value) => {
+                    set(index, 'totalDeductions', value)
+                  }}
+                  prefixClassName={editPrefix}
+                  inputClassName={editValue}
+                />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+    </AppDialog>
+  )
+}
+
+/** "Errors" of a daily-wage run (`GET /daily-wages/{id}/errors`). */
+export function DailyWageErrorsDialog({ id, onClose }: { id: string; onClose: () => void }) {
+  const errors = useDailyWageErrors(id)
+  const entries = errors.data ?? []
+  return (
+    <AppDialog
+      title="Daily Wage Errors"
+      onRequestClose={onClose}
+      className="max-w-4xl"
+      footer={
+        <Button onClick={onClose} className={cn(footerButton, btn.red)}>
+          Cancel
+        </Button>
+      }
+    >
+      {errors.isPending ? (
+        <Skeleton className="h-24 w-full" />
+      ) : entries.length === 0 ? (
+        <NoRecord />
+      ) : (
+        <RunErrorsTable caption="Errors of the daily wage run" entries={entries} />
+      )}
     </AppDialog>
   )
 }
@@ -376,13 +478,15 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * "Daily Wages Details": the batch's facts, then each person's check in,
- * check out, wage, hours, earnings, deductions and net pay; Back, Voucher
- * and Download Excel.
+ * "Daily Wages Details" (`GET /daily-wages/{id}`): the run's facts, then each person's check
+ * in, check out, wage, hours, earnings, deductions, net pay and voucher; Back, Voucher (a
+ * closed run: `POST /daily-wages/{id}/vouchers`) and Download Excel.
  */
 export function DailyWageDetailsDialog({ id, onClose }: { id: string; onClose: () => void }) {
   const detail = useDailyWage(id)
   const vouchers = useDailyWageVouchers()
+  const canVoucher = useCan('payroll.vouchers.create')
+  const [error, setError] = useState<string | null>(null)
   const data = detail.data
   return (
     <AppDialog
@@ -396,18 +500,30 @@ export function DailyWageDetailsDialog({ id, onClose }: { id: string; onClose: (
       className="max-w-5xl"
       footer={
         <>
+          {error && (
+            <p role="alert" className="mr-auto self-center text-sm text-destructive">
+              {error}
+            </p>
+          )}
           <Button onClick={onClose} className={cn(footerButton, btn.orange)}>
             Back
           </Button>
-          <Button
-            disabled={!data || vouchers.isPending}
-            onClick={() => {
-              vouchers.mutate(id)
-            }}
-            className={cn(footerButton, btn.purple)}
-          >
-            Voucher
-          </Button>
+          {canVoucher && data?.status === 'closed' && (
+            <Button
+              disabled={vouchers.isPending}
+              onClick={() => {
+                setError(null)
+                vouchers.mutate(id, {
+                  onError: (reason) => {
+                    setError(failure(reason, 'The vouchers could not be created.'))
+                  },
+                })
+              }}
+              className={cn(footerButton, btn.purple)}
+            >
+              Voucher
+            </Button>
+          )}
           <Button
             disabled={!data}
             onClick={() => {
@@ -426,9 +542,9 @@ export function DailyWageDetailsDialog({ id, onClose }: { id: string; onClose: (
         <div className="grid gap-6">
           <dl className="grid gap-x-10 gap-y-4 border-t pt-6 @2xl:grid-cols-2">
             <Fact label="Name" value={data.name} />
-            <Fact label="Time Slot" value={slotLabel(data.timeSlot)} />
-            <Fact label="Date" value={formatLong(data.date)} />
-            <Fact label="Total Employees" value={String(data.totalEmployees)} />
+            <Fact label="Time Slot" value={data.timeSlotName ?? '—'} />
+            <Fact label="Date" value={data.workDate ? formatLong(data.workDate) : '—'} />
+            <Fact label="Total Employees" value={String(data.employeeCount)} />
             <Fact label="Net Payable" value={formatAmount(data.netPayable)} />
             <Fact label="In words" value={amountInWords(data.netPayable)} />
           </dl>
@@ -438,7 +554,7 @@ export function DailyWageDetailsDialog({ id, onClose }: { id: string; onClose: (
           ) : (
             <div className="overflow-x-auto">
               <table
-                className={cn('w-full min-w-[56rem] text-left', payrollTableClass, detailsTable)}
+                className={cn('w-full min-w-[60rem] text-left', payrollTableClass, detailsTable)}
               >
                 <caption className="sr-only">Daily wage details</caption>
                 <thead>
@@ -453,6 +569,8 @@ export function DailyWageDetailsDialog({ id, onClose }: { id: string; onClose: (
                       'Total Earnings',
                       'Total Deductions',
                       'Net Payable',
+                      'Slip',
+                      'Voucher',
                     ].map((label) => (
                       <th key={label} scope="col">
                         {label}
@@ -462,27 +580,35 @@ export function DailyWageDetailsDialog({ id, onClose }: { id: string; onClose: (
                 </thead>
                 <tbody>
                   {data.rows.map((row) => (
-                    <tr key={row.employee.id}>
+                    <tr key={row.employeeId}>
                       <td>
                         <span className="flex items-center gap-2">
                           <EmployeeAvatar
-                            name={row.employee.name}
-                            photoUrl={row.employee.photoUrl}
+                            name={row.employeeName}
+                            photoUrl={null}
                             className="size-6"
                           />
                           <span className={cn('font-sans', personNameText)}>
-                            {row.employee.name}
+                            {row.employeeName}
                           </span>
                         </span>
                       </td>
                       <td>{row.checkIn ? clock(row.checkIn) : '—'}</td>
                       <td>{row.checkOut ? clock(row.checkOut) : '—'}</td>
-                      <td>{formatRs(row.wage)}</td>
+                      <td>{row.wage === null ? '—' : formatRs(row.wage)}</td>
                       <td>{row.workedMinutes === null ? '—' : hours(row.workedMinutes)}</td>
                       <td>{hours(row.expectedMinutes)}</td>
-                      <td>{formatRs(row.totalEarnings)}</td>
-                      <td>{formatRs(row.totalDeductions)}</td>
-                      <td>{formatRs(row.netPayable)}</td>
+                      <td>{row.totalEarnings === null ? '—' : formatRs(row.totalEarnings)}</td>
+                      <td>{row.totalDeductions === null ? '—' : formatRs(row.totalDeductions)}</td>
+                      <td>{row.netPayable === null ? '—' : formatRs(row.netPayable)}</td>
+                      <td>
+                        {row.payslipStatus ? PAYSLIP_STATUS_META[row.payslipStatus].label : '—'}
+                      </td>
+                      <td>
+                        {row.voucherNo
+                          ? `${row.voucherNo}${row.voucherStatus ? ` (${VOUCHER_STATUS_LABELS[row.voucherStatus]})` : ''}`
+                          : '—'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

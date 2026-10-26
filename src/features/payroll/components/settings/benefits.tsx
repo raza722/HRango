@@ -14,23 +14,26 @@ import {
 import { type DataTableColumn, RowActionsMenu, rowMenuItemClass } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 
 import { BENEFIT_TYPE_LABELS, INFO_TYPE_LABELS } from '../../constants'
 import {
   useDeleteResource,
-  usePayrollLookups,
+  useOrganisationLookup,
+  useResource,
   useResourceList,
+  useResourceLookup,
   useSaveResource,
 } from '../../hooks/use-payroll'
+import { personHint } from '../../hooks/use-payroll-records'
 import {
-  type AdditionalInfo,
   type Benefit,
   BENEFIT_TYPES,
+  type BenefitField,
   INFO_TYPES,
 } from '../../types/payroll.types'
 import { btn, toolbarButton } from '../../utils/styles'
+import { EmployeeSearchSelect } from '../shared/employee-search-select'
 import { NoRecord } from '../shared/no-record'
 import { PayrollDialog } from '../shared/payroll-dialog'
 import { SearchSelect, SearchSelectField } from '../shared/search-select'
@@ -40,28 +43,37 @@ import {
   type DialogState,
   numberText,
   optionalNumberText,
+  orNull,
   sectionHeading,
   toOptionalNumber,
   yesNo,
 } from './settings-helpers'
 import { SettingsTable, ViewHeader } from './settings-list'
 import { SETTINGS_PAGE_SIZE } from './settings-nav'
+import { rowMenuHandlers, useSettingsCan } from './settings-permissions'
 
 let counter = 0
-const localId = (prefix: string) => {
+/** Whom a benefit's employee members come from (former staff too, as on the list). */
+const PEOPLE = { permission: 'payroll.settings.rewards.view', includeInactive: true }
+
+const localKey = (prefix: string) => {
   counter += 1
   return `${prefix}_${Date.now().toString(36)}_${counter}`
 }
+
+/** A field in the dialog's list (the key only lives in the browser). */
+type FieldRow = Omit<BenefitField, 'id'> & { key: string }
 
 // --- Additional Information Create ---------------------------------------------------------
 
 const infoSchema = z
   .object({
-    name: z.string().trim().min(1, 'Enter a name').max(80, 'Keep it under 80 characters'),
+    name: z.string().trim().min(1, 'Enter a name').max(200, 'Keep it under 200 characters'),
     type: z.string().min(1, 'Choose the type'),
     required: z.boolean(),
     min: optionalNumberText,
     max: optionalNumberText,
+    fieldValue: z.string().trim().max(2000),
   })
   .refine(
     (value) => {
@@ -71,39 +83,80 @@ const infoSchema = z
     },
     { message: 'The maximum must be at least the minimum', path: ['max'] },
   )
+  .superRefine((value, context) => {
+    const text = value.fieldValue
+    const fail = (message: string) => {
+      context.addIssue({ code: 'custom', message, path: ['fieldValue'] })
+    }
+    if (text === '') {
+      if (value.required) fail('Enter the value')
+      return
+    }
+    const min = toOptionalNumber(value.min)
+    const max = toOptionalNumber(value.max)
+    if (value.type === 'number') {
+      const number = Number(text)
+      if (!Number.isFinite(number)) fail('Enter a number')
+      else if ((min !== null && number < min) || (max !== null && number > max)) {
+        fail('The value is outside the allowed range')
+      }
+    }
+    if (
+      value.type === 'string' &&
+      ((min !== null && text.length < min) || (max !== null && text.length > max))
+    ) {
+      fail('The value is not the allowed length')
+    }
+  })
 type InfoValues = z.infer<typeof infoSchema>
 
-/** "Additional Information Create": Name, Type, Required and its Conditions. */
+const conditionText = (item: FieldRow) => {
+  if (item.fieldType === 'number' && (item.minValue !== null || item.maxValue !== null)) {
+    return `${item.minValue ?? '…'} – ${item.maxValue ?? '…'}`
+  }
+  if (item.fieldType === 'string' && (item.minLength !== null || item.maxLength !== null)) {
+    return `Length ${item.minLength ?? '…'} – ${item.maxLength ?? '…'}`
+  }
+  return '—'
+}
+
+/** "Additional Information Create": Name, Type, Required, its Conditions and the value (checked against them). */
 function AdditionalInfoDialog({
   info,
   onSave,
   onClose,
 }: {
-  info: AdditionalInfo | null
-  onSave: (info: AdditionalInfo) => void
+  info: FieldRow | null
+  onSave: (info: FieldRow) => void
   onClose: () => void
 }) {
   const form = useForm<InfoValues>({
     resolver: zodResolver(infoSchema),
     defaultValues: {
       name: info?.name ?? '',
-      type: info?.type ?? '',
-      required: info?.required ?? false,
-      min: numberText(info?.min),
-      max: numberText(info?.max),
+      type: info?.fieldType ?? '',
+      required: info?.isRequired ?? false,
+      min: numberText(info?.fieldType === 'string' ? info.minLength : info?.minValue),
+      max: numberText(info?.fieldType === 'string' ? info.maxLength : info?.maxValue),
+      fieldValue: info?.fieldValue ?? '',
     },
   })
   const type = useWatch({ control: form.control, name: 'type' })
   const submit = form.handleSubmit((values) => {
     const picked = INFO_TYPES.find((item) => item === values.type)
     if (!picked) return
+    const min = toOptionalNumber(values.min)
+    const max = toOptionalNumber(values.max)
     onSave({
-      id: info?.id ?? localId('ai'),
+      key: info?.key ?? localKey('bf'),
       name: values.name,
-      type: picked,
-      required: values.required,
-      min: picked === 'boolean' ? null : toOptionalNumber(values.min),
-      max: picked === 'boolean' ? null : toOptionalNumber(values.max),
+      fieldType: picked,
+      isRequired: values.required,
+      minValue: picked === 'number' ? min : null,
+      maxValue: picked === 'number' ? max : null,
+      minLength: picked === 'string' && min !== null ? Math.max(0, Math.round(min)) : null,
+      maxLength: picked === 'string' && max !== null ? Math.max(0, Math.round(max)) : null,
+      fieldValue: values.fieldValue || null,
     })
     onClose()
   })
@@ -152,6 +205,12 @@ function AdditionalInfoDialog({
             />
           </section>
         )}
+        <TextField
+          control={form.control}
+          name="fieldValue"
+          label="Value"
+          description="The benefit's value for this field (required fields need one)."
+        />
       </form>
     </PayrollDialog>
   )
@@ -160,20 +219,21 @@ function AdditionalInfoDialog({
 // --- Benefit Create ------------------------------------------------------------------------------
 
 const memberSchema = z.object({
-  id: z.string(),
-  name: z.string().trim().min(1, 'Enter a name').max(80),
-  formulaId: z.string().nullable(),
+  key: z.string(),
+  kind: z.enum(['employee', 'group']),
+  refId: z.string().min(1, 'Choose who'),
 })
 
 const schema = z
   .object({
-    name: z.string().trim().min(1, 'Enter a name').max(80, 'Keep it under 80 characters'),
+    name: z.string().trim().min(1, 'Enter a name').max(200, 'Keep it under 200 characters'),
     type: z.string().min(1, 'Choose the type'),
     payItemId: z.string().min(1, 'Choose the pay item'),
+    formulaId: z.string().nullable(),
     group: z.boolean(),
     accumulative: z.boolean(),
-    description: z.string().trim().max(500),
-    members: z.array(memberSchema).max(100),
+    description: z.string().trim().max(2000),
+    members: z.array(memberSchema).max(5000),
   })
   .refine((value) => !value.group || value.members.length > 0, {
     message: 'Add at least one member to a group benefit',
@@ -181,6 +241,10 @@ const schema = z
   })
 type Values = z.infer<typeof schema>
 
+/**
+ * "Benefit Create". Members and Additional Information only come with the benefit itself
+ * (`GET /benefits/{id}`), so editing or viewing loads it first.
+ */
 function BenefitDialog({
   state,
   onClose,
@@ -188,58 +252,112 @@ function BenefitDialog({
   state: Exclude<DialogState<Benefit>, null>
   onClose: () => void
 }) {
-  const record = state.mode === 'create' ? undefined : state.record
-  const readOnly = state.mode === 'view'
+  const detail = useResource('benefits', state.mode === 'create' ? null : state.record.id)
+  if (state.mode !== 'create' && !detail.data) {
+    return (
+      <PayrollDialog
+        title="Benefit"
+        onClose={onClose}
+        formId="benefit-form"
+        readOnly
+        className="max-w-5xl"
+      >
+        <p className="text-sm text-muted-foreground">
+          {detail.isError ? 'The benefit could not be loaded.' : 'Loading…'}
+        </p>
+      </PayrollDialog>
+    )
+  }
+  return (
+    <BenefitForm
+      mode={state.mode}
+      record={state.mode === 'create' ? undefined : detail.data}
+      onClose={onClose}
+    />
+  )
+}
+
+function BenefitForm({
+  mode,
+  record,
+  onClose,
+}: {
+  mode: 'create' | 'edit' | 'view'
+  record: Benefit | undefined
+  onClose: () => void
+}) {
+  const readOnly = mode === 'view'
   const save = useSaveResource('benefits')
-  const lookups = usePayrollLookups()
+  const payItems = useResourceLookup('payItems')
+  const formulaList = useResourceLookup('formulas')
+  const groups = useOrganisationLookup('employee-groups')
   const headingId = useId()
   const [error, setError] = useState<string | null>(null)
-  const [info, setInfo] = useState<AdditionalInfo[]>(record?.additionalInfo ?? [])
-  const [infoDialog, setInfoDialog] = useState<{ info: AdditionalInfo | null } | null>(null)
+  const [info, setInfo] = useState<FieldRow[]>(
+    (record?.fields ?? []).map(({ id, ...field }) => ({ ...field, key: id ?? localKey('bf') })),
+  )
+  const [infoDialog, setInfoDialog] = useState<{ info: FieldRow | null } | null>(null)
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: record?.name ?? '',
-      type: record?.type ?? '',
+      type: record?.benefitType ?? '',
       payItemId: record?.payItemId ?? '',
-      group: record?.group ?? false,
-      accumulative: record?.accumulative ?? false,
+      formulaId: record?.formulaId ?? '',
+      group: record?.isGroup ?? false,
+      accumulative: record?.isAccumulative ?? false,
       description: record?.description ?? '',
-      members: record?.members ?? [],
+      members: (record?.members ?? []).map((member) => ({
+        key: member.id,
+        kind: member.employeeGroupId ? ('group' as const) : ('employee' as const),
+        refId: member.employeeGroupId ?? member.employeeId ?? '',
+      })),
     },
   })
-  const members = useFieldArray({ control: form.control, name: 'members', keyName: 'key' })
+  const members = useFieldArray({ control: form.control, name: 'members', keyName: 'rowKey' })
   const group = useWatch({ control: form.control, name: 'group' })
-  const formulas = (lookups.data?.formulas ?? []).map((item) => ({
-    value: item.id,
-    label: item.name,
-  }))
+  const memberKinds = useWatch({ control: form.control, name: 'members' })
+  // Members' names until the employee picker has read them.
+  const knownPeople = (record?.members ?? []).flatMap((member) =>
+    member.employeeId && member.employeeName
+      ? [{ value: member.employeeId, label: member.employeeName }]
+      : [],
+  )
+  const groupOptions = (groups.data ?? []).map((item) => ({ value: item.id, label: item.name }))
 
   const submit = form.handleSubmit(async (values) => {
     setError(null)
-    const type = BENEFIT_TYPES.find((item) => item === values.type)
-    if (!type) return
+    const benefitType = BENEFIT_TYPES.find((item) => item === values.type)
+    if (!benefitType) return
     try {
       await save.mutateAsync({
         id: record?.id,
         input: {
-          ...values,
-          type,
-          additionalInfo: info,
-          members: values.group ? values.members : [],
+          name: values.name,
+          benefitType,
+          payItemId: values.payItemId,
+          formulaId: orNull(values.formulaId),
+          isGroup: values.group,
+          isAccumulative: values.accumulative,
+          description: values.description || null,
+          members: values.group
+            ? values.members.map((member) =>
+                member.kind === 'group'
+                  ? { employeeId: null, employeeGroupId: member.refId }
+                  : { employeeId: member.refId, employeeGroupId: null },
+              )
+            : [],
+          fields: info.map(({ key: _key, ...field }) => field),
+          rowVersion: record?.rowVersion ?? null,
         },
       })
       onClose()
     } catch (failure) {
-      setError(applyApiError(failure, form.setError, ['name', 'payItemId', 'members']))
+      setError(applyApiError(failure, form.setError, ['name', 'payItemId', 'formulaId', 'members']))
     }
   })
   const title =
-    state.mode === 'create'
-      ? 'Benefit Create'
-      : state.mode === 'edit'
-        ? 'Benefit Edit'
-        : 'Benefit View'
+    mode === 'create' ? 'Benefit Create' : mode === 'edit' ? 'Benefit Edit' : 'Benefit View'
 
   return (
     <>
@@ -275,9 +393,22 @@ function BenefitDialog({
             placeholder="Select Payitem"
             required
             disabled={readOnly}
-            options={(lookups.data?.payItems ?? []).map((item) => ({
+            options={(payItems.data?.data ?? []).map((item) => ({
               value: item.id,
               label: item.name,
+            }))}
+          />
+          <SearchSelectField
+            control={form.control}
+            name="formulaId"
+            label="Formula"
+            placeholder="Select Formula"
+            clearable
+            disabled={readOnly}
+            options={(formulaList.data?.data ?? []).map((item) => ({
+              value: item.id,
+              label: item.name,
+              hint: item.expression,
             }))}
           />
           <FieldLayoutContext value="vertical">
@@ -368,17 +499,13 @@ function BenefitDialog({
                   <tbody>
                     {info.map((item) => (
                       <tr
-                        key={item.id}
+                        key={item.key}
                         className="border-b text-[0.6875rem] text-grey last:border-b-0"
                       >
                         <td className="px-3 py-2.5">{item.name}</td>
-                        <td className="px-3 py-2.5">{INFO_TYPE_LABELS[item.type]}</td>
-                        <td className="px-3 py-2.5">{yesNo(item.required)}</td>
-                        <td className="px-3 py-2.5">
-                          {item.type === 'boolean'
-                            ? '—'
-                            : `${item.type === 'string' ? 'Length ' : ''}${item.min ?? '…'} – ${item.max ?? '…'}`}
-                        </td>
+                        <td className="px-3 py-2.5">{INFO_TYPE_LABELS[item.fieldType]}</td>
+                        <td className="px-3 py-2.5">{yesNo(item.isRequired)}</td>
+                        <td className="px-3 py-2.5">{conditionText(item)}</td>
                         <td className="px-3 py-2.5 text-center">
                           {!readOnly && (
                             <RowActionsMenu
@@ -396,7 +523,7 @@ function BenefitDialog({
                                   variant: 'destructive',
                                   onSelect: () => {
                                     setInfo((current) =>
-                                      current.filter((entry) => entry.id !== item.id),
+                                      current.filter((entry) => entry.key !== item.key),
                                     )
                                   },
                                 },
@@ -425,7 +552,7 @@ function BenefitDialog({
                   <Button
                     type="button"
                     onClick={() => {
-                      members.append({ id: localId('bm'), name: '', formulaId: null })
+                      members.append({ key: localKey('bm'), kind: 'employee', refId: '' })
                     }}
                     className={cn(toolbarButton, btn.navy, 'min-w-[6.625rem]')}
                   >
@@ -437,66 +564,94 @@ function BenefitDialog({
                 <NoRecord />
               ) : (
                 <div className="grid gap-3">
-                  <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_4rem] gap-4 px-2 text-sm text-[#303030] sm:grid dark:text-heading">
-                    <span>Name</span>
-                    <span>Formula</span>
+                  <div className="hidden grid-cols-[10rem_minmax(0,1fr)_4rem] gap-4 px-2 text-sm text-[#303030] sm:grid dark:text-heading">
+                    <span>Member</span>
+                    <span>Employee / Group</span>
                     <span className="text-center">Actions</span>
                   </div>
-                  {members.fields.map((member, index) => (
-                    <div
-                      key={member.key}
-                      className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_4rem] sm:items-start sm:gap-4"
-                    >
-                      <Controller
-                        control={form.control}
-                        name={`members.${index}.name`}
-                        render={({ field, fieldState }) => (
-                          <div className="grid gap-1">
-                            <Input
-                              {...field}
-                              aria-label={`Member ${index + 1} name`}
-                              aria-invalid={Boolean(fieldState.error)}
-                              placeholder="Enter name"
+                  {members.fields.map((member, index) => {
+                    const kind = memberKinds[index]?.kind ?? member.kind
+                    return (
+                      <div
+                        key={member.rowKey}
+                        className="grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)_4rem] sm:items-start sm:gap-4"
+                      >
+                        <Controller
+                          control={form.control}
+                          name={`members.${index}.kind`}
+                          render={({ field }) => (
+                            <SearchSelect
+                              aria-label={`Member ${index + 1} kind`}
+                              value={field.value}
+                              onChange={(value) => {
+                                field.onChange(value === 'group' ? 'group' : 'employee')
+                                form.setValue(`members.${index}.refId`, '')
+                              }}
+                              options={[
+                                { value: 'employee', label: 'Employee' },
+                                { value: 'group', label: 'Employee Group' },
+                              ]}
+                              placeholder="Select"
                               disabled={readOnly}
                             />
-                            {fieldState.error && (
-                              <span className="text-xs text-destructive">
-                                {fieldState.error.message}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      />
-                      <Controller
-                        control={form.control}
-                        name={`members.${index}.formulaId`}
-                        render={({ field }) => (
-                          <SearchSelect
-                            aria-label={`Member ${index + 1} formula`}
-                            value={field.value}
-                            onChange={field.onChange}
-                            options={formulas}
-                            placeholder="Select Formula"
+                          )}
+                        />
+                        <Controller
+                          control={form.control}
+                          name={`members.${index}.refId`}
+                          render={({ field, fieldState }) => (
+                            <div className="grid gap-1">
+                              {kind === 'group' ? (
+                                <SearchSelect
+                                  aria-label={`Member ${index + 1} group`}
+                                  value={field.value}
+                                  onChange={(value) => {
+                                    field.onChange(value ?? '')
+                                  }}
+                                  options={groupOptions}
+                                  placeholder="Select Employee Group"
+                                  disabled={readOnly}
+                                  aria-invalid={Boolean(fieldState.error)}
+                                />
+                              ) : (
+                                <EmployeeSearchSelect
+                                  aria-label={`Member ${index + 1} employee`}
+                                  value={field.value || null}
+                                  onChange={(value) => {
+                                    field.onChange(value ?? '')
+                                  }}
+                                  filters={PEOPLE}
+                                  known={knownPeople}
+                                  hint={personHint}
+                                  placeholder="Select Employee"
+                                  disabled={readOnly}
+                                  aria-invalid={Boolean(fieldState.error)}
+                                />
+                              )}
+                              {fieldState.error && (
+                                <span className="text-xs text-destructive">
+                                  {fieldState.error.message}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        />
+                        <div className="flex justify-center">
+                          <button
+                            type="button"
                             disabled={readOnly}
-                            clearable
-                          />
-                        )}
-                      />
-                      <div className="flex justify-center">
-                        <button
-                          type="button"
-                          disabled={readOnly}
-                          aria-label={`Remove member ${index + 1}`}
-                          onClick={() => {
-                            members.remove(index)
-                          }}
-                          className="inline-flex size-10 items-center justify-center rounded-full text-[#E50141] hover:bg-[#E50141]/10 disabled:opacity-40"
-                        >
-                          <XCircle aria-hidden="true" className="size-5" />
-                        </button>
+                            aria-label={`Remove member ${index + 1}`}
+                            onClick={() => {
+                              members.remove(index)
+                            }}
+                            className="inline-flex size-10 items-center justify-center rounded-full text-[#E50141] hover:bg-[#E50141]/10 disabled:opacity-40"
+                          >
+                            <XCircle aria-hidden="true" className="size-5" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
               {form.formState.errors.members?.message && (
@@ -511,8 +666,8 @@ function BenefitDialog({
           info={infoDialog.info}
           onSave={(next) => {
             setInfo((current) =>
-              current.some((entry) => entry.id === next.id)
-                ? current.map((entry) => (entry.id === next.id ? next : entry))
+              current.some((entry) => entry.key === next.key)
+                ? current.map((entry) => (entry.key === next.key ? next : entry))
                 : [...current, next],
             )
           }}
@@ -526,24 +681,31 @@ function BenefitDialog({
 }
 
 const columns: DataTableColumn<Benefit>[] = [
-  { id: 'code', header: 'Code', cell: (row) => row.code },
   { id: 'name', header: 'Name', cell: (row) => row.name, mobile: 'heading' },
+  { id: 'type', header: 'Type', cell: (row) => BENEFIT_TYPE_LABELS[row.benefitType] },
+  { id: 'payItem', header: 'Payitem', cell: (row) => row.payItemName },
+  {
+    id: 'members',
+    header: 'Members',
+    cell: (row) => (row.isGroup ? row.memberCount : 'Everyone'),
+  },
   {
     id: 'description',
     header: 'Description',
     cell: (row) => (
-      <span className="line-clamp-2 max-w-72 whitespace-normal">{row.description || '—'}</span>
+      <span className="line-clamp-2 max-w-72 whitespace-normal">{row.description ?? '—'}</span>
     ),
   },
 ]
 
-/** Rewards → Benefits: allowances and reimbursements, for everyone or a group. */
+/** Rewards → Benefits: allowances, bonuses and rewards, for everyone or a group. */
 export function BenefitsView() {
   const [page, setPage] = useState(1)
   const [dialog, setDialog] = useState<DialogState<Benefit>>(null)
   const [deleting, setDeleting] = useState<Benefit | null>(null)
   const list = useResourceList('benefits', { page, pageSize: SETTINGS_PAGE_SIZE })
   const remove = useDeleteResource('benefits')
+  const may = useSettingsCan('rewards')
 
   return (
     <>
@@ -551,11 +713,13 @@ export function BenefitsView() {
         tab="rewards"
         view="benefits"
         actions={
-          <CreateButton
-            onClick={() => {
-              setDialog({ mode: 'create' })
-            }}
-          />
+          may.create && (
+            <CreateButton
+              onClick={() => {
+                setDialog({ mode: 'create' })
+              }}
+            />
+          )
         }
       />
       <SettingsTable
@@ -569,15 +733,7 @@ export function BenefitsView() {
         rowActions={(row) => (
           <SettingsRowMenu
             label={`Actions for ${row.name}`}
-            onEdit={() => {
-              setDialog({ mode: 'edit', record: row })
-            }}
-            onView={() => {
-              setDialog({ mode: 'view', record: row })
-            }}
-            onDelete={() => {
-              setDeleting(row)
-            }}
+            {...rowMenuHandlers(may, row, setDialog, setDeleting)}
           />
         )}
       />
@@ -595,7 +751,6 @@ export function BenefitsView() {
           setDeleting(null)
         }}
         remove={remove}
-        idOf={(row) => row.id}
       />
     </>
   )

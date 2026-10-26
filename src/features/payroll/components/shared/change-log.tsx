@@ -2,19 +2,19 @@ import { AppDialog } from '@/components/feedback/app-dialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-import type { ChangeLogEntry } from '../../types/payroll.types'
+import type { PayslipHistoryEntry } from '../../types/payroll.types'
 import { formatStamp } from '../../utils/format'
 import { btn, footerButton } from '../../utils/styles'
 import { NoRecord } from './no-record'
 
-/** "History": Field, Old Value, New Value, Action, Performed At and by whom. */
+/** "History" (`GET /payslips/{id}/history`): Field, Old Value, New Value, Action, Performed At and by whom. */
 export function ChangeLogDialog({
   title = 'History',
   entries,
   onClose,
 }: {
   title?: string
-  entries: readonly ChangeLogEntry[]
+  entries: readonly PayslipHistoryEntry[]
   onClose: () => void
 }) {
   return (
@@ -59,14 +59,14 @@ export function ChangeLogDialog({
                   key={entry.id}
                   className="border-b text-sm font-medium text-person last:border-b-0 sm:text-base"
                 >
-                  <td className="px-5 py-3">{entry.field}</td>
-                  <td className="px-5 py-3">{entry.oldValue}</td>
-                  <td className="px-5 py-3">{entry.newValue}</td>
-                  <td className="px-5 py-3">{entry.action}</td>
+                  <td className="px-5 py-3">{entry.fieldName ?? '—'}</td>
+                  <td className="px-5 py-3">{entry.oldValue ?? '—'}</td>
+                  <td className="px-5 py-3">{entry.newValue ?? '—'}</td>
+                  <td className="px-5 py-3">{entry.actionName}</td>
                   <td className="px-5 py-3">
                     {formatStamp(entry.performedAt)}
                     <span className="block text-xs font-normal text-grey">
-                      by {entry.performedBy}
+                      by {entry.performedByName ?? 'System'}
                     </span>
                   </td>
                 </tr>

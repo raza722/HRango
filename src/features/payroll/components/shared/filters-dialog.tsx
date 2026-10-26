@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import { type FilterField, type FilterValues, presetKey } from '../../utils/filters'
 import { btn, dialogFieldType, footerButton } from '../../utils/styles'
 import { DateInput } from './date-input'
+import { EmployeeSearchSelect } from './employee-search-select'
 import { MonthPicker } from './month-picker'
 import { SearchSelect } from './search-select'
 
@@ -53,6 +54,21 @@ export function FiltersDialog({
             set(field.key, next ?? undefined)
           }}
           options={field.options}
+          placeholder={field.placeholder}
+          clearable
+        />
+      )
+    }
+    if (field.kind === 'employee') {
+      return (
+        <EmployeeSearchSelect
+          id={id}
+          value={draft[field.key] ?? null}
+          onChange={(next) => {
+            set(field.key, next ?? undefined)
+          }}
+          filters={field.filters}
+          known={field.known}
           placeholder={field.placeholder}
           clearable
         />

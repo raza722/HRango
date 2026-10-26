@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { type Control, Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { format, lastDayOfMonth, parse } from 'date-fns'
 import { CircleX } from 'lucide-react'
 
 import { CheckboxField, FormField, SelectField, TextareaField, TextField } from '@/components/form'
@@ -10,7 +11,7 @@ import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
 import { PAY_ITEM_TYPE_LABELS } from '../../constants'
-import { usePayrollLookups, useSavePayroll } from '../../hooks/use-payroll'
+import { useResourceLookup, useSavePayroll } from '../../hooks/use-payroll'
 import {
   emptyPayrollForm,
   payrollFormSchema,
@@ -20,6 +21,8 @@ import {
 } from '../../schemas/payroll-form.schema'
 import type { PayrollRow } from '../../types/payroll.types'
 import { btn, toolbarButton } from '../../utils/styles'
+import { DateField } from '../shared/date-input'
+import { MonthField } from '../shared/month-picker'
 import { NoRecord } from '../shared/no-record'
 import { PayrollDialog } from '../shared/payroll-dialog'
 import { SearchSelect } from '../shared/search-select'
@@ -28,15 +31,22 @@ import { TwoWaySwitchField } from '../shared/two-way-switch'
 const FORM_ID = 'payroll-monthly-form'
 /** The switches' side not chosen, as this form draws it (Inter Regular 16 #585858). */
 const SWITCH_OFF = 'text-[#585858] dark:text-grey'
-const DAYS = Array.from({ length: 31 }, (_, index) => ({
-  value: String(index + 1),
-  label: String(index + 1),
-}))
+const CURRENCIES = [
+  { value: 'PKR', label: 'Rupees (PKR)' },
+  { value: 'USD', label: 'US Dollar (USD)' },
+  { value: 'AED', label: 'Dirham (AED)' },
+]
+
+/** The processing date a month suggests: its first day, or its last at month end. */
+function suggestedDate(month: string, mode: 'from_date' | 'month_end') {
+  const first = parse(`${month}-01`, 'yyyy-MM-dd', new Date())
+  return format(mode === 'month_end' ? lastDayOfMonth(first) : first, 'yyyy-MM-dd')
+}
 
 /**
- * "Payrolls Monthly" (Create, Edit) and "Payrolls View": Name, Currency, Tax
- * Structure, Tax Applicable, Payroll Processing, Processing Date, Applicable
- * Days (and No of Fixed Days), Company Bank, Description and the Pay Items.
+ * "Payrolls Monthly" (Create, Edit) and "Payrolls View": Name, Month, Currency, Tax
+ * Structure, Tax Applicable, Payroll Processing and its Date, Applicable Days (and No of
+ * Fixed Days), Disbursement Bank, Description and the Pay Items.
  */
 export function PayrollFormDialog({
   payroll,
@@ -47,9 +57,11 @@ export function PayrollFormDialog({
   payroll: PayrollRow | null
   mode: 'create' | 'edit' | 'view'
   onClose: () => void
-  onHistory?: () => void
+  onHistory?: (() => void) | undefined
 }) {
-  const lookups = usePayrollLookups()
+  const payItemList = useResourceLookup('payItems')
+  const taxStructures = useResourceLookup('taxStructures')
+  const banks = useResourceLookup('banks')
   const save = useSavePayroll()
   const [error, setError] = useState<string | null>(null)
   const readOnly = mode === 'view'
@@ -59,21 +71,36 @@ export function PayrollFormDialog({
   })
   const rows = useFieldArray({ control: form.control, name: 'payItems' })
   const applicableDays = useWatch({ control: form.control, name: 'applicableDays' })
-  const payItems = lookups.data?.payItems ?? []
+  const payItems = payItemList.data?.data ?? []
   const payItemOptions = payItems.map((item) => ({ value: item.id, label: item.name }))
   const itemsError =
     form.formState.errors.payItems?.root?.message ?? form.formState.errors.payItems?.message
 
+  // Picking the month (or switching the mode) fills an empty processing date.
+  const month = useWatch({ control: form.control, name: 'payrollMonth' })
+  const processingMode = useWatch({ control: form.control, name: 'processingMode' })
+  const lastSuggested = useRef('')
+  useEffect(() => {
+    if (readOnly || !/^\d{4}-\d{2}$/.test(month)) return
+    const next = suggestedDate(month, processingMode)
+    const current = form.getValues('processingDate')
+    if (!current || current === lastSuggested.current) {
+      form.setValue('processingDate', next, { shouldValidate: form.formState.isSubmitted })
+    }
+    lastSuggested.current = next
+  }, [month, processingMode, readOnly, form])
+
   const submit = form.handleSubmit(async (values) => {
     setError(null)
     try {
-      await save.mutateAsync({ id: payroll?.id, input: toPayrollInput(values) })
+      await save.mutateAsync({ id: payroll?.id, input: toPayrollInput(values, payroll) })
       onClose()
     } catch (failure) {
       if (failure instanceof ApiError) {
         const [field, message] = Object.entries(failure.fieldErrors)[0] ?? []
-        if (field === 'name' && message) form.setError('name', { message })
-        else setError(failure.message)
+        if (field && message && field in values) {
+          form.setError(field as keyof PayrollFormValues, { message })
+        } else setError(failure.message)
       } else setError('The payroll could not be saved.')
     }
   })
@@ -105,11 +132,18 @@ export function PayrollFormDialog({
             placeholder="Enter name"
             required
           />
+          <MonthField
+            control={form.control}
+            name="payrollMonth"
+            label="Payroll Month"
+            required
+            disabled={readOnly}
+          />
           <SelectField
             control={form.control}
             name="currency"
             label="Currency"
-            options={[{ value: 'PKR', label: 'Rupees' }]}
+            options={CURRENCIES}
             required
             disabled={readOnly}
           />
@@ -118,7 +152,7 @@ export function PayrollFormDialog({
             name="taxStructureId"
             label="Tax Structure"
             placeholder="Select Tax Structure"
-            options={(lookups.data?.taxStructures ?? []).map((item) => ({
+            options={(taxStructures.data?.data ?? []).map((item) => ({
               value: item.id,
               label: item.name,
             }))}
@@ -134,23 +168,21 @@ export function PayrollFormDialog({
             />
             <TwoWaySwitchField
               control={form.control}
-              name="processing"
+              name="processingMode"
               label="Payroll Processing"
               ariaLabel="Payroll Processing"
               offClassName={SWITCH_OFF}
               options={[
-                { value: 'from-date', label: 'Process from Date' },
-                { value: 'month-end', label: 'Process at Month End' },
+                { value: 'from_date', label: 'Process from Date' },
+                { value: 'month_end', label: 'Process at Month End' },
               ]}
               disabled={readOnly}
             />
           </div>
-          <SelectField
+          <DateField
             control={form.control}
-            name="processingDay"
+            name="processingDate"
             label="Payroll Processing Date"
-            placeholder="Day of the month"
-            options={DAYS}
             required
             disabled={readOnly}
           />
@@ -178,17 +210,17 @@ export function PayrollFormDialog({
           )}
           <SelectField
             control={form.control}
-            name="companyBankId"
-            label="Company Bank"
+            name="disbursementBankId"
+            label="Disbursement Bank"
             placeholder="Select Bank"
-            options={(lookups.data?.banks ?? []).map((item) => ({
+            options={(banks.data?.data ?? []).map((item) => ({
               value: item.id,
-              label: item.name,
+              label: `${item.bankName} (${item.accountNumber})`,
             }))}
-            clearable="No bank (cash)"
+            required
             disabled={readOnly}
           />
-          <TextareaField control={form.control} name="description" label="Description" rows={5} />
+          <TextareaField control={form.control} name="description" label="Description" rows={4} />
         </fieldset>
 
         <section aria-labelledby={`${FORM_ID}-items`} className="grid gap-3">
@@ -205,7 +237,7 @@ export function PayrollFormDialog({
                 onClick={() => {
                   rows.append({
                     payItemId: '',
-                    taxable: false,
+                    isTaxable: false,
                     arrearApplicable: false,
                     finalSettlement: true,
                     calculateOnly: false,
@@ -223,7 +255,9 @@ export function PayrollFormDialog({
             </p>
           )}
           {rows.fields.length === 0 ? (
-            <NoRecord />
+            <NoRecord>
+              {payroll ? 'No Record Found' : 'None chosen: every pay item of the company is used'}
+            </NoRecord>
           ) : (
             <div className="scrollbar-thin overflow-x-auto">
               <table className="w-full min-w-[44rem] text-left text-sm">
@@ -261,7 +295,9 @@ export function PayrollFormDialog({
                       control={form.control}
                       options={payItemOptions}
                       typeOf={(id) => {
-                        const type = payItems.find((item) => item.id === id)?.type
+                        const type =
+                          payItems.find((item) => item.id === id)?.itemType ??
+                          payroll?.payItems.find((item) => item.payItemId === id)?.itemType
                         return type ? PAY_ITEM_TYPE_LABELS[type] : '—'
                       }}
                       readOnly={readOnly}
@@ -298,11 +334,29 @@ function PayItemRow({
   const payItemId = useWatch({ control, name: `payItems.${index}.payItemId` })
   const name = options.find((option) => option.value === payItemId)?.label ?? `row ${index + 1}`
   const flags = [
-    ['taxable', 'Taxable'],
+    ['isTaxable', 'Taxable'],
     ['arrearApplicable', 'Arrear Applicable'],
     ['finalSettlement', 'Final Settlement'],
     ['calculateOnly', 'Calculate Only'],
   ] as const
+  const flagCell = ([key, label]: (typeof flags)[number]) => (
+    <td key={key} className="px-2 py-2">
+      <Controller
+        control={control}
+        name={`payItems.${index}.${key}`}
+        render={({ field }) => (
+          <Checkbox
+            aria-label={`${label}: ${name}`}
+            checked={field.value}
+            disabled={readOnly}
+            onCheckedChange={(checked) => {
+              field.onChange(checked === true)
+            }}
+          />
+        )}
+      />
+    </td>
+  )
   return (
     <tr className="border-t align-middle">
       <td className="px-2 py-2">
@@ -331,43 +385,9 @@ function PayItemRow({
           )}
         />
       </td>
-      {flags.slice(0, 1).map(([key, label]) => (
-        <td key={key} className="px-2 py-2">
-          <Controller
-            control={control}
-            name={`payItems.${index}.${key}`}
-            render={({ field }) => (
-              <Checkbox
-                aria-label={`${label}: ${name}`}
-                checked={field.value}
-                disabled={readOnly}
-                onCheckedChange={(checked) => {
-                  field.onChange(checked === true)
-                }}
-              />
-            )}
-          />
-        </td>
-      ))}
+      {flags.slice(0, 1).map(flagCell)}
       <td className="px-2 py-2 font-inter text-[0.9375rem] text-heading">{typeOf(payItemId)}</td>
-      {flags.slice(1).map(([key, label]) => (
-        <td key={key} className="px-2 py-2">
-          <Controller
-            control={control}
-            name={`payItems.${index}.${key}`}
-            render={({ field }) => (
-              <Checkbox
-                aria-label={`${label}: ${name}`}
-                checked={field.value}
-                disabled={readOnly}
-                onCheckedChange={(checked) => {
-                  field.onChange(checked === true)
-                }}
-              />
-            )}
-          />
-        </td>
-      ))}
+      {flags.slice(1).map(flagCell)}
       <td className="px-2 py-2 text-center">
         {!readOnly && (
           <button

@@ -8,9 +8,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
-import { usePayslip, useUpdatePayslip } from '../../hooks/use-payroll'
-import type { PayslipDetail, PayslipItem } from '../../types/payroll.types'
-import { formatAmount } from '../../utils/format'
+import { usePayslip, usePayslipHistory, useUpdatePayslip } from '../../hooks/use-payroll'
+import type { PayslipDetail, PayslipLine } from '../../types/payroll.types'
+import { formatAmount, formatMonth, profileOf } from '../../utils/format'
 import { btn, dialogFieldType, footerButton } from '../../utils/styles'
 import { ChangeLogDialog } from '../shared/change-log'
 import { EmployeeCard } from '../shared/employee-card'
@@ -18,24 +18,22 @@ import { EmployeeCard } from '../shared/employee-card'
 interface Draft {
   value: string
   employer: string
-  manual: boolean
 }
 
 const draftsOf = (slip: PayslipDetail): Record<string, Draft> =>
   Object.fromEntries(
-    slip.items.map((item) => [
-      item.payItemId,
-      {
-        value: String(item.value),
-        employer: String(item.employerContribution ?? 0),
-        manual: item.manuallyUpdated,
-      },
+    slip.lines.map((line) => [
+      line.payItemId,
+      { value: String(line.amount), employer: String(line.employerContribution ?? 0) },
     ]),
   )
 
+const nameOf = (line: PayslipLine) => line.payItemLabel ?? line.payItemName
+
+/** Amounts may be negative (adjustments); only non-numbers are refused. */
 const toAmount = (text: string) => {
   const value = Number(text.replace(/,/g, ''))
-  return Number.isFinite(value) && value >= 0 ? value : null
+  return text.trim() !== '' && Number.isFinite(value) ? value : null
 }
 
 function RsInput({
@@ -82,9 +80,9 @@ const sectionTitle = 'text-xl font-semibold text-title sm:text-2xl'
 const headRow = 'font-inter text-base text-heading sm:text-[1.0625rem]'
 
 /**
- * Pay slip View / Edit: the person card, "Payitems" (value, Manually Updated,
- * History) and "Payitems with Employer Contribution". Edit saves the values;
- * a changed value is marked Manually Updated so a recalculation keeps it.
+ * Pay slip View / Edit (`GET/PUT /payslips/{id}`): the person card, "Payitems" (value,
+ * Manually Updated, History) and "Payitems with Employer Contribution". Edit sends the changed
+ * lines with the row version; the API marks them Manually Updated so a recalculation keeps them.
  */
 export function PayslipDialog({
   payslipId,
@@ -136,11 +134,13 @@ function PayslipForm({
   const formId = useId()
   const save = useUpdatePayslip()
   const [drafts, setDrafts] = useState(() => draftsOf(slip))
-  const [history, setHistory] = useState<PayslipItem | null>(null)
+  const [history, setHistory] = useState<PayslipLine | null>(null)
+  const changes = usePayslipHistory(history ? slip.id : null)
   const [error, setError] = useState<string | null>(null)
   const readOnly = mode === 'view'
-  const plain = slip.items.filter((item) => item.employerContribution === null)
-  const shared = slip.items.filter((item) => item.employerContribution !== null)
+  const lines = slip.lines.filter((line) => readOnly || !line.calculateOnly)
+  const plain = lines.filter((line) => line.employerContribution === null)
+  const shared = lines.filter((line) => line.employerContribution !== null)
 
   const patch = (id: string, next: Partial<Draft>) => {
     setDrafts((current) => {
@@ -150,35 +150,50 @@ function PayslipForm({
     })
     setError(null)
   }
-  const draftOf = (id: string): Draft => drafts[id] ?? { value: '0', employer: '0', manual: false }
+  const draftOf = (id: string): Draft => drafts[id] ?? { value: '0', employer: '0' }
   const invalid = (text: string) => toAmount(text) === null
 
   const submit = (event: SyntheticEvent) => {
     event.preventDefault()
-    const bad = slip.items.find(
-      (item) =>
-        invalid(draftOf(item.payItemId).value) ||
-        (item.employerContribution !== null && invalid(draftOf(item.payItemId).employer)),
+    const bad = lines.find(
+      (line) =>
+        invalid(draftOf(line.payItemId).value) ||
+        (line.employerContribution !== null && invalid(draftOf(line.payItemId).employer)),
     )
     if (bad) {
-      setError(`Enter an amount of 0 or more for ${bad.name}.`)
+      setError(`Enter an amount for ${nameOf(bad)}.`)
+      return
+    }
+    // Only changed lines are sent: the API marks them Manually Updated (kept on recalculation).
+    const changed = lines
+      .map((line) => {
+        const draft = draftOf(line.payItemId)
+        return {
+          before: line,
+          payItemId: line.payItemId,
+          amount: toAmount(draft.value) ?? 0,
+          employerContribution:
+            line.employerContribution === null ? null : (toAmount(draft.employer) ?? 0),
+        }
+      })
+      .filter(
+        (next) =>
+          next.amount !== next.before.amount ||
+          (next.employerContribution ?? 0) !== (next.before.employerContribution ?? 0),
+      )
+    if (changed.length === 0) {
+      onClose()
       return
     }
     save.mutate(
       {
         id: slip.id,
-        items: slip.items.map((item) => {
-          const draft = draftOf(item.payItemId)
-          const value = toAmount(draft.value) ?? 0
-          return {
-            payItemId: item.payItemId,
-            value,
-            employeeContribution: item.employerContribution === null ? null : value,
-            employerContribution:
-              item.employerContribution === null ? null : (toAmount(draft.employer) ?? 0),
-            manuallyUpdated: draft.manual,
-          }
-        }),
+        rowVersion: slip.rowVersion,
+        lines: changed.map(({ payItemId, amount, employerContribution }) => ({
+          payItemId,
+          amount,
+          employerContribution,
+        })),
       },
       {
         onSuccess: onClose,
@@ -191,17 +206,23 @@ function PayslipForm({
     )
   }
 
-  const valueChange = (item: PayslipItem) => (text: string) => {
-    patch(item.payItemId, {
-      value: text,
-      manual: text !== String(item.value) || draftOf(item.payItemId).manual,
-    })
-  }
+  const historyButton = (line: PayslipLine) => (
+    <Button
+      type="button"
+      onClick={() => {
+        setHistory(line)
+      }}
+      aria-label={`History of ${nameOf(line)}`}
+      className={cn('h-7 rounded-[4px] px-5 text-xs font-medium', btn.history)}
+    >
+      History
+    </Button>
+  )
 
   return (
     <>
       <AppDialog
-        title={`${readOnly ? 'Pay slip' : 'Edit pay slip'} of ${slip.employee.name}, ${slip.month}`}
+        title={`${readOnly ? 'Pay slip' : 'Edit pay slip'} of ${slip.employeeName}, ${formatMonth(slip.payslipMonth)}`}
         hideTitle
         onRequestClose={onClose}
         className={cn('max-w-5xl', dialogFieldType)}
@@ -229,7 +250,7 @@ function PayslipForm({
         }
       >
         <form id={formId} noValidate onSubmit={submit} className="grid gap-7">
-          <EmployeeCard profile={slip.employee} />
+          <EmployeeCard profile={profileOf(slip)} />
 
           <section aria-labelledby={`${formId}-items`} className="grid gap-4">
             <h3 id={`${formId}-items`} className={sectionTitle}>
@@ -254,48 +275,33 @@ function PayslipForm({
                   </tr>
                 </thead>
                 <tbody>
-                  {plain.map((item) => {
-                    const draft = draftOf(item.payItemId)
+                  {plain.map((line) => {
+                    const draft = draftOf(line.payItemId)
                     return (
-                      <tr key={item.payItemId}>
+                      <tr key={line.payItemId}>
                         <td className="w-[38%] pr-6">
-                          <span className={nameBox}>{item.name}</span>
+                          <span className={nameBox}>{nameOf(line)}</span>
                         </td>
                         <td className="w-[30%]">
                           <RsInput
-                            label={`${item.name} value`}
+                            label={`${nameOf(line)} value`}
                             value={draft.value}
                             readOnly={readOnly}
                             invalid={invalid(draft.value)}
-                            onChange={valueChange(item)}
+                            onChange={(text) => {
+                              patch(line.payItemId, { value: text })
+                            }}
                           />
                         </td>
                         <td className="text-center">
                           <Checkbox
                             tone="navy"
-                            aria-label={`${item.name} manually updated`}
-                            checked={draft.manual}
-                            disabled={readOnly}
-                            onCheckedChange={(checked) => {
-                              patch(item.payItemId, { manual: checked === true })
-                            }}
+                            aria-label={`${nameOf(line)} manually updated`}
+                            checked={line.isManuallyUpdated}
+                            disabled
                           />
                         </td>
-                        <td className="text-center">
-                          <Button
-                            type="button"
-                            onClick={() => {
-                              setHistory(item)
-                            }}
-                            aria-label={`History of ${item.name}`}
-                            className={cn(
-                              'h-7 rounded-[4px] px-5 text-xs font-medium',
-                              btn.history,
-                            )}
-                          >
-                            History
-                          </Button>
-                        </td>
+                        <td className="text-center">{historyButton(line)}</td>
                       </tr>
                     )
                   })}
@@ -331,37 +337,39 @@ function PayslipForm({
                     </tr>
                   </thead>
                   <tbody>
-                    {shared.map((item) => {
-                      const draft = draftOf(item.payItemId)
+                    {shared.map((line) => {
+                      const draft = draftOf(line.payItemId)
                       const total = (toAmount(draft.value) ?? 0) + (toAmount(draft.employer) ?? 0)
                       return (
-                        <tr key={item.payItemId}>
+                        <tr key={line.payItemId}>
                           <td className="w-[22%] pr-3">
-                            <span className={nameBox}>{item.name}</span>
+                            <span className={nameBox}>{nameOf(line)}</span>
                           </td>
                           <td className="pr-3">
                             <RsInput
-                              label={`${item.name} employee contribution`}
+                              label={`${nameOf(line)} employee contribution`}
                               value={draft.value}
                               readOnly={readOnly}
                               invalid={invalid(draft.value)}
-                              onChange={valueChange(item)}
-                            />
-                          </td>
-                          <td className="pr-3">
-                            <RsInput
-                              label={`${item.name} employer contribution`}
-                              value={draft.employer}
-                              readOnly={readOnly}
-                              invalid={invalid(draft.employer)}
                               onChange={(text) => {
-                                patch(item.payItemId, { employer: text, manual: true })
+                                patch(line.payItemId, { value: text })
                               }}
                             />
                           </td>
                           <td className="pr-3">
                             <RsInput
-                              label={`${item.name} total`}
+                              label={`${nameOf(line)} employer contribution`}
+                              value={draft.employer}
+                              readOnly={readOnly}
+                              invalid={invalid(draft.employer)}
+                              onChange={(text) => {
+                                patch(line.payItemId, { employer: text })
+                              }}
+                            />
+                          </td>
+                          <td className="pr-3">
+                            <RsInput
+                              label={`${nameOf(line)} total`}
                               value={String(total)}
                               readOnly
                               onChange={() => undefined}
@@ -370,12 +378,9 @@ function PayslipForm({
                           <td className="text-center">
                             <Checkbox
                               tone="navy"
-                              aria-label={`${item.name} (employer) manually updated`}
-                              checked={draft.manual}
-                              disabled={readOnly}
-                              onCheckedChange={(checked) => {
-                                patch(item.payItemId, { manual: checked === true })
-                              }}
+                              aria-label={`${nameOf(line)} (employer) manually updated`}
+                              checked={line.isManuallyUpdated}
+                              disabled
                             />
                           </td>
                         </tr>
@@ -390,8 +395,10 @@ function PayslipForm({
       </AppDialog>
       {history && (
         <ChangeLogDialog
-          title={`History: ${history.name}`}
-          entries={slip.changes.filter((entry) => entry.field === history.name)}
+          title={`History: ${nameOf(history)}`}
+          entries={(changes.data ?? []).filter(
+            (entry) => entry.fieldName === null || entry.fieldName === history.payItemName,
+          )}
           onClose={() => {
             setHistory(null)
           }}

@@ -4,17 +4,19 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { format } from 'date-fns'
 import { z } from 'zod'
 
-import { CheckboxField, SelectField, TextField } from '@/components/form'
+import { CheckboxField, SelectField, TextareaField, TextField } from '@/components/form'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/lib/api-error'
 
 import { useEmployeeAccount, useSaveEmployeeAccount } from '../../hooks/use-payroll'
-import { usePayrollOptions } from '../../hooks/use-payroll-records'
+import { personHint, usePayrollOptions } from '../../hooks/use-payroll-records'
 import type { EmployeeAccountRow } from '../../types/payroll.types'
+import { monthOf, monthStart } from '../../utils/format'
+import { EmployeeSearchSelectField } from '../shared/employee-search-select'
 import { MonthField } from '../shared/month-picker'
 import { PayrollDialog } from '../shared/payroll-dialog'
-import { SearchSelectField } from '../shared/search-select'
 import { TwoWaySwitch } from '../shared/two-way-switch'
+import { ReadOnlyRow } from './list-parts'
 
 const schema = z.object({
   accountTypeId: z.string().min(1, 'Choose the account'),
@@ -28,21 +30,24 @@ const schema = z.object({
     .string()
     .refine((value) => Number(value.replace(/,/g, '')) > 0, { message: 'Enter the amount' }),
   processed: z.boolean(),
+  description: z.string().trim().max(2000, 'Keep it under 2000 characters'),
 })
 type Values = z.infer<typeof schema>
 
+/** The API sends credit and debit; one of them is the entry's amount. */
 const toValues = (row: EmployeeAccountRow | undefined): Values => ({
   accountTypeId: row?.accountTypeId ?? '',
   employeeId: row?.employeeId ?? null,
-  month: row?.month ?? format(new Date(), 'yyyy-MM'),
-  direction: row?.direction ?? 'credit',
-  amount: row ? String(row.amount) : '',
-  processed: row?.processed ?? true,
+  month: row ? monthOf(row.entryMonth) : format(new Date(), 'yyyy-MM'),
+  direction: row && row.debit > 0 ? 'debit' : 'credit',
+  amount: row ? String(row.debit > 0 ? row.debit : row.credit) : '',
+  processed: row?.isProcessed ?? false,
+  description: row?.description ?? '',
 })
 
 /**
- * "Employee Account Create" (and its Edit and View, which are not drawn):
- * Account, Employee, Month, Credit+ / Debit-, Amount and Processed.
+ * "Employee Account Create" / Edit / View (`/payroll/employee-accounts`): Account, Employee,
+ * Month, Credit+ / Debit-, Amount, Processed and a description.
  */
 export function EmployeeAccountDialog({
   id,
@@ -79,11 +84,16 @@ function AccountForm({
 }) {
   const formId = useId()
   const switchId = useId()
-  const options = usePayrollOptions()
+  const options = usePayrollOptions('payroll.employee_accounts.view')
   const save = useSaveEmployeeAccount()
   const readOnly = mode === 'view'
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues(row) })
   const direction = useController({ control: form.control, name: 'direction' })
+  // An account no longer in the first page of the lookup still shows by its name.
+  const accounts =
+    row && !options.accountTypes.some((item) => item.value === row.accountTypeId)
+      ? [...options.accountTypes, { value: row.accountTypeId, label: row.accountName }]
+      : options.accountTypes
 
   const submit = form.handleSubmit(async (values) => {
     try {
@@ -92,10 +102,12 @@ function AccountForm({
         input: {
           accountTypeId: values.accountTypeId,
           employeeId: values.employeeId ?? '',
-          month: values.month,
+          entryMonth: monthStart(values.month),
           direction: values.direction,
           amount: Number(values.amount.replace(/,/g, '')),
-          processed: values.processed,
+          isProcessed: values.processed,
+          description: values.description.trim() || null,
+          ...(row ? { rowVersion: row.rowVersion } : {}),
         },
       })
       onClose()
@@ -133,16 +145,18 @@ function AccountForm({
           name="accountTypeId"
           label="Account"
           placeholder="Select Account"
-          options={options.accountTypes}
+          options={accounts}
           required
           disabled={readOnly}
         />
-        <SearchSelectField
+        <EmployeeSearchSelectField
           control={form.control}
           name="employeeId"
           label="Employee"
           placeholder="Select Employee"
-          options={options.employees}
+          filters={options.employeeFilters}
+          known={row ? [{ value: row.employeeId, label: row.employeeName }] : undefined}
+          hint={personHint}
           required
           disabled={readOnly}
         />
@@ -181,6 +195,14 @@ function AccountForm({
           label="Processed"
           disabled={readOnly}
         />
+        <TextareaField
+          control={form.control}
+          name="description"
+          label="Description"
+          disabled={readOnly}
+          textareaClassName="min-h-20"
+        />
+        {row?.payRuleName && <ReadOnlyRow label="Posted by rule" value={row.payRuleName} />}
       </form>
     </PayrollDialog>
   )

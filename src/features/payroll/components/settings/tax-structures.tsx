@@ -18,8 +18,14 @@ import {
 import { cn } from '@/lib/utils'
 
 import { SURCHARGE_RATE_LABELS } from '../../constants'
-import { useDeleteResource, useResourceList, useSaveResource } from '../../hooks/use-payroll'
-import { SURCHARGE_CONDITIONS, SURCHARGE_RATES, type TaxStructure } from '../../types/payroll.types'
+import {
+  useDeleteResource,
+  useResource,
+  useResourceList,
+  useSaveResource,
+} from '../../hooks/use-payroll'
+import { SURCHARGE_RATES, type TaxStructure } from '../../types/payroll.types'
+import { formatLong } from '../../utils/format'
 import { btn, toolbarButton } from '../../utils/styles'
 import { DateField } from '../shared/date-input'
 import { NoRecord } from '../shared/no-record'
@@ -36,6 +42,7 @@ import {
 } from './settings-helpers'
 import { SettingsTable, ViewHeader } from './settings-list'
 import { SETTINGS_PAGE_SIZE } from './settings-nav'
+import { rowMenuHandlers, useSettingsCan } from './settings-permissions'
 
 const slab = z.object({
   id: z.string(),
@@ -58,16 +65,14 @@ const slab = z.object({
 
 const schema = z
   .object({
-    name: z.string().trim().min(1, 'Enter a name').max(80, 'Keep it under 80 characters'),
+    name: z.string().trim().min(1, 'Enter a name').max(200, 'Keep it under 200 characters'),
     startDate: z.string().min(1, 'Choose the start date'),
     endDate: z.string().min(1, 'Choose the end date'),
     surcharge: z.boolean(),
     surchargeValue: optionalNumberText,
     surchargeRate: z.string(),
-    surchargeCondition: z.string(),
-    surchargeAmount: optionalNumberText,
-    description: z.string().trim().max(500),
-    slabs: z.array(slab).max(30),
+    description: z.string().trim().max(2000),
+    slabs: z.array(slab).min(1, 'Add at least one slab').max(50),
   })
   .refine((value) => !value.startDate || !value.endDate || value.endDate >= value.startDate, {
     message: 'The end date must be on or after the start date',
@@ -80,14 +85,6 @@ const schema = z
   .refine((value) => !value.surcharge || value.surchargeRate !== '', {
     message: 'Choose the rate',
     path: ['surchargeRate'],
-  })
-  .refine((value) => !value.surcharge || value.surchargeCondition !== '', {
-    message: 'Choose the condition',
-    path: ['surchargeCondition'],
-  })
-  .refine((value) => !value.surcharge || value.surchargeAmount !== '', {
-    message: 'Enter the tax amount',
-    path: ['surchargeAmount'],
   })
 type Values = z.infer<typeof schema>
 
@@ -108,16 +105,14 @@ function toValues(record: TaxStructure | undefined): Values {
     name: record?.name ?? '',
     startDate: record?.startDate ?? '',
     endDate: record?.endDate ?? '',
-    surcharge: record?.surcharge ?? false,
-    surchargeValue: numberText(record?.surchargeRule?.value),
-    surchargeRate: record?.surchargeRule?.rate ?? '',
-    surchargeCondition: record?.surchargeRule?.condition ?? '',
-    surchargeAmount: numberText(record?.surchargeRule?.amount),
+    surcharge: Boolean(record?.surchargeType),
+    surchargeValue: numberText(record?.surchargeValue),
+    surchargeRate: record?.surchargeType ?? '',
     description: record?.description ?? '',
-    slabs: (record?.slabs ?? []).map((item) => ({
-      id: item.id,
-      min: String(item.min),
-      max: numberText(item.max),
+    slabs: (record?.slabs ?? []).map((item, index) => ({
+      id: item.id ?? `slab_${index}`,
+      min: String(item.minAmount),
+      max: numberText(item.maxAmount),
       fixedAmount: String(item.fixedAmount),
       percentage: String(item.percentage),
     })),
@@ -157,7 +152,10 @@ function InlineSelect({
   )
 }
 
-/** "Tax Structure Create": dates, the surcharge, and the slabs. */
+/**
+ * "Tax Structure Create": dates, the surcharge, and the slabs. The list leaves the slabs
+ * out, so editing or viewing loads the structure first (`GET /tax-structures/{id}`).
+ */
 function TaxStructureDialog({
   state,
   onClose,
@@ -165,8 +163,41 @@ function TaxStructureDialog({
   state: Exclude<DialogState<TaxStructure>, null>
   onClose: () => void
 }) {
-  const record = state.mode === 'create' ? undefined : state.record
-  const readOnly = state.mode === 'view'
+  const detail = useResource('taxStructures', state.mode === 'create' ? null : state.record.id)
+  if (state.mode !== 'create' && !detail.data) {
+    return (
+      <PayrollDialog
+        title="Tax Structure"
+        onClose={onClose}
+        formId="tax-structure-form"
+        readOnly
+        className="max-w-5xl"
+      >
+        <p className="text-sm text-muted-foreground">
+          {detail.isError ? 'The tax structure could not be loaded.' : 'Loading…'}
+        </p>
+      </PayrollDialog>
+    )
+  }
+  return (
+    <TaxStructureForm
+      mode={state.mode}
+      record={state.mode === 'create' ? undefined : detail.data}
+      onClose={onClose}
+    />
+  )
+}
+
+function TaxStructureForm({
+  mode,
+  record,
+  onClose,
+}: {
+  mode: 'create' | 'edit' | 'view'
+  record: TaxStructure | undefined
+  onClose: () => void
+}) {
+  const readOnly = mode === 'view'
   const save = useSaveResource('taxStructures')
   const [error, setError] = useState<string | null>(null)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues(record) })
@@ -177,7 +208,6 @@ function TaxStructureDialog({
   const submit = form.handleSubmit(async (values) => {
     setError(null)
     const rate = SURCHARGE_RATES.find((item) => item === values.surchargeRate)
-    const condition = SURCHARGE_CONDITIONS.find((item) => item === values.surchargeCondition)
     try {
       await save.mutateAsync({
         id: record?.id,
@@ -185,21 +215,13 @@ function TaxStructureDialog({
           name: values.name,
           startDate: values.startDate,
           endDate: values.endDate,
-          surcharge: values.surcharge,
-          surchargeRule:
-            values.surcharge && rate && condition
-              ? {
-                  value: toAmount(values.surchargeValue),
-                  rate,
-                  condition,
-                  amount: toAmount(values.surchargeAmount),
-                }
-              : null,
-          description: values.description,
+          surchargeType: values.surcharge && rate ? rate : null,
+          surchargeValue: values.surcharge && rate ? toAmount(values.surchargeValue) : null,
+          description: values.description || null,
+          rowVersion: record?.rowVersion ?? null,
           slabs: values.slabs.map((item) => ({
-            id: item.id,
-            min: toAmount(item.min),
-            max: toOptionalNumber(item.max),
+            minAmount: toAmount(item.min),
+            maxAmount: toOptionalNumber(item.max),
             fixedAmount: toOptionalNumber(item.fixedAmount) ?? 0,
             percentage: toOptionalNumber(item.percentage) ?? 0,
           })),
@@ -207,13 +229,15 @@ function TaxStructureDialog({
       })
       onClose()
     } catch (failure) {
-      setError(applyApiError(failure, form.setError, ['name', 'endDate', 'slabs']))
+      setError(
+        applyApiError(failure, form.setError, ['name', 'endDate', 'slabs', 'surchargeValue']),
+      )
     }
   })
   const title =
-    state.mode === 'create'
+    mode === 'create'
       ? 'Tax Structure Create'
-      : state.mode === 'edit'
+      : mode === 'edit'
         ? 'Tax Structure Edit'
         : 'Tax Structure View'
   const cellInput = (
@@ -322,51 +346,11 @@ function TaxStructureDialog({
                   />
                 )}
               />
-              <span>When Annual Tax is</span>
-              <Controller
-                control={form.control}
-                name="surchargeCondition"
-                render={({ field, fieldState }) => (
-                  <InlineSelect
-                    label="Surcharge condition"
-                    placeholder="Select Condition"
-                    value={field.value}
-                    onChange={field.onChange}
-                    options={SURCHARGE_CONDITIONS.map((value) => ({ value, label: value }))}
-                    disabled={readOnly}
-                    invalid={Boolean(fieldState.error)}
-                  />
-                )}
-              />
-              <Controller
-                control={form.control}
-                name="surchargeAmount"
-                render={({ field, fieldState }) => (
-                  <Input
-                    {...field}
-                    inputMode="decimal"
-                    aria-label="Surcharge tax amount"
-                    aria-invalid={Boolean(fieldState.error)}
-                    placeholder="Tax amount"
-                    disabled={readOnly}
-                    className="h-9 w-36"
-                  />
-                )}
-              />
+              <span>on the annual tax (a percentage of it, or a flat amount)</span>
             </div>
-            {(errors.surchargeValue ??
-              errors.surchargeRate ??
-              errors.surchargeCondition ??
-              errors.surchargeAmount) && (
+            {(errors.surchargeValue ?? errors.surchargeRate) && (
               <p className="text-xs text-destructive">
-                {
-                  (
-                    errors.surchargeValue ??
-                    errors.surchargeRate ??
-                    errors.surchargeCondition ??
-                    errors.surchargeAmount
-                  )?.message
-                }
+                {(errors.surchargeValue ?? errors.surchargeRate)?.message}
               </p>
             )}
           </section>
@@ -466,10 +450,16 @@ const columns: DataTableColumn<TaxStructure>[] = [
   { id: 'code', header: 'Code', cell: (row) => row.code },
   { id: 'name', header: 'Name', cell: (row) => row.name, mobile: 'heading' },
   {
+    id: 'period',
+    header: 'Period',
+    cell: (row) => `${formatLong(row.startDate)} – ${formatLong(row.endDate)}`,
+  },
+  { id: 'slabs', header: 'Slabs', cell: (row) => row.slabCount },
+  {
     id: 'description',
     header: 'Description',
     cell: (row) => (
-      <span className="line-clamp-2 max-w-72 whitespace-normal">{row.description || '—'}</span>
+      <span className="line-clamp-2 max-w-72 whitespace-normal">{row.description ?? '—'}</span>
     ),
   },
 ]
@@ -481,6 +471,7 @@ export function TaxStructuresView() {
   const [deleting, setDeleting] = useState<TaxStructure | null>(null)
   const list = useResourceList('taxStructures', { page, pageSize: SETTINGS_PAGE_SIZE })
   const remove = useDeleteResource('taxStructures')
+  const may = useSettingsCan('tax')
 
   return (
     <>
@@ -488,11 +479,13 @@ export function TaxStructuresView() {
         tab="tax"
         view="tax-structure"
         actions={
-          <CreateButton
-            onClick={() => {
-              setDialog({ mode: 'create' })
-            }}
-          />
+          may.create && (
+            <CreateButton
+              onClick={() => {
+                setDialog({ mode: 'create' })
+              }}
+            />
+          )
         }
       />
       <SettingsTable
@@ -506,15 +499,7 @@ export function TaxStructuresView() {
         rowActions={(row) => (
           <SettingsRowMenu
             label={`Actions for ${row.name}`}
-            onEdit={() => {
-              setDialog({ mode: 'edit', record: row })
-            }}
-            onView={() => {
-              setDialog({ mode: 'view', record: row })
-            }}
-            onDelete={() => {
-              setDeleting(row)
-            }}
+            {...rowMenuHandlers(may, row, setDialog, setDeleting)}
           />
         )}
       />
@@ -532,7 +517,6 @@ export function TaxStructuresView() {
           setDeleting(null)
         }}
         remove={remove}
-        idOf={(row) => row.id}
       />
     </>
   )

@@ -1,42 +1,17 @@
-import { endOfMonth, format, parse } from 'date-fns'
-import { http } from 'msw'
+import { format } from 'date-fns'
+import { http, HttpResponse } from 'msw'
 import { z } from 'zod'
 
-import {
-  ENCASHMENT_BASES,
-  ENCASHMENT_BASIS_RATES,
-  ENCASHMENT_TYPES,
-  type EncashmentBasis,
-  type LeaveEncashment,
-  type LeaveEncashmentDetail,
-  type LeaveEncashmentInput,
-  type LeaveEncashmentLine,
-  type LeaveEncashmentRow,
-} from '@/features/payroll'
+import { ENCASHMENT_BASES, ENCASHMENT_TYPES, type LeaveEncashmentDetail } from '@/features/payroll'
 
 import { DIRECTORY, findEmployee } from '../employees/seed'
+import { leaveTypes } from '../leaves/db'
 import { createId, latency, requireAuth } from '../utils'
-import {
-  accountEntries,
-  accountTypes,
-  currentPayrollSettings,
-  leaveEncashments,
-  payslips,
-  vouchers,
-} from './db'
-import {
-  employeeRef,
-  ensurePayrollRuns,
-  isActive,
-  refreshPayslips,
-  salaryOn,
-  shiftHours,
-} from './engine'
+import { leaveEncashments } from './db'
 import {
   base,
   conflict,
   invalid,
-  nextCode,
   notFound,
   numberParam,
   ok,
@@ -44,301 +19,161 @@ import {
   param,
   readBody,
   rejected,
+  searched,
 } from './http'
-import { personMatches } from './records-handlers'
-import { encashmentEntryId, encashmentVoucherId, thisMonth } from './seed'
+import { isActive, nextRowVersion, salaryOn } from './people'
+import { encashmentWithLines } from './seed-records'
+
+// Leave encashment as `/api/payroll/leave-encashments` serves it. Days are what is left of the
+// leave type's quota in the year (a fixed quota per type here, less what was encashed already).
 
 const authed = async (request: Request) => {
   await latency()
-  ensurePayrollRuns()
   return requireAuth(request)
 }
 
-const pad = (month: number) => String(month).padStart(2, '0')
+const now = () => new Date().toISOString().slice(0, 19)
 const today = () => format(new Date(), 'yyyy-MM-dd')
-const monthName = (month: string) => format(parse(month, 'yyyy-MM', new Date()), 'MMMM, yyyy')
-const leaveName = (id: string) => accountTypes.find(id)?.name ?? '—'
 
-/** The months of a leave year, from Payroll Settings → Leave Configuration. */
-function leaveYearMonths(year: number): { from: string; to: string } {
-  const { fiscalYear, yearStartMonth, yearEndMonth } = currentPayrollSettings().leave
-  if (fiscalYear === 'calendar') return { from: `${year}-01`, to: `${year}-12` }
-  const endYear = yearEndMonth < yearStartMonth ? year + 1 : year
-  return { from: `${year}-${pad(yearStartMonth)}`, to: `${endYear}-${pad(yearEndMonth)}` }
-}
+const QUOTA: Record<string, number> = { lt_sick: 8, lt_casual: 10, lt_annual: 14 }
 
-/** The leave year this month falls in. */
-function currentLeaveYear(): number {
-  const now = thisMonth()
-  const year = Number(now.slice(0, 4))
-  return leaveYearMonths(year).from <= now ? year : year - 1
-}
+const leaveName = (id: string) => leaveTypes.find(id)?.title ?? 'Leave'
 
-const ownEntry = (encashmentId: string) => `ae_le_${encashmentId}_`
-const ownVoucher = (encashmentId: string) => `vc_le_${encashmentId}_`
-
-/**
- * Leave days left: the Leave Quotas account's credits less its debits in the
- * leave year. `ignore` leaves out an encashment's own debits (when it is edited).
- */
+/** Days left to encash: the quota less this year's other encashments of the type. */
 function daysLeft(employeeId: string, leaveTypeId: string, year: number, ignore?: string) {
-  const { from, to } = leaveYearMonths(year)
-  return accountEntries
+  const used = leaveEncashments
     .all()
     .filter(
-      (entry) =>
-        entry.employeeId === employeeId &&
-        entry.accountTypeId === leaveTypeId &&
-        entry.month >= from &&
-        entry.month <= to &&
-        !(ignore && entry.id.startsWith(ownEntry(ignore))),
+      (item) => item.id !== ignore && item.leaveTypeId === leaveTypeId && item.fiscalYear === year,
     )
-    .reduce((sum, entry) => sum + (entry.direction === 'credit' ? entry.amount : -entry.amount), 0)
+    .flatMap((item) => item.employees)
+    .filter((line) => line.employeeId === employeeId)
+    .reduce((sum, line) => sum + line.days, 0)
+  return Math.max(0, (QUOTA[leaveTypeId] ?? 5) - used)
 }
 
-/**
- * What one leave day is paid: a day's gross salary (÷ 30), or the hourly rate
- * (a day ÷ 8) for the person's shift hours at the basis's multiple. The salary
- * is the one at the end of the leave year, or today while the year runs.
- */
-function amountPerLeave(employeeId: string, basis: EncashmentBasis, year: number): number {
-  const { to } = leaveYearMonths(year)
-  const yearEnd = format(endOfMonth(parse(to, 'yyyy-MM', new Date())), 'yyyy-MM-dd')
-  const date = yearEnd < today() ? yearEnd : today()
-  const day = salaryOn(employeeId, date) / 30
-  const rate = ENCASHMENT_BASIS_RATES[basis]
-  return Math.round(
-    rate.perShiftHour ? (day / 8) * shiftHours(employeeId, date) * rate.times : day * rate.times,
-  )
-}
-
-/** One line per person with days left; Payroll pays a day's salary per leave. */
-function linesFor(input: LeaveEncashmentInput, ignore?: string): LeaveEncashmentLine[] {
-  const people = input.allEmployees
-    ? DIRECTORY.filter((employee) => isActive(employee.id)).map((employee) => employee.id)
-    : input.employeeIds
-  const basis = input.type === 'manual' ? (input.basis ?? 'overtime') : 'earned-salary'
-  return people.flatMap((employeeId) => {
-    const days = daysLeft(employeeId, input.leaveTypeId, input.year, ignore)
-    return days > 0
-      ? [{ employeeId, days, amountPerLeave: amountPerLeave(employeeId, basis, input.year) }]
-      : []
-  })
-}
-
-/** Paid: a payroll encashment is in a released pay slip of its month. */
-function isPaid(item: LeaveEncashment): boolean {
-  if (item.type !== 'payroll') return false
-  const people = new Set(item.lines.map((line) => line.employeeId))
-  return payslips
-    .all()
-    .some(
-      (slip) =>
-        people.has(slip.employeeId) &&
-        slip.month === item.payMonth &&
-        (slip.status === 'released' || slip.status === 'released-fs') &&
-        slip.items.some((entry) => entry.payItemId === 'pi_leave_encashment' && entry.value > 0),
-    )
-}
-
-/** Take the encashment's debits off the leave quotas, and its voucher lines off Vouchers. */
-function clearEffects(id: string) {
-  for (const entry of accountEntries.all()) {
-    if (entry.id.startsWith(ownEntry(id))) accountEntries.remove(entry.id)
-  }
-  for (const voucher of vouchers.all()) {
-    if (voucher.id.startsWith(ownVoucher(id))) vouchers.remove(voucher.id)
-  }
-}
-
-/**
- * The paid days come off each person's leave quota (a debit in the pay month,
- * kept inside the leave year); Manually adds a voucher line per person.
- */
-function applyEffects(item: LeaveEncashment) {
-  const { from, to } = leaveYearMonths(item.year)
-  const month = item.payMonth < from ? from : item.payMonth > to ? to : item.payMonth
-  for (const line of item.lines) {
-    accountEntries.insert({
-      id: encashmentEntryId(item.id, line.employeeId),
-      employeeId: line.employeeId,
-      accountTypeId: item.leaveTypeId,
-      month,
-      direction: 'debit',
-      amount: line.days,
-      processed: true,
-    })
-    if (item.type === 'manual') {
-      vouchers.insert({
-        id: encashmentVoucherId(item.id, line.employeeId),
-        code: nextCode(
-          '',
-          vouchers.all().map((voucher) => voucher.code),
-          1,
-        ),
-        employeeId: line.employeeId,
-        amount: line.days * line.amountPerLeave,
-        date: today(),
-        type: 'leave-encashment',
-      })
-    }
-  }
-}
-
-const detail = (item: LeaveEncashment): LeaveEncashmentDetail => ({
-  ...item,
-  leave: leaveName(item.leaveTypeId),
-  paid: isPaid(item),
-})
-
-const rowsOf = (item: LeaveEncashment): LeaveEncashmentRow[] =>
-  item.lines.map((line) => ({
-    id: `${item.id}:${line.employeeId}`,
-    encashmentId: item.id,
-    leave: leaveName(item.leaveTypeId),
-    employee: employeeRef(line.employeeId),
-    year: item.year,
-    days: line.days,
-    amountPerLeave: line.amountPerLeave,
-    people: item.lines.length,
-  }))
-
-const schema = z
+const input = z
   .object({
-    leaveTypeId: z
-      .string()
-      .min(1, 'Choose the leave type')
-      .refine((id) => accountTypes.find(id)?.category === 'leave-quotas', {
-        message: 'Choose the leave type',
-      }),
-    allEmployees: z.boolean(),
-    employeeIds: z.array(z.string()).max(500),
-    year: z
-      .number({ error: 'Choose the year' })
-      .int('Choose the year')
-      .min(2000, 'Choose the year')
-      .max(2100, 'Choose the year'),
-    type: z.enum(ENCASHMENT_TYPES),
-    basis: z.enum(ENCASHMENT_BASES).nullable(),
+    leaveTypeId: z.coerce.string().min(1, 'Choose the leave type'),
+    fiscalYear: z.number().int().min(2000).max(2100),
+    allEmployees: z.boolean().default(false),
+    employeeIds: z.array(z.coerce.string()).max(10000).default([]),
+    mode: z.enum(ENCASHMENT_TYPES),
+    basis: z.enum(ENCASHMENT_BASES),
+    amountPerLeave: z.number().gt(0).nullish(),
+    rowVersion: z.string().nullish(),
   })
-  .refine((value) => value.allEmployees || value.employeeIds.length > 0, {
-    message: 'Choose the employees',
-    path: ['employeeIds'],
+  .refine((value) => value.basis === 'earned_salary' || Boolean(value.amountPerLeave), {
+    message: 'Give the amount per leave for this basis.',
+    path: ['amountPerLeave'],
   })
-  .refine((value) => value.employeeIds.every((id) => Boolean(findEmployee(id))), {
-    message: 'Choose the employees',
-    path: ['employeeIds'],
-  })
-  .refine((value) => value.type === 'payroll' || value.basis !== null, {
-    message: 'Choose the amount per leave',
-    path: ['basis'],
-  })
-  .refine((value) => value.year <= currentLeaveYear(), {
-    message: 'That leave year has not started yet',
-    path: ['year'],
-  })
-
-const nobodyLeft = (input: LeaveEncashmentInput) =>
-  invalid(
-    `${input.allEmployees ? 'Nobody' : 'Nobody chosen'} has ${leaveName(input.leaveTypeId)} left in ${String(input.year)}.`,
-  )
-
-const paidConflict = (item: LeaveEncashment) =>
-  conflict(
-    `This encashment was paid in the ${monthName(item.payMonth)} payroll and cannot be changed.`,
-    'PAID',
-  )
-
-const people = (item: LeaveEncashment | undefined) =>
-  item ? item.lines.map((line) => line.employeeId) : []
 
 export const payrollEncashmentHandlers = [
   http.get(base('/leave-encashments'), async ({ request }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
+    const denied = await authed(request)
+    if (denied) return denied
     const url = new URL(request.url)
     const leaveTypeId = param(url, 'leaveTypeId')
     const year = numberParam(url, 'year')
-    const list = leaveEncashments
+    const employeeId = param(url, 'employeeId')
+    const lines = leaveEncashments
       .all()
+      .sort((a, b) => b.encashmentDate.localeCompare(a.encashmentDate))
+      .flatMap((item) => item.employees)
       .filter(
-        (item) =>
-          (!leaveTypeId || item.leaveTypeId === leaveTypeId) &&
-          (year === undefined || item.year === year),
+        (line) =>
+          (!leaveTypeId || line.leaveTypeId === leaveTypeId) &&
+          (year === undefined || line.fiscalYear === year) &&
+          (!employeeId || line.employeeId === employeeId),
       )
-      .sort((a, b) => b.code.localeCompare(a.code))
-      .flatMap((item) =>
-        rowsOf(item)
-          .filter((row) => personMatches(url, row.employee.id))
-          .sort((a, b) => a.employee.name.localeCompare(b.employee.name)),
-      )
-    return page(url, list)
+    return page(
+      url,
+      searched(url, lines, (line) => `${line.employeeName} ${line.employeeCode}`),
+    )
   }),
+
   http.get(base('/leave-encashments/:id'), async ({ request, params }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const item = leaveEncashments.find(String(params.id))
-    return item ? ok(detail(item)) : notFound('leave encashment')
+    const denied = await authed(request)
+    if (denied) return denied
+    const found = leaveEncashments.find(String(params.id))
+    return found ? ok(found) : notFound('leave encashment')
   }),
-  http.post(base('/leave-encashments'), async ({ request }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const parsed = await readBody(request, schema)
-    if (!parsed.success) return rejected(parsed.error)
-    const input = parsed.data
-    const lines = linesFor(input)
-    if (lines.length === 0) return nobodyLeft(input)
-    const item: LeaveEncashment = {
-      id: createId('le'),
-      code: nextCode(
-        'LE-',
-        leaveEncashments.all().map((entry) => entry.code),
-      ),
-      ...input,
-      employeeIds: input.allEmployees ? [] : input.employeeIds,
-      basis: input.type === 'manual' ? input.basis : null,
-      lines,
-      payMonth: thisMonth(),
-      createdAt: new Date().toISOString(),
-    }
-    leaveEncashments.insert(item)
-    applyEffects(item)
-    if (item.type === 'payroll') refreshPayslips(people(item), item.payMonth)
-    return ok(detail(item))
-  }),
-  http.put(base('/leave-encashments/:id'), async ({ request, params }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const existing = leaveEncashments.find(String(params.id))
-    if (!existing) return notFound('leave encashment')
-    if (isPaid(existing)) return paidConflict(existing)
-    const parsed = await readBody(request, schema)
-    if (!parsed.success) return rejected(parsed.error)
-    const input = parsed.data
-    const lines = linesFor(input, existing.id)
-    if (lines.length === 0) return nobodyLeft(input)
-    const item: LeaveEncashment = {
-      ...existing,
-      ...input,
-      employeeIds: input.allEmployees ? [] : input.employeeIds,
-      basis: input.type === 'manual' ? input.basis : null,
-      lines,
-    }
-    clearEffects(existing.id)
-    leaveEncashments.update(existing.id, item)
-    applyEffects(item)
-    refreshPayslips([...people(existing), ...people(item)], item.payMonth)
-    return ok(detail(item))
-  }),
+
+  ...(['post', 'put'] as const).map((method) =>
+    http[method](
+      base(method === 'post' ? '/leave-encashments' : '/leave-encashments/:id'),
+      async ({ request, params }) => {
+        const denied = await authed(request)
+        if (denied) return denied
+        const body = await readBody(request, input)
+        if (!body.success) return rejected(body.error)
+        const value = body.data
+        const current = method === 'put' ? leaveEncashments.find(String(params.id)) : undefined
+        if (method === 'put' && !current) return notFound('leave encashment')
+        if (current && value.rowVersion && value.rowVersion !== current.rowVersion) {
+          return conflict('Someone else changed this leave encashment. Reload it and try again')
+        }
+        if (current?.isPaid) {
+          return conflict('This encashment was paid. It cannot be changed', 'ENCASHMENT_PAID')
+        }
+        if (!value.allEmployees && value.employeeIds.length === 0) {
+          return invalid('Choose the employees.', { employeeIds: 'Choose the employees.' })
+        }
+        const people = value.allEmployees
+          ? DIRECTORY.filter((employee) => isActive(employee.id)).map((employee) => employee.id)
+          : value.employeeIds.filter((id) => Boolean(findEmployee(id)))
+        const lines = people
+          .map(
+            (id) => [id, daysLeft(id, value.leaveTypeId, value.fiscalYear, current?.id)] as const,
+          )
+          .filter(([, days]) => days > 0)
+        if (lines.length === 0) {
+          return invalid('Nobody chosen has leave days to encash.', {
+            employeeIds: 'Nobody chosen has leave days to encash.',
+          })
+        }
+        // Earned salary: a day's salary (monthly / 30) of the first person; the API works it out
+        // per person, the mock keeps one rate per encashment.
+        const first = lines[0]?.[0] ?? ''
+        const amountPerLeave = value.amountPerLeave ?? Math.round(salaryOn(first, today()) / 30)
+        const detail: LeaveEncashmentDetail = encashmentWithLines(
+          {
+            id: current?.id ?? createId('le'),
+            leaveTypeId: value.leaveTypeId,
+            leaveTypeName: leaveName(value.leaveTypeId),
+            fiscalYear: value.fiscalYear,
+            encashmentDate: current?.encashmentDate ?? today(),
+            appliesToAll: value.allEmployees,
+            basis: value.basis,
+            amountPerLeave,
+            mode: value.mode,
+            isPaid: false,
+            createdAt: current?.createdAt ?? now(),
+            updatedAt: current ? now() : null,
+            rowVersion: nextRowVersion(),
+          },
+          lines,
+        )
+        if (current) leaveEncashments.update(detail.id, detail)
+        else leaveEncashments.insert(detail)
+        return HttpResponse.json({ data: detail }, { status: current ? 200 : 201 })
+      },
+    ),
+  ),
+
   http.delete(base('/leave-encashments/:id'), async ({ request, params }) => {
-    const unauthorized = await authed(request)
-    if (unauthorized) return unauthorized
-    const existing = leaveEncashments.find(String(params.id))
-    if (!existing) return notFound('leave encashment')
-    if (isPaid(existing)) return paidConflict(existing)
-    clearEffects(existing.id)
-    leaveEncashments.remove(existing.id)
-    refreshPayslips(people(existing), existing.payMonth)
-    return ok({ id: existing.id })
+    const denied = await authed(request)
+    if (denied) return denied
+    const found = leaveEncashments.find(String(params.id))
+    if (!found) return notFound('leave encashment')
+    const sent = param(new URL(request.url), 'rowVersion')
+    if (sent && sent !== found.rowVersion) {
+      return conflict('Someone else changed this leave encashment. Reload it and try again')
+    }
+    if (found.isPaid) {
+      return conflict('This encashment was paid. It cannot be deleted', 'ENCASHMENT_PAID')
+    }
+    leaveEncashments.remove(found.id)
+    return new HttpResponse(null, { status: 204 })
   }),
 ]

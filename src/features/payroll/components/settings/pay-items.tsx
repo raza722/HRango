@@ -3,7 +3,7 @@ import { Controller, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
-import { FieldLayoutContext, SelectField, TextField } from '@/components/form'
+import { FieldLayoutContext, SelectField, TextareaField, TextField } from '@/components/form'
 import type { DataTableColumn } from '@/components/layout'
 import { Checkbox } from '@/components/ui/checkbox'
 
@@ -14,8 +14,8 @@ import {
 } from '../../constants'
 import {
   useDeleteResource,
-  usePayrollLookups,
   useResourceList,
+  useResourceLookup,
   useSaveResource,
 } from '../../hooks/use-payroll'
 import {
@@ -28,79 +28,69 @@ import { PayrollDialog } from '../shared/payroll-dialog'
 import { SearchSelectField } from '../shared/search-select'
 import { TwoWaySwitchField } from '../shared/two-way-switch'
 import { CreateButton, DeleteConfirm, ExpressionField, SettingsRowMenu } from './settings-common'
-import { applyApiError, type DialogState } from './settings-helpers'
+import { applyApiError, type DialogState, orNull } from './settings-helpers'
 import { SettingsTable, ViewHeader } from './settings-list'
 import { SETTINGS_PAGE_SIZE } from './settings-nav'
+import { rowMenuHandlers, useSettingsCan } from './settings-permissions'
 
 const schema = z
   .object({
-    name: z.string().trim().min(1, 'Enter a name').max(80, 'Keep it under 80 characters'),
-    label: z.string().trim().max(80),
+    name: z.string().trim().min(1, 'Enter a name').max(200, 'Keep it under 200 characters'),
+    label: z.string().trim().max(200),
     taxDistribution: z.enum(TAX_DISTRIBUTIONS),
-    type: z.string().min(1, 'Choose the pay item type'),
+    itemType: z.string().min(1, 'Choose the pay item type'),
     calculationType: z.string().min(1, 'Choose the calculation type'),
-    employeeFormulaId: z.string(),
+    employeeFormulaId: z.string().nullable(),
     employerContribution: z.enum(['no', 'yes']),
     employerFormulaId: z.string(),
-    displayOnly: z.boolean(),
-    benefit: z.boolean(),
-    eligibilityCriteria: z.boolean(),
+    isTaxable: z.boolean(),
+    isDisplayOnly: z.boolean(),
+    isBenefit: z.boolean(),
     isAdvancePayment: z.boolean(),
-    expression: z.string().trim().max(500),
+    eligibilityExpression: z.string().trim().max(2000),
+    description: z.string().trim().max(2000),
   })
-  .refine(
-    (value) =>
-      value.calculationType !== 'fixed' ||
-      value.expression.length > 0 ||
-      (value.type === 'deduction' && value.employeeFormulaId !== ''),
-    {
-      message: 'A fixed pay item needs an expression',
-      path: ['expression'],
-    },
-  )
-  .refine(
-    (value) =>
-      value.type !== 'deduction' ||
-      value.calculationType !== 'fixed' ||
-      value.employeeFormulaId !== '' ||
-      value.expression.length > 0,
-    { message: 'Choose the employee deduction formula', path: ['employeeFormulaId'] },
-  )
-  .refine(
-    (value) =>
-      value.type !== 'deduction' ||
-      value.employerContribution === 'no' ||
-      value.employerFormulaId !== '',
-    { message: 'Choose the employer contribution formula', path: ['employerFormulaId'] },
-  )
+  .refine((value) => value.calculationType !== 'formula' || Boolean(value.employeeFormulaId), {
+    message: 'Choose the formula',
+    path: ['employeeFormulaId'],
+  })
+  .refine((value) => value.employerContribution === 'no' || value.employerFormulaId !== '', {
+    message: 'Choose the employer contribution formula',
+    path: ['employerFormulaId'],
+  })
 type Values = z.infer<typeof schema>
 
 function toValues(record: PayItem | undefined): Values {
   return {
     name: record?.name ?? '',
     label: record?.label ?? '',
-    taxDistribution: record?.taxDistribution ?? 'remaining-months',
-    type: record?.type ?? '',
+    taxDistribution: record?.taxDistribution ?? 'remaining_months',
+    itemType: record?.itemType ?? '',
     calculationType: record?.calculationType ?? '',
     employeeFormulaId: record?.employeeFormulaId ?? '',
-    employerContribution: record?.employerContribution ? 'yes' : 'no',
+    employerContribution: record?.employerFormulaId ? 'yes' : 'no',
     employerFormulaId: record?.employerFormulaId ?? '',
-    displayOnly: record?.displayOnly ?? false,
-    benefit: record?.benefit ?? false,
-    eligibilityCriteria: record?.eligibilityCriteria ?? false,
+    isTaxable: record?.isTaxable ?? false,
+    isDisplayOnly: record?.isDisplayOnly ?? false,
+    isBenefit: record?.isBenefit ?? false,
     isAdvancePayment: record?.isAdvancePayment ?? false,
-    expression: record?.expression ?? '',
+    eligibilityExpression: record?.eligibilityExpression ?? '',
+    description: record?.description ?? '',
   }
 }
 
 const FLAGS = [
-  ['displayOnly', 'Display Only'],
-  ['benefit', 'Benefit'],
-  ['eligibilityCriteria', 'Eligibility Criteria'],
+  ['isTaxable', 'Taxable'],
+  ['isDisplayOnly', 'Display Only'],
+  ['isBenefit', 'Benefit'],
   ['isAdvancePayment', 'Is Advance Payment'],
 ] as const
 
-/** "Pay Item Create": name, how it is taxed and worked out, its formulas and flags. */
+/**
+ * "Pay Item Create": name, how it is taxed and worked out, its formulas and flags.
+ * Formula items take their amount from the employee formula; fixed / manual items from the
+ * person's pay items or a hand entry. The eligibility condition decides who gets it.
+ */
 function PayItemDialog({
   state,
   onClose,
@@ -110,52 +100,61 @@ function PayItemDialog({
 }) {
   const record = state.mode === 'create' ? undefined : state.record
   const readOnly = state.mode === 'view'
+  // The system works its own items out: their type and calculation cannot change.
+  const systemItem = Boolean(record?.systemCode)
   const save = useSaveResource('payItems')
-  const lookups = usePayrollLookups()
+  const formulaList = useResourceLookup('formulas')
   const [error, setError] = useState<string | null>(null)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues(record) })
-  const [type, calculationType, employer] = useWatch({
+  const [calculationType, employer, employeeFormulaId] = useWatch({
     control: form.control,
-    name: ['type', 'calculationType', 'employerContribution'],
+    name: ['calculationType', 'employerContribution', 'employeeFormulaId'],
   })
-  const formulas = (lookups.data?.formulas ?? []).map((item) => ({
+  const formulas = (formulaList.data?.data ?? []).map((item) => ({
     value: item.id,
     label: item.name,
+    hint: item.expression,
   }))
-  const deduction = type === 'deduction'
+  const chosen = formulaList.data?.data.find((item) => item.id === employeeFormulaId)
 
   const submit = form.handleSubmit(async (values) => {
     setError(null)
-    const payType = PAY_ITEM_TYPES.find((item) => item === values.type)
+    const itemType = PAY_ITEM_TYPES.find((item) => item === values.itemType)
     const calc = CALCULATION_TYPES.find((item) => item === values.calculationType)
-    if (!payType || !calc) return
-    const isDeduction = payType === 'deduction'
+    if (!itemType || !calc) return
     try {
       await save.mutateAsync({
         id: record?.id,
         input: {
           name: values.name,
-          label: values.label,
-          taxDistribution: values.taxDistribution,
-          type: payType,
+          label: values.label || null,
+          itemType,
           calculationType: calc,
-          expression: calc === 'manual' ? '' : values.expression,
-          employeeFormulaId:
-            isDeduction && values.employeeFormulaId ? values.employeeFormulaId : null,
-          employerContribution: isDeduction && values.employerContribution === 'yes',
+          taxDistribution: values.taxDistribution,
+          employeeFormulaId: orNull(values.employeeFormulaId),
           employerFormulaId:
-            isDeduction && values.employerContribution === 'yes' && values.employerFormulaId
+            values.employerContribution === 'yes' && values.employerFormulaId
               ? values.employerFormulaId
               : null,
-          displayOnly: values.displayOnly,
-          benefit: values.benefit,
-          eligibilityCriteria: values.eligibilityCriteria,
+          isTaxable: values.isTaxable,
+          isDisplayOnly: values.isDisplayOnly,
+          isBenefit: values.isBenefit,
           isAdvancePayment: values.isAdvancePayment,
+          eligibilityExpression: values.eligibilityExpression || null,
+          description: values.description || null,
+          rowVersion: record?.rowVersion ?? null,
         },
       })
       onClose()
     } catch (failure) {
-      setError(applyApiError(failure, form.setError, ['name', 'expression', 'employerFormulaId']))
+      setError(
+        applyApiError(failure, form.setError, [
+          'name',
+          'employeeFormulaId',
+          'employerFormulaId',
+          'eligibilityExpression',
+        ]),
+      )
     }
   })
   const title =
@@ -181,6 +180,12 @@ function PayItemDialog({
         className="grid gap-5"
       >
         <TextField control={form.control} name="name" label="Name" required disabled={readOnly} />
+        {record && (
+          <p className="font-inter text-sm text-muted-foreground">
+            Used in expressions as <span className="font-mono">{record.reference}</span>
+            {record.systemCode ? ' (added by the system: it cannot be deleted)' : ''}
+          </p>
+        )}
         <TextField control={form.control} name="label" label="Label" disabled={readOnly} />
         <SelectField
           control={form.control}
@@ -194,11 +199,11 @@ function PayItemDialog({
         />
         <SearchSelectField
           control={form.control}
-          name="type"
+          name="itemType"
           label="Pay item Type"
           placeholder="Select Pay item Type"
           required
-          disabled={readOnly}
+          disabled={readOnly || systemItem}
           options={PAY_ITEM_TYPES.map((value) => ({ value, label: PAY_ITEM_TYPE_LABELS[value] }))}
         />
         <SearchSelectField
@@ -207,46 +212,46 @@ function PayItemDialog({
           label="Calculation Type"
           placeholder="Select Calculation Type"
           required
-          disabled={readOnly}
+          disabled={readOnly || systemItem}
           options={CALCULATION_TYPES.map((value) => ({
             value,
             label: CALCULATION_TYPE_LABELS[value],
           }))}
         />
-        {deduction && (
-          <>
-            <SearchSelectField
-              control={form.control}
-              name="employeeFormulaId"
-              label="Employee Deduction(Formula)"
-              placeholder="Select Employee Deduction Formula"
-              required={calculationType === 'fixed'}
-              disabled={readOnly}
-              options={formulas}
-            />
-            <TwoWaySwitchField<Values, 'no' | 'yes'>
-              control={form.control}
-              name="employerContribution"
-              label="Employer Contribution (Formula)"
-              ariaLabel="Employer Contribution"
-              options={[
-                { value: 'no', label: 'No' },
-                { value: 'yes', label: 'Yes' },
-              ]}
-              disabled={readOnly}
-            />
-            {employer === 'yes' && (
-              <SearchSelectField
-                control={form.control}
-                name="employerFormulaId"
-                label="Employer Contribution (Formula)"
-                placeholder="Select Employer Contribution"
-                required
-                disabled={readOnly}
-                options={formulas}
-              />
-            )}
-          </>
+        <SearchSelectField
+          control={form.control}
+          name="employeeFormulaId"
+          label="Employee Formula"
+          placeholder="Select Formula"
+          required={calculationType === 'formula'}
+          clearable
+          disabled={readOnly}
+          options={formulas}
+        />
+        {chosen && (
+          <p className="font-mono text-xs break-words text-muted-foreground">{chosen.expression}</p>
+        )}
+        <TwoWaySwitchField<Values, 'no' | 'yes'>
+          control={form.control}
+          name="employerContribution"
+          label="Employer Contribution (Formula)"
+          ariaLabel="Employer Contribution"
+          options={[
+            { value: 'no', label: 'No' },
+            { value: 'yes', label: 'Yes' },
+          ]}
+          disabled={readOnly}
+        />
+        {employer === 'yes' && (
+          <SearchSelectField
+            control={form.control}
+            name="employerFormulaId"
+            label="Employer Contribution (Formula)"
+            placeholder="Select Employer Contribution"
+            required
+            disabled={readOnly}
+            options={formulas}
+          />
         )}
         <FieldLayoutContext value="vertical">
           <div className="flex flex-wrap items-center gap-x-10 gap-y-3">
@@ -271,14 +276,19 @@ function PayItemDialog({
             ))}
           </div>
         </FieldLayoutContext>
-        {calculationType !== 'manual' && (
-          <ExpressionField
-            control={form.control}
-            name="expression"
-            required={calculationType === 'fixed' && !deduction}
-            disabled={readOnly}
-          />
-        )}
+        <ExpressionField
+          control={form.control}
+          name="eligibilityExpression"
+          label="Eligibility Criteria"
+          description="A condition; only people it is true for get this item. Leave blank for everyone."
+          disabled={readOnly}
+        />
+        <TextareaField
+          control={form.control}
+          name="description"
+          label="Description"
+          disabled={readOnly}
+        />
       </form>
     </PayrollDialog>
   )
@@ -286,7 +296,7 @@ function PayItemDialog({
 
 const columns: DataTableColumn<PayItem>[] = [
   { id: 'name', header: 'Name', cell: (row) => row.name, mobile: 'heading' },
-  { id: 'type', header: 'Type', cell: (row) => PAY_ITEM_TYPE_LABELS[row.type] },
+  { id: 'type', header: 'Type', cell: (row) => PAY_ITEM_TYPE_LABELS[row.itemType] },
   {
     id: 'calculation',
     header: 'Calculation Type',
@@ -296,7 +306,7 @@ const columns: DataTableColumn<PayItem>[] = [
     id: 'expression',
     header: 'Expression',
     cell: (row) => (
-      <span className="line-clamp-2 max-w-72 whitespace-normal">{row.expression || '—'}</span>
+      <span className="line-clamp-2 max-w-72 whitespace-normal">{row.expression ?? '—'}</span>
     ),
   },
 ]
@@ -308,6 +318,7 @@ export function PayItemsView() {
   const [deleting, setDeleting] = useState<PayItem | null>(null)
   const list = useResourceList('payItems', { page, pageSize: SETTINGS_PAGE_SIZE })
   const remove = useDeleteResource('payItems')
+  const may = useSettingsCan('payComponents')
 
   return (
     <>
@@ -315,11 +326,13 @@ export function PayItemsView() {
         tab="pay-components"
         view="pay-items"
         actions={
-          <CreateButton
-            onClick={() => {
-              setDialog({ mode: 'create' })
-            }}
-          />
+          may.create && (
+            <CreateButton
+              onClick={() => {
+                setDialog({ mode: 'create' })
+              }}
+            />
+          )
         }
       />
       <SettingsTable
@@ -333,15 +346,7 @@ export function PayItemsView() {
         rowActions={(row) => (
           <SettingsRowMenu
             label={`Actions for ${row.name}`}
-            onEdit={() => {
-              setDialog({ mode: 'edit', record: row })
-            }}
-            onView={() => {
-              setDialog({ mode: 'view', record: row })
-            }}
-            onDelete={() => {
-              setDeleting(row)
-            }}
+            {...rowMenuHandlers(may, row, setDialog, setDeleting, row.systemCode === null)}
           />
         )}
       />
@@ -359,7 +364,6 @@ export function PayItemsView() {
           setDeleting(null)
         }}
         remove={remove}
-        idOf={(row) => row.id}
       />
     </>
   )

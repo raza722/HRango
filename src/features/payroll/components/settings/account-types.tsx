@@ -10,7 +10,13 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 import { ACCOUNT_CATEGORY_LABELS } from '../../constants'
-import { useDeleteResource, useResourceList, useSaveResource } from '../../hooks/use-payroll'
+import {
+  useDeleteResource,
+  useLeaveTypeLookup,
+  useResourceList,
+  useResourceLookup,
+  useSaveResource,
+} from '../../hooks/use-payroll'
 import { ACCOUNT_CATEGORIES, type AccountType } from '../../types/payroll.types'
 import type { FilterValues } from '../../utils/filters'
 import { btn } from '../../utils/styles'
@@ -21,18 +27,13 @@ import { CreateButton, DeleteConfirm, SettingsRowMenu } from './settings-common'
 import { applyApiError, type DialogState } from './settings-helpers'
 import { SettingsTable, ViewHeader } from './settings-list'
 import { SETTINGS_PAGE_SIZE } from './settings-nav'
+import { rowMenuHandlers, useSettingsCan } from './settings-permissions'
 
-const LEAVE_TYPES = ['Sick Leave', 'Casual Leaves']
-
-const schema = z
-  .object({
-    category: z.string().min(1, 'Choose the account category'),
-    name: z.string().trim().max(80),
-  })
-  .refine((value) => value.category === '' || value.name.length > 0, {
-    message: 'Choose the account type',
-    path: ['name'],
-  })
+const schema = z.object({
+  category: z.string().min(1, 'Choose the account category'),
+  name: z.string().trim().min(1, 'Enter the account name').max(200, 'Keep it under 200 characters'),
+  refId: z.string(),
+})
 type Values = z.infer<typeof schema>
 
 const categoryOptions = ACCOUNT_CATEGORIES.map((value) => ({
@@ -40,7 +41,10 @@ const categoryOptions = ACCOUNT_CATEGORIES.map((value) => ({
   label: ACCOUNT_CATEGORY_LABELS[value],
 }))
 
-/** "Account Type Create": the category, then what it is (a benefit, a leave type, a name). */
+/**
+ * "Account Type Create": the category, what it follows (a benefit, a leave type or a pay
+ * item: `refId`) and the account's name. Picking the record fills the name when it is empty.
+ */
 function AccountTypeDialog({
   state,
   onClose,
@@ -51,32 +55,59 @@ function AccountTypeDialog({
   const record = state.mode === 'create' ? undefined : state.record
   const readOnly = state.mode === 'view'
   const save = useSaveResource('accountTypes')
-  const benefits = useResourceList('benefits', { page: 1, pageSize: 100 })
   const [error, setError] = useState<string | null>(null)
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { category: record?.category ?? '', name: record?.name ?? '' },
+    defaultValues: {
+      category: record?.category ?? '',
+      name: record?.name ?? '',
+      refId: record?.refId ?? '',
+    },
   })
   const category = useWatch({ control: form.control, name: 'category' })
-  const benefitNames = [
-    ...new Set(['Medical', ...(benefits.data?.data ?? []).map((item) => item.name)]),
-  ]
+  const benefits = useResourceLookup('benefits', category === 'benefit')
+  const payItems = useResourceLookup('payItems', category === 'custom_pay_item')
+  const leaveTypes = useLeaveTypeLookup()
+  const refOptions =
+    category === 'benefit'
+      ? (benefits.data?.data ?? []).map((item) => ({ value: item.id, label: item.name }))
+      : category === 'leave_quota'
+        ? (leaveTypes.data ?? []).map((item) => ({ value: item.id, label: item.name }))
+        : category === 'custom_pay_item'
+          ? (payItems.data?.data ?? []).map((item) => ({ value: item.id, label: item.name }))
+          : []
+  const refLabel =
+    category === 'benefit' ? 'Benefit' : category === 'leave_quota' ? 'Leave Type' : 'Pay Item'
 
   const submit = form.handleSubmit(async (values) => {
     setError(null)
     const picked = ACCOUNT_CATEGORIES.find((item) => item === values.category)
     if (!picked) return
     try {
-      await save.mutateAsync({ id: record?.id, input: { category: picked, name: values.name } })
+      await save.mutateAsync({
+        id: record?.id,
+        input: {
+          category: picked,
+          name: values.name,
+          refId: values.refId || null,
+          rowVersion: record?.rowVersion ?? null,
+        },
+      })
       onClose()
     } catch (failure) {
-      setError(applyApiError(failure, form.setError, ['name', 'category']))
+      setError(applyApiError(failure, form.setError, ['name', 'category', 'refId']))
     }
   })
 
   return (
     <PayrollDialog
-      title={state.mode === 'view' ? 'Account Type View' : 'Account Type Create'}
+      title={
+        state.mode === 'view'
+          ? 'Account Type View'
+          : state.mode === 'edit'
+            ? 'Account Type Edit'
+            : 'Account Type Create'
+      }
       onClose={onClose}
       formId="account-type-form"
       readOnly={readOnly}
@@ -98,38 +129,31 @@ function AccountTypeDialog({
           options={categoryOptions}
           disabled={readOnly}
           onValueChange={() => {
-            form.setValue('name', '')
+            form.setValue('refId', '')
           }}
         />
-        {category === 'benefit' && (
+        {category !== '' && (
           <SearchSelectField
             control={form.control}
-            name="name"
-            label="Benefit"
-            placeholder="Select Benefit"
-            options={benefitNames.map((value) => ({ value, label: value }))}
+            name="refId"
+            label={refLabel}
+            placeholder={`Select ${refLabel}`}
+            options={refOptions}
             disabled={readOnly}
+            onValueChange={(value) => {
+              const label = refOptions.find((option) => option.value === value)?.label
+              if (label && form.getValues('name').trim() === '') form.setValue('name', label)
+            }}
           />
         )}
-        {category === 'leave-quotas' && (
-          <SearchSelectField
-            control={form.control}
-            name="name"
-            label="Benefit"
-            placeholder="Select Leave Type"
-            options={LEAVE_TYPES.map((value) => ({ value, label: value }))}
-            disabled={readOnly}
-          />
-        )}
-        {category === 'custom-pay-item' && (
-          <TextField
-            control={form.control}
-            name="name"
-            label="Name"
-            placeholder="Enter name"
-            disabled={readOnly}
-          />
-        )}
+        <TextField
+          control={form.control}
+          name="name"
+          label="Account Name"
+          placeholder="Enter name"
+          required
+          disabled={readOnly}
+        />
       </form>
     </PayrollDialog>
   )
@@ -142,7 +166,9 @@ const columns: DataTableColumn<AccountType>[] = [
     cell: (row) => ACCOUNT_CATEGORY_LABELS[row.category],
     mobile: 'heading',
   },
+  { id: 'code', header: 'Code', cell: (row) => row.code },
   { id: 'type', header: 'Account Type', cell: (row) => row.name },
+  { id: 'ref', header: 'Linked To', cell: (row) => row.refName ?? '—' },
 ]
 
 /** Settings → Account Type: the accounts employee balances are kept in. */
@@ -155,9 +181,10 @@ export function AccountTypesView() {
   const list = useResourceList('accountTypes', {
     page,
     pageSize: SETTINGS_PAGE_SIZE,
-    ...(filters.category ? { search: filters.category } : {}),
+    ...(filters.category ? { category: filters.category } : {}),
   })
   const remove = useDeleteResource('accountTypes')
+  const may = useSettingsCan('accountTypes')
 
   return (
     <>
@@ -176,11 +203,13 @@ export function AccountTypesView() {
             >
               <Filter aria-hidden="true" className="size-4 fill-current" />
             </Button>
-            <CreateButton
-              onClick={() => {
-                setDialog({ mode: 'create' })
-              }}
-            />
+            {may.create && (
+              <CreateButton
+                onClick={() => {
+                  setDialog({ mode: 'create' })
+                }}
+              />
+            )}
           </>
         }
       />
@@ -195,12 +224,7 @@ export function AccountTypesView() {
         rowActions={(row) => (
           <SettingsRowMenu
             label={`Actions for ${row.name}`}
-            onView={() => {
-              setDialog({ mode: 'view', record: row })
-            }}
-            onDelete={() => {
-              setDeleting(row)
-            }}
+            {...rowMenuHandlers(may, row, setDialog, setDeleting)}
           />
         )}
       />
@@ -240,7 +264,6 @@ export function AccountTypesView() {
           setDeleting(null)
         }}
         remove={remove}
-        idOf={(row) => row.id}
       />
     </>
   )

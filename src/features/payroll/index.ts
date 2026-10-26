@@ -1,5 +1,5 @@
 // Public API of the payroll feature. Import from '@/features/payroll', not from deep paths.
-export { payrollApi, payrollKeys } from './api/payroll.api'
+export { lookupApi, payrollApi, payrollKeys } from './api/payroll.api'
 export { AccountStatementPage } from './components/balances/account-statement-page'
 export { EmployeeAccountsPage } from './components/balances/employee-accounts-page'
 export { OpeningBalancePage } from './components/balances/opening-balance-page'
@@ -32,6 +32,12 @@ export { AttachmentField } from './components/shared/attachment-field'
 export { ConfirmAction } from './components/shared/confirm-action'
 export { DateField, DateInput } from './components/shared/date-input'
 export { EmployeeCard } from './components/shared/employee-card'
+export {
+  EmployeeMultiSearchSelect,
+  EmployeeMultiSearchSelectField,
+  EmployeeSearchSelect,
+  EmployeeSearchSelectField,
+} from './components/shared/employee-search-select'
 export { FiltersDialog } from './components/shared/filters-dialog'
 export { ImportButton, MenuButton, type MenuChoice } from './components/shared/menu-button'
 export { MonthField, MonthPicker } from './components/shared/month-picker'
@@ -46,6 +52,7 @@ export {
 } from './components/shared/search-select'
 export { StatusChip } from './components/shared/status-chip'
 export { TwoWaySwitch, TwoWaySwitchField } from './components/shared/two-way-switch'
+export { UploadField } from './components/shared/upload-field'
 export { YearField, YearPicker } from './components/shared/year-picker'
 export {
   PAGE_SEARCH_DEFAULTS,
@@ -75,6 +82,9 @@ export {
   formatShort,
   formatStamp,
   formatWeekday,
+  monthOf,
+  monthStart,
+  profileOf,
 } from './utils/format'
 export {
   btn,

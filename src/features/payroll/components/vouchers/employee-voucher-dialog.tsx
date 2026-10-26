@@ -1,4 +1,4 @@
-import { type SyntheticEvent, useId } from 'react'
+import { type SyntheticEvent, useId, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { format } from 'date-fns'
@@ -7,102 +7,103 @@ import { z } from 'zod'
 import { FormField, SelectField, TextareaField, TextField } from '@/components/form'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Textarea } from '@/components/ui/textarea'
+import type { EmployeeLookupRow } from '@/hooks/use-employee-lookup'
 import { ApiError } from '@/lib/api-error'
+import type { FileRef } from '@/lib/files'
 
 import { PAYMENT_METHOD_LABELS, VOUCHER_STATUS_LABELS, VOUCHER_TYPE_LABELS } from '../../constants'
-import { useEmployeeVoucher, useSaveEmployeeVoucher } from '../../hooks/use-payroll'
-import { usePayrollOptions } from '../../hooks/use-payroll-records'
+import { useDecideVoucher, useSaveVoucher, useVoucher } from '../../hooks/use-payroll'
+import { personHint, usePayrollOptions } from '../../hooks/use-payroll-records'
 import {
-  type EmployeeVoucherInput,
-  type EmployeeVoucherRow,
   PAYMENT_METHODS,
   type PaymentMethod,
-  VOUCHER_STATUSES,
   VOUCHER_TYPES,
-  type VoucherStatus,
+  type VoucherInput,
+  type VoucherRow,
   type VoucherType,
 } from '../../types/payroll.types'
-import { RsField, SectionTitle } from '../balances/list-parts'
-import { AttachmentField } from '../shared/attachment-field'
+import { formatStamp } from '../../utils/format'
+import { ReadOnlyRow, RsField, SectionTitle } from '../balances/list-parts'
 import { DateField } from '../shared/date-input'
+import { EmployeeSearchSelectField } from '../shared/employee-search-select'
 import { PayrollDialog } from '../shared/payroll-dialog'
-import { SearchSelectField } from '../shared/search-select'
+import { UploadField } from '../shared/upload-field'
 
 const DATE = 'EEE,d MMM yyyy'
 
-const person = (message: string) =>
-  z
+const schema = z.object({
+  employeeId: z
     .string()
     .nullable()
-    .refine((value) => Boolean(value), { message })
-
-const schema = z.object({
-  employeeId: person('Choose the employee'),
+    .refine((value) => Boolean(value), { message: 'Choose the employee' }),
   voucherType: z.string().min(1, 'Choose the voucher type'),
-  voucherNo: z
+  voucherNo: z.string().trim().max(30, 'Keep it under 30 characters'),
+  voucherDate: z.string().min(1, 'Choose the voucher date'),
+  currency: z
     .string()
     .trim()
-    .min(1, 'Enter the voucher number')
-    .max(40, 'Keep it under 40 characters'),
-  voucherDate: z.string().min(1, 'Choose the voucher date'),
+    .regex(/^([A-Za-z]{3})?$/, 'Use a 3-letter currency code'),
   amount: z
     .string()
     .refine((value) => Number(value.replace(/,/g, '')) > 0, { message: 'Enter the amount' }),
   paymentMethod: z.string().min(1, 'Choose the payment method'),
-  purpose: z.string().trim().max(500, 'Keep it under 500 characters'),
-  comments: z.string().trim().max(1000, 'Keep it under 1000 characters'),
-  attachmentName: z.string().nullable(),
-  requestedById: person('Choose who requested it'),
-  approvedById: person('Choose who approved it'),
-  approvalDate: z.string().min(1, 'Choose the approval date'),
-  verifiedBy: z.string().trim().min(1, 'Enter who verified it').max(80),
-  verificationDate: z.string(),
-  status: z.string().min(1, 'Choose the status'),
+  purpose: z
+    .string()
+    .trim()
+    .min(1, 'Enter the purpose of the voucher')
+    .max(500, 'Keep it under 500 characters'),
+  notes: z.string().trim().max(2000, 'Keep it under 2000 characters'),
+  requestedById: z.string().nullable(),
 })
 type Values = z.infer<typeof schema>
 
-const toValues = (row: EmployeeVoucherRow | undefined): Values => ({
+const toValues = (row: VoucherRow | undefined): Values => ({
   employeeId: row?.employeeId ?? null,
-  voucherType: row?.voucherType ?? 'expense-reimbursement',
+  voucherType: row && row.voucherType !== 'daily_wage' ? row.voucherType : 'expense_reimbursement',
   voucherNo: row?.voucherNo ?? '',
   voucherDate: row?.voucherDate ?? format(new Date(), 'yyyy-MM-dd'),
+  currency: row?.currency ?? 'PKR',
   amount: row ? String(row.amount) : '',
-  paymentMethod: row?.paymentMethod ?? 'bank-transfer',
+  paymentMethod: row?.paymentMethod ?? 'bank_transfer',
   purpose: row?.purpose ?? '',
-  comments: row?.comments ?? '',
-  attachmentName: row?.attachmentName ?? null,
+  notes: row?.notes ?? '',
   requestedById: row?.requestedById ?? null,
-  approvedById: row?.approvedById ?? null,
-  approvalDate: row?.approvalDate ?? '',
-  verifiedBy: row?.verifiedBy ?? '',
-  verificationDate: row?.verificationDate ?? '',
-  status: row?.status ?? 'pending',
 })
 
 const pick = <T extends string>(values: readonly T[], value: string, fallback: T): T =>
   values.find((item) => item === value) ?? fallback
 
-function toInput(values: Values): EmployeeVoucherInput {
+function toInput(values: Values, file: FileRef | null, rowVersion?: string): VoucherInput {
   return {
     employeeId: values.employeeId ?? '',
-    voucherType: pick<VoucherType>(VOUCHER_TYPES, values.voucherType, 'expense-reimbursement'),
-    voucherNo: values.voucherNo.trim(),
+    voucherNo: values.voucherNo.trim() || null,
+    voucherType: pick<VoucherType>(VOUCHER_TYPES, values.voucherType, 'expense_reimbursement'),
     voucherDate: values.voucherDate,
+    currency: values.currency.trim().toUpperCase() || null,
     amount: Number(values.amount.replace(/,/g, '')),
-    paymentMethod: pick<PaymentMethod>(PAYMENT_METHODS, values.paymentMethod, 'bank-transfer'),
+    paymentMethod: pick<PaymentMethod>(PAYMENT_METHODS, values.paymentMethod, 'bank_transfer'),
     purpose: values.purpose.trim(),
-    comments: values.comments.trim(),
-    attachmentName: values.attachmentName,
-    requestedById: values.requestedById ?? '',
-    approvedById: values.approvedById,
-    approvalDate: values.approvalDate || null,
-    verifiedBy: values.verifiedBy.trim(),
-    verificationDate: values.verificationDate || null,
-    status: pick<VoucherStatus>(VOUCHER_STATUSES, values.status, 'pending'),
+    notes: values.notes.trim() || null,
+    fileId: file?.id ?? null,
+    requestedById: values.requestedById,
+    ...(rowVersion ? { rowVersion } : {}),
   }
 }
 
-/** "Employee Voucher Create" / Edit / View: who, the voucher, the approval and the verification. */
+const FIELDS = [
+  'employeeId',
+  'voucherNo',
+  'voucherType',
+  'voucherDate',
+  'amount',
+  'purpose',
+] as const
+
+/**
+ * "Employee Voucher Create" / Edit / View (`POST/PUT/GET /payroll/vouchers`): who, the voucher and
+ * its attachment. Approval and Finance verification are actions on the list (the View shows them).
+ */
 export function EmployeeVoucherDialog({
   id,
   mode,
@@ -112,7 +113,7 @@ export function EmployeeVoucherDialog({
   mode: 'create' | 'edit' | 'view'
   onClose: () => void
 }) {
-  const voucher = useEmployeeVoucher(id)
+  const voucher = useVoucher(id)
   if (id && !voucher.data) {
     return (
       <PayrollDialog
@@ -132,34 +133,38 @@ function VoucherForm({
   mode,
   onClose,
 }: {
-  row: EmployeeVoucherRow | undefined
+  row: VoucherRow | undefined
   mode: 'create' | 'edit' | 'view'
   onClose: () => void
 }) {
   const formId = useId()
-  const options = usePayrollOptions()
-  const save = useSaveEmployeeVoucher()
+  const options = usePayrollOptions('payroll.vouchers.view')
+  const save = useSaveVoucher()
   const readOnly = mode === 'view'
+  const [file, setFile] = useState<FileRef | null>(row?.file ?? null)
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues(row) })
   const employeeId = useWatch({ control: form.control, name: 'employeeId' })
-  const attachment = useWatch({ control: form.control, name: 'attachmentName' })
-  const chosen = options.lookups?.employees.find((item) => item.id === employeeId)
+  // The picked person's lookup row (code, department, designation).
+  const [picked, setPicked] = useState<EmployeeLookupRow | undefined>(undefined)
+  const chosen = picked?.id === employeeId ? picked : undefined
 
   const submit = form.handleSubmit(async (values) => {
     try {
-      await save.mutateAsync({ id: row?.id, input: toInput(values) })
+      await save.mutateAsync({ id: row?.id, input: toInput(values, file, row?.rowVersion) })
       onClose()
     } catch (error) {
-      if (error instanceof ApiError) {
-        const field = Object.keys(error.fieldErrors)[0]
-        if (field === 'voucherNo') form.setError('voucherNo', { message: error.fieldErrors[field] })
-        else form.setError('root', { message: error.message })
+      if (!(error instanceof ApiError)) {
+        form.setError('root', { message: 'Could not save the voucher.' })
+        return
       }
+      const field = FIELDS.find((name) => error.fieldErrors[name])
+      if (field) form.setError(field, { message: error.fieldErrors[field] })
+      else form.setError('root', { message: error.message })
     }
   })
 
   const readOnlyBox = (label: string, value: string) => (
-    <FormField label={label} required>
+    <FormField label={label}>
       {(a11y) => <Input {...a11y} readOnly value={value} className="bg-card" />}
     </FormField>
   )
@@ -185,18 +190,30 @@ function VoucherForm({
         onSubmit={(event: SyntheticEvent) => void submit(event)}
         className="grid gap-5"
       >
-        <SearchSelectField
+        <EmployeeSearchSelectField
           control={form.control}
           name="employeeId"
           label="Employee Name"
           placeholder="Select Employee"
-          options={options.activeEmployees}
+          filters={readOnly ? options.employeeFilters : options.activeEmployeeFilters}
+          known={
+            row
+              ? [{ value: row.employeeId, label: row.employeeName, hint: row.employeeCode }]
+              : undefined
+          }
+          hint={personHint}
+          onValueChange={(_, person) => {
+            setPicked(person)
+          }}
           required
-          disabled={readOnly}
+          disabled={readOnly || mode === 'edit'}
         />
-        {readOnlyBox('Employee ID', chosen?.code ?? '')}
-        {readOnlyBox('Department', chosen?.department ?? '')}
-        {readOnlyBox('Designation', chosen?.designation ?? '')}
+        {readOnlyBox('Employee ID', chosen?.code ?? row?.employeeCode ?? '')}
+        {readOnlyBox('Department', chosen?.departmentName ?? row?.departmentName ?? '')}
+        {readOnlyBox(
+          'Designation',
+          chosen?.designationName ?? chosen?.jobTitleName ?? row?.designationName ?? '',
+        )}
 
         <SectionTitle>Voucher Details</SectionTitle>
         <SelectField
@@ -211,7 +228,7 @@ function VoucherForm({
           control={form.control}
           name="voucherNo"
           label="Voucher No"
-          required
+          placeholder="Next VCH- number"
           disabled={readOnly}
         />
         <DateField
@@ -222,11 +239,13 @@ function VoucherForm({
           disabled={readOnly}
           display={DATE}
         />
-        <RsField control={form.control} name="amount" label="Currency" readOnly={readOnly} />
+        <TextField control={form.control} name="currency" label="Currency" disabled={readOnly} />
+        <RsField control={form.control} name="amount" label="Amount" required readOnly={readOnly} />
         <SelectField
           control={form.control}
           name="paymentMethod"
           label="Payment Method"
+          required
           disabled={readOnly}
           options={PAYMENT_METHODS.map((method) => ({
             value: method,
@@ -237,78 +256,118 @@ function VoucherForm({
           control={form.control}
           name="purpose"
           label="Purpose Of Voucher"
+          required
           disabled={readOnly}
           textareaClassName="min-h-20"
         />
         <TextareaField
           control={form.control}
-          name="comments"
+          name="notes"
           label="Comments/ Additional Notes"
           disabled={readOnly}
           textareaClassName="min-h-24"
         />
-        <AttachmentField
-          value={attachment}
-          disabled={readOnly}
-          onChange={(name) => {
-            form.setValue('attachmentName', name, { shouldDirty: true })
-          }}
-        />
-
-        <SectionTitle>Approval Web Flow</SectionTitle>
-        <SearchSelectField
+        <UploadField value={file} disabled={readOnly} onChange={setFile} />
+        <EmployeeSearchSelectField
           control={form.control}
           name="requestedById"
           label="Requested By (Employee)"
           placeholder="Employee"
-          options={options.activeEmployees}
-          required
+          filters={options.activeEmployeeFilters}
+          known={
+            row?.requestedById && row.requestedByName
+              ? [{ value: row.requestedById, label: row.requestedByName }]
+              : undefined
+          }
+          hint={personHint}
+          clearable
           disabled={readOnly}
-        />
-        <SearchSelectField
-          control={form.control}
-          name="approvedById"
-          label="Approved By (Manager/ Supervisor)"
-          placeholder="Employee"
-          options={options.activeEmployees}
-          required
-          disabled={readOnly}
-        />
-        <DateField
-          control={form.control}
-          name="approvalDate"
-          label="Approval Date"
-          required
-          disabled={readOnly}
-          display={DATE}
         />
 
-        <SectionTitle>Verification</SectionTitle>
-        <TextField
-          control={form.control}
-          name="verifiedBy"
-          label="Verified By (Finance/ Admin)"
-          required
-          disabled={readOnly}
-        />
-        <DateField
-          control={form.control}
-          name="verificationDate"
-          label="Verification Date"
-          disabled={readOnly}
-          display={DATE}
-        />
-        <SelectField
-          control={form.control}
-          name="status"
-          label="Voucher Status"
-          disabled={readOnly}
-          options={VOUCHER_STATUSES.map((status) => ({
-            value: status,
-            label: VOUCHER_STATUS_LABELS[status],
-          }))}
-        />
+        {row && (
+          <>
+            <SectionTitle>Approval Web Flow</SectionTitle>
+            <ReadOnlyRow label="Voucher Status" value={VOUCHER_STATUS_LABELS[row.status]} />
+            <ReadOnlyRow label="Approved By" value={row.approvedByName ?? '—'} />
+            <ReadOnlyRow
+              label="Approval Date"
+              value={row.approvedAt ? formatStamp(row.approvedAt) : '—'}
+            />
+            <SectionTitle>Verification</SectionTitle>
+            <ReadOnlyRow label="Verified By" value={row.verifiedByName ?? '—'} />
+            <ReadOnlyRow
+              label="Verification Date"
+              value={row.verifiedAt ? formatStamp(row.verifiedAt) : '—'}
+            />
+            <ReadOnlyRow label="Remarks" value={row.remarks ?? '—'} />
+          </>
+        )}
       </form>
+    </PayrollDialog>
+  )
+}
+
+const DECISION_TITLES = {
+  approve: 'Approve Voucher',
+  reject: 'Reject Voucher',
+  verify: 'Verify Voucher',
+} as const
+
+/** Approve / Reject (manager) or Verify for payment (Finance), with optional remarks. */
+export function VoucherDecisionDialog({
+  row,
+  action,
+  onClose,
+}: {
+  row: VoucherRow
+  action: 'approve' | 'reject' | 'verify'
+  onClose: () => void
+}) {
+  const [remarks, setRemarks] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const decide = useDecideVoucher()
+  return (
+    <PayrollDialog
+      title={DECISION_TITLES[action]}
+      onClose={onClose}
+      saveLabel={action === 'approve' ? 'Approve' : action === 'reject' ? 'Reject' : 'Verify'}
+      pending={decide.isPending}
+      error={error}
+      className="max-w-2xl"
+      onSave={() => {
+        setError(null)
+        decide.mutate(
+          {
+            id: row.id,
+            action,
+            input: { remarks: remarks.trim() || null, rowVersion: row.rowVersion },
+          },
+          {
+            onSuccess: onClose,
+            onError: (reason) => {
+              setError(reason instanceof ApiError ? reason.message : 'That could not be done.')
+            },
+          },
+        )
+      }}
+    >
+      <div className="grid gap-4">
+        <ReadOnlyRow label="Voucher" value={`${row.voucherNo} · ${row.employeeName}`} />
+        <ReadOnlyRow label="Type" value={VOUCHER_TYPE_LABELS[row.voucherType]} />
+        <FormField label="Remarks">
+          {(a11y) => (
+            <Textarea
+              {...a11y}
+              value={remarks}
+              maxLength={2000}
+              onChange={(event) => {
+                setRemarks(event.target.value)
+              }}
+              className="min-h-24"
+            />
+          )}
+        </FormField>
+      </div>
     </PayrollDialog>
   )
 }

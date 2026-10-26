@@ -1,5 +1,7 @@
 import { useState } from 'react'
 
+import type { EmployeeLookupFilters } from '@/hooks/use-employee-lookup'
+
 import type { SearchOption } from '../components/shared/search-select'
 
 export type FilterValues = Record<string, string | undefined>
@@ -11,6 +13,17 @@ export type FilterField =
       label: string
       placeholder: string
       options: readonly SearchOption[]
+    }
+  | {
+      /** A person from `GET /employees/lookup` (searched on the server, paged). */
+      kind: 'employee'
+      key: string
+      label: string
+      placeholder: string
+      /** Whom the list holds (the screen's permission code …). */
+      filters: EmployeeLookupFilters
+      /** Names for ids the lookup has not read yet. */
+      known?: readonly SearchOption[]
     }
   | { kind: 'text'; key: string; label: string; placeholder?: string }
   | { kind: 'range'; key: string; label: string; from: string; to: string }
