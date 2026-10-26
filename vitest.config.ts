@@ -2,8 +2,9 @@ import { defineConfig, mergeConfig } from 'vitest/config'
 
 import viteConfig from './vite.config.ts'
 
+// vite.config.ts exports a function of the mode; tests run in the "test" mode.
 export default mergeConfig(
-  viteConfig,
+  viteConfig({ mode: 'test', command: 'serve', isSsrBuild: false, isPreview: false }),
   defineConfig({
     test: {
       environment: 'jsdom',

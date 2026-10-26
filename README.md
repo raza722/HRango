@@ -1,18 +1,16 @@
-# Top Edge Technologies HRMS — frontend shell
+# hRango — web app
 
-Frontend-only shell for the Top Edge Technologies HR Management System. There is no backend yet:
-every request is answered in the browser by [Mock Service Worker](https://mswjs.io), so the app
-runs end to end from `npm run dev`.
+The hRango web app (HR, attendance, payroll and people operations), built by Top Edge Technologies.
+It runs against the real HRango API (`../backend`), or entirely in the browser against
+[Mock Service Worker](https://mswjs.io) mocks that follow the same API contract.
 
-**Warning → Policy** is the fully built reference feature (form, sub-forms per time span, table,
-view page, create / edit / optimistic delete). **Settings → Control Panel** is built too: the
-organisation setup (Branch, Location, Area, Job Title) with lists, create/edit forms and a map
-picker, plus General Settings. **Roster** is built as well: roster groups with a weekly shift
-pattern, and enrolling employees in them. The other modules are routed, gated and shown in the
-navigation, with placeholder pages listing the screens planned for them.
+Branding: hRango's own logos are in `public/` (`logo-full-*.png`, `logo-icon-*.png`; see
+`src/lib/brand.ts`) and appear on the sign-in page, the browser tab and "Powered by hRango". The
+sidebar shows the organisation using hRango: its name and the logo set in Settings → Control Panel →
+General Settings (`companyName` / `companyLogoUrl` from `GET /auth/me`). Top Edge Technologies appears
+only as "Powered by".
 
-The look follows the Figma file _HRango – UI design_ (Warning Section frames): navy sidebar,
-light grey canvas, white cards, purple primary button, chip selectors, blue pager.
+How each screen maps to the API: `docs/backend-mapping/*.md`.
 
 ---
 
@@ -20,20 +18,25 @@ light grey canvas, white cards, purple primary button, chip selectors, blue page
 
 ```bash
 npm install
-npm run dev
+npm run dev:api
 ```
 
-Open <http://localhost:5190>, then sign in with the mock demo account (the login page has a
-**Fill in the demo account** button):
+`npm run dev:api` (mode `backend`, `.env.backend`) talks to the API: start it first
+(`..\backend\run.bat`, port 8000); Vite proxies `/api` to it. Open <http://localhost:5190> and sign in
+with an account of the API's database. The local development database has a demo administrator:
 
 | Email                         | Password    |
 | ----------------------------- | ----------- |
 | `shelley.kannes@topedge.tech` | `Demo@1234` |
 
-These are test values that exist only inside the mock API (`src/features/auth/constants.ts`).
+These are test values for local development only (`src/features/auth/constants.ts`; the login page
+has a **Fill in the demo account** button in development).
 
-Requirements: Node 20.19+ (developed on Node 25). Mock data created in the browser is kept in
-`sessionStorage`, so it survives a reload but not a new tab; close the tab to reset it.
+`npm run dev` runs without an API: every request is answered in the browser by the mocks, with the
+same demo account. Mock data created in the browser is kept in `sessionStorage`, so it survives a
+reload but not a new tab; close the tab to reset it.
+
+Requirements: Node 20.19+ (developed on Node 25).
 
 If a tab sits in the background for a long time, the browser can stop MSW's service worker; API
 calls then return the HTML page instead of JSON. Reload the tab to start it again.

@@ -28,7 +28,9 @@ import { ProjectManagementIcon } from '@/components/icons/project-management-ico
 import { LeavesNavIcon, RequestsNavIcon } from '@/components/icons/request-icons'
 import { RosterIcon } from '@/components/icons/roster-icon'
 import { SchedulingIcon } from '@/components/icons/scheduling-icon'
+import { can } from '@/lib/permissions'
 import type { FileRouteTypes } from '@/routeTree.gen'
+import type { AuthUser } from '@/types/auth'
 
 /** Every navigable path in the app, derived from the generated route tree. */
 export type AppPath = FileRouteTypes['to']
@@ -44,6 +46,8 @@ export interface NavChild {
   alwaysOpen?: boolean
   /** Drawn in place of the tree's ring bullet (Manpower Planning's pages). */
   icon?: ComponentType<SVGProps<SVGSVGElement>>
+  /** Who sees it: see {@link NavPermission}. Without one the item follows its parent. */
+  permission?: NavPermission
 }
 
 export interface NavItem {
@@ -57,51 +61,174 @@ export interface NavItem {
   children?: readonly NavChild[]
   /** Draw the children as Payroll's tree: circle bullets, nested groups. */
   tree?: boolean
+  /** Who sees it: see {@link NavPermission}. Without one the item is always shown. */
+  permission?: NavPermission
+}
+
+/**
+ * Screens a menu entry opens, as permission code prefixes (`app/catalogue/<module>.py` on the
+ * API): the entry shows when the user may view any screen under one of them. `'payroll'`
+ * matches `payroll.payslips.view` and `payroll.settings.tax.view`; `'attendance.overview'`
+ * matches `attendance.overview.view`.
+ */
+export type NavPermission = string | readonly string[]
+
+/** May the user view a screen under this code prefix? */
+function canViewUnder(user: AuthUser | null, prefix: string): boolean {
+  return (
+    can(user, `${prefix}.view`) || can(user, `${prefix}.*.view`) || can(user, `${prefix}.*.*.view`)
+  )
+}
+
+function allowed(user: AuthUser | null, permission: NavPermission | undefined): boolean {
+  if (permission === undefined) return true
+  const prefixes: readonly string[] = typeof permission === 'string' ? [permission] : permission
+  return prefixes.some((prefix) => canViewUnder(user, prefix))
+}
+
+function visibleChildren(
+  children: readonly NavChild[],
+  user: AuthUser | null,
+): readonly NavChild[] {
+  return children.flatMap((child): NavChild[] => {
+    if (!allowed(user, child.permission)) return []
+    if (!child.children) return [child]
+    const nested = visibleChildren(child.children, user)
+    // A group whose pages are all hidden goes too; one with its own permission keeps its page.
+    if (nested.length === 0 && child.permission === undefined) return []
+    return [{ ...child, children: nested }]
+  })
+}
+
+/**
+ * The menu the user may use: items and pages they hold no view permission for are left out,
+ * and a parent whose children are all hidden goes too. A user without a permissions list
+ * (the mock API) sees everything. The server checks every request anyway.
+ */
+export function filterNavItems(items: readonly NavItem[], user: AuthUser | null): NavItem[] {
+  return items.flatMap((item): NavItem[] => {
+    if (!allowed(user, item.permission)) return []
+    if (!item.children) return [item]
+    const children = visibleChildren(item.children, user)
+    return children.length === 0 ? [] : [{ ...item, children }]
+  })
 }
 
 /** Sidebar entries, in the order drawn in the Figma side menu. */
 export const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Dashboard', to: '/', icon: DashboardIcon, exact: true },
-  { label: 'Recruitment', to: '/recruitment', icon: RecruitmentIcon },
-  { label: 'Talent Management', to: '/talent-management', icon: TalentManagementIcon },
-  { label: 'Separation Management', to: '/separation-management', icon: SeparationManagementIcon },
+  { label: 'Recruitment', to: '/recruitment', icon: RecruitmentIcon, permission: 'recruitment' },
+  {
+    label: 'Talent Management',
+    to: '/talent-management',
+    icon: TalentManagementIcon,
+    permission: 'employees',
+  },
+  {
+    label: 'Separation Management',
+    to: '/separation-management',
+    icon: SeparationManagementIcon,
+    permission: 'offboarding',
+  },
   {
     label: 'Attendance',
     to: '/attendance',
     icon: AttendanceIcon,
+    permission: ['attendance', 'scheduling.settings'],
     children: [
-      { label: 'Attendance Overview', to: '/attendance/overview' },
-      { label: 'Time Sheet', to: '/attendance/time-sheet' },
-      { label: 'Attendance Logs', to: '/attendance/logs' },
-      { label: 'Attendance Settings', to: '/attendance/settings' },
+      {
+        label: 'Attendance Overview',
+        to: '/attendance/overview',
+        permission: 'attendance.overview',
+      },
+      { label: 'Time Sheet', to: '/attendance/time-sheet', permission: 'attendance.time_sheet' },
+      { label: 'Attendance Logs', to: '/attendance/logs', permission: 'attendance.logs' },
+      {
+        label: 'Attendance Settings',
+        to: '/attendance/settings',
+        // Scheduling's tabs (rest days, break types, holidays, time slots) live here too.
+        permission: ['attendance.settings', 'scheduling.settings'],
+      },
     ],
   },
-  { label: 'Leaves', to: '/leaves', icon: LeavesNavIcon },
+  { label: 'Leaves', to: '/leaves', icon: LeavesNavIcon, permission: 'leaves' },
   {
     label: 'Requests',
     to: '/requests',
     icon: RequestsNavIcon,
+    permission: 'requests',
     // The Request Settings frames (3894:26499) draw the sidebar's Requests as this tree; its
     // items follow the in-page sub menu (Travel and Transfer included, Requisition left out:
     // it has no screens). "Relaxion" and "Deligation" are spelt correctly.
     tree: true,
     children: [
-      { label: 'Punch', to: '/requests/punch' },
-      { label: 'Expense', to: '/requests/$type', params: { type: 'expense' } },
-      { label: 'Leave', to: '/requests/$type', params: { type: 'leave' } },
-      { label: 'Shift Request', to: '/requests/shift' },
-      { label: 'Loan & Advances', to: '/requests/$type', params: { type: 'loan-advances' } },
-      { label: 'Work from Home', to: '/requests/$type', params: { type: 'work-from-home' } },
-      { label: 'Official Visit', to: '/requests/$type', params: { type: 'official-visits' } },
-      { label: 'Promotion', to: '/requests/$type', params: { type: 'promotion' } },
-      { label: 'Relaxation', to: '/requests/$type', params: { type: 'relaxation' } },
-      { label: 'Rest Days', to: '/requests/$type', params: { type: 'rest-days' } },
-      { label: 'Travel', to: '/requests/$type', params: { type: 'travel' } },
-      { label: 'Transfer', to: '/requests/transfer' },
-      { label: 'Resignation', to: '/requests/$type', params: { type: 'resignation' } },
+      { label: 'Punch', to: '/requests/punch', permission: 'requests.punch' },
+      {
+        label: 'Expense',
+        to: '/requests/$type',
+        params: { type: 'expense' },
+        permission: 'requests.expense',
+      },
+      {
+        label: 'Leave',
+        to: '/requests/$type',
+        params: { type: 'leave' },
+        permission: 'requests.leave',
+      },
+      { label: 'Shift Request', to: '/requests/shift', permission: 'requests.shift_swap' },
+      {
+        label: 'Loan & Advances',
+        to: '/requests/$type',
+        params: { type: 'loan-advances' },
+        permission: 'requests.loan',
+      },
+      {
+        label: 'Work from Home',
+        to: '/requests/$type',
+        params: { type: 'work-from-home' },
+        permission: 'requests.work_from_home',
+      },
+      {
+        label: 'Official Visit',
+        to: '/requests/$type',
+        params: { type: 'official-visits' },
+        permission: 'requests.official_visit',
+      },
+      {
+        label: 'Promotion',
+        to: '/requests/$type',
+        params: { type: 'promotion' },
+        permission: 'requests.promotion',
+      },
+      {
+        label: 'Relaxation',
+        to: '/requests/$type',
+        params: { type: 'relaxation' },
+        permission: 'requests.relaxation',
+      },
+      {
+        label: 'Rest Days',
+        to: '/requests/$type',
+        params: { type: 'rest-days' },
+        permission: 'requests.rest_day',
+      },
+      {
+        label: 'Travel',
+        to: '/requests/$type',
+        params: { type: 'travel' },
+        permission: 'requests.travel',
+      },
+      { label: 'Transfer', to: '/requests/transfer', permission: 'requests.transfer' },
+      {
+        label: 'Resignation',
+        to: '/requests/$type',
+        params: { type: 'resignation' },
+        permission: 'requests.resignation',
+      },
       {
         label: 'Settings',
         to: '/requests/settings',
+        permission: 'requests.settings',
         children: [
           { label: 'Request Restriction', to: '/requests/settings/restrictions' },
           { label: 'Delegation', to: '/requests/settings/delegation' },
@@ -114,6 +241,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'Payroll',
     to: '/payroll',
     icon: PayrollIcon,
+    permission: 'payroll',
     tree: true,
     children: [
       { label: 'Dashboard', to: '/payroll/dashboard' },
@@ -175,6 +303,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'Assets',
     to: '/assets',
     icon: AssetsIcon,
+    permission: 'assets',
     tree: true,
     children: [
       { label: 'Company Assets', to: '/assets/company-assets' },
@@ -187,6 +316,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'End of Employment',
     to: '/end-of-employment',
     icon: EndOfEmploymentIcon,
+    permission: 'offboarding.end_of_employment',
     tree: true,
     children: [
       { label: 'All', to: '/end-of-employment/all' },
@@ -198,6 +328,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'Project Management',
     to: '/project-management',
     icon: ProjectManagementIcon,
+    permission: 'projects',
     // The Project Management files' side menu (388:137608): four dashboards and Create
     // Workspace, drawn as a tree between Payroll and Performance.
     tree: true,
@@ -209,18 +340,24 @@ export const NAV_ITEMS: readonly NavItem[] = [
       { label: 'Create Workspace', to: '/project-management/workspaces' },
     ],
   },
-  { label: 'Performance', to: '/performance', icon: PerformanceIcon },
+  {
+    label: 'Performance',
+    to: '/performance',
+    icon: PerformanceIcon,
+    permission: ['performance', 'training'],
+  },
   // HRango Dashboard App Version, section Benefits: one item, right after Performance.
-  { label: 'Benefits', to: '/benefits', icon: BenefitsIcon },
-  { label: 'Roster', to: '/roster', icon: RosterIcon },
-  { label: 'Warning', to: '/warning', icon: WarningIcon },
-  { label: 'Scheduling', to: '/scheduling', icon: SchedulingIcon },
+  { label: 'Benefits', to: '/benefits', icon: BenefitsIcon, permission: 'benefits' },
+  { label: 'Roster', to: '/roster', icon: RosterIcon, permission: 'roster' },
+  { label: 'Warning', to: '/warning', icon: WarningIcon, permission: 'warning' },
+  { label: 'Scheduling', to: '/scheduling', icon: SchedulingIcon, permission: 'scheduling' },
   { label: 'Configuration', to: '/configuration', icon: ConfigurationIcon },
   { label: 'Custom Form', to: '/custom-form', icon: CustomFormIcon },
   {
     label: 'Manpower Planning',
     to: '/manpower-planning',
     icon: ManpowerPlanningIcon,
+    permission: 'manpower',
     // HRango Dashboard App Version, page App UI: the Manpower Planning frames' side menu.
     tree: true,
     children: [
@@ -248,12 +385,25 @@ export const NAV_ITEMS: readonly NavItem[] = [
     to: '/settings',
     icon: SettingsIcon,
     children: [
+      // No API module yet: shown to everyone (a placeholder page).
       { label: 'Custom Forms', to: '/settings/custom-forms' },
-      { label: 'Control Panel', to: '/settings/control-panel' },
-      { label: 'Off Boarding Settings', to: '/settings/off-boarding' },
-      { label: 'System User', to: '/settings/system-users' },
-      { label: 'User Group Permissions', to: '/settings/user-group-permissions' },
-      { label: 'Biometric Devices', to: '/settings/biometric-devices' },
+      { label: 'Control Panel', to: '/settings/control-panel', permission: 'organisation' },
+      {
+        label: 'Off Boarding Settings',
+        to: '/settings/off-boarding',
+        permission: 'offboarding.settings',
+      },
+      { label: 'System User', to: '/settings/system-users', permission: 'access.users' },
+      {
+        label: 'User Group Permissions',
+        to: '/settings/user-group-permissions',
+        permission: 'access.roles',
+      },
+      {
+        label: 'Biometric Devices',
+        to: '/settings/biometric-devices',
+        permission: 'attendance.settings.devices',
+      },
     ],
   },
 ]

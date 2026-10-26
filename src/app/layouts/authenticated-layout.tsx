@@ -2,7 +2,7 @@ import { Outlet } from '@tanstack/react-router'
 
 import { NAV_ITEMS } from '@/app/navigation'
 import { LanguageSwitcher, Sidebar, SIDEBAR_WIDTH, ThemeToggle, Topbar } from '@/components/layout'
-import { useLogout } from '@/features/auth'
+import { useLogout, useSessionRefresh } from '@/features/auth'
 import { InboxMenu } from '@/features/inbox'
 import { BREAKPOINTS, useMediaQuery } from '@/hooks/use-media-query'
 import { useAuthStore } from '@/stores/auth-store'
@@ -14,6 +14,7 @@ export function AuthenticatedLayout() {
   const collapsed = useSidebarStore((state) => state.collapsed)
   const isDesktop = useMediaQuery(BREAKPOINTS.desktop)
   const logout = useLogout()
+  useSessionRefresh()
 
   const offset = isDesktop ? (collapsed ? SIDEBAR_WIDTH.collapsed : SIDEBAR_WIDTH.expanded) : 0
 

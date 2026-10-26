@@ -1,5 +1,6 @@
 import { http, HttpResponse } from 'msw'
 
+import companyLogoUrl from '@/assets/brand/logo-top-edge.svg'
 import avatarUrl from '@/assets/images/avatar-shelley-kannes.png'
 import { DEMO_ACCOUNT } from '@/features/auth'
 import type { ApiItem } from '@/types/api'
@@ -21,6 +22,10 @@ export const DEMO_USER: AuthUser = {
   email: DEMO_ACCOUNT.email,
   role: 'HR Manager',
   avatarUrl,
+  employeeId: 'em_shelley',
+  // The demo tenant: the organisation using hRango in mock mode.
+  companyName: 'Top Edge Technologies',
+  companyLogoUrl,
 }
 
 interface LoginBody {

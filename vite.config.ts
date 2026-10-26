@@ -3,10 +3,10 @@ import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     // Must run before the React plugin. Paths and code style come from tsr.config.json,
     // which `npm run routes:generate` (the CLI) reads too.
@@ -38,9 +38,16 @@ export default defineConfig({
   server: {
     port: 5190,
     strictPort: true,
+    // The real API (npm run dev:api). With mocks on, MSW answers before a request gets here.
+    proxy: {
+      '/api': {
+        target: loadEnv(mode, process.cwd(), '').VITE_DEV_API_TARGET || 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+    },
   },
   preview: {
     port: 5191,
     strictPort: true,
   },
-})
+}))

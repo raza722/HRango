@@ -1,5 +1,5 @@
 export { authApi } from './api/auth.api'
 export { LoginPage } from './components/login-page'
 export { DEMO_ACCOUNT } from './constants'
-export { useLogin, useLogout } from './hooks/use-auth'
+export { useLogin, useLogout, useSessionRefresh } from './hooks/use-auth'
 export { type LoginInput, loginSchema } from './schemas/login.schema'

@@ -7,6 +7,7 @@ import { attendanceSettingsHandlers } from './attendance/settings-handlers'
 import { authHandlers } from './auth/handlers'
 import { benefitsHandlers, resetBenefitsDb } from './benefits/handlers'
 import { dashboardHandlers } from './dashboard/handlers'
+import { filesHandlers } from './files/handlers'
 import { inboxHandlers, resetInbox } from './inbox/handlers'
 import { leavesHandlers, resetLeavesDb } from './leaves/handlers'
 import { manpowerPlanningHandlers, resetManpowerPlanningDb } from './manpower-planning/handlers'
@@ -32,6 +33,7 @@ import { warningPolicies, warningPolicyHandlers } from './warning-policies/handl
 /** Every mock endpoint. Add a feature's handlers here after creating `src/mocks/<feature>/`. */
 export const handlers = [
   ...authHandlers,
+  ...filesHandlers,
   ...dashboardHandlers,
   ...inboxHandlers,
   ...warningPolicyHandlers,

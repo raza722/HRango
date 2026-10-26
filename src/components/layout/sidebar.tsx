@@ -1,7 +1,6 @@
 import { Link } from '@tanstack/react-router'
 
-import type { NavItem } from '@/app/navigation'
-import logoUrl from '@/assets/brand/logo-top-edge.svg'
+import { filterNavItems, type NavItem } from '@/app/navigation'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { BREAKPOINTS, useMediaQuery } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
@@ -9,6 +8,7 @@ import { useSidebarStore } from '@/stores/sidebar-store'
 import type { AuthUser } from '@/types/auth'
 
 import { SIDEBAR_WIDTH } from './constants'
+import { OrganisationBrand, PoweredBy } from './organisation-brand'
 import { SidebarNav } from './sidebar-nav'
 import { SidebarUserCard } from './sidebar-user-card'
 
@@ -31,19 +31,9 @@ function SidebarPanel({ items, user, onSignOut, collapsed, onNavigate }: Sidebar
           to="/"
           onClick={onNavigate}
           className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-sidebar-muted/60"
-          aria-label="Top Edge Technologies - go to dashboard"
+          aria-label={`${user?.companyName ?? 'Home'} - go to dashboard`}
         >
-          {collapsed ? (
-            <img
-              src={`${import.meta.env.BASE_URL}favicon.svg`}
-              alt=""
-              className="size-9"
-              width={36}
-              height={36}
-            />
-          ) : (
-            <img src={logoUrl} alt="" className="h-[2.9375rem] w-auto" width={108} height={47} />
-          )}
+          <OrganisationBrand user={user} collapsed={collapsed} />
         </Link>
       </div>
 
@@ -56,8 +46,15 @@ function SidebarPanel({ items, user, onSignOut, collapsed, onNavigate }: Sidebar
           collapsed ? 'px-3' : 'px-4',
         )}
       >
-        <SidebarNav items={items} collapsed={collapsed} onNavigate={onNavigate} />
+        {/* Only the entries the user holds a view permission for (all of them in mock mode). */}
+        <SidebarNav
+          items={filterNavItems(items, user)}
+          collapsed={collapsed}
+          onNavigate={onNavigate}
+        />
       </nav>
+
+      <PoweredBy collapsed={collapsed} />
     </div>
   )
 }
