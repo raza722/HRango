@@ -161,6 +161,21 @@ export function TimeWindowForm({
               ? 'Start Time and End Time must fall inside this shift.'
               : undefined
 
+  // Official Visit: a visit may fall outside the day's shift, but say so (a slip is likely).
+  const [startTime, endTime] = useWatch({ control: form.control, name: ['startTime', 'endTime'] })
+  const day = shift.data
+  const outsideShift =
+    !readOnly &&
+    !options.needsShift &&
+    day?.start &&
+    day.end &&
+    day.start < day.end &&
+    startTime &&
+    endTime &&
+    (startTime < day.start || endTime > day.end)
+      ? `This visit (${clock(startTime)} - ${clock(endTime)}) is outside the day's shift (${clock(day.start)} - ${clock(day.end)}). Check the times, or save it as it is.`
+      : null
+
   const submit = form.handleSubmit(async (values) => {
     if (pickPerson && !values.employeeId) {
       form.setError('employeeId', { message: 'Choose the employee' })
@@ -251,6 +266,14 @@ export function TimeWindowForm({
           required
           disabled={readOnly}
         />
+        {outsideShift && (
+          <p
+            role="status"
+            className="rounded-md bg-amber-100 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"
+          >
+            {outsideShift}
+          </p>
+        )}
         <TextareaField
           control={form.control}
           name="reason"

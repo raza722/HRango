@@ -9,13 +9,18 @@ import { statusLabel } from './standard-styles'
 
 type Column<P> = DataTableColumn<StandardRequest<P>>
 
-/** The tick column: only requests waiting for your decision can be ticked (any request type). */
+/**
+ * The tick column: only requests waiting for your decision can be ticked (any request type).
+ * `excluded` keeps a row unticked though it waits (the requester's own Promotion).
+ */
 export function selectColumn<R extends { id: string; code: string; actions: readonly string[] }>(
   rows: readonly R[],
   selected: ReadonlySet<string>,
   onChange: (next: ReadonlySet<string>) => void,
+  excluded: (row: R) => boolean = () => false,
 ): DataTableColumn<R> {
-  const tickable = rows.filter((row) => row.actions.includes('decide'))
+  const canTick = (row: R) => row.actions.includes('decide') && !excluded(row)
+  const tickable = rows.filter(canTick)
   const allTicked = tickable.length > 0 && tickable.every((row) => selected.has(row.id))
   return {
     id: 'select',
@@ -37,7 +42,7 @@ export function selectColumn<R extends { id: string; code: string; actions: read
         tone="navy"
         aria-label={`Select ${row.code}`}
         checked={selected.has(row.id)}
-        disabled={!row.actions.includes('decide')}
+        disabled={!canTick(row)}
         onCheckedChange={(checked) => {
           const next = new Set(selected)
           if (checked === true) next.add(row.id)

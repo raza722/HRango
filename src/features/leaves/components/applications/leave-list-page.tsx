@@ -32,6 +32,7 @@ import {
   useDepartmentLookup,
   useLeaveApplicationCounts,
   useLeaveApplications,
+  useLeaveWaitingIds,
 } from '../../hooks/use-leaves'
 import type { LeaveListSearch } from '../../routing'
 import {
@@ -148,13 +149,13 @@ const shortLabel = (value: string | null) =>
     ? SHORT_LEAVE_LABELS[value as (typeof SHORT_LEAVE_TYPES)[number]]
     : (value ?? '')
 
-/** The columns as drawn: Sr#., (Employees), Category, Type, Days, Leave Date, Applied On, Reason, Status. */
+/** The columns as drawn: Sr#, (Employees), Category, Type, Days, Leave Date, Applied On, Reason, Status. */
 function columnsFor(scope: LeaveListScope, page: number): readonly Column[] {
   const nowrap = (content: string) => <span className="whitespace-nowrap">{content}</span>
   return [
     {
       id: 'serial',
-      header: 'Sr#.',
+      header: 'Sr#',
       mobile: 'hidden',
       cell: (_row, index) => serial(page, LEAVES_PAGE_SIZE, index),
     },
@@ -248,8 +249,9 @@ function TabSwitch({ value, onChange }: { value: LeaveTab; onChange: (tab: Leave
  * My Leaves (frame 4428:89943) and Leave Applications (4428:90071): the
  * title, "All Requests ⌄" with the count of each status, Filter, "+ Apply
  * Leave", the list and its pager. The row menu offers View and Cancel on your
- * own applications, View and Approve/Reject on everyone's; the buttons follow
- * the signed-in person's permission codes.
+ * own applications, View and Approve/Reject on the ones waiting for your
+ * decision (`GET /requests/approvals`); the buttons follow the signed-in
+ * person's permission codes.
  */
 export function LeaveListPage({
   scope,
@@ -272,7 +274,12 @@ export function LeaveListPage({
   const filtering = dialog?.type === 'filters'
   const types = useAllLeaveTypes(filtering)
   const departments = useDepartmentLookup(filtering && scope !== 'my')
-  const query = apiFilters(filters)
+  // A profile's link names the person in the URL (`?employeeId=`); the Filters dialog takes over.
+  const query = apiFilters(
+    scope === 'applications' && search.employeeId
+      ? { ...filters, employeeId: search.employeeId }
+      : filters,
+  )
   const list = useLeaveApplications({
     tab,
     status: search.status,
@@ -281,6 +288,8 @@ export function LeaveListPage({
     filters: query,
   })
   const counts = useLeaveApplicationCounts({ tab, filters: query })
+  // Approve/Reject only where the request waits for you (not your own, not someone else's step).
+  const waiting = useLeaveWaitingIds(scope === 'applications' && canDecide)
   const page = list.data
   const rows = page?.data ?? []
   const meta = page?.meta
@@ -368,7 +377,8 @@ export function LeaveListPage({
                 },
                 ...(scope === 'applications' &&
                 canDecide &&
-                (row.status === 'pending' || row.status === 'cancelling')
+                (row.status === 'pending' || row.status === 'cancelling') &&
+                waiting.data?.has(row.id) === true
                   ? [
                       {
                         label:
@@ -429,7 +439,7 @@ export function LeaveListPage({
           onApply={(next) => {
             const { status: picked, ...rest } = next
             setFilters(apiFilters(rest))
-            onSearch({ status: statusOf(picked), page: 1 })
+            onSearch({ status: statusOf(picked), employeeId: undefined, page: 1 })
           }}
           onClose={close}
         />

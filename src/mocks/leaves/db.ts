@@ -3,12 +3,10 @@ import {
   DEFAULT_LEAVE_SETTINGS,
   seedEncashments,
   seedLeavePolicies,
-  seedLeaveRequests,
   seedLeaveSettings,
   seedLeaveTypes,
   type StoredEncashment,
   type StoredLeavePolicy,
-  type StoredLeaveRequest,
   type StoredLeaveSettings,
   type StoredLeaveType,
   type StoredLedgerEntry,
@@ -32,19 +30,13 @@ export const leaveSettingsStore = createMockCollection<StoredLeaveSettings>({
   seed: seedLeaveSettings,
 })
 
-/** The leave ledger's credits and adjustments (the allotment run fills it). */
-export const leaveLedger = createMockCollection<StoredLedgerEntry>({
-  storageKey: 'hrms-mock-leave-ledger',
-  seed: () => [],
-})
-
 /**
- * The leave requests the Leaves lists read. In the app the requests module owns them; this
- * mock keeps its own so the Leaves screens work alone (see `leaveRequestHandlers`).
+ * The leave ledger's credits and adjustments (the allotment run fills it). The leave requests
+ * are not kept here: they are the Requests module's (`./requests.ts` reads them).
  */
-export const leaveRequests = createMockCollection<StoredLeaveRequest>({
-  storageKey: 'hrms-mock-leave-requests',
-  seed: seedLeaveRequests,
+export const leaveLedger = createMockCollection<StoredLedgerEntry>({
+  storageKey: 'hrms-mock-leave-ledger-v2',
+  seed: () => [],
 })
 
 /** Leave encashments (Payroll → Leave Encashment calls `/leaves/encashments`). */

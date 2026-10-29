@@ -219,17 +219,52 @@ export function entriesByPerson(entries: readonly TimeEntry[]) {
 
 export const TIME_NOTES_MAX = 165
 
-/** The manual time entry form: Select Day & Date, Start Time, Stop Time, notes. */
+const CLOCK = /^\d{2}:\d{2}$/
+
+/**
+ * The Time Tracked popup's entry: a typed duration ("Enter Time (ex: 3h 30min)") or Select Day &
+ * Date, Start Time and Stop Time, with notes. A typed duration is saved as it is; without one,
+ * Start and Stop are needed.
+ */
 export const timeEntrySchema = z
   .object({
+    duration: z.string(),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose the day'),
-    start: z.string().regex(/^\d{2}:\d{2}$/, 'Choose the start time'),
-    end: z.string().regex(/^\d{2}:\d{2}$/, 'Choose the stop time'),
+    start: z.string(),
+    end: z.string(),
     notes: z.string().max(TIME_NOTES_MAX, `Keep notes to ${TIME_NOTES_MAX} characters`),
   })
-  .refine((entry) => !entry.start || !entry.end || entry.end > entry.start, {
-    path: ['end'],
-    message: 'The stop time must be after the start time',
+  .superRefine((entry, context) => {
+    const typed = entry.duration.trim()
+    if (typed) {
+      const minutes = parseDuration(typed)
+      if (minutes === null) {
+        context.addIssue({
+          code: 'custom',
+          path: ['duration'],
+          message: 'Enter a time such as 3h 30min',
+        })
+      } else if (minutes > 24 * 60) {
+        context.addIssue({
+          code: 'custom',
+          path: ['duration'],
+          message: 'One entry is at most 24 hours',
+        })
+      }
+      return
+    }
+    if (!CLOCK.test(entry.start)) {
+      context.addIssue({ code: 'custom', path: ['start'], message: 'Choose the start time' })
+    }
+    if (!CLOCK.test(entry.end)) {
+      context.addIssue({ code: 'custom', path: ['end'], message: 'Choose the stop time' })
+    } else if (CLOCK.test(entry.start) && entry.end <= entry.start) {
+      context.addIssue({
+        code: 'custom',
+        path: ['end'],
+        message: 'The stop time must be after the start time',
+      })
+    }
   })
 export type TimeEntryForm = z.infer<typeof timeEntrySchema>
 
@@ -330,6 +365,8 @@ export function formatFileSize(bytes: number): string {
 
 /** Largest file a task takes (backend: PDF, DOCX, XLSX, PNG or JPG up to 10 MB). */
 export const MAX_FILE_BYTES = 10 * 1024 * 1024
+/** The limit as the popup says it ("10 MB"), so the text follows the check. */
+export const MAX_FILE_LABEL = `${String(MAX_FILE_BYTES / (1024 * 1024))} MB`
 
 /** File types a task attachment may be (checked again by the API, by content). */
 export const ATTACHMENT_TYPES = '.pdf,.docx,.xlsx,.png,.jpg,.jpeg'

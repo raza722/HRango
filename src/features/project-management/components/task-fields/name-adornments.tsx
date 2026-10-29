@@ -22,7 +22,8 @@ const iconButton =
 /**
  * The icons after a task's name (Workspace Page 1:2755): description (opens the editor; shown
  * faintly on row hover when there is none), the dependency warning while a task it waits on is
- * open (shows the dependencies), and the link (copies the task's address).
+ * open (shows the dependencies), the link (copies the task's address), and a "Closed late" chip
+ * (not drawn) on a task finished after its due date.
  */
 export function TaskNameAdornments({ task, workspace, tasks }: TaskCellProps) {
   const [descriptionOpen, setDescriptionOpen] = useState(false)
@@ -53,7 +54,7 @@ export function TaskNameAdornments({ task, workspace, tasks }: TaskCellProps) {
             }
             className={cn(
               iconButton,
-              'bg-[#FFEEE7] text-[#B07542]',
+              'bg-[#FFEEE7] text-[#B07542] dark:bg-[#F79009]/15 dark:text-[#FFC266]',
               !hasDescription &&
                 'opacity-0 group-hover/row:opacity-60 focus-visible:opacity-100 data-[state=open]:opacity-100',
             )}
@@ -81,7 +82,10 @@ export function TaskNameAdornments({ task, workspace, tasks }: TaskCellProps) {
             <button
               type="button"
               aria-label={`Waiting on ${blockers} open ${blockers === 1 ? 'task' : 'tasks'}: show dependencies`}
-              className={cn(iconButton, 'w-[1.5rem] bg-[#FFF9E7] text-[#B0A042]')}
+              className={cn(
+                iconButton,
+                'w-[1.5rem] bg-[#FFF9E7] text-[#B0A042] dark:bg-[#D9A800]/15 dark:text-[#E8D36A]',
+              )}
             >
               <WarningIcon />
             </button>
@@ -95,13 +99,23 @@ export function TaskNameAdornments({ task, workspace, tasks }: TaskCellProps) {
             type="button"
             onClick={copyLink}
             aria-label={`Copy link to ${task.name}`}
-            className={cn(iconButton, 'w-[1.6rem] bg-[#E7F1FF] text-[#427FB0]')}
+            className={cn(
+              iconButton,
+              'w-[1.6rem] bg-[#E7F1FF] text-[#427FB0] dark:bg-sky-500/15 dark:text-sky-300',
+            )}
           >
             <LinkIcon />
           </button>
         </TooltipTrigger>
         <TooltipContent className={fieldStyles.tooltip}>Copy link</TooltipContent>
       </Tooltip>
+
+      {/* Finished after its due date (the Overdue tab lists these under Closed late). */}
+      {task.isClosedLate && (
+        <span className="inline-flex h-[1.25rem] shrink-0 items-center rounded-[0.27rem] bg-[#FDECEE] px-1.5 text-[0.6875rem] font-medium whitespace-nowrap text-[#B7192C] dark:bg-[#DC3545]/15 dark:text-[#FF9AA3]">
+          Closed late
+        </span>
+      )}
     </span>
   )
 }
@@ -132,7 +146,7 @@ function DescriptionEditor({ task, onClose }: { task: TaskRow; onClose: () => vo
           rows={6}
           maxLength={DESCRIPTION_MAX}
           placeholder="Add a description"
-          className="resize-none rounded-[0.5625rem] border border-[#E9E9E9] px-3 py-2 text-[0.8125rem] text-[#3D3D3D] outline-none placeholder:text-[#909090] focus:border-[#A181FF]"
+          className="resize-none rounded-[0.5625rem] border border-[#E9E9E9] px-3 py-2 text-[0.8125rem] text-[#3D3D3D] outline-none placeholder:text-[#909090] focus:border-[#A181FF] dark:border-border dark:text-title"
         />
         <span className="self-end text-[0.625rem] text-[#909090]">
           {value.length}/{DESCRIPTION_MAX}

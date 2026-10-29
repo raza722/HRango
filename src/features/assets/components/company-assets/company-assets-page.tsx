@@ -33,6 +33,7 @@ import {
   useAssets,
   useAssetTypeOptions,
   useDeleteAsset,
+  useEverAllocated,
   useSetAssetActive,
 } from '../../hooks/use-assets'
 import { type Asset, ASSET_AVAILABILITIES, ASSET_STATUSES } from '../../types/assets.types'
@@ -86,6 +87,11 @@ export function CompanyAssetsPage() {
     status: filters.status,
     assetTypeId: filters.assetTypeId,
   })
+  // An asset allocated even once keeps its history, so the server refuses to delete it.
+  const allocatedBefore = useEverAllocated(
+    (list.data?.data ?? []).map((row) => row.id),
+    canDelete,
+  )
   const goTo = (next: number) => {
     void navigate({ search: (prev) => ({ ...prev, page: next }) })
   }
@@ -186,8 +192,13 @@ export function CompanyAssetsPage() {
               ...(canDelete
                 ? [
                     {
-                      label: 'Delete',
+                      label:
+                        allocatedBefore.get(row.id) === true
+                          ? 'Delete (allocated before: deactivate it instead)'
+                          : 'Delete',
                       variant: 'destructive' as const,
+                      // Not until the allocation check has answered.
+                      disabled: allocatedBefore.get(row.id) !== false,
                       onSelect: () => {
                         setDialog({ type: 'delete', row })
                       },
@@ -267,7 +278,7 @@ export function CompanyAssetsPage() {
           if (!open) close()
         }}
         title="Delete asset"
-        message="Are you sure you want to Delete this?"
+        message={`Delete ${dialog?.type === 'delete' ? `${dialog.row.code}, ${dialog.row.name}` : 'this asset'}? This cannot be undone.`}
         onConfirm={() => {
           if (dialog?.type === 'delete') {
             remove.mutate(dialog.row, { onError: failed('Could not delete the asset.') })

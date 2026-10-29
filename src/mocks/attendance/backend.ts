@@ -15,7 +15,7 @@ import type { DirectoryEmployee } from '../employees/seed'
 import { profileOf } from '../scheduling/seed'
 import { attendanceEdits, attendanceIgnored, dayId } from './db'
 import type { ComputedDay } from './engine'
-import { breakTypes } from './settings-db'
+import { breakTypes, machineName } from './settings-db'
 import type {
   AttendanceBreak,
   DayStatus,
@@ -200,7 +200,7 @@ export function toWirePunch(log: PunchLog, employee: DirectoryEmployee): WirePun
     source: SOURCE_TO_WIRE[log.source],
     deviceId: log.machineId,
     deviceCode: log.machineId,
-    deviceName: log.machineId ? `Machine (${log.machineId})` : null,
+    deviceName: log.machineId ? machineName(log.machineId) : null,
     latitude: null,
     longitude: null,
     ipAddress: log.source === 'dashboard' ? '10.0.0.24' : null,

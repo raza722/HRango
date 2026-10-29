@@ -57,9 +57,9 @@ function TagChip({ tag }: { tag: Tag }) {
 /** A label chip (Labels column): a white card with shadow around the label on its tint. */
 function LabelChip({ tag }: { tag: Tag | null }) {
   return (
-    <span className="flex h-8 min-w-0 shrink items-center rounded-md bg-white px-[0.3rem] shadow-[0_0_7px_rgba(31,41,55,0.1)]">
+    <span className="flex h-8 min-w-0 shrink items-center rounded-md bg-white px-[0.3rem] shadow-[0_0_7px_rgba(31,41,55,0.1)] dark:bg-card">
       <span
-        className="flex h-[1.45rem] min-w-0 items-center truncate rounded-[0.125rem] px-3 text-[0.8125rem] font-medium text-[#626262]"
+        className="flex h-[1.45rem] min-w-0 items-center truncate rounded-[0.125rem] px-3 text-[0.8125rem] font-medium text-[#626262] dark:text-title"
         style={{ backgroundColor: tag ? tagColors(tag.color).backgroundColor : '#E4E4E4' }}
       >
         {tag?.name ?? '-'}
@@ -98,7 +98,9 @@ function TagCell({ task, workspace, kind }: TaskCellProps & { kind: TagKind }) {
             <span className="flex min-w-0 items-center gap-1">
               <LabelChip tag={shown[0] ?? null} />
               {more > 0 && (
-                <span className="text-[0.6875rem] font-semibold text-[#7127EA]">+{more}</span>
+                <span className="text-[0.6875rem] font-semibold text-[#7127EA] dark:text-[#C4ABFF]">
+                  +{more}
+                </span>
               )}
             </span>
           ) : chosen.length === 0 ? (
@@ -114,7 +116,9 @@ function TagCell({ task, workspace, kind }: TaskCellProps & { kind: TagKind }) {
                 <TagChip key={tag.id} tag={tag} />
               ))}
               {more > 0 && (
-                <span className="text-[0.6875rem] font-semibold text-[#7127EA]">+{more}</span>
+                <span className="text-[0.6875rem] font-semibold text-[#7127EA] dark:text-[#C4ABFF]">
+                  +{more}
+                </span>
               )}
             </span>
           )}
@@ -216,7 +220,7 @@ function TagPicker({ task, workspaceId, kind, tags }: TagPickerProps) {
 }
 
 const menuItem =
-  'h-9 rounded-lg border border-[#EFEFEF] px-3 text-[0.8125rem] text-[#4F4F4F] focus:border-[#D9C8FB] focus:bg-[#F7F2FF]'
+  'h-9 rounded-lg border border-[#EFEFEF] dark:border-border px-3 text-[0.8125rem] text-[#4F4F4F] dark:text-title focus:border-[#D9C8FB] focus:bg-[#F7F2FF] dark:focus:bg-[#7127EA]/15'
 
 interface TagRowProps {
   tag: Tag
@@ -251,7 +255,7 @@ function TagRow({ tag, selected, onToggle }: TagRowProps) {
   return (
     <li
       className={cn(
-        'flex h-[2.4rem] shrink-0 items-center gap-2 rounded-[0.5625rem] bg-[#F7F7F7] pr-1 pl-3',
+        'flex h-[2.4rem] shrink-0 items-center gap-2 rounded-[0.5625rem] bg-[#F7F7F7] pr-1 pl-3 dark:bg-white/5',
         selected && 'ring-1 ring-[#A181FF]',
       )}
       style={selected ? { backgroundColor: tagColors(tag.color).backgroundColor } : undefined}
@@ -279,7 +283,7 @@ function TagRow({ tag, selected, onToggle }: TagRowProps) {
               void rename()
             }}
             maxLength={tag.kind === 'tag' ? 25 : 200}
-            className="h-7 w-full rounded-md border border-[#A181FF] bg-white px-2 text-[0.8125rem] outline-none"
+            className="h-7 w-full rounded-md border border-[#A181FF] bg-white px-2 text-[0.8125rem] outline-none dark:bg-card"
           />
         </label>
       ) : (
@@ -296,7 +300,7 @@ function TagRow({ tag, selected, onToggle }: TagRowProps) {
       <DropdownMenu>
         <DropdownMenuTrigger
           aria-label={`Options for ${tag.name}`}
-          className="flex size-8 shrink-0 items-center justify-center rounded-md text-[#7127EA] hover:bg-white"
+          className="flex size-8 shrink-0 items-center justify-center rounded-md text-[#7127EA] hover:bg-white dark:text-[#C4ABFF] dark:hover:bg-white/5"
         >
           <MoreIcon className="size-[1.1rem]" />
         </DropdownMenuTrigger>

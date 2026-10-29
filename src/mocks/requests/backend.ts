@@ -15,7 +15,7 @@ import type {
 import type { ApiItem } from '@/types/api'
 
 import { findEmployee } from '../employees/seed'
-import { mockFileUrl } from '../files/handlers'
+import { mockFileUrl, mockUploadName } from '../files/handlers'
 import { profileOf } from '../scheduling/seed'
 import { apiPath, errorResponse, latency, paginate, readPageParams, requireAuth } from '../utils'
 import { currentStep, type FlowRecord, type StoredStep } from './flow'
@@ -332,7 +332,8 @@ export function filesFrom(ids: readonly string[], at: string): StoredFile[] {
   return ids.map((fileId, index) => ({
     id: `att_${fileId}`,
     fileId,
-    name: `Attachment ${String(index + 1)}`,
+    // The name it was uploaded with (as the API returns it); seeded ids have none.
+    name: mockUploadName(fileId) ?? `Attachment ${String(index + 1)}`,
     label: null,
     at,
   }))
@@ -489,17 +490,21 @@ export function pageOf(
     BackendStatus,
     number
   >
+  // Approvals: each row sits in one tab, so the counts add up to All. One waiting for you is
+  // Pending (whatever its status, e.g. a cancelling one in Cancellations); the rest go by status.
   for (const { row, waiting } of filtered) {
     if (waiting === undefined) counts[row.status] += 1
     else if (waiting) counts.pending += 1
-    if (waiting !== undefined && row.status !== 'pending') counts[row.status] += 1
+    else if (row.status !== 'pending') counts[row.status] += 1
   }
   const shown = filtered.filter(({ row, waiting }) =>
     !status
       ? true
-      : waiting !== undefined && status === 'pending'
-        ? waiting
-        : row.status === status,
+      : waiting === undefined
+        ? row.status === status
+        : status === 'pending'
+          ? waiting
+          : !waiting && row.status === status,
   )
   const sorted = shown.sort(
     (a, b) =>

@@ -21,8 +21,11 @@ function WorkspaceRoute() {
       key={workspaceId}
       workspaceId={workspaceId}
       search={search}
-      onSearch={(patch) => {
-        void navigate({ search: (prev) => ({ ...prev, ...patch }) })
+      onSearch={(patch, options) => {
+        void navigate({
+          search: (prev) => ({ ...prev, ...patch }),
+          ...(options?.hash ? { hash: options.hash } : {}),
+        })
       }}
     />
   )

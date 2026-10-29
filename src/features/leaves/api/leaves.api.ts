@@ -40,6 +40,14 @@ import type {
 
 type LeaveCountParams = Pick<LeaveApplicationListParams, 'tab' | 'filters'>
 
+/** The parts of a Scheduling board row (`GET /scheduling/schedules`) Apply Leave reads. */
+interface LeaveScheduleRow {
+  employee: { id: string | number }
+  shifts: { workDate: string }[]
+  restDays: { restDate: string }[]
+  holidays: { holidayDate: string; holidayName: string; attendanceExempt?: boolean }[]
+}
+
 /** Leaves out empty values, so the query string carries only what is set. */
 function clean(params: object): Record<string, string | number | boolean> {
   return Object.fromEntries(
@@ -103,6 +111,53 @@ export const leavesApi = {
       { remarks: remarks || null, rowVersion },
     )
     return data.data
+  },
+  /**
+   * The leave requests waiting for the caller's decision now: their own step, a step of
+   * someone who delegated to them, or a cancellation they decide (`GET /requests/approvals`,
+   * `status=pending` per box). Leave Applications offers Approve/Reject on these only.
+   */
+  async waitingIds(signal?: AbortSignal) {
+    const boxes = ['requested', 'delegates', 'cancellations'] as const
+    const pages = await Promise.all(
+      boxes.map((box) =>
+        apiClient.get<Paginated<{ id: string | number; isWaiting?: boolean | null }>>(
+          '/requests/approvals',
+          { params: { box, type: 'leave', status: 'pending', page: 1, pageSize: 100 }, signal },
+        ),
+      ),
+    )
+    return pages.flatMap(({ data }) =>
+      data.data.filter((row) => row.isWaiting !== false).map((row) => String(row.id)),
+    )
+  },
+  /**
+   * A person's days between two dates from Scheduling's board (`GET /scheduling/schedules`;
+   * without an employee, the caller's own): which have a shift, and their holidays and rest
+   * days. Apply Leave warns with it about the days a leave does not count.
+   */
+  async scheduleDays(
+    employeeId: string | undefined,
+    from: string,
+    to: string,
+    signal?: AbortSignal,
+  ) {
+    const { data } = await apiClient.get<{ data: LeaveScheduleRow[] }>('/scheduling/schedules', {
+      params: employeeId
+        ? { tab: 'all', employeeId, from, to, pageSize: 1 }
+        : { tab: 'my', from, to, pageSize: 1 },
+      signal,
+    })
+    const row = employeeId
+      ? data.data.find((item) => String(item.employee.id) === employeeId)
+      : data.data[0]
+    return {
+      shiftDates: row?.shifts.map((shift) => shift.workDate) ?? [],
+      holidays: (row?.holidays ?? [])
+        .filter((holiday) => holiday.attendanceExempt !== false)
+        .map((holiday) => ({ date: holiday.holidayDate, name: holiday.holidayName })),
+      restDates: row?.restDays.map((day) => day.restDate) ?? [],
+    }
   },
 
   // --- Settings ----------------------------------------------------------------------------------
@@ -286,6 +341,9 @@ export const leavesKeys = {
     ] as const,
   application: (id: string) => [...leavesKeys.applications(), 'detail', id] as const,
   request: (id: string) => [...leavesKeys.applications(), 'request', id] as const,
+  waiting: () => [...leavesKeys.applications(), 'waiting'] as const,
+  schedule: (employeeId: string | undefined, from: string, to: string) =>
+    [...leavesKeys.all, 'schedule', employeeId ?? 'me', from, to] as const,
   settings: () => [...leavesKeys.all, 'settings'] as const,
   types: () => [...leavesKeys.all, 'types'] as const,
   typeList: (params: LeaveTypeListParams) => [...leavesKeys.types(), clean(params)] as const,

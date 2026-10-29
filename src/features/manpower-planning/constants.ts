@@ -30,6 +30,12 @@ export const OPEN_POSITION_STATUS_META: Record<
   closed: { label: 'Closed', tone: 'grey' },
 }
 
+/** An active position whose end date has passed: shown as expired (the server keeps it active). */
+export const EXPIRED_POSITION_META = { label: 'Expired', tone: 'amber' } as const satisfies {
+  label: string
+  tone: ChipTone
+}
+
 export const ACTIVE_META = {
   active: { label: 'Active', tone: 'green' },
   inactive: { label: 'Inactive', tone: 'grey' },

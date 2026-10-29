@@ -12,6 +12,7 @@ import { ConfirmAction } from '@/features/payroll'
 import { ApiError } from '@/lib/api-error'
 import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { typePermission } from '../api/backend'
 import type { DetailSource } from '../api/engine.api'
@@ -19,6 +20,7 @@ import { RequestEmployeeSelect } from '../components/shared/request-employee-fie
 import { RequestFileLinks } from '../components/shared/request-files'
 import type { FlowStep, FlowStepStatus, RequestEmployee } from '../types/requests.types'
 import { stamp } from '../utils/request-format'
+import { isOwnUndecidable } from './self-decision'
 import type { StandardKindConfig, StandardRequest } from './standard.types'
 import { StandardPersonCell } from './standard-parts'
 import { standardButton, standardFooterButton } from './standard-styles'
@@ -323,8 +325,9 @@ export function StandardHistoryDialog<P>({
 }
 
 /**
- * "<Type> Request Cancel": a pending request is withdrawn at once; an approved
- * one goes through the cancellation flow before it takes effect. A reason is required.
+ * Withdraw / cancel: a pending request is withdrawn at once ("Withdraw request"); an approved
+ * one goes through the cancellation flow before it takes effect ("Cancel approved request").
+ * A reason is required either way. Unlike Delete, the request stays on the list.
  */
 export function StandardCancelDialog<P>({
   config,
@@ -338,9 +341,10 @@ export function StandardCancelDialog<P>({
   const cancel = useCancelStandard(config.kind)
   const [reason, setReason] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const withdrawing = request.status === 'pending'
   const submit = async () => {
     if (!reason.trim()) {
-      setError('Give a reason for cancellation')
+      setError(withdrawing ? 'Give a reason for withdrawing' : 'Give a reason for cancellation')
       return
     }
     try {
@@ -357,10 +361,10 @@ export function StandardCancelDialog<P>({
   }
   return (
     <AppDialog
-      title={`${config.noun} Request Cancel`}
+      title={withdrawing ? 'Withdraw request' : 'Cancel approved request'}
       description={
-        request.status === 'pending'
-          ? `${request.code}: the request is withdrawn at once.`
+        withdrawing
+          ? `${request.code} is withdrawn at once and stays on the list as Cancelled. (Delete removes it completely.)`
           : `${request.code}: the cancellation goes for approval before it takes effect.`
       }
       onRequestClose={onClose}
@@ -372,7 +376,7 @@ export function StandardCancelDialog<P>({
             onClick={() => void submit()}
             className={cn(standardFooterButton, standardButton.green)}
           >
-            Save
+            {withdrawing ? 'Withdraw' : 'Send for approval'}
           </Button>
           <Button onClick={onClose} className={cn(standardFooterButton, standardButton.red)}>
             Cancel
@@ -382,7 +386,7 @@ export function StandardCancelDialog<P>({
     >
       <div className="@container">
         <RemarksField
-          label="Reason for Cancellation"
+          label={withdrawing ? 'Reason for Withdrawing' : 'Reason for Cancellation'}
           required
           value={reason}
           onChange={(value) => {
@@ -414,7 +418,11 @@ export function StandardDeleteDialog<P>({
         if (!open) onClose()
       }}
       title={`Delete ${request.code}`}
-      description="Are you sure you want to Delete this?"
+      description={
+        request.status === 'pending'
+          ? `Delete ${request.code} completely? It leaves the lists. (Withdraw keeps it on record as Cancelled.)`
+          : 'Are you sure you want to Delete this?'
+      }
       confirmLabel="Yes"
       cancelLabel="No"
       variant="destructive"
@@ -512,7 +520,10 @@ export function StandardDecisionDialog<P>({
   const [confirming, setConfirming] = useState<'approve' | 'reject' | null>(null)
   const [panel, setPanel] = useState<'flow' | 'history' | null>(null)
   const request = detail.data?.request
-  const deciding = mode === 'decide' && Boolean(request?.actions.includes('decide'))
+  const myEmployeeId = useAuthStore((state) => state.user?.employeeId ?? null)
+  // The requester's own Promotion or Resignation is shown read-only (see self-decision.ts).
+  const ownRequest = isOwnUndecidable(config.kind, request, myEmployeeId)
+  const deciding = mode === 'decide' && Boolean(request?.actions.includes('decide')) && !ownRequest
   // Each button only when the API lists it for the caller (the detail's `actions`).
   const may = (action: 'approve' | 'reject') => request?.decisions?.includes(action) ?? true
   const cancelling = request?.status === 'cancelling'
@@ -523,6 +534,14 @@ export function StandardDecisionDialog<P>({
     if (needed && !remarks.trim()) {
       setError(decision === 'reject' ? 'Give a reason for rejecting' : 'Give a reason for approval')
       return
+    }
+    // The approver's inputs are checked before "Are you sure?", and shown once, at the inputs.
+    if (decision === 'approve' && !cancelling && request && config.validateDecision) {
+      const problems = config.validateDecision(request, extras)
+      if (Object.keys(problems).length > 0) {
+        setErrors(problems)
+        return
+      }
     }
     setConfirming(decision)
   }
@@ -541,7 +560,11 @@ export function StandardDecisionDialog<P>({
     } catch (failure) {
       if (failure instanceof ApiError) {
         setErrors(failure.fieldErrors)
-        setError(failure.fieldErrors.remarks ?? failure.message)
+        // A field the approver's inputs show is not repeated under Remarks.
+        const atInputs =
+          DecisionFields !== undefined &&
+          Object.keys(failure.fieldErrors).some((field) => field !== 'remarks')
+        setError(failure.fieldErrors.remarks ?? (atInputs ? null : failure.message))
       }
       setConfirming(null)
       return
@@ -640,6 +663,15 @@ export function StandardDecisionDialog<P>({
         ) : (
           <div className="@container grid gap-6">
             <StandardEmployeeCard employee={request.employee} />
+            {mode === 'decide' && ownRequest && (
+              <p
+                role="note"
+                className="rounded-md bg-muted px-3 py-2 text-sm text-heading dark:bg-input"
+              >
+                This is your own {config.noun.toLowerCase()} request, so you can’t approve, reject
+                or forward it. The next approver in its flow decides.
+              </p>
+            )}
             {cancelling && (
               <p className="rounded-md bg-amber-100 px-3 py-2 text-sm text-amber-800 dark:bg-amber-500/15 dark:text-amber-200">
                 {request.employee.name} asks to cancel this approved request

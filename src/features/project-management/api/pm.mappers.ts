@@ -2,8 +2,11 @@ import { format, parseISO } from 'date-fns'
 
 import { DEFAULT_VISIBLE_COLUMNS, PM_SWATCHES } from '../constants'
 import {
+  type ActivityEntry,
   type Attachment,
   type ColumnPermission,
+  EXTENSION_STATUSES,
+  type ExtensionRequest,
   type ListColumn,
   type OrganizerFeature,
   type PermissionLevel,
@@ -13,6 +16,7 @@ import {
   type Priority,
   type Recurrence,
   type Reminder,
+  type ReminderEntry,
   type ShareAccess,
   type ShareEntity,
   type ShareSettings,
@@ -38,6 +42,7 @@ import {
   type WorkspaceView,
 } from '../types/pm.types'
 import type {
+  ActivityDto,
   ApiFeatureCode,
   ApiPermissionLevel,
   ApiStatusGroup,
@@ -49,6 +54,7 @@ import type {
   ColumnPermissionsDto,
   CommentDto,
   CustomFieldDto,
+  ExtensionDto,
   PersonDto,
   RecurrenceDto,
   ReminderDto,
@@ -590,6 +596,8 @@ export function taskRowFromApi(dto: TaskRowDto, favorites?: ReadonlySet<string>)
     createdByName: dto.createdByName,
     createdAt: instant(dto.createdAt) ?? '',
     closedAt: instant(dto.closedAt),
+    originalDueDate: dto.originalDueDate,
+    isClosedLate: dto.isClosedLate,
     order: dto.sortOrder ?? 0,
     cover: dto.cover ?? null,
     rowVersion: dto.rowVersion,
@@ -633,8 +641,26 @@ export function taskDetailFromApi(dto: TaskDto): TaskDetail {
       .filter((entry) => entry.kind === 'blocking')
       .map((entry) => entry.taskId),
     hiddenColumns: dto.hiddenColumns,
+    extensions: dto.extensions
+      .map(extensionFromApi)
+      .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt)),
   }
 }
+
+export const extensionFromApi = (dto: ExtensionDto): ExtensionRequest => ({
+  id: dto.id,
+  requestedById: dto.requestedById,
+  requestedByName: dto.requestedByName,
+  oldDueDate: dto.oldDueDate,
+  newDueDate: dto.newDueDate,
+  reason: dto.reason,
+  status: EXTENSION_STATUSES.find((status) => status === dto.status) ?? 'pending',
+  decidedByName: dto.decidedByName,
+  decidedAt: instant(dto.decidedAt),
+  remarks: dto.remarks,
+  createdAt: instant(dto.createdAt),
+  rowVersion: dto.rowVersion,
+})
 
 // --- collaboration -------------------------------------------------------------------------------------
 
@@ -696,6 +722,31 @@ export const reminderFromApi = (dto: ReminderDto): Reminder => ({
   id: dto.id,
   remindAt: instant(dto.remindAt),
   rowVersion: dto.rowVersion,
+})
+
+export const activityFromApi = (dto: ActivityDto): ActivityEntry => ({
+  id: dto.id,
+  entityType: dto.entityType,
+  entityId: dto.entityId,
+  itemCode: dto.itemCode,
+  itemName: dto.itemName,
+  action: dto.actionName,
+  fieldName: dto.fieldName,
+  oldValue: dto.oldValue,
+  newValue: dto.newValue,
+  performedByName: dto.performedByName,
+  performedAt: instant(dto.performedAt),
+})
+
+export const reminderEntryFromApi = (dto: ReminderDto): ReminderEntry => ({
+  ...reminderFromApi(dto),
+  workspaceId: dto.workspaceId,
+  entityType: dto.entityType,
+  entityId: dto.entityId,
+  entityName: dto.entityName,
+  name: dto.name,
+  notifyBeforeMinutes: dto.notifyBeforeMinutes,
+  notifiedAt: instant(dto.notifiedAt),
 })
 
 /** `2026-10-26T10:00:00Z` → `2026-10-26T15:00` (local, for datetime-local inputs). */

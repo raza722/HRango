@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
+import { format } from 'date-fns'
 
 import { ErrorState } from '@/components/feedback/error-state'
 import { DataTable, type DataTableColumn } from '@/components/layout'
@@ -7,7 +8,12 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useCan } from '@/lib/permissions'
 
 import { manpowerApi } from '../../api/manpower.api'
-import { DEFAULT_PAGE_SIZE, MP_CODES, OPEN_POSITION_STATUS_META } from '../../constants'
+import {
+  DEFAULT_PAGE_SIZE,
+  EXPIRED_POSITION_META,
+  MP_CODES,
+  OPEN_POSITION_STATUS_META,
+} from '../../constants'
 import { useOpenPositions, useSetOpenPositionClosed } from '../../hooks/use-manpower'
 import type { OpenPosition } from '../../types/manpower.types'
 import { toastError } from '../../utils/errors'
@@ -23,6 +29,15 @@ import { OpenPositionDialog } from './open-position-dialog'
 const routeApi = getRouteApi('/_app/manpower-planning/open-positions')
 
 const downloadFailed = toastError('The job description could not be downloaded.')
+
+/** The status drawn: an active position past its end date reads "Expired". */
+function openPositionStatusMeta(position: Pick<OpenPosition, 'status' | 'endDate'>) {
+  const today = format(new Date(), 'yyyy-MM-dd')
+  if (position.status === 'active' && position.endDate && position.endDate < today) {
+    return EXPIRED_POSITION_META
+  }
+  return OPEN_POSITION_STATUS_META[position.status]
+}
 
 /** Opens a signed link (a fresh one: the list's links expire) as a download. */
 function openLink(url: string, name: string) {
@@ -136,7 +151,7 @@ export function OpenPositionsPage() {
       id: 'status',
       header: 'Status',
       align: 'center',
-      cell: (row) => <Chip {...OPEN_POSITION_STATUS_META[row.status]} />,
+      cell: (row) => <Chip {...openPositionStatusMeta(row)} />,
     },
   ]
 

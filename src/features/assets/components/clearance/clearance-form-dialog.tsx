@@ -43,7 +43,7 @@ import {
 } from '../../types/assets.types'
 import { UploadField } from '../shared/upload-field'
 
-const DATE = 'EEE,d MMM yyyy'
+const DATE = 'EEE, d MMM yyyy'
 
 /** Opens a new form for someone leaving: who, and the End of Employment record it belongs to. */
 export interface ClearancePrefillProps {
@@ -156,8 +156,7 @@ function ReturnStatusField({
       <span id={labelId} className="font-inter text-sm text-heading @xl:text-base">
         Return Status
         {!disabled && (
-          <span aria-hidden="true" className="text-destructive">
-            {' '}
+          <span aria-hidden="true" className="ml-1 text-destructive">
             *
           </span>
         )}
@@ -519,7 +518,7 @@ function ClearanceForm({
           control={form.control}
           name="checkedById"
           label="Checked By"
-          placeholder="Employee"
+          placeholder="Select who checked the assets"
           filters={people}
           enabled={!readOnly}
           known={named}
@@ -530,7 +529,7 @@ function ClearanceForm({
           control={form.control}
           name="approvedById"
           label="Clearance Approved By"
-          placeholder="Employee"
+          placeholder="Select who approves the clearance"
           filters={people}
           enabled={!readOnly}
           known={named}

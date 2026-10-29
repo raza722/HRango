@@ -98,11 +98,6 @@ export const CONTROL_PANEL_SECTIONS: readonly ControlPanelSection[] = [
 
 /** Copy for Settings screens that are routed but not designed yet. */
 export const SETTINGS_PLACEHOLDERS = {
-  users: {
-    title: 'Users',
-    description: 'People who can sign in to the portal and what they can see.',
-    planned: ['Invite user', 'Roles', 'Deactivate', 'Reset password'],
-  },
   subscriptions: {
     title: 'Subscriptions',
     description: 'Your plan, seats, invoices and payment method.',
@@ -112,26 +107,6 @@ export const SETTINGS_PLACEHOLDERS = {
     title: 'Help & Support',
     description: 'Guides, contact details and support tickets.',
     planned: ['Knowledge base', 'Contact support', 'Ticket history', 'Release notes'],
-  },
-  customForms: {
-    title: 'Custom Forms',
-    description: 'Fields your company adds to employee records and requests.',
-    planned: ['Form list', 'Field builder', 'Assign to module'],
-  },
-  systemUsers: {
-    title: 'System User',
-    description: 'Service and integration accounts that use the API.',
-    planned: ['System users', 'API keys', 'Access log'],
-  },
-  userGroupPermissions: {
-    title: 'User Group Permissions',
-    description: 'Groups of users and the modules and actions each group may use.',
-    planned: ['Groups', 'Module permissions', 'Data scope'],
-  },
-  biometricDevices: {
-    title: 'Biometric Devices',
-    description: 'Fingerprint and face attendance terminals at each branch.',
-    planned: ['Devices', 'Device sync', 'Enrolments', 'Punch log'],
   },
 } as const satisfies Record<
   string,

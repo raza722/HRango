@@ -30,6 +30,7 @@ import {
   firstIncompleteStep,
   type StatusLibrary,
   stepComplete,
+  stepHint,
   stepOfField,
   templateSetup,
   toWorkspaceInput,
@@ -208,6 +209,7 @@ function WizardBody({
   }
 
   const complete = stepComplete(step, values)
+  const hint = step === 'customize' || complete ? null : stepHint(step, values)
   const employees = lookups.data?.employees ?? []
 
   const loading = lookups.isPending || templates.isPending || departments.isPending
@@ -259,6 +261,20 @@ function WizardBody({
 
         <footer className={cn(wz.gutter, 'shrink-0')}>
           <FormError message={rootError} />
+          {/*
+            Why Continue is disabled. One paragraph whose text only changes (never emptied): the
+            dialog's focus trap refocuses itself when nodes are removed while focus is on <body>,
+            which happened as a nested picker closed.
+          */}
+          <p
+            aria-live="polite"
+            className={cn(
+              'text-right text-xs text-[#707070] dark:text-grey',
+              hint ? 'mb-2' : 'hidden',
+            )}
+          >
+            {hint ?? ' '}
+          </p>
           <div className={cn(wz.footer, step !== 'details' && 'justify-between')}>
             {step !== 'details' && (
               <BackButton

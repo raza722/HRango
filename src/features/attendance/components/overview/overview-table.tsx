@@ -110,7 +110,11 @@ export function OverviewTable({
                 </tr>
               ))
             : rows.map((row, index) => {
-                const zebra = index % 2 === 0 ? 'bg-[#F5F5F5] dark:bg-muted/40' : 'bg-card'
+                // Opaque in both themes: the sticky Emp Id / Name cells hide what scrolls under them.
+                const zebra =
+                  index % 2 === 0
+                    ? 'bg-[#F5F5F5] dark:bg-[color-mix(in_srgb,var(--color-muted)_40%,var(--color-card))]'
+                    : 'bg-card'
                 return (
                   <tr key={row.employeeId} className={cn('text-title', zebra)}>
                     <td className={cn(cell, stickyId, zebra)}>{row.employeeCode}</td>

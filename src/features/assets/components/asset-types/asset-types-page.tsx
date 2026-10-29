@@ -29,7 +29,7 @@ import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { ASSET_PAGE_SIZE, ASSET_TYPE_STATUS_META } from '../../constants'
-import { useAssetTypes, useDeleteAssetType } from '../../hooks/use-assets'
+import { useAssetTypes, useDeleteAssetType, useSetAssetTypeActive } from '../../hooks/use-assets'
 import type { AssetType } from '../../types/assets.types'
 import { AssetTypeDialog } from './asset-type-dialog'
 
@@ -69,7 +69,10 @@ const FIELDS: FilterField[] = [
   { kind: 'text', key: 'q', label: 'Search', placeholder: 'Name or code' },
 ]
 
-/** Asset Type: Code, Name, Description and Status; Create, Filters and Edit / View / Delete. */
+/**
+ * Asset Types: Code, Name, Description and Status; Create, Filters and Edit / View, Deactivate
+ * (Activate) and Delete (only for a type no asset uses: one in use is deactivated instead).
+ */
 export function AssetTypesPage() {
   const { page } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
@@ -79,6 +82,7 @@ export function AssetTypesPage() {
   const canDelete = useCan('assets.types.delete')
   const [dialog, setDialog] = useState<Dialog>(null)
   const remove = useDeleteAssetType()
+  const setActive = useSetAssetTypeActive()
   const list = useAssetTypes({
     page,
     pageSize: ASSET_PAGE_SIZE,
@@ -94,7 +98,7 @@ export function AssetTypesPage() {
 
   return (
     <PayrollCard
-      title="Asset Type"
+      title="Asset Types"
       actions={
         <>
           {canCreate && (
@@ -125,7 +129,7 @@ export function AssetTypesPage() {
         isFetching={list.isFetching}
         className={payrollTableClass}
         emptyState={<NoRecord />}
-        rowActionsHeader="Action"
+        rowActionsHeader="Actions"
         rowActions={(row) => (
           <RowActionsMenu
             itemClassName={rowMenuItemClass.inter}
@@ -147,11 +151,37 @@ export function AssetTypesPage() {
                   setDialog({ type: 'view', row })
                 },
               },
+              ...(canEdit
+                ? [
+                    {
+                      label: row.isActive ? 'Deactivate' : 'Activate',
+                      onSelect: () => {
+                        setActive.mutate(
+                          { record: row, active: !row.isActive },
+                          {
+                            onError: (error) => {
+                              toast.error(
+                                error instanceof ApiError
+                                  ? error.message
+                                  : 'Could not change the asset type.',
+                              )
+                            },
+                          },
+                        )
+                      },
+                    },
+                  ]
+                : []),
+              // A type in use cannot be deleted: Deactivate above retires it instead.
               ...(canDelete
                 ? [
                     {
-                      label: 'Delete',
+                      label:
+                        row.assetCount > 0
+                          ? `Delete (used by ${String(row.assetCount)} ${row.assetCount === 1 ? 'asset' : 'assets'})`
+                          : 'Delete',
                       variant: 'destructive' as const,
+                      disabled: row.assetCount > 0,
                       onSelect: () => {
                         setDialog({ type: 'delete', row })
                       },
@@ -191,7 +221,7 @@ export function AssetTypesPage() {
           if (!open) close()
         }}
         title="Delete asset type"
-        message="Are you sure you want to Delete this?"
+        message={`Delete the asset type ${dialog?.type === 'delete' ? `“${dialog.row.name}”` : ''}? This cannot be undone.`}
         onConfirm={() => {
           if (dialog?.type === 'delete') {
             remove.mutate(dialog.row, {

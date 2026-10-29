@@ -8,10 +8,10 @@ import { PageContainer, Pagination } from '@/components/layout'
 import { ApiError } from '@/lib/api-error'
 
 import { attendanceApi } from '../../api/attendance.api'
-import { OVERVIEW_PAGE_SIZE } from '../../constants'
 import { useAttendanceOverview } from '../../hooks/use-attendance'
 import type { OverviewSearch } from '../../routing'
-import type { DayKey, DayStatus, OverviewParams } from '../../types/attendance.types'
+import type { DayKey, DayStatus } from '../../types/attendance.types'
+import { overviewParams } from '../../utils/overview-params'
 import { TimeSheetViewDialog } from '../dialogs/time-sheet-view-dialog'
 import { OverviewFilters } from './overview-filters'
 import { OverviewHeader } from './overview-header'
@@ -19,26 +19,40 @@ import { OverviewTable } from './overview-table'
 
 const routeApi = getRouteApi('/_app/attendance/overview')
 
-function overviewParams(search: OverviewSearch, month: string): OverviewParams {
-  return {
-    scope: search.scope,
-    month,
-    page: search.page,
-    pageSize: OVERVIEW_PAGE_SIZE,
-    ...(search.q ? { search: search.q } : {}),
-    ...(search.status !== 'all' ? { status: search.status } : {}),
-    ...(search.departmentId ? { departmentId: search.departmentId } : {}),
-  }
+/** Applies a change to the overview's URL state (`replace` for typing in the search box). */
+export type OverviewSearchUpdate = (
+  patch: Partial<OverviewSearch>,
+  replace?: boolean,
+) => Promise<void>
+
+/** Attendance Overview on its own route (sidebar → Attendance Overview). */
+export function AttendanceOverviewPage() {
+  const search = routeApi.useSearch()
+  const navigate = routeApi.useNavigate()
+  return (
+    <AttendanceOverviewView
+      search={search}
+      onSearch={(patch, replace = false) =>
+        navigate({ search: (prev) => ({ ...prev, ...patch }), replace })
+      }
+    />
+  )
 }
 
 /**
  * Attendance Overview: everyone's month at a glance. All / Subordinates, the
  * legend of day states, Employee Status / Department / Month / Year filters
  * (and Export), and a grid with the totals and one column per processed day.
+ * The route that shows it owns the URL: the sidebar's Attendance Overview, and
+ * Attendance Insights inside the Attendance sub menu.
  */
-export function AttendanceOverviewPage() {
-  const search = routeApi.useSearch()
-  const navigate = routeApi.useNavigate()
+export function AttendanceOverviewView({
+  search,
+  onSearch,
+}: {
+  search: OverviewSearch
+  onSearch: OverviewSearchUpdate
+}) {
   const [today] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [highlight, setHighlight] = useState<DayStatus | null>(null)
   const [openDay, setOpenDay] = useState<DayKey | null>(null)
@@ -46,8 +60,7 @@ export function AttendanceOverviewPage() {
   const params = overviewParams(search, month)
   const overview = useAttendanceOverview(params)
 
-  const update = (patch: Partial<OverviewSearch>, replace = false) =>
-    navigate({ search: (prev) => ({ ...prev, ...patch }), replace })
+  const update = (patch: Partial<OverviewSearch>, replace = false) => onSearch(patch, replace)
 
   // Search box: the URL (and the request) follow when typing pauses.
   const q = search.q ?? ''

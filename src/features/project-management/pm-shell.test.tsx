@@ -61,10 +61,13 @@ describe('Project Management shell', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('shows the dashboards as not designed yet', async () => {
+  it('opens the Task Dashboard with its figures (the dashboards have their own tests)', async () => {
     renderApp('/project-management/task-dashboard')
     expect(await screen.findByRole('heading', { name: 'Task Dashboard', level: 1 })).toBeVisible()
-    expect(screen.getByText(/has no screen in the Figma files yet/)).toBeVisible()
+    // Tiles are named "<label>: <count>"; the seed has four tasks in an Active status.
+    expect(
+      await screen.findByRole('button', { name: 'In Progress: 4' }, { timeout: 15_000 }),
+    ).toBeVisible()
   })
 })
 

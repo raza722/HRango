@@ -1,6 +1,6 @@
 import type { StandardKindConfig } from '../../standard.types'
 import { nowrap, standardColumns as col } from '../../standard-columns'
-import { claimFilterFields, money, viewDay } from './claims.utils'
+import { claimFilterFields, expenseDecisionProblems, money, viewDay } from './claims.utils'
 import type { ExpensePayload } from './expense.types'
 import { ExpenseDecisionFields } from './expense-decision'
 import { ExpenseDetail } from './expense-detail'
@@ -59,4 +59,5 @@ export const expenseConfig: StandardKindConfig<ExpensePayload> = {
   FormDialog: ExpenseForm,
   DetailRows: ExpenseDetail,
   DecisionFields: ExpenseDecisionFields,
+  validateDecision: expenseDecisionProblems,
 }

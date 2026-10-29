@@ -4,6 +4,7 @@ import { addDays, differenceInCalendarMonths, format, isWeekend } from 'date-fns
 import { describe, expect, it } from 'vitest'
 
 import { attendanceEdits, dayId } from '@/mocks/attendance/db'
+import { holidays } from '@/mocks/attendance/settings-db'
 import { standardRequests } from '@/mocks/requests/standard'
 import { requestStandardCancel } from '@/mocks/requests/standard/engine'
 import { renderApp } from '@/test/test-utils'
@@ -32,9 +33,15 @@ const confirmYes = async (user: UserEvent) => {
 }
 
 /** A weekday a week or more ahead: Shelley works Morning Work (09:00–17:00) that day. */
+/** A holiday of the Attendance settings seed covers this day (no shift is planned on it). */
+const isHoliday = (date: Date) => {
+  const day = format(date, 'yyyy-MM-dd')
+  return holidays.all().some((holiday) => holiday.startDate <= day && holiday.endDate >= day)
+}
+
 function nextWorkday(): Date {
   let date = addDays(new Date(), 9)
-  while (isWeekend(date)) date = addDays(date, 1)
+  while (isWeekend(date) || isHoliday(date)) date = addDays(date, 1)
   return date
 }
 

@@ -197,7 +197,8 @@ export function GeneralSettingsPage() {
         }
         onSubmit={submit}
         onCancel={() => {
-          form.reset(values ?? EMPTY_VALUES)
+          // Not the form's keepDirtyValues (meant for refetches): Cancel drops every edit.
+          form.reset(values ?? EMPTY_VALUES, { keepDirtyValues: false })
         }}
         isSaving={saveMutation.isPending}
         isLoading={settingsQuery.isPending}

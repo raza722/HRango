@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { type DefaultValues, type FieldValues, type Path, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { toast } from 'sonner'
 import type { z } from 'zod'
 
 import { useUnsavedChangesGuard } from '@/hooks/use-unsaved-changes-guard'
@@ -79,16 +80,21 @@ export function useOrgRecordForm<
         rowVersion: recordQuery.data?.rowVersion,
       })
     } catch (error) {
+      let placed = false
       if (error instanceof ApiError) {
-        Object.entries(error.fieldErrors).forEach(([field, message]) => {
-          if (field in formValues) {
-            form.setError(
-              field as Path<TValues>,
-              { type: 'server', message },
-              { shouldFocus: true },
-            )
-          }
-        })
+        for (const [field, message] of Object.entries(error.fieldErrors)) {
+          if (!(field in formValues)) continue
+          form.setError(
+            field as Path<TValues>,
+            { type: 'server', message },
+            { shouldFocus: !placed },
+          )
+          placed = true
+        }
+      }
+      // An error on a field is shown there only; anything else (a stale record…) as a toast.
+      if (!placed && !(error instanceof ApiError && error.kind === 'cancelled')) {
+        toast.error(error instanceof ApiError ? error.message : 'The record could not be saved.')
       }
       return
     }

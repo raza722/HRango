@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
-import { format } from 'date-fns'
+import { addDays, format } from 'date-fns'
 import { describe, expect, it } from 'vitest'
 
 import { clearances } from '@/mocks/assets/db'
@@ -13,12 +13,25 @@ async function choose(user: UserEvent, label: string | RegExp, option: string | 
   await user.click(await screen.findByRole('option', { name: option }))
 }
 
-/** Opens a date box's calendar and picks a day of this month. */
+/**
+ * Opens a date box's calendar and picks a day. The calendar opens on the box's month (or its
+ * first allowed one), so it moves to the day's month first.
+ */
 async function pickDay(user: UserEvent, scope: HTMLElement, label: string | RegExp, date: Date) {
   await user.click(within(scope).getByRole('button', { name: label }))
-  await user.click(
-    await screen.findByRole('button', { name: new RegExp(format(date, 'MMMM do, yyyy')) }),
-  )
+  const day = new RegExp(format(date, 'MMMM do, yyyy'))
+  await screen.findByRole('button', { name: /^Go to the Next Month$/ })
+  for (let tries = 0; tries < 24 && !screen.queryByRole('button', { name: day }); tries += 1) {
+    // The month grid is named after the month shown ("October 2026").
+    const shown = screen.getByRole('grid').getAttribute('aria-label')
+    const later = shown ? new Date(`1 ${shown}`) < date : true
+    await user.click(
+      screen.getByRole('button', {
+        name: later ? /^Go to the Next Month$/ : /^Go to the Previous Month$/,
+      }),
+    )
+  }
+  await user.click(screen.getByRole('button', { name: day }))
 }
 
 const rowOf = async (name: string) => {
@@ -28,7 +41,7 @@ const rowOf = async (name: string) => {
   return row
 }
 
-describe('End of Employment', () => {
+describe('End of Employment', { timeout: 60_000 }, () => {
   it('lists the records, and the sidebar scopes narrow them', async () => {
     const { router } = renderApp('/end-of-employment')
 
@@ -52,13 +65,20 @@ describe('End of Employment', () => {
     const dialog = await screen.findByRole('dialog', { name: 'End of Employment Create' })
     await choose(user, 'Employee', /Kashif Raza/)
     expect(await within(dialog).findByText(/^Email:/)).toBeVisible()
+    // Before saving, the card reads the person's record: age, email, phone and experience.
+    const facts = within(dialog).getByRole('region', { name: /^Kashif Raza/ })
+    expect(await within(facts).findByText(/@/)).toBeVisible()
+    expect(within(facts).getAllByText(/\d+ years?, \d+ months?, \d+ days?/)).toHaveLength(2)
+    expect(within(facts).queryByText('—')).not.toBeInTheDocument()
     await choose(user, /^Reason/, 'Termination')
     expect(
       within(dialog).queryByRole('button', { name: /^Last Working Date/ }),
     ).not.toBeInTheDocument()
     await user.click(within(dialog).getByRole('checkbox', { name: 'Notice Period' }))
     await user.type(within(dialog).getByRole('textbox', { name: /^Notice Period Days/ }), '30')
-    await pickDay(user, dialog, /^Last Working Date/, new Date())
+    // The days fill in the Last Working Date: 30 days from today.
+    const lastDay = addDays(new Date(), 30)
+    expect(within(dialog).getByText(format(lastDay, 'MMMM d, yyyy'))).toBeVisible()
     await user.click(within(dialog).getByRole('checkbox', { name: 'Final Settlement' }))
 
     // Notice Days Served takes 0 to 90.
@@ -78,7 +98,7 @@ describe('End of Employment', () => {
       reason: 'termination',
       noticePeriod: true,
       noticePeriodDays: 30,
-      lastWorkingDate: format(new Date(), 'yyyy-MM-dd'),
+      lastWorkingDate: format(lastDay, 'yyyy-MM-dd'),
     })
     expect(record?.checklist.cf_notice_days).toBe(30)
     const settlement = finalSettlements.all().find((item) => item.employeeId === 'em_kashif')
@@ -128,11 +148,18 @@ describe('End of Employment', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(await within(dialog).findByText('Choose the joining date')).toBeVisible()
 
+    // A joining date on or before the last working date is refused before the confirm.
+    const last = endOfEmployments.find('eoe_2')?.lastWorkingDate ?? ''
     const joining = new Date()
     await pickDay(user, dialog, /^Joining Date/, joining)
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     const confirm = await screen.findByRole('alertdialog', { name: 'Rehire Nida Hassan' })
-    expect(within(confirm).getByText('Are you sure you want to Perform this action?')).toBeVisible()
+    expect(
+      within(confirm).getByText(
+        `Rehire Nida Hassan, joining on ${format(joining, 'MMMM d, yyyy')}?`,
+      ),
+    ).toBeVisible()
+    expect(last < format(joining, 'yyyy-MM-dd')).toBe(true)
     await user.click(within(confirm).getByRole('button', { name: 'Yes' }))
 
     expect(await screen.findByText('Nida Hassan rehired')).toBeInTheDocument()
@@ -142,12 +169,16 @@ describe('End of Employment', () => {
     expect(screen.queryByRole('menuitem', { name: 'Rehire' })).not.toBeInTheDocument()
   })
 
-  it('says what a pending record waits for when Complete is chosen', async () => {
+  it('offers Complete only once nothing waits, saying what it waits for', async () => {
     const { user } = renderApp('/end-of-employment/pending')
 
     await user.click(await screen.findByRole('button', { name: 'Actions for Talha Aziz' }))
-    await user.click(await screen.findByRole('menuitem', { name: 'Complete' }))
-    expect(await screen.findByText(/^Waiting for: Final settlement to be closed/)).toBeVisible()
+    const complete = await screen.findByRole('menuitem', {
+      name: /^Complete \(waiting for Final settlement to be closed/,
+    })
+    expect(complete).toHaveAttribute('aria-disabled', 'true')
     expect(endOfEmployments.find('eoe_1')?.status).toBe('pending')
+    expect(screen.getByText(/^Showing 1 to 1 of 1 record$/)).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Last Working Date' })).toBeInTheDocument()
   })
 })

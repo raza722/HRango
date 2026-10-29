@@ -56,7 +56,7 @@ export type AreaFormValues = z.infer<typeof areaFormSchema>
 
 export const MAX_HEAD_COUNT = 100_000
 
-export const jobTitleFormSchema = z
+const jobTitleObject = z
   .object({
     name: nameSchema('job title'),
     limitHeadCount: z.boolean(),
@@ -84,4 +84,18 @@ export const jobTitleFormSchema = z
     }
   })
 
-export type JobTitleFormValues = z.infer<typeof jobTitleFormSchema>
+export const jobTitleFormSchema = jobTitleObject
+
+/** Job Title with the people who hold it now (`held`): the maximum cannot go below them. */
+export const makeJobTitleFormSchema = (held: number) =>
+  jobTitleObject.superRefine((values, ctx) => {
+    const count = Number(values.maxHeadCount)
+    if (!values.limitHeadCount || !/^\d+$/.test(values.maxHeadCount) || count >= held) return
+    ctx.addIssue({
+      code: 'custom',
+      path: ['maxHeadCount'],
+      message: `${held.toLocaleString('en-US')} ${held === 1 ? 'employee holds' : 'employees hold'} this job title now: enter ${held.toLocaleString('en-US')} or more`,
+    })
+  })
+
+export type JobTitleFormValues = z.infer<typeof jobTitleObject>

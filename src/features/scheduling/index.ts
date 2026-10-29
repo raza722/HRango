@@ -2,7 +2,11 @@
 export { boardQueryOptions, schedulingApi, schedulingKeys } from './api/scheduling.api'
 export { RestDayDialog } from './components/dialogs/rest-day-dialog'
 export { EmployeeSelector, type SelectorFilter } from './components/fields/employee-selector'
-export { SchedulingPage } from './components/scheduling-page'
+export {
+  SchedulingPage,
+  type SchedulingSearchUpdate,
+  SchedulingView,
+} from './components/scheduling-page'
 export { SCHEDULING_PERMISSIONS } from './constants'
 export {
   useActiveShift,

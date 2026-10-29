@@ -1,4 +1,4 @@
-import type { ComponentType, SVGProps } from 'react'
+import type { ComponentType, ReactNode, SVGProps } from 'react'
 import { Construction } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -11,6 +11,8 @@ interface ModulePlaceholderProps {
   icon: ComponentType<SVGProps<SVGSVGElement>>
   /** Screens planned for this module (taken from the Figma design folders). */
   plannedScreens: readonly string[]
+  /** Beside a sub menu (Payroll Settings → Appraisal) the page container is already there. */
+  standalone?: boolean
 }
 
 /**
@@ -22,9 +24,11 @@ export function ModulePlaceholder({
   description,
   icon: Icon,
   plannedScreens,
+  standalone = true,
 }: ModulePlaceholderProps) {
+  const Frame = standalone ? PageContainer : PlainStack
   return (
-    <PageContainer>
+    <Frame>
       <PageHeader title={title} description={description} />
       <section
         aria-labelledby="module-placeholder-heading"
@@ -60,6 +64,11 @@ export function ModulePlaceholder({
           </ul>
         )}
       </section>
-    </PageContainer>
+    </Frame>
   )
+}
+
+/** The page container's spacing between the cards, without a second `@container/page`. */
+function PlainStack({ children }: { children: ReactNode }) {
+  return <div className="flex min-w-0 flex-col gap-4 sm:gap-5">{children}</div>
 }

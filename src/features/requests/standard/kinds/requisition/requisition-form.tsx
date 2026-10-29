@@ -31,7 +31,13 @@ const lineSchema = z.object({
   itemName: z.string().trim().min(1, 'Enter the item').max(200, 'Keep it under 200 characters'),
   quantity: z
     .string()
-    .refine((value) => (parseAmount(value) ?? 0) > 0, { message: 'Enter a quantity above 0' }),
+    .refine((value) => (parseAmount(value) ?? 0) > 0, { message: 'Enter a quantity above 0' })
+    .refine((value) => Number.isInteger(parseAmount(value) ?? 0), {
+      message: 'Enter a whole number',
+    })
+    .refine((value) => (parseAmount(value) ?? 0) <= 100_000, {
+      message: 'Ask for 100,000 at most',
+    }),
   unit: z.string().trim().max(50, 'Keep it under 50 characters'),
   estimatedUnitCost: z
     .string()
@@ -305,7 +311,7 @@ export function RequisitionForm({
               name={`lines.${index}.quantity`}
               label="Quantity"
               required
-              inputMode="decimal"
+              inputMode="numeric"
               disabled={readOnly}
             />
             <TextField

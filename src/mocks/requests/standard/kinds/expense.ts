@@ -340,7 +340,10 @@ const schema = z.object({
         title: z.string().trim().min(1).max(200),
         claimDate: z.string().regex(ymd).nullish(),
         expenseCategoryId: id,
-        amount: amount.pipe(z.number().gt(0)),
+        // A sane ceiling per claim (the form says the same).
+        amount: amount.pipe(
+          z.number().gt(0).max(10_000_000, 'Claim at most PKR 10,000,000 at a time.'),
+        ),
         description: z.string().trim().min(1).max(4000),
         fileId: id.nullish(),
       }),

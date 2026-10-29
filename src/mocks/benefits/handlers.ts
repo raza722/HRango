@@ -12,8 +12,11 @@ import type {
 } from '@/features/benefits'
 import type { ApiErrorBody, ApiItem } from '@/types/api'
 
+import { toProfile } from '../attendance/seed'
+import { DIRECTORY, findEmployee } from '../employees/seed'
 import { mockFileUrl } from '../files/handlers'
-import { findPerson, orgLookupHandlers, orgName, PEOPLE } from '../manpower-planning/org-lookups'
+import { orgLookupHandlers } from '../manpower-planning/org-lookups'
+import { employees as employeeRecords } from '../talent-management/db'
 import {
   apiPath,
   createId,
@@ -77,7 +80,51 @@ const versionOf = (request: Request) => new URL(request.url).searchParams.get('r
 
 // --- shaping ---------------------------------------------------------------------------------
 
-const missingOf = (person: (typeof PEOPLE)[number]): MissingDetail[] => [
+// --- people ----------------------------------------------------------------------------------
+
+/**
+ * The sample gaps the Employees tab shows (as drawn): details the benefits carriers need that
+ * these people's records are taken to lack. Everyone else's come from their Employees record.
+ */
+const SAMPLE_GAPS: Record<string, readonly ('dateOfBirth' | 'maritalStatus')[]> = {
+  em_omer: ['dateOfBirth', 'maritalStatus'],
+  em_maryam: ['maritalStatus'],
+}
+
+interface BenefitPerson {
+  id: string
+  code: string
+  name: string
+  jobTitleName: string | null
+  departmentName: string | null
+  dateOfBirth: string | null
+  maritalStatus: string | null
+}
+
+/** A person of the shared company directory, with the details benefits enrolment needs. */
+function personOf(id: string): BenefitPerson | undefined {
+  const employee = findEmployee(id)
+  if (!employee) return undefined
+  const record = employeeRecords.find(id)
+  const gaps = SAMPLE_GAPS[id] ?? []
+  return {
+    id,
+    code: toProfile(employee).code,
+    name: employee.name,
+    jobTitleName: employee.jobTitle,
+    departmentName: employee.department,
+    dateOfBirth: gaps.includes('dateOfBirth') ? null : (record?.dateOfBirth ?? null),
+    maritalStatus: gaps.includes('maritalStatus') ? null : (record?.maritalStatus ?? null),
+  }
+}
+
+/** Everyone in the company directory (the Employees tab and its count). */
+const people = () =>
+  DIRECTORY.map((employee) => personOf(employee.id)).filter(
+    (person): person is BenefitPerson => person !== undefined,
+  )
+
+const missingOf = (person: BenefitPerson): MissingDetail[] => [
   ...(person.dateOfBirth ? [] : (['date_of_birth'] as const)),
   ...(person.maritalStatus ? [] : (['marital_status'] as const)),
 ]
@@ -93,7 +140,7 @@ function toPlanYear(rec: PlanYearRec): PlanYear {
     pending: count('pending'),
     approved: count('approved'),
     incomplete: count('incomplete'),
-    missingInformation: PEOPLE.filter((person) => missingOf(person).length > 0).length,
+    missingInformation: people().filter((person) => missingOf(person).length > 0).length,
   }
 }
 
@@ -196,7 +243,7 @@ export const benefitsHandlers = [
         planYears: planYears.all().length,
         plans: plans.all().length,
         enrollmentWindows: enrollmentWindows.all().length,
-        employees: PEOPLE.length,
+        employees: people().length,
       },
     })
   }),
@@ -341,7 +388,16 @@ export const benefitsHandlers = [
     const rec = plans.find(String(params.id))
     if (!rec) return notFound('Plan')
     if (versionOf(request) && versionOf(request) !== rec.rowVersion) return conflict()
-    if (elections.all().some((election) => election.planIds.includes(rec.id))) {
+    // Elected (approved or waiting): the same count the list shows as enrolled / pending.
+    if (
+      elections
+        .all()
+        .some(
+          (election) =>
+            (election.status === 'approved' || election.status === 'pending') &&
+            election.planIds.includes(rec.id),
+        )
+    ) {
       return errorResponse(409, 'People have elected this plan; it cannot be deleted.', {
         code: 'PLAN_IN_USE',
       })
@@ -430,6 +486,14 @@ export const benefitsHandlers = [
     if (body.effectiveDate < year.startDate || body.effectiveDate > year.endDate) {
       return invalid('effectiveDate', 'The effective date must fall in the plan year.')
     }
+    // A new window starts today or later and closes inside its plan year, on a day still to come.
+    if (body.effectiveDate < today()) {
+      return invalid('effectiveDate', 'Choose today or a later day.')
+    }
+    if (body.closesOn < today()) return invalid('closesOn', 'Choose today or a later day.')
+    if (body.closesOn > year.endDate) {
+      return invalid('closesOn', 'The last day of enrollment must fall in the plan year.')
+    }
     if (body.planIds.some((planId) => !year.planIds.includes(planId))) {
       return invalid('planIds', 'Choose plans offered in the plan year.')
     }
@@ -472,11 +536,12 @@ export const benefitsHandlers = [
     const q = (url.searchParams.get('q') ?? '').toLowerCase()
     const yearId = url.searchParams.get('planYearId')
     const missingOnly = url.searchParams.get('missingOnly') === 'true'
-    const rows: BenefitEmployee[] = PEOPLE.filter(
-      (person) =>
-        (!q || person.name.toLowerCase().includes(q)) &&
-        (!missingOnly || missingOf(person).length > 0),
-    )
+    const rows: BenefitEmployee[] = people()
+      .filter(
+        (person) =>
+          (!q || `${person.name} ${person.code}`.toLowerCase().includes(q)) &&
+          (!missingOnly || missingOf(person).length > 0),
+      )
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((person) => {
         const election = yearId
@@ -488,8 +553,8 @@ export const benefitsHandlers = [
           id: person.id,
           code: person.code,
           name: person.name,
-          jobTitleName: orgName.jobTitle(person.jobTitleId),
-          departmentName: orgName.department(person.departmentId),
+          jobTitleName: person.jobTitleName,
+          departmentName: person.departmentName,
           dateOfBirth: person.dateOfBirth,
           maritalStatus: person.maritalStatus,
           missing: missingOf(person),
@@ -506,7 +571,7 @@ export const benefitsHandlers = [
     await latency()
     const denied = requireAuth(request)
     if (denied) return denied
-    const person = findPerson(String(params.id))
+    const person = personOf(String(params.id))
     if (!person) return undefined
     const body = await readBody(request, updateRequestBody)
     if (body instanceof Response) return body
@@ -568,6 +633,19 @@ async function savePlanYear(request: Request, yearId: string | null) {
   }
   if (body.planIds.some((planId) => !plans.find(planId))) {
     return invalid('planIds', 'A chosen plan was not found.')
+  }
+  // Plan years do not overlap: a person is covered by one plan year at a time.
+  const overlap = planYears
+    .all()
+    .find(
+      (rec) => rec.id !== yearId && body.startDate <= rec.endDate && body.endDate >= rec.startDate,
+    )
+  if (overlap) {
+    const message = `These dates overlap ${overlap.name} (${overlap.startDate} to ${overlap.endDate}). Plan years cannot overlap.`
+    return errorResponse(409, message, {
+      code: 'PLAN_YEAR_OVERLAP',
+      fieldErrors: { startDate: message },
+    })
   }
   const saved: PlanYearRec = {
     id: current?.id ?? createId('by'),

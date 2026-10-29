@@ -24,8 +24,8 @@ import { EnrollEmployeesDialog, LeavePolicyDialog } from './leave-policy-dialogs
 const routeApi = getRouteApi('/_app/leaves/settings/policies')
 
 /**
- * Settings → Leave Policies (frame 4428:90410, `/leaves/policies`): Sr#., Leave Policy, the
- * policy kind, No. of Leaves (what its leave types add up to), Enroll Employee (how many
+ * Settings → Leave Policies (frame 4428:90410, `/leaves/policies`): Sr#, Leave Policy (with
+ * the policy kind under the title when they differ), No. of Leaves (what its leave types add up to), Enroll Employee (how many
  * people the policy covers; on an employee level policy it opens Enroll Employee), Policy
  * Level, the Status switch and the pencil in Actions. "+ Add New" in the title row opens
  * Add Policy. Buttons follow `leaves.settings.policies.*`.
@@ -53,17 +53,26 @@ export function LeavePoliciesPage() {
   const columns: DataTableColumn<LeavePolicy>[] = [
     {
       id: 'serial',
-      header: 'Sr#.',
+      header: 'Sr#',
       mobile: 'hidden',
       cell: (_row, index) => serial(list.data?.meta.page ?? page, LEAVES_PAGE_SIZE, index),
     },
-    { id: 'title', header: 'Leave Policy', mobile: 'heading', cell: (row) => row.title },
     {
-      id: 'kind',
-      header: 'Policy',
-      cell: (row) => (
-        <span className="whitespace-nowrap">{POLICY_KIND_LABELS[row.policyKind]}</span>
-      ),
+      // One column: the seeded titles are the kinds' names, so a Policy column repeated them.
+      id: 'title',
+      header: 'Leave Policy',
+      mobile: 'heading',
+      cell: (row) =>
+        row.title === POLICY_KIND_LABELS[row.policyKind] ? (
+          row.title
+        ) : (
+          <span className="grid">
+            <span>{row.title}</span>
+            <span className="text-[0.625rem] whitespace-nowrap text-grey">
+              {POLICY_KIND_LABELS[row.policyKind]}
+            </span>
+          </span>
+        ),
     },
     {
       id: 'leaves',

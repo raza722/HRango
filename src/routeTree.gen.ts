@@ -35,14 +35,22 @@ import { Route as AppAssetsCompanyAssetsRouteImport } from './routes/_app/assets
 import { Route as AppAssetsTypesRouteImport } from './routes/_app/assets/types'
 import { Route as AppAttendanceIndexRouteImport } from './routes/_app/attendance/index'
 import { Route as AppAttendanceSectionRouteImport } from './routes/_app/attendance/$section'
+import { Route as AppAttendanceInsightsRouteImport } from './routes/_app/attendance/insights'
 import { Route as AppAttendanceLogsRouteImport } from './routes/_app/attendance/logs'
+import { Route as AppAttendanceOfficialVisitsRouteImport } from './routes/_app/attendance/official-visits'
+import { Route as AppAttendanceOvertimeRouteImport } from './routes/_app/attendance/overtime'
 import { Route as AppAttendanceOverviewRouteImport } from './routes/_app/attendance/overview'
+import { Route as AppAttendanceSchedulingRouteImport } from './routes/_app/attendance/scheduling'
 import { Route as AppAttendanceSettingsRouteImport } from './routes/_app/attendance/settings'
 import { Route as AppAttendanceTimeSheetRouteImport } from './routes/_app/attendance/time-sheet'
 import { Route as AppBenefitsIndexRouteImport } from './routes/_app/benefits/index'
 import { Route as AppBenefitsEmployeesRouteImport } from './routes/_app/benefits/employees'
 import { Route as AppBenefitsEnrollmentWindowsRouteImport } from './routes/_app/benefits/enrollment-windows'
 import { Route as AppBenefitsFilesRouteImport } from './routes/_app/benefits/files'
+import { Route as AppCustomFormIndexRouteImport } from './routes/_app/custom-form/index'
+import { Route as AppCustomFormFormsRouteImport } from './routes/_app/custom-form/forms'
+import { Route as AppCustomFormMyFormsRouteImport } from './routes/_app/custom-form/my-forms'
+import { Route as AppCustomFormResponsesRouteImport } from './routes/_app/custom-form/responses'
 import { Route as AppEndOfEmploymentIndexRouteImport } from './routes/_app/end-of-employment/index'
 import { Route as AppEndOfEmploymentAllRouteImport } from './routes/_app/end-of-employment/all'
 import { Route as AppEndOfEmploymentCompletedRouteImport } from './routes/_app/end-of-employment/completed'
@@ -62,12 +70,28 @@ import { Route as AppPayrollFinalSettlementRouteImport } from './routes/_app/pay
 import { Route as AppPayrollLeaveEncashmentRouteImport } from './routes/_app/payroll/leave-encashment'
 import { Route as AppPayrollSalaryRevisionRouteImport } from './routes/_app/payroll/salary-revision'
 import { Route as AppPayrollSalarySheetRouteImport } from './routes/_app/payroll/salary-sheet'
+import { Route as AppPerformanceIndexRouteImport } from './routes/_app/performance/index'
+import { Route as AppPerformanceAppraisalsRouteImport } from './routes/_app/performance/appraisals'
+import { Route as AppPerformanceCyclesRouteImport } from './routes/_app/performance/cycles'
+import { Route as AppPerformanceGoalsRouteImport } from './routes/_app/performance/goals'
+import { Route as AppPerformanceKpisRouteImport } from './routes/_app/performance/kpis'
+import { Route as AppPerformanceOverviewRouteImport } from './routes/_app/performance/overview'
+import { Route as AppPerformanceReviewsRouteImport } from './routes/_app/performance/reviews'
 import { Route as AppProjectManagementIndexRouteImport } from './routes/_app/project-management/index'
 import { Route as AppProjectManagementHomeRouteImport } from './routes/_app/project-management/home'
 import { Route as AppProjectManagementProjectDashboardRouteImport } from './routes/_app/project-management/project-dashboard'
+import { Route as AppProjectManagementRemindersRouteImport } from './routes/_app/project-management/reminders'
 import { Route as AppProjectManagementTaskDashboardRouteImport } from './routes/_app/project-management/task-dashboard'
 import { Route as AppProjectManagementWorkspaceDashboardRouteImport } from './routes/_app/project-management/workspace-dashboard'
 import { Route as AppProjectManagementWorkspacesRouteImport } from './routes/_app/project-management/workspaces'
+import { Route as AppRecruitmentIndexRouteImport } from './routes/_app/recruitment/index'
+import { Route as AppRecruitmentApplicationsRouteImport } from './routes/_app/recruitment/applications'
+import { Route as AppRecruitmentCandidatesRouteImport } from './routes/_app/recruitment/candidates'
+import { Route as AppRecruitmentDashboardRouteImport } from './routes/_app/recruitment/dashboard'
+import { Route as AppRecruitmentInterviewsRouteImport } from './routes/_app/recruitment/interviews'
+import { Route as AppRecruitmentOffersRouteImport } from './routes/_app/recruitment/offers'
+import { Route as AppRecruitmentOpeningsRouteImport } from './routes/_app/recruitment/openings'
+import { Route as AppRecruitmentSettingsRouteImport } from './routes/_app/recruitment/settings'
 import { Route as AppRequestsIndexRouteImport } from './routes/_app/requests/index'
 import { Route as AppRequestsTypeRouteImport } from './routes/_app/requests/$type'
 import { Route as AppRequestsPunchRouteImport } from './routes/_app/requests/punch'
@@ -80,6 +104,7 @@ import { Route as AppSettingsCustomFormsRouteImport } from './routes/_app/settin
 import { Route as AppSettingsOffBoardingRouteImport } from './routes/_app/settings/off-boarding'
 import { Route as AppSettingsSystemUsersRouteImport } from './routes/_app/settings/system-users'
 import { Route as AppSettingsUserGroupPermissionsRouteImport } from './routes/_app/settings/user-group-permissions'
+import { Route as AppTalentManagementIndexRouteImport } from './routes/_app/talent-management/index'
 import { Route as AppWarningIndexRouteImport } from './routes/_app/warning/index'
 import { Route as AppBenefitsPlanYearsIndexRouteImport } from './routes/_app/benefits/plan-years/index'
 import { Route as AppBenefitsPlanYearsNewRouteImport } from './routes/_app/benefits/plan-years/new'
@@ -105,9 +130,13 @@ import { Route as AppPayrollReportsIndexRouteImport } from './routes/_app/payrol
 import { Route as AppPayrollReportsEmployeeAccountsRouteImport } from './routes/_app/payroll/reports/employee-accounts'
 import { Route as AppPayrollSettingsIndexRouteImport } from './routes/_app/payroll/settings/index'
 import { Route as AppPayrollSettingsAccountTypeRouteImport } from './routes/_app/payroll/settings/account-type'
+import { Route as AppPayrollSettingsAppraisalRouteImport } from './routes/_app/payroll/settings/appraisal'
 import { Route as AppPayrollSettingsDisbursementBanksRouteImport } from './routes/_app/payroll/settings/disbursement-banks'
 import { Route as AppPayrollSettingsGeneralRouteImport } from './routes/_app/payroll/settings/general'
+import { Route as AppPayrollSettingsHistoryRouteImport } from './routes/_app/payroll/settings/history'
+import { Route as AppPayrollSettingsLoansRouteImport } from './routes/_app/payroll/settings/loans'
 import { Route as AppPayrollSettingsPayComponentsRouteImport } from './routes/_app/payroll/settings/pay-components'
+import { Route as AppPayrollSettingsPayRunsRouteImport } from './routes/_app/payroll/settings/pay-runs'
 import { Route as AppPayrollSettingsRewardsRouteImport } from './routes/_app/payroll/settings/rewards'
 import { Route as AppPayrollSettingsTaxRouteImport } from './routes/_app/payroll/settings/tax'
 import { Route as AppPayrollVouchersIndexRouteImport } from './routes/_app/payroll/vouchers/index'
@@ -125,6 +154,12 @@ import { Route as AppSettingsControlPanelSubscriptionsRouteImport } from './rout
 import { Route as AppSettingsControlPanelUsersRouteImport } from './routes/_app/settings/control-panel/users'
 import { Route as AppSettingsOffBoardingIndexRouteImport } from './routes/_app/settings/off-boarding/index'
 import { Route as AppSettingsOffBoardingChecklistRouteImport } from './routes/_app/settings/off-boarding/checklist'
+import { Route as AppSettingsSystemUsersIndexRouteImport } from './routes/_app/settings/system-users/index'
+import { Route as AppSettingsSystemUsersUserIdRouteImport } from './routes/_app/settings/system-users/$userId'
+import { Route as AppSettingsUserGroupPermissionsIndexRouteImport } from './routes/_app/settings/user-group-permissions/index'
+import { Route as AppSettingsUserGroupPermissionsRoleIdRouteImport } from './routes/_app/settings/user-group-permissions/$roleId'
+import { Route as AppTalentManagementEmployeesIndexRouteImport } from './routes/_app/talent-management/employees/index'
+import { Route as AppTalentManagementEmployeesEmployeeIdRouteImport } from './routes/_app/talent-management/employees/$employeeId'
 import { Route as AppWarningPenaltyIndexRouteImport } from './routes/_app/warning/penalty/index'
 import { Route as AppWarningPolicyIndexRouteImport } from './routes/_app/warning/policy/index'
 import { Route as AppWarningPolicyPolicyIdRouteImport } from './routes/_app/warning/policy/$policyId'
@@ -272,14 +307,35 @@ const AppAttendanceSectionRoute = AppAttendanceSectionRouteImport.update({
   path: '/attendance/$section',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAttendanceInsightsRoute = AppAttendanceInsightsRouteImport.update({
+  id: '/attendance/insights',
+  path: '/attendance/insights',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAttendanceLogsRoute = AppAttendanceLogsRouteImport.update({
   id: '/attendance/logs',
   path: '/attendance/logs',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAttendanceOfficialVisitsRoute =
+  AppAttendanceOfficialVisitsRouteImport.update({
+    id: '/attendance/official-visits',
+    path: '/attendance/official-visits',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppAttendanceOvertimeRoute = AppAttendanceOvertimeRouteImport.update({
+  id: '/attendance/overtime',
+  path: '/attendance/overtime',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAttendanceOverviewRoute = AppAttendanceOverviewRouteImport.update({
   id: '/attendance/overview',
   path: '/attendance/overview',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAttendanceSchedulingRoute = AppAttendanceSchedulingRouteImport.update({
+  id: '/attendance/scheduling',
+  path: '/attendance/scheduling',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAttendanceSettingsRoute = AppAttendanceSettingsRouteImport.update({
@@ -312,6 +368,26 @@ const AppBenefitsFilesRoute = AppBenefitsFilesRouteImport.update({
   id: '/files',
   path: '/files',
   getParentRoute: () => AppBenefitsRoute,
+} as any)
+const AppCustomFormIndexRoute = AppCustomFormIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppCustomFormRoute,
+} as any)
+const AppCustomFormFormsRoute = AppCustomFormFormsRouteImport.update({
+  id: '/forms',
+  path: '/forms',
+  getParentRoute: () => AppCustomFormRoute,
+} as any)
+const AppCustomFormMyFormsRoute = AppCustomFormMyFormsRouteImport.update({
+  id: '/my-forms',
+  path: '/my-forms',
+  getParentRoute: () => AppCustomFormRoute,
+} as any)
+const AppCustomFormResponsesRoute = AppCustomFormResponsesRouteImport.update({
+  id: '/responses',
+  path: '/responses',
+  getParentRoute: () => AppCustomFormRoute,
 } as any)
 const AppEndOfEmploymentIndexRoute = AppEndOfEmploymentIndexRouteImport.update({
   id: '/',
@@ -418,6 +494,42 @@ const AppPayrollSalarySheetRoute = AppPayrollSalarySheetRouteImport.update({
   path: '/salary-sheet',
   getParentRoute: () => AppPayrollRoute,
 } as any)
+const AppPerformanceIndexRoute = AppPerformanceIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppPerformanceRoute,
+} as any)
+const AppPerformanceAppraisalsRoute =
+  AppPerformanceAppraisalsRouteImport.update({
+    id: '/appraisals',
+    path: '/appraisals',
+    getParentRoute: () => AppPerformanceRoute,
+  } as any)
+const AppPerformanceCyclesRoute = AppPerformanceCyclesRouteImport.update({
+  id: '/cycles',
+  path: '/cycles',
+  getParentRoute: () => AppPerformanceRoute,
+} as any)
+const AppPerformanceGoalsRoute = AppPerformanceGoalsRouteImport.update({
+  id: '/goals',
+  path: '/goals',
+  getParentRoute: () => AppPerformanceRoute,
+} as any)
+const AppPerformanceKpisRoute = AppPerformanceKpisRouteImport.update({
+  id: '/kpis',
+  path: '/kpis',
+  getParentRoute: () => AppPerformanceRoute,
+} as any)
+const AppPerformanceOverviewRoute = AppPerformanceOverviewRouteImport.update({
+  id: '/overview',
+  path: '/overview',
+  getParentRoute: () => AppPerformanceRoute,
+} as any)
+const AppPerformanceReviewsRoute = AppPerformanceReviewsRouteImport.update({
+  id: '/reviews',
+  path: '/reviews',
+  getParentRoute: () => AppPerformanceRoute,
+} as any)
 const AppProjectManagementIndexRoute =
   AppProjectManagementIndexRouteImport.update({
     id: '/',
@@ -434,6 +546,12 @@ const AppProjectManagementProjectDashboardRoute =
   AppProjectManagementProjectDashboardRouteImport.update({
     id: '/project-dashboard',
     path: '/project-dashboard',
+    getParentRoute: () => AppProjectManagementRoute,
+  } as any)
+const AppProjectManagementRemindersRoute =
+  AppProjectManagementRemindersRouteImport.update({
+    id: '/reminders',
+    path: '/reminders',
     getParentRoute: () => AppProjectManagementRoute,
   } as any)
 const AppProjectManagementTaskDashboardRoute =
@@ -454,6 +572,49 @@ const AppProjectManagementWorkspacesRoute =
     path: '/workspaces',
     getParentRoute: () => AppProjectManagementRoute,
   } as any)
+const AppRecruitmentIndexRoute = AppRecruitmentIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRecruitmentRoute,
+} as any)
+const AppRecruitmentApplicationsRoute =
+  AppRecruitmentApplicationsRouteImport.update({
+    id: '/applications',
+    path: '/applications',
+    getParentRoute: () => AppRecruitmentRoute,
+  } as any)
+const AppRecruitmentCandidatesRoute =
+  AppRecruitmentCandidatesRouteImport.update({
+    id: '/candidates',
+    path: '/candidates',
+    getParentRoute: () => AppRecruitmentRoute,
+  } as any)
+const AppRecruitmentDashboardRoute = AppRecruitmentDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AppRecruitmentRoute,
+} as any)
+const AppRecruitmentInterviewsRoute =
+  AppRecruitmentInterviewsRouteImport.update({
+    id: '/interviews',
+    path: '/interviews',
+    getParentRoute: () => AppRecruitmentRoute,
+  } as any)
+const AppRecruitmentOffersRoute = AppRecruitmentOffersRouteImport.update({
+  id: '/offers',
+  path: '/offers',
+  getParentRoute: () => AppRecruitmentRoute,
+} as any)
+const AppRecruitmentOpeningsRoute = AppRecruitmentOpeningsRouteImport.update({
+  id: '/openings',
+  path: '/openings',
+  getParentRoute: () => AppRecruitmentRoute,
+} as any)
+const AppRecruitmentSettingsRoute = AppRecruitmentSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRecruitmentRoute,
+} as any)
 const AppRequestsIndexRoute = AppRequestsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -515,6 +676,12 @@ const AppSettingsUserGroupPermissionsRoute =
     id: '/settings/user-group-permissions',
     path: '/settings/user-group-permissions',
     getParentRoute: () => AppRoute,
+  } as any)
+const AppTalentManagementIndexRoute =
+  AppTalentManagementIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AppTalentManagementRoute,
   } as any)
 const AppWarningIndexRoute = AppWarningIndexRouteImport.update({
   id: '/warning/',
@@ -654,6 +821,12 @@ const AppPayrollSettingsAccountTypeRoute =
     path: '/settings/account-type',
     getParentRoute: () => AppPayrollRoute,
   } as any)
+const AppPayrollSettingsAppraisalRoute =
+  AppPayrollSettingsAppraisalRouteImport.update({
+    id: '/settings/appraisal',
+    path: '/settings/appraisal',
+    getParentRoute: () => AppPayrollRoute,
+  } as any)
 const AppPayrollSettingsDisbursementBanksRoute =
   AppPayrollSettingsDisbursementBanksRouteImport.update({
     id: '/settings/disbursement-banks',
@@ -666,10 +839,27 @@ const AppPayrollSettingsGeneralRoute =
     path: '/settings/general',
     getParentRoute: () => AppPayrollRoute,
   } as any)
+const AppPayrollSettingsHistoryRoute =
+  AppPayrollSettingsHistoryRouteImport.update({
+    id: '/settings/history',
+    path: '/settings/history',
+    getParentRoute: () => AppPayrollRoute,
+  } as any)
+const AppPayrollSettingsLoansRoute = AppPayrollSettingsLoansRouteImport.update({
+  id: '/settings/loans',
+  path: '/settings/loans',
+  getParentRoute: () => AppPayrollRoute,
+} as any)
 const AppPayrollSettingsPayComponentsRoute =
   AppPayrollSettingsPayComponentsRouteImport.update({
     id: '/settings/pay-components',
     path: '/settings/pay-components',
+    getParentRoute: () => AppPayrollRoute,
+  } as any)
+const AppPayrollSettingsPayRunsRoute =
+  AppPayrollSettingsPayRunsRouteImport.update({
+    id: '/settings/pay-runs',
+    path: '/settings/pay-runs',
     getParentRoute: () => AppPayrollRoute,
   } as any)
 const AppPayrollSettingsRewardsRoute =
@@ -771,6 +961,42 @@ const AppSettingsOffBoardingChecklistRoute =
     id: '/checklist',
     path: '/checklist',
     getParentRoute: () => AppSettingsOffBoardingRoute,
+  } as any)
+const AppSettingsSystemUsersIndexRoute =
+  AppSettingsSystemUsersIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AppSettingsSystemUsersRoute,
+  } as any)
+const AppSettingsSystemUsersUserIdRoute =
+  AppSettingsSystemUsersUserIdRouteImport.update({
+    id: '/$userId',
+    path: '/$userId',
+    getParentRoute: () => AppSettingsSystemUsersRoute,
+  } as any)
+const AppSettingsUserGroupPermissionsIndexRoute =
+  AppSettingsUserGroupPermissionsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AppSettingsUserGroupPermissionsRoute,
+  } as any)
+const AppSettingsUserGroupPermissionsRoleIdRoute =
+  AppSettingsUserGroupPermissionsRoleIdRouteImport.update({
+    id: '/$roleId',
+    path: '/$roleId',
+    getParentRoute: () => AppSettingsUserGroupPermissionsRoute,
+  } as any)
+const AppTalentManagementEmployeesIndexRoute =
+  AppTalentManagementEmployeesIndexRouteImport.update({
+    id: '/employees/',
+    path: '/employees/',
+    getParentRoute: () => AppTalentManagementRoute,
+  } as any)
+const AppTalentManagementEmployeesEmployeeIdRoute =
+  AppTalentManagementEmployeesEmployeeIdRouteImport.update({
+    id: '/employees/$employeeId',
+    path: '/employees/$employeeId',
+    getParentRoute: () => AppTalentManagementRoute,
   } as any)
 const AppWarningPenaltyIndexRoute = AppWarningPenaltyIndexRouteImport.update({
   id: '/warning/penalty/',
@@ -879,31 +1105,38 @@ export interface FileRoutesByFullPath {
   '/assets': typeof AppAssetsRouteWithChildren
   '/benefits': typeof AppBenefitsRouteWithChildren
   '/configuration': typeof AppConfigurationRoute
-  '/custom-form': typeof AppCustomFormRoute
+  '/custom-form': typeof AppCustomFormRouteWithChildren
   '/end-of-employment': typeof AppEndOfEmploymentRouteWithChildren
   '/leaves': typeof AppLeavesRouteWithChildren
   '/manpower-planning': typeof AppManpowerPlanningRouteWithChildren
   '/payroll': typeof AppPayrollRouteWithChildren
-  '/performance': typeof AppPerformanceRoute
+  '/performance': typeof AppPerformanceRouteWithChildren
   '/project-management': typeof AppProjectManagementRouteWithChildren
-  '/recruitment': typeof AppRecruitmentRoute
+  '/recruitment': typeof AppRecruitmentRouteWithChildren
   '/requests': typeof AppRequestsRouteWithChildren
   '/roster': typeof AppRosterRoute
   '/scheduling': typeof AppSchedulingRoute
   '/separation-management': typeof AppSeparationManagementRoute
-  '/talent-management': typeof AppTalentManagementRoute
+  '/talent-management': typeof AppTalentManagementRouteWithChildren
   '/assets/allocations': typeof AppAssetsAllocationsRoute
   '/assets/clearance-form': typeof AppAssetsClearanceFormRoute
   '/assets/company-assets': typeof AppAssetsCompanyAssetsRoute
   '/assets/types': typeof AppAssetsTypesRoute
   '/attendance/$section': typeof AppAttendanceSectionRoute
+  '/attendance/insights': typeof AppAttendanceInsightsRoute
   '/attendance/logs': typeof AppAttendanceLogsRoute
+  '/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
+  '/attendance/overtime': typeof AppAttendanceOvertimeRoute
   '/attendance/overview': typeof AppAttendanceOverviewRoute
+  '/attendance/scheduling': typeof AppAttendanceSchedulingRoute
   '/attendance/settings': typeof AppAttendanceSettingsRoute
   '/attendance/time-sheet': typeof AppAttendanceTimeSheetRoute
   '/benefits/employees': typeof AppBenefitsEmployeesRoute
   '/benefits/enrollment-windows': typeof AppBenefitsEnrollmentWindowsRoute
   '/benefits/files': typeof AppBenefitsFilesRoute
+  '/custom-form/forms': typeof AppCustomFormFormsRoute
+  '/custom-form/my-forms': typeof AppCustomFormMyFormsRoute
+  '/custom-form/responses': typeof AppCustomFormResponsesRoute
   '/end-of-employment/all': typeof AppEndOfEmploymentAllRoute
   '/end-of-employment/completed': typeof AppEndOfEmploymentCompletedRoute
   '/end-of-employment/pending': typeof AppEndOfEmploymentPendingRoute
@@ -919,11 +1152,25 @@ export interface FileRoutesByFullPath {
   '/payroll/leave-encashment': typeof AppPayrollLeaveEncashmentRoute
   '/payroll/salary-revision': typeof AppPayrollSalaryRevisionRoute
   '/payroll/salary-sheet': typeof AppPayrollSalarySheetRoute
+  '/performance/appraisals': typeof AppPerformanceAppraisalsRoute
+  '/performance/cycles': typeof AppPerformanceCyclesRoute
+  '/performance/goals': typeof AppPerformanceGoalsRoute
+  '/performance/kpis': typeof AppPerformanceKpisRoute
+  '/performance/overview': typeof AppPerformanceOverviewRoute
+  '/performance/reviews': typeof AppPerformanceReviewsRoute
   '/project-management/home': typeof AppProjectManagementHomeRoute
   '/project-management/project-dashboard': typeof AppProjectManagementProjectDashboardRoute
+  '/project-management/reminders': typeof AppProjectManagementRemindersRoute
   '/project-management/task-dashboard': typeof AppProjectManagementTaskDashboardRoute
   '/project-management/workspace-dashboard': typeof AppProjectManagementWorkspaceDashboardRoute
   '/project-management/workspaces': typeof AppProjectManagementWorkspacesRouteWithChildren
+  '/recruitment/applications': typeof AppRecruitmentApplicationsRoute
+  '/recruitment/candidates': typeof AppRecruitmentCandidatesRoute
+  '/recruitment/dashboard': typeof AppRecruitmentDashboardRoute
+  '/recruitment/interviews': typeof AppRecruitmentInterviewsRoute
+  '/recruitment/offers': typeof AppRecruitmentOffersRoute
+  '/recruitment/openings': typeof AppRecruitmentOpeningsRoute
+  '/recruitment/settings': typeof AppRecruitmentSettingsRoute
   '/requests/$type': typeof AppRequestsTypeRoute
   '/requests/punch': typeof AppRequestsPunchRoute
   '/requests/shift': typeof AppRequestsShiftRoute
@@ -932,18 +1179,22 @@ export interface FileRoutesByFullPath {
   '/settings/control-panel': typeof AppSettingsControlPanelRouteWithChildren
   '/settings/custom-forms': typeof AppSettingsCustomFormsRoute
   '/settings/off-boarding': typeof AppSettingsOffBoardingRouteWithChildren
-  '/settings/system-users': typeof AppSettingsSystemUsersRoute
-  '/settings/user-group-permissions': typeof AppSettingsUserGroupPermissionsRoute
+  '/settings/system-users': typeof AppSettingsSystemUsersRouteWithChildren
+  '/settings/user-group-permissions': typeof AppSettingsUserGroupPermissionsRouteWithChildren
   '/assets/': typeof AppAssetsIndexRoute
   '/attendance/': typeof AppAttendanceIndexRoute
   '/benefits/': typeof AppBenefitsIndexRoute
+  '/custom-form/': typeof AppCustomFormIndexRoute
   '/end-of-employment/': typeof AppEndOfEmploymentIndexRoute
   '/leaves/': typeof AppLeavesIndexRoute
   '/manpower-planning/': typeof AppManpowerPlanningIndexRoute
   '/payroll/': typeof AppPayrollIndexRoute
+  '/performance/': typeof AppPerformanceIndexRoute
   '/project-management/': typeof AppProjectManagementIndexRoute
+  '/recruitment/': typeof AppRecruitmentIndexRoute
   '/requests/': typeof AppRequestsIndexRoute
   '/settings/': typeof AppSettingsIndexRoute
+  '/talent-management/': typeof AppTalentManagementIndexRoute
   '/warning/': typeof AppWarningIndexRoute
   '/benefits/plan-years/new': typeof AppBenefitsPlanYearsNewRoute
   '/benefits/plans/new': typeof AppBenefitsPlansNewRoute
@@ -960,9 +1211,13 @@ export interface FileRoutesByFullPath {
   '/payroll/payrolls/monthly': typeof AppPayrollPayrollsMonthlyRoute
   '/payroll/reports/employee-accounts': typeof AppPayrollReportsEmployeeAccountsRoute
   '/payroll/settings/account-type': typeof AppPayrollSettingsAccountTypeRoute
+  '/payroll/settings/appraisal': typeof AppPayrollSettingsAppraisalRoute
   '/payroll/settings/disbursement-banks': typeof AppPayrollSettingsDisbursementBanksRoute
   '/payroll/settings/general': typeof AppPayrollSettingsGeneralRoute
+  '/payroll/settings/history': typeof AppPayrollSettingsHistoryRoute
+  '/payroll/settings/loans': typeof AppPayrollSettingsLoansRoute
   '/payroll/settings/pay-components': typeof AppPayrollSettingsPayComponentsRoute
+  '/payroll/settings/pay-runs': typeof AppPayrollSettingsPayRunsRoute
   '/payroll/settings/rewards': typeof AppPayrollSettingsRewardsRoute
   '/payroll/settings/tax': typeof AppPayrollSettingsTaxRoute
   '/payroll/vouchers/employee': typeof AppPayrollVouchersEmployeeRoute
@@ -975,6 +1230,9 @@ export interface FileRoutesByFullPath {
   '/settings/control-panel/subscriptions': typeof AppSettingsControlPanelSubscriptionsRoute
   '/settings/control-panel/users': typeof AppSettingsControlPanelUsersRoute
   '/settings/off-boarding/checklist': typeof AppSettingsOffBoardingChecklistRoute
+  '/settings/system-users/$userId': typeof AppSettingsSystemUsersUserIdRoute
+  '/settings/user-group-permissions/$roleId': typeof AppSettingsUserGroupPermissionsRoleIdRoute
+  '/talent-management/employees/$employeeId': typeof AppTalentManagementEmployeesEmployeeIdRoute
   '/warning/policy/$policyId': typeof AppWarningPolicyPolicyIdRoute
   '/benefits/plan-years/': typeof AppBenefitsPlanYearsIndexRoute
   '/benefits/plans/': typeof AppBenefitsPlansIndexRoute
@@ -990,6 +1248,9 @@ export interface FileRoutesByFullPath {
   '/requests/settings/': typeof AppRequestsSettingsIndexRoute
   '/settings/control-panel/': typeof AppSettingsControlPanelIndexRoute
   '/settings/off-boarding/': typeof AppSettingsOffBoardingIndexRoute
+  '/settings/system-users/': typeof AppSettingsSystemUsersIndexRoute
+  '/settings/user-group-permissions/': typeof AppSettingsUserGroupPermissionsIndexRoute
+  '/talent-management/employees/': typeof AppTalentManagementEmployeesIndexRoute
   '/warning/penalty/': typeof AppWarningPenaltyIndexRoute
   '/warning/policy/': typeof AppWarningPolicyIndexRoute
   '/manpower-planning/planning/$planId/edit': typeof AppManpowerPlanningPlanningPlanIdEditRoute
@@ -1010,26 +1271,29 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/configuration': typeof AppConfigurationRoute
-  '/custom-form': typeof AppCustomFormRoute
-  '/performance': typeof AppPerformanceRoute
-  '/recruitment': typeof AppRecruitmentRoute
   '/roster': typeof AppRosterRoute
   '/scheduling': typeof AppSchedulingRoute
   '/separation-management': typeof AppSeparationManagementRoute
-  '/talent-management': typeof AppTalentManagementRoute
   '/': typeof AppIndexRoute
   '/assets/allocations': typeof AppAssetsAllocationsRoute
   '/assets/clearance-form': typeof AppAssetsClearanceFormRoute
   '/assets/company-assets': typeof AppAssetsCompanyAssetsRoute
   '/assets/types': typeof AppAssetsTypesRoute
   '/attendance/$section': typeof AppAttendanceSectionRoute
+  '/attendance/insights': typeof AppAttendanceInsightsRoute
   '/attendance/logs': typeof AppAttendanceLogsRoute
+  '/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
+  '/attendance/overtime': typeof AppAttendanceOvertimeRoute
   '/attendance/overview': typeof AppAttendanceOverviewRoute
+  '/attendance/scheduling': typeof AppAttendanceSchedulingRoute
   '/attendance/settings': typeof AppAttendanceSettingsRoute
   '/attendance/time-sheet': typeof AppAttendanceTimeSheetRoute
   '/benefits/employees': typeof AppBenefitsEmployeesRoute
   '/benefits/enrollment-windows': typeof AppBenefitsEnrollmentWindowsRoute
   '/benefits/files': typeof AppBenefitsFilesRoute
+  '/custom-form/forms': typeof AppCustomFormFormsRoute
+  '/custom-form/my-forms': typeof AppCustomFormMyFormsRoute
+  '/custom-form/responses': typeof AppCustomFormResponsesRoute
   '/end-of-employment/all': typeof AppEndOfEmploymentAllRoute
   '/end-of-employment/completed': typeof AppEndOfEmploymentCompletedRoute
   '/end-of-employment/pending': typeof AppEndOfEmploymentPendingRoute
@@ -1044,28 +1308,44 @@ export interface FileRoutesByTo {
   '/payroll/leave-encashment': typeof AppPayrollLeaveEncashmentRoute
   '/payroll/salary-revision': typeof AppPayrollSalaryRevisionRoute
   '/payroll/salary-sheet': typeof AppPayrollSalarySheetRoute
+  '/performance/appraisals': typeof AppPerformanceAppraisalsRoute
+  '/performance/cycles': typeof AppPerformanceCyclesRoute
+  '/performance/goals': typeof AppPerformanceGoalsRoute
+  '/performance/kpis': typeof AppPerformanceKpisRoute
+  '/performance/overview': typeof AppPerformanceOverviewRoute
+  '/performance/reviews': typeof AppPerformanceReviewsRoute
   '/project-management/home': typeof AppProjectManagementHomeRoute
   '/project-management/project-dashboard': typeof AppProjectManagementProjectDashboardRoute
+  '/project-management/reminders': typeof AppProjectManagementRemindersRoute
   '/project-management/task-dashboard': typeof AppProjectManagementTaskDashboardRoute
   '/project-management/workspace-dashboard': typeof AppProjectManagementWorkspaceDashboardRoute
+  '/recruitment/applications': typeof AppRecruitmentApplicationsRoute
+  '/recruitment/candidates': typeof AppRecruitmentCandidatesRoute
+  '/recruitment/dashboard': typeof AppRecruitmentDashboardRoute
+  '/recruitment/interviews': typeof AppRecruitmentInterviewsRoute
+  '/recruitment/offers': typeof AppRecruitmentOffersRoute
+  '/recruitment/openings': typeof AppRecruitmentOpeningsRoute
+  '/recruitment/settings': typeof AppRecruitmentSettingsRoute
   '/requests/$type': typeof AppRequestsTypeRoute
   '/requests/punch': typeof AppRequestsPunchRoute
   '/requests/shift': typeof AppRequestsShiftRoute
   '/requests/transfer': typeof AppRequestsTransferRoute
   '/settings/biometric-devices': typeof AppSettingsBiometricDevicesRoute
   '/settings/custom-forms': typeof AppSettingsCustomFormsRoute
-  '/settings/system-users': typeof AppSettingsSystemUsersRoute
-  '/settings/user-group-permissions': typeof AppSettingsUserGroupPermissionsRoute
   '/assets': typeof AppAssetsIndexRoute
   '/attendance': typeof AppAttendanceIndexRoute
   '/benefits': typeof AppBenefitsIndexRoute
+  '/custom-form': typeof AppCustomFormIndexRoute
   '/end-of-employment': typeof AppEndOfEmploymentIndexRoute
   '/leaves': typeof AppLeavesIndexRoute
   '/manpower-planning': typeof AppManpowerPlanningIndexRoute
   '/payroll': typeof AppPayrollIndexRoute
+  '/performance': typeof AppPerformanceIndexRoute
   '/project-management': typeof AppProjectManagementIndexRoute
+  '/recruitment': typeof AppRecruitmentIndexRoute
   '/requests': typeof AppRequestsIndexRoute
   '/settings': typeof AppSettingsIndexRoute
+  '/talent-management': typeof AppTalentManagementIndexRoute
   '/warning': typeof AppWarningIndexRoute
   '/benefits/plan-years/new': typeof AppBenefitsPlanYearsNewRoute
   '/benefits/plans/new': typeof AppBenefitsPlansNewRoute
@@ -1082,9 +1362,13 @@ export interface FileRoutesByTo {
   '/payroll/payrolls/monthly': typeof AppPayrollPayrollsMonthlyRoute
   '/payroll/reports/employee-accounts': typeof AppPayrollReportsEmployeeAccountsRoute
   '/payroll/settings/account-type': typeof AppPayrollSettingsAccountTypeRoute
+  '/payroll/settings/appraisal': typeof AppPayrollSettingsAppraisalRoute
   '/payroll/settings/disbursement-banks': typeof AppPayrollSettingsDisbursementBanksRoute
   '/payroll/settings/general': typeof AppPayrollSettingsGeneralRoute
+  '/payroll/settings/history': typeof AppPayrollSettingsHistoryRoute
+  '/payroll/settings/loans': typeof AppPayrollSettingsLoansRoute
   '/payroll/settings/pay-components': typeof AppPayrollSettingsPayComponentsRoute
+  '/payroll/settings/pay-runs': typeof AppPayrollSettingsPayRunsRoute
   '/payroll/settings/rewards': typeof AppPayrollSettingsRewardsRoute
   '/payroll/settings/tax': typeof AppPayrollSettingsTaxRoute
   '/payroll/vouchers/employee': typeof AppPayrollVouchersEmployeeRoute
@@ -1097,6 +1381,9 @@ export interface FileRoutesByTo {
   '/settings/control-panel/subscriptions': typeof AppSettingsControlPanelSubscriptionsRoute
   '/settings/control-panel/users': typeof AppSettingsControlPanelUsersRoute
   '/settings/off-boarding/checklist': typeof AppSettingsOffBoardingChecklistRoute
+  '/settings/system-users/$userId': typeof AppSettingsSystemUsersUserIdRoute
+  '/settings/user-group-permissions/$roleId': typeof AppSettingsUserGroupPermissionsRoleIdRoute
+  '/talent-management/employees/$employeeId': typeof AppTalentManagementEmployeesEmployeeIdRoute
   '/warning/policy/$policyId': typeof AppWarningPolicyPolicyIdRoute
   '/benefits/plan-years': typeof AppBenefitsPlanYearsIndexRoute
   '/benefits/plans': typeof AppBenefitsPlansIndexRoute
@@ -1112,6 +1399,9 @@ export interface FileRoutesByTo {
   '/requests/settings': typeof AppRequestsSettingsIndexRoute
   '/settings/control-panel': typeof AppSettingsControlPanelIndexRoute
   '/settings/off-boarding': typeof AppSettingsOffBoardingIndexRoute
+  '/settings/system-users': typeof AppSettingsSystemUsersIndexRoute
+  '/settings/user-group-permissions': typeof AppSettingsUserGroupPermissionsIndexRoute
+  '/talent-management/employees': typeof AppTalentManagementEmployeesIndexRoute
   '/warning/penalty': typeof AppWarningPenaltyIndexRoute
   '/warning/policy': typeof AppWarningPolicyIndexRoute
   '/manpower-planning/planning/$planId/edit': typeof AppManpowerPlanningPlanningPlanIdEditRoute
@@ -1136,32 +1426,39 @@ export interface FileRoutesById {
   '/_app/assets': typeof AppAssetsRouteWithChildren
   '/_app/benefits': typeof AppBenefitsRouteWithChildren
   '/_app/configuration': typeof AppConfigurationRoute
-  '/_app/custom-form': typeof AppCustomFormRoute
+  '/_app/custom-form': typeof AppCustomFormRouteWithChildren
   '/_app/end-of-employment': typeof AppEndOfEmploymentRouteWithChildren
   '/_app/leaves': typeof AppLeavesRouteWithChildren
   '/_app/manpower-planning': typeof AppManpowerPlanningRouteWithChildren
   '/_app/payroll': typeof AppPayrollRouteWithChildren
-  '/_app/performance': typeof AppPerformanceRoute
+  '/_app/performance': typeof AppPerformanceRouteWithChildren
   '/_app/project-management': typeof AppProjectManagementRouteWithChildren
-  '/_app/recruitment': typeof AppRecruitmentRoute
+  '/_app/recruitment': typeof AppRecruitmentRouteWithChildren
   '/_app/requests': typeof AppRequestsRouteWithChildren
   '/_app/roster': typeof AppRosterRoute
   '/_app/scheduling': typeof AppSchedulingRoute
   '/_app/separation-management': typeof AppSeparationManagementRoute
-  '/_app/talent-management': typeof AppTalentManagementRoute
+  '/_app/talent-management': typeof AppTalentManagementRouteWithChildren
   '/_app/': typeof AppIndexRoute
   '/_app/assets/allocations': typeof AppAssetsAllocationsRoute
   '/_app/assets/clearance-form': typeof AppAssetsClearanceFormRoute
   '/_app/assets/company-assets': typeof AppAssetsCompanyAssetsRoute
   '/_app/assets/types': typeof AppAssetsTypesRoute
   '/_app/attendance/$section': typeof AppAttendanceSectionRoute
+  '/_app/attendance/insights': typeof AppAttendanceInsightsRoute
   '/_app/attendance/logs': typeof AppAttendanceLogsRoute
+  '/_app/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
+  '/_app/attendance/overtime': typeof AppAttendanceOvertimeRoute
   '/_app/attendance/overview': typeof AppAttendanceOverviewRoute
+  '/_app/attendance/scheduling': typeof AppAttendanceSchedulingRoute
   '/_app/attendance/settings': typeof AppAttendanceSettingsRoute
   '/_app/attendance/time-sheet': typeof AppAttendanceTimeSheetRoute
   '/_app/benefits/employees': typeof AppBenefitsEmployeesRoute
   '/_app/benefits/enrollment-windows': typeof AppBenefitsEnrollmentWindowsRoute
   '/_app/benefits/files': typeof AppBenefitsFilesRoute
+  '/_app/custom-form/forms': typeof AppCustomFormFormsRoute
+  '/_app/custom-form/my-forms': typeof AppCustomFormMyFormsRoute
+  '/_app/custom-form/responses': typeof AppCustomFormResponsesRoute
   '/_app/end-of-employment/all': typeof AppEndOfEmploymentAllRoute
   '/_app/end-of-employment/completed': typeof AppEndOfEmploymentCompletedRoute
   '/_app/end-of-employment/pending': typeof AppEndOfEmploymentPendingRoute
@@ -1177,11 +1474,25 @@ export interface FileRoutesById {
   '/_app/payroll/leave-encashment': typeof AppPayrollLeaveEncashmentRoute
   '/_app/payroll/salary-revision': typeof AppPayrollSalaryRevisionRoute
   '/_app/payroll/salary-sheet': typeof AppPayrollSalarySheetRoute
+  '/_app/performance/appraisals': typeof AppPerformanceAppraisalsRoute
+  '/_app/performance/cycles': typeof AppPerformanceCyclesRoute
+  '/_app/performance/goals': typeof AppPerformanceGoalsRoute
+  '/_app/performance/kpis': typeof AppPerformanceKpisRoute
+  '/_app/performance/overview': typeof AppPerformanceOverviewRoute
+  '/_app/performance/reviews': typeof AppPerformanceReviewsRoute
   '/_app/project-management/home': typeof AppProjectManagementHomeRoute
   '/_app/project-management/project-dashboard': typeof AppProjectManagementProjectDashboardRoute
+  '/_app/project-management/reminders': typeof AppProjectManagementRemindersRoute
   '/_app/project-management/task-dashboard': typeof AppProjectManagementTaskDashboardRoute
   '/_app/project-management/workspace-dashboard': typeof AppProjectManagementWorkspaceDashboardRoute
   '/_app/project-management/workspaces': typeof AppProjectManagementWorkspacesRouteWithChildren
+  '/_app/recruitment/applications': typeof AppRecruitmentApplicationsRoute
+  '/_app/recruitment/candidates': typeof AppRecruitmentCandidatesRoute
+  '/_app/recruitment/dashboard': typeof AppRecruitmentDashboardRoute
+  '/_app/recruitment/interviews': typeof AppRecruitmentInterviewsRoute
+  '/_app/recruitment/offers': typeof AppRecruitmentOffersRoute
+  '/_app/recruitment/openings': typeof AppRecruitmentOpeningsRoute
+  '/_app/recruitment/settings': typeof AppRecruitmentSettingsRoute
   '/_app/requests/$type': typeof AppRequestsTypeRoute
   '/_app/requests/punch': typeof AppRequestsPunchRoute
   '/_app/requests/shift': typeof AppRequestsShiftRoute
@@ -1190,18 +1501,22 @@ export interface FileRoutesById {
   '/_app/settings/control-panel': typeof AppSettingsControlPanelRouteWithChildren
   '/_app/settings/custom-forms': typeof AppSettingsCustomFormsRoute
   '/_app/settings/off-boarding': typeof AppSettingsOffBoardingRouteWithChildren
-  '/_app/settings/system-users': typeof AppSettingsSystemUsersRoute
-  '/_app/settings/user-group-permissions': typeof AppSettingsUserGroupPermissionsRoute
+  '/_app/settings/system-users': typeof AppSettingsSystemUsersRouteWithChildren
+  '/_app/settings/user-group-permissions': typeof AppSettingsUserGroupPermissionsRouteWithChildren
   '/_app/assets/': typeof AppAssetsIndexRoute
   '/_app/attendance/': typeof AppAttendanceIndexRoute
   '/_app/benefits/': typeof AppBenefitsIndexRoute
+  '/_app/custom-form/': typeof AppCustomFormIndexRoute
   '/_app/end-of-employment/': typeof AppEndOfEmploymentIndexRoute
   '/_app/leaves/': typeof AppLeavesIndexRoute
   '/_app/manpower-planning/': typeof AppManpowerPlanningIndexRoute
   '/_app/payroll/': typeof AppPayrollIndexRoute
+  '/_app/performance/': typeof AppPerformanceIndexRoute
   '/_app/project-management/': typeof AppProjectManagementIndexRoute
+  '/_app/recruitment/': typeof AppRecruitmentIndexRoute
   '/_app/requests/': typeof AppRequestsIndexRoute
   '/_app/settings/': typeof AppSettingsIndexRoute
+  '/_app/talent-management/': typeof AppTalentManagementIndexRoute
   '/_app/warning/': typeof AppWarningIndexRoute
   '/_app/benefits/plan-years/new': typeof AppBenefitsPlanYearsNewRoute
   '/_app/benefits/plans/new': typeof AppBenefitsPlansNewRoute
@@ -1218,9 +1533,13 @@ export interface FileRoutesById {
   '/_app/payroll/payrolls/monthly': typeof AppPayrollPayrollsMonthlyRoute
   '/_app/payroll/reports/employee-accounts': typeof AppPayrollReportsEmployeeAccountsRoute
   '/_app/payroll/settings/account-type': typeof AppPayrollSettingsAccountTypeRoute
+  '/_app/payroll/settings/appraisal': typeof AppPayrollSettingsAppraisalRoute
   '/_app/payroll/settings/disbursement-banks': typeof AppPayrollSettingsDisbursementBanksRoute
   '/_app/payroll/settings/general': typeof AppPayrollSettingsGeneralRoute
+  '/_app/payroll/settings/history': typeof AppPayrollSettingsHistoryRoute
+  '/_app/payroll/settings/loans': typeof AppPayrollSettingsLoansRoute
   '/_app/payroll/settings/pay-components': typeof AppPayrollSettingsPayComponentsRoute
+  '/_app/payroll/settings/pay-runs': typeof AppPayrollSettingsPayRunsRoute
   '/_app/payroll/settings/rewards': typeof AppPayrollSettingsRewardsRoute
   '/_app/payroll/settings/tax': typeof AppPayrollSettingsTaxRoute
   '/_app/payroll/vouchers/employee': typeof AppPayrollVouchersEmployeeRoute
@@ -1233,6 +1552,9 @@ export interface FileRoutesById {
   '/_app/settings/control-panel/subscriptions': typeof AppSettingsControlPanelSubscriptionsRoute
   '/_app/settings/control-panel/users': typeof AppSettingsControlPanelUsersRoute
   '/_app/settings/off-boarding/checklist': typeof AppSettingsOffBoardingChecklistRoute
+  '/_app/settings/system-users/$userId': typeof AppSettingsSystemUsersUserIdRoute
+  '/_app/settings/user-group-permissions/$roleId': typeof AppSettingsUserGroupPermissionsRoleIdRoute
+  '/_app/talent-management/employees/$employeeId': typeof AppTalentManagementEmployeesEmployeeIdRoute
   '/_app/warning/policy/$policyId': typeof AppWarningPolicyPolicyIdRoute
   '/_app/benefits/plan-years/': typeof AppBenefitsPlanYearsIndexRoute
   '/_app/benefits/plans/': typeof AppBenefitsPlansIndexRoute
@@ -1248,6 +1570,9 @@ export interface FileRoutesById {
   '/_app/requests/settings/': typeof AppRequestsSettingsIndexRoute
   '/_app/settings/control-panel/': typeof AppSettingsControlPanelIndexRoute
   '/_app/settings/off-boarding/': typeof AppSettingsOffBoardingIndexRoute
+  '/_app/settings/system-users/': typeof AppSettingsSystemUsersIndexRoute
+  '/_app/settings/user-group-permissions/': typeof AppSettingsUserGroupPermissionsIndexRoute
+  '/_app/talent-management/employees/': typeof AppTalentManagementEmployeesIndexRoute
   '/_app/warning/penalty/': typeof AppWarningPenaltyIndexRoute
   '/_app/warning/policy/': typeof AppWarningPolicyIndexRoute
   '/_app/manpower-planning/planning/$planId/edit': typeof AppManpowerPlanningPlanningPlanIdEditRoute
@@ -1291,13 +1616,20 @@ export interface FileRouteTypes {
     | '/assets/company-assets'
     | '/assets/types'
     | '/attendance/$section'
+    | '/attendance/insights'
     | '/attendance/logs'
+    | '/attendance/official-visits'
+    | '/attendance/overtime'
     | '/attendance/overview'
+    | '/attendance/scheduling'
     | '/attendance/settings'
     | '/attendance/time-sheet'
     | '/benefits/employees'
     | '/benefits/enrollment-windows'
     | '/benefits/files'
+    | '/custom-form/forms'
+    | '/custom-form/my-forms'
+    | '/custom-form/responses'
     | '/end-of-employment/all'
     | '/end-of-employment/completed'
     | '/end-of-employment/pending'
@@ -1313,11 +1645,25 @@ export interface FileRouteTypes {
     | '/payroll/leave-encashment'
     | '/payroll/salary-revision'
     | '/payroll/salary-sheet'
+    | '/performance/appraisals'
+    | '/performance/cycles'
+    | '/performance/goals'
+    | '/performance/kpis'
+    | '/performance/overview'
+    | '/performance/reviews'
     | '/project-management/home'
     | '/project-management/project-dashboard'
+    | '/project-management/reminders'
     | '/project-management/task-dashboard'
     | '/project-management/workspace-dashboard'
     | '/project-management/workspaces'
+    | '/recruitment/applications'
+    | '/recruitment/candidates'
+    | '/recruitment/dashboard'
+    | '/recruitment/interviews'
+    | '/recruitment/offers'
+    | '/recruitment/openings'
+    | '/recruitment/settings'
     | '/requests/$type'
     | '/requests/punch'
     | '/requests/shift'
@@ -1331,13 +1677,17 @@ export interface FileRouteTypes {
     | '/assets/'
     | '/attendance/'
     | '/benefits/'
+    | '/custom-form/'
     | '/end-of-employment/'
     | '/leaves/'
     | '/manpower-planning/'
     | '/payroll/'
+    | '/performance/'
     | '/project-management/'
+    | '/recruitment/'
     | '/requests/'
     | '/settings/'
+    | '/talent-management/'
     | '/warning/'
     | '/benefits/plan-years/new'
     | '/benefits/plans/new'
@@ -1354,9 +1704,13 @@ export interface FileRouteTypes {
     | '/payroll/payrolls/monthly'
     | '/payroll/reports/employee-accounts'
     | '/payroll/settings/account-type'
+    | '/payroll/settings/appraisal'
     | '/payroll/settings/disbursement-banks'
     | '/payroll/settings/general'
+    | '/payroll/settings/history'
+    | '/payroll/settings/loans'
     | '/payroll/settings/pay-components'
+    | '/payroll/settings/pay-runs'
     | '/payroll/settings/rewards'
     | '/payroll/settings/tax'
     | '/payroll/vouchers/employee'
@@ -1369,6 +1723,9 @@ export interface FileRouteTypes {
     | '/settings/control-panel/subscriptions'
     | '/settings/control-panel/users'
     | '/settings/off-boarding/checklist'
+    | '/settings/system-users/$userId'
+    | '/settings/user-group-permissions/$roleId'
+    | '/talent-management/employees/$employeeId'
     | '/warning/policy/$policyId'
     | '/benefits/plan-years/'
     | '/benefits/plans/'
@@ -1384,6 +1741,9 @@ export interface FileRouteTypes {
     | '/requests/settings/'
     | '/settings/control-panel/'
     | '/settings/off-boarding/'
+    | '/settings/system-users/'
+    | '/settings/user-group-permissions/'
+    | '/talent-management/employees/'
     | '/warning/penalty/'
     | '/warning/policy/'
     | '/manpower-planning/planning/$planId/edit'
@@ -1404,26 +1764,29 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/configuration'
-    | '/custom-form'
-    | '/performance'
-    | '/recruitment'
     | '/roster'
     | '/scheduling'
     | '/separation-management'
-    | '/talent-management'
     | '/'
     | '/assets/allocations'
     | '/assets/clearance-form'
     | '/assets/company-assets'
     | '/assets/types'
     | '/attendance/$section'
+    | '/attendance/insights'
     | '/attendance/logs'
+    | '/attendance/official-visits'
+    | '/attendance/overtime'
     | '/attendance/overview'
+    | '/attendance/scheduling'
     | '/attendance/settings'
     | '/attendance/time-sheet'
     | '/benefits/employees'
     | '/benefits/enrollment-windows'
     | '/benefits/files'
+    | '/custom-form/forms'
+    | '/custom-form/my-forms'
+    | '/custom-form/responses'
     | '/end-of-employment/all'
     | '/end-of-employment/completed'
     | '/end-of-employment/pending'
@@ -1438,28 +1801,44 @@ export interface FileRouteTypes {
     | '/payroll/leave-encashment'
     | '/payroll/salary-revision'
     | '/payroll/salary-sheet'
+    | '/performance/appraisals'
+    | '/performance/cycles'
+    | '/performance/goals'
+    | '/performance/kpis'
+    | '/performance/overview'
+    | '/performance/reviews'
     | '/project-management/home'
     | '/project-management/project-dashboard'
+    | '/project-management/reminders'
     | '/project-management/task-dashboard'
     | '/project-management/workspace-dashboard'
+    | '/recruitment/applications'
+    | '/recruitment/candidates'
+    | '/recruitment/dashboard'
+    | '/recruitment/interviews'
+    | '/recruitment/offers'
+    | '/recruitment/openings'
+    | '/recruitment/settings'
     | '/requests/$type'
     | '/requests/punch'
     | '/requests/shift'
     | '/requests/transfer'
     | '/settings/biometric-devices'
     | '/settings/custom-forms'
-    | '/settings/system-users'
-    | '/settings/user-group-permissions'
     | '/assets'
     | '/attendance'
     | '/benefits'
+    | '/custom-form'
     | '/end-of-employment'
     | '/leaves'
     | '/manpower-planning'
     | '/payroll'
+    | '/performance'
     | '/project-management'
+    | '/recruitment'
     | '/requests'
     | '/settings'
+    | '/talent-management'
     | '/warning'
     | '/benefits/plan-years/new'
     | '/benefits/plans/new'
@@ -1476,9 +1855,13 @@ export interface FileRouteTypes {
     | '/payroll/payrolls/monthly'
     | '/payroll/reports/employee-accounts'
     | '/payroll/settings/account-type'
+    | '/payroll/settings/appraisal'
     | '/payroll/settings/disbursement-banks'
     | '/payroll/settings/general'
+    | '/payroll/settings/history'
+    | '/payroll/settings/loans'
     | '/payroll/settings/pay-components'
+    | '/payroll/settings/pay-runs'
     | '/payroll/settings/rewards'
     | '/payroll/settings/tax'
     | '/payroll/vouchers/employee'
@@ -1491,6 +1874,9 @@ export interface FileRouteTypes {
     | '/settings/control-panel/subscriptions'
     | '/settings/control-panel/users'
     | '/settings/off-boarding/checklist'
+    | '/settings/system-users/$userId'
+    | '/settings/user-group-permissions/$roleId'
+    | '/talent-management/employees/$employeeId'
     | '/warning/policy/$policyId'
     | '/benefits/plan-years'
     | '/benefits/plans'
@@ -1506,6 +1892,9 @@ export interface FileRouteTypes {
     | '/requests/settings'
     | '/settings/control-panel'
     | '/settings/off-boarding'
+    | '/settings/system-users'
+    | '/settings/user-group-permissions'
+    | '/talent-management/employees'
     | '/warning/penalty'
     | '/warning/policy'
     | '/manpower-planning/planning/$planId/edit'
@@ -1548,13 +1937,20 @@ export interface FileRouteTypes {
     | '/_app/assets/company-assets'
     | '/_app/assets/types'
     | '/_app/attendance/$section'
+    | '/_app/attendance/insights'
     | '/_app/attendance/logs'
+    | '/_app/attendance/official-visits'
+    | '/_app/attendance/overtime'
     | '/_app/attendance/overview'
+    | '/_app/attendance/scheduling'
     | '/_app/attendance/settings'
     | '/_app/attendance/time-sheet'
     | '/_app/benefits/employees'
     | '/_app/benefits/enrollment-windows'
     | '/_app/benefits/files'
+    | '/_app/custom-form/forms'
+    | '/_app/custom-form/my-forms'
+    | '/_app/custom-form/responses'
     | '/_app/end-of-employment/all'
     | '/_app/end-of-employment/completed'
     | '/_app/end-of-employment/pending'
@@ -1570,11 +1966,25 @@ export interface FileRouteTypes {
     | '/_app/payroll/leave-encashment'
     | '/_app/payroll/salary-revision'
     | '/_app/payroll/salary-sheet'
+    | '/_app/performance/appraisals'
+    | '/_app/performance/cycles'
+    | '/_app/performance/goals'
+    | '/_app/performance/kpis'
+    | '/_app/performance/overview'
+    | '/_app/performance/reviews'
     | '/_app/project-management/home'
     | '/_app/project-management/project-dashboard'
+    | '/_app/project-management/reminders'
     | '/_app/project-management/task-dashboard'
     | '/_app/project-management/workspace-dashboard'
     | '/_app/project-management/workspaces'
+    | '/_app/recruitment/applications'
+    | '/_app/recruitment/candidates'
+    | '/_app/recruitment/dashboard'
+    | '/_app/recruitment/interviews'
+    | '/_app/recruitment/offers'
+    | '/_app/recruitment/openings'
+    | '/_app/recruitment/settings'
     | '/_app/requests/$type'
     | '/_app/requests/punch'
     | '/_app/requests/shift'
@@ -1588,13 +1998,17 @@ export interface FileRouteTypes {
     | '/_app/assets/'
     | '/_app/attendance/'
     | '/_app/benefits/'
+    | '/_app/custom-form/'
     | '/_app/end-of-employment/'
     | '/_app/leaves/'
     | '/_app/manpower-planning/'
     | '/_app/payroll/'
+    | '/_app/performance/'
     | '/_app/project-management/'
+    | '/_app/recruitment/'
     | '/_app/requests/'
     | '/_app/settings/'
+    | '/_app/talent-management/'
     | '/_app/warning/'
     | '/_app/benefits/plan-years/new'
     | '/_app/benefits/plans/new'
@@ -1611,9 +2025,13 @@ export interface FileRouteTypes {
     | '/_app/payroll/payrolls/monthly'
     | '/_app/payroll/reports/employee-accounts'
     | '/_app/payroll/settings/account-type'
+    | '/_app/payroll/settings/appraisal'
     | '/_app/payroll/settings/disbursement-banks'
     | '/_app/payroll/settings/general'
+    | '/_app/payroll/settings/history'
+    | '/_app/payroll/settings/loans'
     | '/_app/payroll/settings/pay-components'
+    | '/_app/payroll/settings/pay-runs'
     | '/_app/payroll/settings/rewards'
     | '/_app/payroll/settings/tax'
     | '/_app/payroll/vouchers/employee'
@@ -1626,6 +2044,9 @@ export interface FileRouteTypes {
     | '/_app/settings/control-panel/subscriptions'
     | '/_app/settings/control-panel/users'
     | '/_app/settings/off-boarding/checklist'
+    | '/_app/settings/system-users/$userId'
+    | '/_app/settings/user-group-permissions/$roleId'
+    | '/_app/talent-management/employees/$employeeId'
     | '/_app/warning/policy/$policyId'
     | '/_app/benefits/plan-years/'
     | '/_app/benefits/plans/'
@@ -1641,6 +2062,9 @@ export interface FileRouteTypes {
     | '/_app/requests/settings/'
     | '/_app/settings/control-panel/'
     | '/_app/settings/off-boarding/'
+    | '/_app/settings/system-users/'
+    | '/_app/settings/user-group-permissions/'
+    | '/_app/talent-management/employees/'
     | '/_app/warning/penalty/'
     | '/_app/warning/policy/'
     | '/_app/manpower-planning/planning/$planId/edit'
@@ -1848,6 +2272,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAttendanceSectionRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/attendance/insights': {
+      id: '/_app/attendance/insights'
+      path: '/attendance/insights'
+      fullPath: '/attendance/insights'
+      preLoaderRoute: typeof AppAttendanceInsightsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/attendance/logs': {
       id: '/_app/attendance/logs'
       path: '/attendance/logs'
@@ -1855,11 +2286,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAttendanceLogsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/attendance/official-visits': {
+      id: '/_app/attendance/official-visits'
+      path: '/attendance/official-visits'
+      fullPath: '/attendance/official-visits'
+      preLoaderRoute: typeof AppAttendanceOfficialVisitsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/attendance/overtime': {
+      id: '/_app/attendance/overtime'
+      path: '/attendance/overtime'
+      fullPath: '/attendance/overtime'
+      preLoaderRoute: typeof AppAttendanceOvertimeRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/attendance/overview': {
       id: '/_app/attendance/overview'
       path: '/attendance/overview'
       fullPath: '/attendance/overview'
       preLoaderRoute: typeof AppAttendanceOverviewRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/attendance/scheduling': {
+      id: '/_app/attendance/scheduling'
+      path: '/attendance/scheduling'
+      fullPath: '/attendance/scheduling'
+      preLoaderRoute: typeof AppAttendanceSchedulingRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/attendance/settings': {
@@ -1903,6 +2355,34 @@ declare module '@tanstack/react-router' {
       fullPath: '/benefits/files'
       preLoaderRoute: typeof AppBenefitsFilesRouteImport
       parentRoute: typeof AppBenefitsRoute
+    }
+    '/_app/custom-form/': {
+      id: '/_app/custom-form/'
+      path: '/'
+      fullPath: '/custom-form/'
+      preLoaderRoute: typeof AppCustomFormIndexRouteImport
+      parentRoute: typeof AppCustomFormRoute
+    }
+    '/_app/custom-form/forms': {
+      id: '/_app/custom-form/forms'
+      path: '/forms'
+      fullPath: '/custom-form/forms'
+      preLoaderRoute: typeof AppCustomFormFormsRouteImport
+      parentRoute: typeof AppCustomFormRoute
+    }
+    '/_app/custom-form/my-forms': {
+      id: '/_app/custom-form/my-forms'
+      path: '/my-forms'
+      fullPath: '/custom-form/my-forms'
+      preLoaderRoute: typeof AppCustomFormMyFormsRouteImport
+      parentRoute: typeof AppCustomFormRoute
+    }
+    '/_app/custom-form/responses': {
+      id: '/_app/custom-form/responses'
+      path: '/responses'
+      fullPath: '/custom-form/responses'
+      preLoaderRoute: typeof AppCustomFormResponsesRouteImport
+      parentRoute: typeof AppCustomFormRoute
     }
     '/_app/end-of-employment/': {
       id: '/_app/end-of-employment/'
@@ -2037,6 +2517,55 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPayrollSalarySheetRouteImport
       parentRoute: typeof AppPayrollRoute
     }
+    '/_app/performance/': {
+      id: '/_app/performance/'
+      path: '/'
+      fullPath: '/performance/'
+      preLoaderRoute: typeof AppPerformanceIndexRouteImport
+      parentRoute: typeof AppPerformanceRoute
+    }
+    '/_app/performance/appraisals': {
+      id: '/_app/performance/appraisals'
+      path: '/appraisals'
+      fullPath: '/performance/appraisals'
+      preLoaderRoute: typeof AppPerformanceAppraisalsRouteImport
+      parentRoute: typeof AppPerformanceRoute
+    }
+    '/_app/performance/cycles': {
+      id: '/_app/performance/cycles'
+      path: '/cycles'
+      fullPath: '/performance/cycles'
+      preLoaderRoute: typeof AppPerformanceCyclesRouteImport
+      parentRoute: typeof AppPerformanceRoute
+    }
+    '/_app/performance/goals': {
+      id: '/_app/performance/goals'
+      path: '/goals'
+      fullPath: '/performance/goals'
+      preLoaderRoute: typeof AppPerformanceGoalsRouteImport
+      parentRoute: typeof AppPerformanceRoute
+    }
+    '/_app/performance/kpis': {
+      id: '/_app/performance/kpis'
+      path: '/kpis'
+      fullPath: '/performance/kpis'
+      preLoaderRoute: typeof AppPerformanceKpisRouteImport
+      parentRoute: typeof AppPerformanceRoute
+    }
+    '/_app/performance/overview': {
+      id: '/_app/performance/overview'
+      path: '/overview'
+      fullPath: '/performance/overview'
+      preLoaderRoute: typeof AppPerformanceOverviewRouteImport
+      parentRoute: typeof AppPerformanceRoute
+    }
+    '/_app/performance/reviews': {
+      id: '/_app/performance/reviews'
+      path: '/reviews'
+      fullPath: '/performance/reviews'
+      preLoaderRoute: typeof AppPerformanceReviewsRouteImport
+      parentRoute: typeof AppPerformanceRoute
+    }
     '/_app/project-management/': {
       id: '/_app/project-management/'
       path: '/'
@@ -2056,6 +2585,13 @@ declare module '@tanstack/react-router' {
       path: '/project-dashboard'
       fullPath: '/project-management/project-dashboard'
       preLoaderRoute: typeof AppProjectManagementProjectDashboardRouteImport
+      parentRoute: typeof AppProjectManagementRoute
+    }
+    '/_app/project-management/reminders': {
+      id: '/_app/project-management/reminders'
+      path: '/reminders'
+      fullPath: '/project-management/reminders'
+      preLoaderRoute: typeof AppProjectManagementRemindersRouteImport
       parentRoute: typeof AppProjectManagementRoute
     }
     '/_app/project-management/task-dashboard': {
@@ -2078,6 +2614,62 @@ declare module '@tanstack/react-router' {
       fullPath: '/project-management/workspaces'
       preLoaderRoute: typeof AppProjectManagementWorkspacesRouteImport
       parentRoute: typeof AppProjectManagementRoute
+    }
+    '/_app/recruitment/': {
+      id: '/_app/recruitment/'
+      path: '/'
+      fullPath: '/recruitment/'
+      preLoaderRoute: typeof AppRecruitmentIndexRouteImport
+      parentRoute: typeof AppRecruitmentRoute
+    }
+    '/_app/recruitment/applications': {
+      id: '/_app/recruitment/applications'
+      path: '/applications'
+      fullPath: '/recruitment/applications'
+      preLoaderRoute: typeof AppRecruitmentApplicationsRouteImport
+      parentRoute: typeof AppRecruitmentRoute
+    }
+    '/_app/recruitment/candidates': {
+      id: '/_app/recruitment/candidates'
+      path: '/candidates'
+      fullPath: '/recruitment/candidates'
+      preLoaderRoute: typeof AppRecruitmentCandidatesRouteImport
+      parentRoute: typeof AppRecruitmentRoute
+    }
+    '/_app/recruitment/dashboard': {
+      id: '/_app/recruitment/dashboard'
+      path: '/dashboard'
+      fullPath: '/recruitment/dashboard'
+      preLoaderRoute: typeof AppRecruitmentDashboardRouteImport
+      parentRoute: typeof AppRecruitmentRoute
+    }
+    '/_app/recruitment/interviews': {
+      id: '/_app/recruitment/interviews'
+      path: '/interviews'
+      fullPath: '/recruitment/interviews'
+      preLoaderRoute: typeof AppRecruitmentInterviewsRouteImport
+      parentRoute: typeof AppRecruitmentRoute
+    }
+    '/_app/recruitment/offers': {
+      id: '/_app/recruitment/offers'
+      path: '/offers'
+      fullPath: '/recruitment/offers'
+      preLoaderRoute: typeof AppRecruitmentOffersRouteImport
+      parentRoute: typeof AppRecruitmentRoute
+    }
+    '/_app/recruitment/openings': {
+      id: '/_app/recruitment/openings'
+      path: '/openings'
+      fullPath: '/recruitment/openings'
+      preLoaderRoute: typeof AppRecruitmentOpeningsRouteImport
+      parentRoute: typeof AppRecruitmentRoute
+    }
+    '/_app/recruitment/settings': {
+      id: '/_app/recruitment/settings'
+      path: '/settings'
+      fullPath: '/recruitment/settings'
+      preLoaderRoute: typeof AppRecruitmentSettingsRouteImport
+      parentRoute: typeof AppRecruitmentRoute
     }
     '/_app/requests/': {
       id: '/_app/requests/'
@@ -2162,6 +2754,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/settings/user-group-permissions'
       preLoaderRoute: typeof AppSettingsUserGroupPermissionsRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/_app/talent-management/': {
+      id: '/_app/talent-management/'
+      path: '/'
+      fullPath: '/talent-management/'
+      preLoaderRoute: typeof AppTalentManagementIndexRouteImport
+      parentRoute: typeof AppTalentManagementRoute
     }
     '/_app/warning/': {
       id: '/_app/warning/'
@@ -2338,6 +2937,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPayrollSettingsAccountTypeRouteImport
       parentRoute: typeof AppPayrollRoute
     }
+    '/_app/payroll/settings/appraisal': {
+      id: '/_app/payroll/settings/appraisal'
+      path: '/settings/appraisal'
+      fullPath: '/payroll/settings/appraisal'
+      preLoaderRoute: typeof AppPayrollSettingsAppraisalRouteImport
+      parentRoute: typeof AppPayrollRoute
+    }
     '/_app/payroll/settings/disbursement-banks': {
       id: '/_app/payroll/settings/disbursement-banks'
       path: '/settings/disbursement-banks'
@@ -2352,11 +2958,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPayrollSettingsGeneralRouteImport
       parentRoute: typeof AppPayrollRoute
     }
+    '/_app/payroll/settings/history': {
+      id: '/_app/payroll/settings/history'
+      path: '/settings/history'
+      fullPath: '/payroll/settings/history'
+      preLoaderRoute: typeof AppPayrollSettingsHistoryRouteImport
+      parentRoute: typeof AppPayrollRoute
+    }
+    '/_app/payroll/settings/loans': {
+      id: '/_app/payroll/settings/loans'
+      path: '/settings/loans'
+      fullPath: '/payroll/settings/loans'
+      preLoaderRoute: typeof AppPayrollSettingsLoansRouteImport
+      parentRoute: typeof AppPayrollRoute
+    }
     '/_app/payroll/settings/pay-components': {
       id: '/_app/payroll/settings/pay-components'
       path: '/settings/pay-components'
       fullPath: '/payroll/settings/pay-components'
       preLoaderRoute: typeof AppPayrollSettingsPayComponentsRouteImport
+      parentRoute: typeof AppPayrollRoute
+    }
+    '/_app/payroll/settings/pay-runs': {
+      id: '/_app/payroll/settings/pay-runs'
+      path: '/settings/pay-runs'
+      fullPath: '/payroll/settings/pay-runs'
+      preLoaderRoute: typeof AppPayrollSettingsPayRunsRouteImport
       parentRoute: typeof AppPayrollRoute
     }
     '/_app/payroll/settings/rewards': {
@@ -2477,6 +3104,48 @@ declare module '@tanstack/react-router' {
       fullPath: '/settings/off-boarding/checklist'
       preLoaderRoute: typeof AppSettingsOffBoardingChecklistRouteImport
       parentRoute: typeof AppSettingsOffBoardingRoute
+    }
+    '/_app/settings/system-users/': {
+      id: '/_app/settings/system-users/'
+      path: '/'
+      fullPath: '/settings/system-users/'
+      preLoaderRoute: typeof AppSettingsSystemUsersIndexRouteImport
+      parentRoute: typeof AppSettingsSystemUsersRoute
+    }
+    '/_app/settings/system-users/$userId': {
+      id: '/_app/settings/system-users/$userId'
+      path: '/$userId'
+      fullPath: '/settings/system-users/$userId'
+      preLoaderRoute: typeof AppSettingsSystemUsersUserIdRouteImport
+      parentRoute: typeof AppSettingsSystemUsersRoute
+    }
+    '/_app/settings/user-group-permissions/': {
+      id: '/_app/settings/user-group-permissions/'
+      path: '/'
+      fullPath: '/settings/user-group-permissions/'
+      preLoaderRoute: typeof AppSettingsUserGroupPermissionsIndexRouteImport
+      parentRoute: typeof AppSettingsUserGroupPermissionsRoute
+    }
+    '/_app/settings/user-group-permissions/$roleId': {
+      id: '/_app/settings/user-group-permissions/$roleId'
+      path: '/$roleId'
+      fullPath: '/settings/user-group-permissions/$roleId'
+      preLoaderRoute: typeof AppSettingsUserGroupPermissionsRoleIdRouteImport
+      parentRoute: typeof AppSettingsUserGroupPermissionsRoute
+    }
+    '/_app/talent-management/employees/': {
+      id: '/_app/talent-management/employees/'
+      path: '/employees'
+      fullPath: '/talent-management/employees/'
+      preLoaderRoute: typeof AppTalentManagementEmployeesIndexRouteImport
+      parentRoute: typeof AppTalentManagementRoute
+    }
+    '/_app/talent-management/employees/$employeeId': {
+      id: '/_app/talent-management/employees/$employeeId'
+      path: '/employees/$employeeId'
+      fullPath: '/talent-management/employees/$employeeId'
+      preLoaderRoute: typeof AppTalentManagementEmployeesEmployeeIdRouteImport
+      parentRoute: typeof AppTalentManagementRoute
     }
     '/_app/warning/penalty/': {
       id: '/_app/warning/penalty/'
@@ -2646,6 +3315,24 @@ const AppBenefitsRouteWithChildren = AppBenefitsRoute._addFileChildren(
   AppBenefitsRouteChildren,
 )
 
+interface AppCustomFormRouteChildren {
+  AppCustomFormFormsRoute: typeof AppCustomFormFormsRoute
+  AppCustomFormMyFormsRoute: typeof AppCustomFormMyFormsRoute
+  AppCustomFormResponsesRoute: typeof AppCustomFormResponsesRoute
+  AppCustomFormIndexRoute: typeof AppCustomFormIndexRoute
+}
+
+const AppCustomFormRouteChildren: AppCustomFormRouteChildren = {
+  AppCustomFormFormsRoute: AppCustomFormFormsRoute,
+  AppCustomFormMyFormsRoute: AppCustomFormMyFormsRoute,
+  AppCustomFormResponsesRoute: AppCustomFormResponsesRoute,
+  AppCustomFormIndexRoute: AppCustomFormIndexRoute,
+}
+
+const AppCustomFormRouteWithChildren = AppCustomFormRoute._addFileChildren(
+  AppCustomFormRouteChildren,
+)
+
 interface AppEndOfEmploymentRouteChildren {
   AppEndOfEmploymentAllRoute: typeof AppEndOfEmploymentAllRoute
   AppEndOfEmploymentCompletedRoute: typeof AppEndOfEmploymentCompletedRoute
@@ -2745,9 +3432,13 @@ interface AppPayrollRouteChildren {
   AppPayrollPayrollsMonthlyRoute: typeof AppPayrollPayrollsMonthlyRoute
   AppPayrollReportsEmployeeAccountsRoute: typeof AppPayrollReportsEmployeeAccountsRoute
   AppPayrollSettingsAccountTypeRoute: typeof AppPayrollSettingsAccountTypeRoute
+  AppPayrollSettingsAppraisalRoute: typeof AppPayrollSettingsAppraisalRoute
   AppPayrollSettingsDisbursementBanksRoute: typeof AppPayrollSettingsDisbursementBanksRoute
   AppPayrollSettingsGeneralRoute: typeof AppPayrollSettingsGeneralRoute
+  AppPayrollSettingsHistoryRoute: typeof AppPayrollSettingsHistoryRoute
+  AppPayrollSettingsLoansRoute: typeof AppPayrollSettingsLoansRoute
   AppPayrollSettingsPayComponentsRoute: typeof AppPayrollSettingsPayComponentsRoute
+  AppPayrollSettingsPayRunsRoute: typeof AppPayrollSettingsPayRunsRoute
   AppPayrollSettingsRewardsRoute: typeof AppPayrollSettingsRewardsRoute
   AppPayrollSettingsTaxRoute: typeof AppPayrollSettingsTaxRoute
   AppPayrollVouchersEmployeeRoute: typeof AppPayrollVouchersEmployeeRoute
@@ -2778,10 +3469,14 @@ const AppPayrollRouteChildren: AppPayrollRouteChildren = {
   AppPayrollReportsEmployeeAccountsRoute:
     AppPayrollReportsEmployeeAccountsRoute,
   AppPayrollSettingsAccountTypeRoute: AppPayrollSettingsAccountTypeRoute,
+  AppPayrollSettingsAppraisalRoute: AppPayrollSettingsAppraisalRoute,
   AppPayrollSettingsDisbursementBanksRoute:
     AppPayrollSettingsDisbursementBanksRoute,
   AppPayrollSettingsGeneralRoute: AppPayrollSettingsGeneralRoute,
+  AppPayrollSettingsHistoryRoute: AppPayrollSettingsHistoryRoute,
+  AppPayrollSettingsLoansRoute: AppPayrollSettingsLoansRoute,
   AppPayrollSettingsPayComponentsRoute: AppPayrollSettingsPayComponentsRoute,
+  AppPayrollSettingsPayRunsRoute: AppPayrollSettingsPayRunsRoute,
   AppPayrollSettingsRewardsRoute: AppPayrollSettingsRewardsRoute,
   AppPayrollSettingsTaxRoute: AppPayrollSettingsTaxRoute,
   AppPayrollVouchersEmployeeRoute: AppPayrollVouchersEmployeeRoute,
@@ -2795,6 +3490,30 @@ const AppPayrollRouteChildren: AppPayrollRouteChildren = {
 
 const AppPayrollRouteWithChildren = AppPayrollRoute._addFileChildren(
   AppPayrollRouteChildren,
+)
+
+interface AppPerformanceRouteChildren {
+  AppPerformanceAppraisalsRoute: typeof AppPerformanceAppraisalsRoute
+  AppPerformanceCyclesRoute: typeof AppPerformanceCyclesRoute
+  AppPerformanceGoalsRoute: typeof AppPerformanceGoalsRoute
+  AppPerformanceKpisRoute: typeof AppPerformanceKpisRoute
+  AppPerformanceOverviewRoute: typeof AppPerformanceOverviewRoute
+  AppPerformanceReviewsRoute: typeof AppPerformanceReviewsRoute
+  AppPerformanceIndexRoute: typeof AppPerformanceIndexRoute
+}
+
+const AppPerformanceRouteChildren: AppPerformanceRouteChildren = {
+  AppPerformanceAppraisalsRoute: AppPerformanceAppraisalsRoute,
+  AppPerformanceCyclesRoute: AppPerformanceCyclesRoute,
+  AppPerformanceGoalsRoute: AppPerformanceGoalsRoute,
+  AppPerformanceKpisRoute: AppPerformanceKpisRoute,
+  AppPerformanceOverviewRoute: AppPerformanceOverviewRoute,
+  AppPerformanceReviewsRoute: AppPerformanceReviewsRoute,
+  AppPerformanceIndexRoute: AppPerformanceIndexRoute,
+}
+
+const AppPerformanceRouteWithChildren = AppPerformanceRoute._addFileChildren(
+  AppPerformanceRouteChildren,
 )
 
 interface AppProjectManagementWorkspacesRouteChildren {
@@ -2818,6 +3537,7 @@ const AppProjectManagementWorkspacesRouteWithChildren =
 interface AppProjectManagementRouteChildren {
   AppProjectManagementHomeRoute: typeof AppProjectManagementHomeRoute
   AppProjectManagementProjectDashboardRoute: typeof AppProjectManagementProjectDashboardRoute
+  AppProjectManagementRemindersRoute: typeof AppProjectManagementRemindersRoute
   AppProjectManagementTaskDashboardRoute: typeof AppProjectManagementTaskDashboardRoute
   AppProjectManagementWorkspaceDashboardRoute: typeof AppProjectManagementWorkspaceDashboardRoute
   AppProjectManagementWorkspacesRoute: typeof AppProjectManagementWorkspacesRouteWithChildren
@@ -2828,6 +3548,7 @@ const AppProjectManagementRouteChildren: AppProjectManagementRouteChildren = {
   AppProjectManagementHomeRoute: AppProjectManagementHomeRoute,
   AppProjectManagementProjectDashboardRoute:
     AppProjectManagementProjectDashboardRoute,
+  AppProjectManagementRemindersRoute: AppProjectManagementRemindersRoute,
   AppProjectManagementTaskDashboardRoute:
     AppProjectManagementTaskDashboardRoute,
   AppProjectManagementWorkspaceDashboardRoute:
@@ -2839,6 +3560,32 @@ const AppProjectManagementRouteChildren: AppProjectManagementRouteChildren = {
 
 const AppProjectManagementRouteWithChildren =
   AppProjectManagementRoute._addFileChildren(AppProjectManagementRouteChildren)
+
+interface AppRecruitmentRouteChildren {
+  AppRecruitmentApplicationsRoute: typeof AppRecruitmentApplicationsRoute
+  AppRecruitmentCandidatesRoute: typeof AppRecruitmentCandidatesRoute
+  AppRecruitmentDashboardRoute: typeof AppRecruitmentDashboardRoute
+  AppRecruitmentInterviewsRoute: typeof AppRecruitmentInterviewsRoute
+  AppRecruitmentOffersRoute: typeof AppRecruitmentOffersRoute
+  AppRecruitmentOpeningsRoute: typeof AppRecruitmentOpeningsRoute
+  AppRecruitmentSettingsRoute: typeof AppRecruitmentSettingsRoute
+  AppRecruitmentIndexRoute: typeof AppRecruitmentIndexRoute
+}
+
+const AppRecruitmentRouteChildren: AppRecruitmentRouteChildren = {
+  AppRecruitmentApplicationsRoute: AppRecruitmentApplicationsRoute,
+  AppRecruitmentCandidatesRoute: AppRecruitmentCandidatesRoute,
+  AppRecruitmentDashboardRoute: AppRecruitmentDashboardRoute,
+  AppRecruitmentInterviewsRoute: AppRecruitmentInterviewsRoute,
+  AppRecruitmentOffersRoute: AppRecruitmentOffersRoute,
+  AppRecruitmentOpeningsRoute: AppRecruitmentOpeningsRoute,
+  AppRecruitmentSettingsRoute: AppRecruitmentSettingsRoute,
+  AppRecruitmentIndexRoute: AppRecruitmentIndexRoute,
+}
+
+const AppRecruitmentRouteWithChildren = AppRecruitmentRoute._addFileChildren(
+  AppRecruitmentRouteChildren,
+)
 
 interface AppRequestsRouteChildren {
   AppRequestsTypeRoute: typeof AppRequestsTypeRoute
@@ -2867,6 +3614,23 @@ const AppRequestsRouteChildren: AppRequestsRouteChildren = {
 const AppRequestsRouteWithChildren = AppRequestsRoute._addFileChildren(
   AppRequestsRouteChildren,
 )
+
+interface AppTalentManagementRouteChildren {
+  AppTalentManagementIndexRoute: typeof AppTalentManagementIndexRoute
+  AppTalentManagementEmployeesEmployeeIdRoute: typeof AppTalentManagementEmployeesEmployeeIdRoute
+  AppTalentManagementEmployeesIndexRoute: typeof AppTalentManagementEmployeesIndexRoute
+}
+
+const AppTalentManagementRouteChildren: AppTalentManagementRouteChildren = {
+  AppTalentManagementIndexRoute: AppTalentManagementIndexRoute,
+  AppTalentManagementEmployeesEmployeeIdRoute:
+    AppTalentManagementEmployeesEmployeeIdRoute,
+  AppTalentManagementEmployeesIndexRoute:
+    AppTalentManagementEmployeesIndexRoute,
+}
+
+const AppTalentManagementRouteWithChildren =
+  AppTalentManagementRoute._addFileChildren(AppTalentManagementRouteChildren)
 
 interface AppSettingsControlPanelRouteChildren {
   AppSettingsControlPanelGeneralRoute: typeof AppSettingsControlPanelGeneralRoute
@@ -2942,35 +3706,73 @@ const AppSettingsOffBoardingRouteWithChildren =
     AppSettingsOffBoardingRouteChildren,
   )
 
+interface AppSettingsSystemUsersRouteChildren {
+  AppSettingsSystemUsersUserIdRoute: typeof AppSettingsSystemUsersUserIdRoute
+  AppSettingsSystemUsersIndexRoute: typeof AppSettingsSystemUsersIndexRoute
+}
+
+const AppSettingsSystemUsersRouteChildren: AppSettingsSystemUsersRouteChildren =
+  {
+    AppSettingsSystemUsersUserIdRoute: AppSettingsSystemUsersUserIdRoute,
+    AppSettingsSystemUsersIndexRoute: AppSettingsSystemUsersIndexRoute,
+  }
+
+const AppSettingsSystemUsersRouteWithChildren =
+  AppSettingsSystemUsersRoute._addFileChildren(
+    AppSettingsSystemUsersRouteChildren,
+  )
+
+interface AppSettingsUserGroupPermissionsRouteChildren {
+  AppSettingsUserGroupPermissionsRoleIdRoute: typeof AppSettingsUserGroupPermissionsRoleIdRoute
+  AppSettingsUserGroupPermissionsIndexRoute: typeof AppSettingsUserGroupPermissionsIndexRoute
+}
+
+const AppSettingsUserGroupPermissionsRouteChildren: AppSettingsUserGroupPermissionsRouteChildren =
+  {
+    AppSettingsUserGroupPermissionsRoleIdRoute:
+      AppSettingsUserGroupPermissionsRoleIdRoute,
+    AppSettingsUserGroupPermissionsIndexRoute:
+      AppSettingsUserGroupPermissionsIndexRoute,
+  }
+
+const AppSettingsUserGroupPermissionsRouteWithChildren =
+  AppSettingsUserGroupPermissionsRoute._addFileChildren(
+    AppSettingsUserGroupPermissionsRouteChildren,
+  )
+
 interface AppRouteChildren {
   AppAssetsRoute: typeof AppAssetsRouteWithChildren
   AppBenefitsRoute: typeof AppBenefitsRouteWithChildren
   AppConfigurationRoute: typeof AppConfigurationRoute
-  AppCustomFormRoute: typeof AppCustomFormRoute
+  AppCustomFormRoute: typeof AppCustomFormRouteWithChildren
   AppEndOfEmploymentRoute: typeof AppEndOfEmploymentRouteWithChildren
   AppLeavesRoute: typeof AppLeavesRouteWithChildren
   AppManpowerPlanningRoute: typeof AppManpowerPlanningRouteWithChildren
   AppPayrollRoute: typeof AppPayrollRouteWithChildren
-  AppPerformanceRoute: typeof AppPerformanceRoute
+  AppPerformanceRoute: typeof AppPerformanceRouteWithChildren
   AppProjectManagementRoute: typeof AppProjectManagementRouteWithChildren
-  AppRecruitmentRoute: typeof AppRecruitmentRoute
+  AppRecruitmentRoute: typeof AppRecruitmentRouteWithChildren
   AppRequestsRoute: typeof AppRequestsRouteWithChildren
   AppRosterRoute: typeof AppRosterRoute
   AppSchedulingRoute: typeof AppSchedulingRoute
   AppSeparationManagementRoute: typeof AppSeparationManagementRoute
-  AppTalentManagementRoute: typeof AppTalentManagementRoute
+  AppTalentManagementRoute: typeof AppTalentManagementRouteWithChildren
   AppIndexRoute: typeof AppIndexRoute
   AppAttendanceSectionRoute: typeof AppAttendanceSectionRoute
+  AppAttendanceInsightsRoute: typeof AppAttendanceInsightsRoute
   AppAttendanceLogsRoute: typeof AppAttendanceLogsRoute
+  AppAttendanceOfficialVisitsRoute: typeof AppAttendanceOfficialVisitsRoute
+  AppAttendanceOvertimeRoute: typeof AppAttendanceOvertimeRoute
   AppAttendanceOverviewRoute: typeof AppAttendanceOverviewRoute
+  AppAttendanceSchedulingRoute: typeof AppAttendanceSchedulingRoute
   AppAttendanceSettingsRoute: typeof AppAttendanceSettingsRoute
   AppAttendanceTimeSheetRoute: typeof AppAttendanceTimeSheetRoute
   AppSettingsBiometricDevicesRoute: typeof AppSettingsBiometricDevicesRoute
   AppSettingsControlPanelRoute: typeof AppSettingsControlPanelRouteWithChildren
   AppSettingsCustomFormsRoute: typeof AppSettingsCustomFormsRoute
   AppSettingsOffBoardingRoute: typeof AppSettingsOffBoardingRouteWithChildren
-  AppSettingsSystemUsersRoute: typeof AppSettingsSystemUsersRoute
-  AppSettingsUserGroupPermissionsRoute: typeof AppSettingsUserGroupPermissionsRoute
+  AppSettingsSystemUsersRoute: typeof AppSettingsSystemUsersRouteWithChildren
+  AppSettingsUserGroupPermissionsRoute: typeof AppSettingsUserGroupPermissionsRouteWithChildren
   AppAttendanceIndexRoute: typeof AppAttendanceIndexRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
   AppWarningIndexRoute: typeof AppWarningIndexRoute
@@ -2983,31 +3785,36 @@ const AppRouteChildren: AppRouteChildren = {
   AppAssetsRoute: AppAssetsRouteWithChildren,
   AppBenefitsRoute: AppBenefitsRouteWithChildren,
   AppConfigurationRoute: AppConfigurationRoute,
-  AppCustomFormRoute: AppCustomFormRoute,
+  AppCustomFormRoute: AppCustomFormRouteWithChildren,
   AppEndOfEmploymentRoute: AppEndOfEmploymentRouteWithChildren,
   AppLeavesRoute: AppLeavesRouteWithChildren,
   AppManpowerPlanningRoute: AppManpowerPlanningRouteWithChildren,
   AppPayrollRoute: AppPayrollRouteWithChildren,
-  AppPerformanceRoute: AppPerformanceRoute,
+  AppPerformanceRoute: AppPerformanceRouteWithChildren,
   AppProjectManagementRoute: AppProjectManagementRouteWithChildren,
-  AppRecruitmentRoute: AppRecruitmentRoute,
+  AppRecruitmentRoute: AppRecruitmentRouteWithChildren,
   AppRequestsRoute: AppRequestsRouteWithChildren,
   AppRosterRoute: AppRosterRoute,
   AppSchedulingRoute: AppSchedulingRoute,
   AppSeparationManagementRoute: AppSeparationManagementRoute,
-  AppTalentManagementRoute: AppTalentManagementRoute,
+  AppTalentManagementRoute: AppTalentManagementRouteWithChildren,
   AppIndexRoute: AppIndexRoute,
   AppAttendanceSectionRoute: AppAttendanceSectionRoute,
+  AppAttendanceInsightsRoute: AppAttendanceInsightsRoute,
   AppAttendanceLogsRoute: AppAttendanceLogsRoute,
+  AppAttendanceOfficialVisitsRoute: AppAttendanceOfficialVisitsRoute,
+  AppAttendanceOvertimeRoute: AppAttendanceOvertimeRoute,
   AppAttendanceOverviewRoute: AppAttendanceOverviewRoute,
+  AppAttendanceSchedulingRoute: AppAttendanceSchedulingRoute,
   AppAttendanceSettingsRoute: AppAttendanceSettingsRoute,
   AppAttendanceTimeSheetRoute: AppAttendanceTimeSheetRoute,
   AppSettingsBiometricDevicesRoute: AppSettingsBiometricDevicesRoute,
   AppSettingsControlPanelRoute: AppSettingsControlPanelRouteWithChildren,
   AppSettingsCustomFormsRoute: AppSettingsCustomFormsRoute,
   AppSettingsOffBoardingRoute: AppSettingsOffBoardingRouteWithChildren,
-  AppSettingsSystemUsersRoute: AppSettingsSystemUsersRoute,
-  AppSettingsUserGroupPermissionsRoute: AppSettingsUserGroupPermissionsRoute,
+  AppSettingsSystemUsersRoute: AppSettingsSystemUsersRouteWithChildren,
+  AppSettingsUserGroupPermissionsRoute:
+    AppSettingsUserGroupPermissionsRouteWithChildren,
   AppAttendanceIndexRoute: AppAttendanceIndexRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,
   AppWarningIndexRoute: AppWarningIndexRoute,

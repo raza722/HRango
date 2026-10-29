@@ -56,7 +56,7 @@ export function PmMenuSubTrigger({
     <Menu.SubTrigger className={cn(menuStyles.item, className)} {...props}>
       {icon && <span className={menuStyles.icon}>{icon}</span>}
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      <ChevronRightIcon className="h-3 w-1.5 shrink-0 text-[#7127EA]" />
+      <ChevronRightIcon className="h-3 w-1.5 shrink-0 text-[#7127EA] dark:text-[#C4ABFF]" />
     </Menu.SubTrigger>
   )
 }
@@ -88,7 +88,11 @@ export function PmMenuCheckItem({
 }: ComponentProps<typeof Menu.CheckboxItem> & { icon?: ReactNode }) {
   return (
     <Menu.CheckboxItem
-      className={cn(menuStyles.item, 'data-[state=checked]:bg-[#F0E9FD]', className)}
+      className={cn(
+        menuStyles.item,
+        'data-[state=checked]:bg-[#F0E9FD] dark:data-[state=checked]:bg-[#7127EA]/25',
+        className,
+      )}
       {...props}
     >
       {icon && <span className={menuStyles.icon}>{icon}</span>}

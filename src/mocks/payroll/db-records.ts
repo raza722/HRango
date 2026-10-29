@@ -34,6 +34,10 @@ export interface StoredSalaryRevision {
   percentage: number | null
   previousSalary: number
   salary: number
+  /** Written by an approved promotion (Requests → Promotion): changed there, not here. */
+  source?: 'promotion'
+  /** The promotion request's code (`RQ-PRM-0004`). */
+  sourceCode?: string
 }
 
 /** The off-boarding mock creates and completes these; the API's view is mapped in the handlers. */
@@ -108,7 +112,10 @@ export function seedFinalSettlements(): StoredFinalSettlement[] {
       attachmentName: null,
       description: '',
       status: 'completed',
-      payslipId: null,
+      // Its released settlement slip is worked out on first read (records-handlers), so the
+      // closed settlement shows its amount.
+      payslipId: 'ps_fs_nida',
+      closedAt: `${day(45)}T10:00:00`,
     },
   ]
 }

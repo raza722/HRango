@@ -2,9 +2,9 @@ import { format, isValid, parse, parseISO } from 'date-fns'
 
 import type { Stamp } from '../types/manpower.types'
 
-/** Amounts as the lists draw them: whole numbers without separators ("150000"). */
+/** Amounts as whole numbers with thousands separators ("150,000"). */
 export const formatAmount = (value: number) =>
-  Number.isFinite(value) ? String(Math.round(value)) : ''
+  Number.isFinite(value) ? Math.round(value).toLocaleString('en-US') : ''
 
 /** `yyyy-MM-dd` → "1 Jan 2024". */
 export function formatDay(value: string): string {
@@ -24,8 +24,8 @@ export function formatStampTime(iso: string): string {
   return isValid(date) ? format(date, 'd MMM yyyy hh:mm a') : iso
 }
 
-/** Total Positions as drawn: two digits ("05"). */
-export const formatCount = (value: number) => String(value).padStart(2, '0')
+/** Counts as plain numbers ("5"; the design's "05" read as a code). */
+export const formatCount = (value: number) => String(value)
 
 /** A stamp from a record's time and person (`createdAt` / `createdByName` …). */
 export const stampOf = (at: string, byName: string | null | undefined): Stamp => ({

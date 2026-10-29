@@ -314,10 +314,16 @@ const voucherHandlers = [
     if (stale(param(new URL(request.url), 'rowVersion'), found.rowVersion)) {
       return changedByOthers('voucher')
     }
-    if (found.status === 'processed') {
-      return conflict('A processed voucher cannot be deleted', 'VOUCHER_PROCESSED', {
-        status: 'A processed voucher cannot be deleted',
-      })
+    if (found.status === 'processed' || found.status === 'approved') {
+      const message =
+        found.status === 'processed'
+          ? 'A processed voucher cannot be deleted'
+          : 'An approved voucher cannot be deleted'
+      return conflict(
+        message,
+        found.status === 'processed' ? 'VOUCHER_PROCESSED' : 'VOUCHER_APPROVED',
+        { status: message },
+      )
     }
     vouchers.remove(found.id)
     return new HttpResponse(null, { status: 204 })
@@ -494,10 +500,26 @@ function settlementPayslip(
   }
 }
 
+/**
+ * A completed settlement always has its released slip: one closed without it (the seed's
+ * Nida Hassan, or a leaver completed in Off-boarding) gets it worked out on first read.
+ */
+export function ensureClosedSlips() {
+  for (const record of finalSettlements.all()) {
+    if (record.status !== 'completed' || !record.finalSettlement) continue
+    if (record.payslipId && payslips.find(record.payslipId)) continue
+    const closedAt = record.closedAt ?? `${record.lastWorkingDate}T12:00:00`
+    const slip = settlementPayslip(record, record.payslipId)
+    payslips.insert({ ...slip, status: 'released', releasedAt: closedAt })
+    finalSettlements.update(record.id, { ...record, payslipId: slip.id, closedAt })
+  }
+}
+
 const settlementHandlers = [
   http.get(base('/final-settlements'), async ({ request }) => {
     const denied = await authed(request)
     if (denied) return denied
+    ensureClosedSlips()
     const url = new URL(request.url)
     const status = param(url, 'status')
     const wantedMonth = param(url, 'month')
@@ -520,6 +542,7 @@ const settlementHandlers = [
   http.get(base('/final-settlements/:id'), async ({ request, params }) => {
     const denied = await authed(request)
     if (denied) return denied
+    ensureClosedSlips()
     const found = finalSettlements.find(String(params.id))
     return found ? ok(settlementRow(found)) : notFound('final settlement')
   }),
@@ -527,6 +550,7 @@ const settlementHandlers = [
   http.get(base('/final-settlements/:id/payslip'), async ({ request, params }) => {
     const denied = await authed(request)
     if (denied) return denied
+    ensureClosedSlips()
     const found = finalSettlements.find(String(params.id))
     if (!found) return notFound('final settlement')
     const slip = found.payslipId ? payslips.find(found.payslipId) : undefined
@@ -1017,8 +1041,8 @@ function revisionRow(revision: StoredSalaryRevision): SalaryRevisionRow {
       revision.type === 'percentage'
         ? revision.percentage
         : revision.salary - revision.previousSalary,
-    source: 'revision',
-    canEdit: true,
+    source: revision.source ?? 'revision',
+    canEdit: revision.source !== 'promotion',
     departmentName: fields.departmentName,
     locationName: fields.locationName,
     branchName: fields.branchName,
@@ -1036,11 +1060,21 @@ const revisionInput = z.object({
   employeeId,
   effectiveDate: isoDay,
   changeType: z.enum(['flat', 'percent']),
-  changeValue: z.number({ error: 'Enter the change' }).refine((value) => value !== 0, {
-    message: 'The change cannot be zero.',
-  }),
+  changeValue: z
+    .number({ error: 'Enter the change' })
+    .refine((value) => value !== 0, {
+      message: 'The change cannot be zero.',
+    })
+    .refine((value) => Math.abs(value) <= 1e10, { message: 'The change is too large.' }),
   rowVersion,
 })
+
+/** 409 for a revision a promotion wrote: it is changed (or undone) on the promotion. */
+const fromPromotion = (revision: StoredSalaryRevision) =>
+  conflict(
+    `This salary came from ${revision.sourceCode ? `promotion ${revision.sourceCode}` : 'a promotion'}. Cancel the promotion in Requests → Promotion to undo it.`,
+    'FROM_PROMOTION',
+  )
 
 function revised(previous: number, changeType: 'flat' | 'percent', changeValue: number) {
   return changeType === 'flat'
@@ -1158,6 +1192,7 @@ const revisionHandlers = [
         if (current && stale(input.rowVersion, revisionVersion(current))) {
           return changedByOthers('salary revision')
         }
+        if (current?.source === 'promotion') return fromPromotion(current)
         if (input.changeType === 'percent' && input.changeValue <= -100) {
           return invalid('A percentage cut cannot be 100% or more.', {
             changeValue: 'A percentage cut cannot be 100% or more.',
@@ -1177,6 +1212,11 @@ const revisionHandlers = [
           })
         }
         const previous = salaryOn(input.employeeId, dayBefore(input.effectiveDate))
+        const salary = revised(previous, input.changeType, input.changeValue)
+        if (salary <= 0) {
+          const message = `The new salary would be Rs ${Math.round(salary).toLocaleString('en-US')}. It must be more than zero.`
+          return invalid(message, { changeValue: message })
+        }
         const revision: StoredSalaryRevision = {
           id: current?.id ?? createId('sr'),
           code:
@@ -1190,7 +1230,7 @@ const revisionHandlers = [
           type: input.changeType === 'percent' ? 'percentage' : 'flat',
           percentage: input.changeType === 'percent' ? input.changeValue : null,
           previousSalary: previous,
-          salary: revised(previous, input.changeType, input.changeValue),
+          salary,
         }
         if (current) salaryRevisions.update(revision.id, revision)
         else salaryRevisions.insert(revision)
@@ -1207,6 +1247,7 @@ const revisionHandlers = [
     if (stale(param(new URL(request.url), 'rowVersion'), revisionVersion(found))) {
       return changedByOthers('salary revision')
     }
+    if (found.source === 'promotion') return fromPromotion(found)
     salaryRevisions.remove(found.id)
     return new HttpResponse(null, { status: 204 })
   }),

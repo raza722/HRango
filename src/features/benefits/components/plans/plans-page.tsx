@@ -48,6 +48,14 @@ const columns: DataTableColumn<BenefitPlan>[] = [
   },
 ]
 
+/** People have elected the plan (approved or waiting): the API keeps it. */
+const inUse = (row: BenefitPlan) => row.enrolled + row.pending > 0
+
+const inUseReason = (row: BenefitPlan) => {
+  const people = row.enrolled + row.pending
+  return `${row.name} cannot be deleted: ${String(people)} ${people === 1 ? 'person has' : 'people have'} elected it.`
+}
+
 /**
  * Plans: "Benefit Plans" with + Add New Plan (the category menu); Category, Plan Name, End Date,
  * Eligible, Status (enrolled, not enrolled / waived) and the copy and delete icons.
@@ -116,10 +124,18 @@ export function PlansPage() {
                       <button
                         type="button"
                         aria-label={`Delete ${row.name}`}
+                        // A plan people have elected stays: say so before any confirm.
+                        aria-disabled={inUse(row) || undefined}
+                        title={inUse(row) ? inUseReason(row) : undefined}
                         onClick={() => {
-                          setDeleting(row)
+                          if (inUse(row)) toast.error(inUseReason(row))
+                          else setDeleting(row)
                         }}
-                        className={cn(iconButton, 'text-[#C2420B]')}
+                        className={cn(
+                          iconButton,
+                          'text-[#C2420B]',
+                          inUse(row) && 'cursor-not-allowed opacity-50',
+                        )}
                       >
                         <PlanDeleteIcon className="h-[1.055rem] w-[0.9375rem]" />
                       </button>

@@ -1,6 +1,6 @@
 import { useRouter } from '@tanstack/react-router'
 import { formatDistanceToNow, parseISO } from 'date-fns'
-import { Bell, Mail } from 'lucide-react'
+import { ArrowUpRight, Bell, Mail } from 'lucide-react'
 
 import { TopbarIconButton } from '@/components/layout'
 import { Button } from '@/components/ui/button'
@@ -31,7 +31,8 @@ const parseUtc = (iso: string) => parseISO(/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(iso) 
 /**
  * Mail or bell button in the top bar, with an unread dot and a dropdown list. Notifications
  * come from `GET /inbox` (unread count and the latest five); clicking one marks it read and
- * opens its link. Hidden without `inbox.notifications.view`.
+ * opens its link (an app path such as `/requests/leave`) when it has one. Hidden without
+ * `inbox.notifications.view`.
  */
 export function InboxMenu({ kind }: { kind: InboxKind }) {
   const canSee = useCanSeeInbox()
@@ -50,7 +51,9 @@ export function InboxMenu({ kind }: { kind: InboxKind }) {
 
   const open = (item: InboxItem) => {
     if (!item.read) markRead.mutate(item.id)
-    if (item.link?.startsWith('/')) router.history.push(item.link)
+    // App paths only (`/…`, not `//host`): a link elsewhere is not followed from the menu.
+    const link = item.link?.trim()
+    if (link?.startsWith('/') && !link.startsWith('//')) void router.navigate({ href: link })
   }
 
   return (
@@ -107,6 +110,12 @@ export function InboxMenu({ kind }: { kind: InboxKind }) {
                   <span className={cn('flex-1 truncate', !item.read && 'font-medium')}>
                     {item.title}
                   </span>
+                  {item.link && (
+                    <ArrowUpRight
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                    />
+                  )}
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {formatDistanceToNow(parseUtc(item.createdAt), { addSuffix: true })}
                   </span>

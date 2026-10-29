@@ -46,6 +46,7 @@ export function NewPlanYearPage() {
   const save = useSavePlanYear()
   const wizard = usePlanYearWizard({
     initial: EMPTY_PLAN_YEAR,
+    others: lookups.data?.planYears ?? [],
     save: async (input) => {
       await save.mutateAsync({ input })
       guard.allowNextNavigation()

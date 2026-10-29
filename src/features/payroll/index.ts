@@ -13,6 +13,14 @@ export { EmployeeAccountReportPage } from './components/reports/employee-account
 export { SalaryRevisionPage } from './components/salary-revision/salary-revision-page'
 export { SalarySheetPage } from './components/salary-sheet/salary-sheet-page'
 export { PayrollSettingsPage } from './components/settings/payroll-settings-page'
+export {
+  PayrollHistoryPage,
+  PayrollPayRunsPage,
+} from './components/settings/settings-embedded-pages'
+export {
+  PayrollSettingsLayout,
+  type PayrollSettingsSection,
+} from './components/settings/settings-menu'
 export { EmployeeVouchersPage } from './components/vouchers/employee-vouchers-page'
 export { VouchersPage } from './components/vouchers/vouchers-page'
 export * from './constants'
@@ -59,6 +67,9 @@ export {
   type PageSearch,
   pageSearchSchema,
   type PayrollSettingsTab,
+  REPORT_SEARCH_DEFAULTS,
+  type ReportSearch,
+  reportSearchSchema,
   type SalarySheetSearch,
   salarySheetSearchSchema,
   SETTINGS_TABS,

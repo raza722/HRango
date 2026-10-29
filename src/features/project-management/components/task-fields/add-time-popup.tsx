@@ -47,7 +47,7 @@ export function AddTimePopover({
 }
 
 const labelChip =
-  'flex h-[1.9rem] w-[3.9rem] items-center justify-center rounded-md bg-[#DFD7FF] text-[0.8125rem] font-semibold tracking-[0.01em] text-[#4A4A4A]'
+  'flex h-[1.9rem] w-[3.9rem] items-center justify-center rounded-md bg-[#DFD7FF] dark:bg-[#7127EA]/25 text-[0.8125rem] font-semibold tracking-[0.01em] text-[#4A4A4A] dark:text-title'
 
 function AddTimeForm({
   initial,
@@ -65,7 +65,7 @@ function AddTimeForm({
   return (
     <div className="flex flex-col gap-4">
       <h3 className={fieldStyles.popupTitle}>Add Time</h3>
-      <div className="rounded-[0.8125rem] bg-[#EEE7FF] px-3 py-3">
+      <div className="rounded-[0.8125rem] bg-[#EEE7FF] px-3 py-3 dark:bg-[#7127EA]/10">
         <div className="grid grid-cols-[1fr_auto_1fr_1fr] items-center gap-x-2.5 gap-y-2.5">
           <span className={labelChip}>Hour</span>
           <span />
@@ -82,7 +82,7 @@ function AddTimeForm({
               if (hour >= 1 && hour <= 12) setClock((current) => ({ ...current, hour }))
             }}
           />
-          <span className="flex size-[1.75rem] items-center justify-center rounded-md bg-white text-[1.05rem] font-bold text-[#626262] shadow-[0_0_7px_rgba(0,0,0,0.1)]">
+          <span className="flex size-[1.75rem] items-center justify-center rounded-md bg-white text-[1.05rem] font-bold text-[#626262] shadow-[0_0_7px_rgba(0,0,0,0.1)] dark:bg-card dark:text-title">
             :
           </span>
           <Stepper
@@ -138,7 +138,7 @@ interface StepperProps {
 function Stepper({ label, display, onStep, onType }: StepperProps) {
   const [typing, setTyping] = useState<string | null>(null)
   return (
-    <div className="flex h-[2.4rem] items-center justify-between gap-1 rounded-md bg-white pr-1.5 pl-1.5 shadow-[0_0_7px_rgba(0,0,0,0.1)]">
+    <div className="flex h-[2.4rem] items-center justify-between gap-1 rounded-md bg-white pr-1.5 pl-1.5 shadow-[0_0_7px_rgba(0,0,0,0.1)] dark:bg-card">
       <input
         aria-label={label}
         value={typing ?? display}
@@ -163,7 +163,7 @@ function Stepper({ label, display, onStep, onType }: StepperProps) {
             onStep(event.key === 'ArrowUp' ? 1 : -1)
           }
         }}
-        className="h-[1.6rem] w-9 rounded-[0.125rem] bg-[#F6F4FF] text-center text-[1.05rem] font-medium text-[#626262] outline-none focus:ring-1 focus:ring-[#A181FF]"
+        className="h-[1.6rem] w-9 rounded-[0.125rem] bg-[#F6F4FF] text-center text-[1.05rem] font-medium text-[#626262] outline-none focus:ring-1 focus:ring-[#A181FF] dark:bg-[#7127EA]/10 dark:text-title"
       />
       <span className="flex flex-col gap-1">
         <button
@@ -172,7 +172,7 @@ function Stepper({ label, display, onStep, onType }: StepperProps) {
           onClick={() => {
             onStep(1)
           }}
-          className="flex h-2.5 w-3 items-center justify-center text-[#7127EA]"
+          className="flex h-2.5 w-3 items-center justify-center text-[#7127EA] dark:text-[#C4ABFF]"
         >
           <ChevronUpIcon className="h-[0.33rem] w-[0.6rem]" />
         </button>
@@ -182,7 +182,7 @@ function Stepper({ label, display, onStep, onType }: StepperProps) {
           onClick={() => {
             onStep(-1)
           }}
-          className="flex h-2.5 w-3 items-center justify-center text-[#7127EA]"
+          className="flex h-2.5 w-3 items-center justify-center text-[#7127EA] dark:text-[#C4ABFF]"
         >
           <ChevronDownIcon className="h-[0.33rem] w-[0.6rem]" />
         </button>

@@ -107,8 +107,9 @@ function ReminderForm({
                     setTime(toTime(pick.at))
                   }}
                   className={cn(
-                    'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-[0.8125rem] text-[#4F4F4F] outline-none hover:bg-[#F7F2FF] focus-visible:ring-2 focus-visible:ring-[#A181FF]',
-                    active && 'bg-[#F0E9FD] text-[#7127EA]',
+                    'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-[0.8125rem] text-[#4F4F4F] outline-none hover:bg-[#F7F2FF] focus-visible:ring-2 focus-visible:ring-[#A181FF] dark:text-title dark:hover:bg-[#7127EA]/15',
+                    active &&
+                      'bg-[#F0E9FD] text-[#7127EA] dark:bg-[#7127EA]/20 dark:text-[#C4ABFF]',
                   )}
                 >
                   <span>{pick.label}</span>
@@ -118,13 +119,13 @@ function ReminderForm({
             )
           })}
         </ul>
-        <div className="flex min-w-0 flex-1 flex-col gap-2 border-t border-[#EFEFEF] pt-3 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-2 border-t border-[#EFEFEF] pt-3 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-3 dark:border-border">
           <button
             type="button"
             onClick={() => {
               setMonth(now)
             }}
-            className="self-end text-xs font-medium text-[#7127EA] hover:underline"
+            className="self-end text-xs font-medium text-[#7127EA] hover:underline dark:text-[#C4ABFF]"
           >
             Today
           </button>
@@ -142,7 +143,7 @@ function ReminderForm({
             }}
             className="p-0"
           />
-          <label className="flex items-center justify-between gap-3 text-[0.8125rem] text-[#4F4F4F]">
+          <label className="flex items-center justify-between gap-3 text-[0.8125rem] text-[#4F4F4F] dark:text-title">
             Add Time
             <input
               type="time"
@@ -155,7 +156,7 @@ function ReminderForm({
           </label>
         </div>
       </div>
-      <p className="text-xs text-[#707070]" aria-live="polite">
+      <p className="text-xs text-[#707070] dark:text-grey" aria-live="polite">
         {chosen ? `Reminder on ${format(chosen, 'EEE, d MMM yyyy, h:mm a')}` : 'Pick a day.'}
       </p>
       <div className="flex flex-wrap justify-end gap-2">
@@ -165,7 +166,7 @@ function ReminderForm({
             onClick={() => {
               onSave(null)
             }}
-            className="mr-auto text-xs font-medium text-[#B7192C] hover:underline"
+            className="mr-auto text-xs font-medium text-[#B7192C] hover:underline dark:text-[#FF9AA3]"
           >
             Remove reminder
           </button>

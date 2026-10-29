@@ -50,9 +50,9 @@ type RoleChoice = 'everyone' | PmRole
 
 /** Dropdown buttons: 47 px, 0.73 px #E9E9E9, open 1 px purple with a 4 px purple glow. */
 const dropdownClass =
-  'flex h-[2.9375rem] w-full min-w-0 items-center gap-3 rounded-[0.8125rem] border-[0.045rem] border-[#E9E9E9] bg-white pr-4 pl-1.5 text-left text-[0.9085rem] leading-[1.5] text-[#454545] outline-none focus-visible:border-[#7127EA] focus-visible:ring-4 focus-visible:ring-[#7127EA]/20 data-[state=open]:border-[#7127EA] data-[state=open]:ring-4 data-[state=open]:ring-[#7127EA]/20'
+  'flex h-[2.9375rem] w-full min-w-0 items-center gap-3 rounded-[0.8125rem] border-[0.045rem] border-[#E9E9E9] dark:border-border bg-white dark:bg-card pr-4 pl-1.5 text-left text-[0.9085rem] leading-[1.5] text-[#454545] dark:text-title outline-none focus-visible:border-[#7127EA] focus-visible:ring-4 focus-visible:ring-[#7127EA]/20 data-[state=open]:border-[#7127EA] data-[state=open]:ring-4 data-[state=open]:ring-[#7127EA]/20'
 const dropdownIcon =
-  'flex h-[2.2425rem] w-[2.208rem] shrink-0 items-center justify-center rounded-[0.56rem] bg-[#F6F2FF] text-[#7127EA] [&_svg]:size-[1.15rem]'
+  'flex h-[2.2425rem] w-[2.208rem] shrink-0 items-center justify-center rounded-[0.56rem] bg-[#F6F2FF] dark:bg-[#7127EA]/10 text-[#7127EA] dark:text-[#C4ABFF] [&_svg]:size-[1.15rem]'
 const panelClass = cn(popupStyles.content, 'z-50 outline-none')
 
 /**
@@ -162,14 +162,14 @@ function PermissionForm({
     >
       <div className="flex items-start justify-between gap-3 px-5 pt-6">
         <div className="min-w-0">
-          <DialogTitle className="font-sans text-[1.375rem] leading-[1.5] font-semibold text-[#393636] sm:text-[1.375rem]">
+          <DialogTitle className="font-sans text-[1.375rem] leading-[1.5] font-semibold text-[#393636] sm:text-[1.375rem] dark:text-title">
             Set Role Permission
           </DialogTitle>
           <p className="text-xs font-medium text-[#909090]">{COLUMN_LABELS[columnKey]} column</p>
         </div>
         <DialogClose
           aria-label="Close"
-          className="flex h-[2.468rem] w-10 shrink-0 items-center justify-center rounded-[0.583rem] bg-[#EC474F]/10 text-[#DC3545] transition-colors hover:bg-[#EC474F]/20"
+          className="flex h-[2.468rem] w-10 shrink-0 items-center justify-center rounded-[0.583rem] bg-[#EC474F]/10 text-[#DC3545] transition-colors hover:bg-[#EC474F]/20 dark:text-[#FF8A94]"
         >
           <CloseIcon className="size-[1.25rem]" />
         </DialogClose>
@@ -233,7 +233,9 @@ function PermissionForm({
 
         {role !== 'everyone' && (
           <div className="mt-3 flex flex-col gap-1.5">
-            <p className="text-xs font-semibold text-[#4A4A4A]">{ROLE_LABELS[role]} employees</p>
+            <p className="text-xs font-semibold text-[#4A4A4A] dark:text-title">
+              {ROLE_LABELS[role]} employees
+            </p>
             <ul
               aria-label={`${ROLE_LABELS[role]} employees`}
               className="flex max-h-40 flex-col gap-1.5 overflow-y-auto"
@@ -244,7 +246,7 @@ function PermissionForm({
               {byRole(role).map((person) => (
                 <li
                   key={person.id}
-                  className="flex flex-wrap items-center gap-2 rounded-lg bg-[#F4F4F4] px-2 py-1.5"
+                  className="flex flex-wrap items-center gap-2 rounded-lg bg-[#F4F4F4] px-2 py-1.5 dark:bg-white/5"
                 >
                   <EmployeeAvatar
                     name={person.name}
@@ -252,7 +254,7 @@ function PermissionForm({
                     className="size-6"
                     fallbackClassName="text-[0.5rem]"
                   />
-                  <span className="min-w-0 flex-1 truncate text-xs font-semibold text-[#5D5D5D]">
+                  <span className="min-w-0 flex-1 truncate text-xs font-semibold text-[#5D5D5D] dark:text-title">
                     {person.name}
                   </span>
                   <PersonChips person={person} />
@@ -264,10 +266,10 @@ function PermissionForm({
 
         <hr className="mt-[2.6875rem] border-t-[0.1136rem] border-black/[0.08]" />
 
-        <h3 className="mt-[2.1rem] text-[0.8177rem] leading-[1.5] font-semibold text-[#4A4A4A]">
+        <h3 className="mt-[2.1rem] text-[0.8177rem] leading-[1.5] font-semibold text-[#4A4A4A] dark:text-title">
           Custom Permissions
         </h3>
-        <p className="mt-2 text-xs leading-[1.5] font-medium text-[#4A4A4A]">
+        <p className="mt-2 text-xs leading-[1.5] font-medium text-[#4A4A4A] dark:text-title">
           Custom permissions for specific members or teams.
         </p>
         <div className="mt-[1.75rem]">
@@ -287,7 +289,7 @@ function PermissionForm({
               return (
                 <li
                   key={entry.employeeId}
-                  className="flex flex-col gap-1.5 rounded-[0.625rem] bg-[#F4F4F4] px-2.5 py-2"
+                  className="flex flex-col gap-1.5 rounded-[0.625rem] bg-[#F4F4F4] px-2.5 py-2 dark:bg-white/5"
                 >
                   <div className="flex items-center gap-2">
                     <EmployeeAvatar
@@ -296,10 +298,10 @@ function PermissionForm({
                       className="size-7"
                       fallbackClassName="text-[0.55rem]"
                     />
-                    <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-semibold text-[#5D5D5D]">
+                    <span className="min-w-0 flex-1 truncate text-[0.8125rem] font-semibold text-[#5D5D5D] dark:text-title">
                       {person.name}
                     </span>
-                    <span className="shrink-0 rounded bg-[#F0E9FD] px-2 py-0.5 text-[0.6875rem] font-medium text-[#A181FF]">
+                    <span className="shrink-0 rounded bg-[#F0E9FD] px-2 py-0.5 text-[0.6875rem] font-medium text-[#A181FF] dark:bg-[#7127EA]/20">
                       {ROLE_LABELS[roleOf(person, workspace)]}
                     </span>
                   </div>
@@ -331,7 +333,7 @@ function PermissionForm({
                             ),
                           }))
                         }}
-                        className="flex size-6 items-center justify-center rounded-md text-[#DC3545] hover:bg-[#EC474F]/10"
+                        className="flex size-6 items-center justify-center rounded-md text-[#DC3545] hover:bg-[#EC474F]/10 dark:text-[#FF8A94]"
                       >
                         <CloseIcon className="size-3.5" />
                       </button>
@@ -367,10 +369,10 @@ function PermissionForm({
 function PersonChips({ person }: { person: PmPerson }) {
   return (
     <>
-      <span className="rounded bg-[#FFF0D0] px-1.5 text-[0.6875rem] leading-[1.2rem] font-medium text-[#5D5D5D]">
+      <span className="rounded bg-[#FFF0D0] px-1.5 text-[0.6875rem] leading-[1.2rem] font-medium text-[#5D5D5D] dark:bg-[#F79009]/20 dark:text-title">
         Designation: {person.designation}
       </span>
-      <span className="rounded bg-[#FFD0D0] px-1.5 text-[0.6875rem] leading-[1.2rem] font-medium text-[#5D5D5D]">
+      <span className="rounded bg-[#FFD0D0] px-1.5 text-[0.6875rem] leading-[1.2rem] font-medium text-[#5D5D5D] dark:bg-[#DC3545]/20 dark:text-title">
         Department: {person.department}
       </span>
     </>
@@ -397,7 +399,7 @@ function Dropdown({
         <button type="button" aria-label={`${label}: ${text}`} className={dropdownClass}>
           <span className={dropdownIcon}>{icon}</span>
           <span className="min-w-0 flex-1 truncate">{text}</span>
-          <ChevronDownIcon className="h-[0.42rem] w-[0.78rem] shrink-0 text-[#7127EA]" />
+          <ChevronDownIcon className="h-[0.42rem] w-[0.78rem] shrink-0 text-[#7127EA] dark:text-[#C4ABFF]" />
         </button>
       </PopoverPrimitive.Trigger>
       <PopoverPrimitive.Portal>
@@ -438,17 +440,17 @@ function RoleOption({
         className={cn(
           'flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-[#A181FF]',
           selected
-            ? 'border-[#A181FF] bg-[#F8F5FF]'
-            : 'border-[#E9E9E9] bg-white hover:bg-[#FAFAFA]',
+            ? 'border-[#A181FF] bg-[#F8F5FF] dark:bg-[#7127EA]/10'
+            : 'border-[#E9E9E9] bg-white hover:bg-[#FAFAFA] dark:border-border dark:bg-card dark:hover:bg-white/5',
         )}
       >
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[0.8125rem] font-medium text-[#454545]">
+          <span className="block truncate text-[0.8125rem] font-medium text-[#454545] dark:text-title">
             {label}
           </span>
           <span className="block truncate text-[0.6875rem] text-[#909090]">{hint}</span>
         </span>
-        <span className="shrink-0 text-[0.6875rem] font-medium text-[#7127EA]">
+        <span className="shrink-0 text-[0.6875rem] font-medium text-[#7127EA] dark:text-[#C4ABFF]">
           {PERMISSION_LABELS[level ?? 'default']}
         </span>
       </button>
@@ -483,16 +485,16 @@ function LevelList({
             className={cn(
               'flex items-start gap-2 rounded-lg border p-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-[#A181FF]',
               checked
-                ? 'border-[#A181FF] bg-[#F8F5FF]'
-                : 'border-[#E9E9E9] bg-white hover:bg-[#FAFAFA]',
+                ? 'border-[#A181FF] bg-[#F8F5FF] dark:bg-[#7127EA]/10'
+                : 'border-[#E9E9E9] bg-white hover:bg-[#FAFAFA] dark:border-border dark:bg-card dark:hover:bg-white/5',
             )}
           >
-            <Icon className="mt-0.5 size-4 shrink-0 text-[#7127EA]" />
+            <Icon className="mt-0.5 size-4 shrink-0 text-[#7127EA] dark:text-[#C4ABFF]" />
             <span className="min-w-0 flex-1">
-              <span className="block text-xs font-semibold text-[#7127EA]">
+              <span className="block text-xs font-semibold text-[#7127EA] dark:text-[#C4ABFF]">
                 {PERMISSION_LABELS[entry]}
               </span>
-              <span className="block text-[0.6875rem] leading-snug text-[#707070]">
+              <span className="block text-[0.6875rem] leading-snug text-[#707070] dark:text-grey">
                 {PERMISSION_DESCRIPTIONS[entry]}
               </span>
             </span>
@@ -500,7 +502,9 @@ function LevelList({
               aria-hidden="true"
               className={cn(
                 'mt-0.5 flex size-3.5 shrink-0 items-center justify-center rounded-[0.2rem] border',
-                checked ? 'border-[#7127EA] bg-[#7127EA] text-white' : 'border-[#BDBDBD]',
+                checked
+                  ? 'border-[#7127EA] bg-[#7127EA] text-white'
+                  : 'border-[#BDBDBD] dark:border-border',
               )}
             >
               {checked && (
@@ -539,7 +543,7 @@ function LevelPill({
         <button
           type="button"
           aria-label={`${label} permission: ${PERMISSION_LABELS[value]}`}
-          className="flex h-7 shrink-0 items-center gap-1 rounded-lg border border-[#7127EA] bg-white px-2 text-[0.6875rem] font-medium text-[#7127EA] outline-none hover:bg-[#F8F5FF] focus-visible:ring-2 focus-visible:ring-[#A181FF]"
+          className="flex h-7 shrink-0 items-center gap-1 rounded-lg border border-[#7127EA] bg-white px-2 text-[0.6875rem] font-medium text-[#7127EA] outline-none hover:bg-[#F8F5FF] focus-visible:ring-2 focus-visible:ring-[#A181FF] dark:bg-card dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/15"
         >
           {PERMISSION_LABELS[value]}
           <ChevronDownIcon className="h-1.5 w-2.5" />
@@ -592,7 +596,7 @@ function MemberPicker({
         <div className="flex max-h-[20rem] flex-col gap-2">
           <label className="relative block">
             <span className="sr-only">Search members or teams</span>
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[#7127EA]" />
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[#7127EA] dark:text-[#C4ABFF]" />
             <input
               autoFocus
               value={query}
@@ -619,7 +623,7 @@ function MemberPicker({
                     onAdd(ids)
                     close()
                   }}
-                  className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-[#454545] hover:bg-[#F8F5FF] focus-visible:bg-[#F8F5FF] focus-visible:outline-none"
+                  className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-[#454545] hover:bg-[#F8F5FF] focus-visible:bg-[#F8F5FF] focus-visible:outline-none dark:text-title dark:hover:bg-[#7127EA]/15 dark:focus-visible:bg-[#7127EA]/15"
                 >
                   <span className="truncate">{team}</span>
                   <span className="shrink-0 text-[0.6875rem] text-[#909090]">
@@ -639,7 +643,7 @@ function MemberPicker({
                   onAdd([person.id])
                   close()
                 }}
-                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-[#F8F5FF] focus-visible:bg-[#F8F5FF] focus-visible:outline-none"
+                className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-[#F8F5FF] focus-visible:bg-[#F8F5FF] focus-visible:outline-none dark:hover:bg-[#7127EA]/15 dark:focus-visible:bg-[#7127EA]/15"
               >
                 <EmployeeAvatar
                   name={person.name}
@@ -648,7 +652,9 @@ function MemberPicker({
                   fallbackClassName="text-[0.5rem]"
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs text-[#454545]">{person.name}</span>
+                  <span className="block truncate text-xs text-[#454545] dark:text-title">
+                    {person.name}
+                  </span>
                   <span className="block truncate text-[0.6875rem] text-[#909090]">
                     {person.designation}
                   </span>

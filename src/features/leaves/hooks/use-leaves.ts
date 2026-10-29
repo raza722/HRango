@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { differenceInCalendarDays, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 
 import {
@@ -39,6 +40,38 @@ export const useLeaveApplication = (id: string) => useQuery(leaveApplicationQuer
 /** The request behind an application (steps, attachments, actions, rowVersion). */
 export const useLeaveRequest = (id: string, enabled = true) =>
   useQuery({ ...leaveRequestQueryOptions(id), enabled })
+
+/** Ids of the leave requests waiting for the caller's decision (Approve/Reject in the row menu). */
+export const useLeaveWaitingIds = (enabled = true) =>
+  useQuery({
+    queryKey: leavesKeys.waiting(),
+    queryFn: ({ signal }) => leavesApi.waitingIds(signal),
+    select: (ids) => new Set(ids),
+    enabled,
+  })
+
+/** Longest span Apply Leave reads the schedule for (61 days, widened to whole weeks). */
+const MAX_SCHEDULE_DAYS = 76
+
+/**
+ * The person's shifts, holidays and rest days between two dates (Scheduling's board), for the
+ * days a leave does not count. `employeeId` undefined: the signed-in person.
+ */
+export function useLeaveSchedule(
+  employeeId: string | undefined,
+  from: string,
+  to: string,
+  enabled = true,
+) {
+  const span =
+    from && to && to >= from ? differenceInCalendarDays(parseISO(to), parseISO(from)) : -1
+  return useQuery({
+    queryKey: leavesKeys.schedule(employeeId, from, to),
+    queryFn: ({ signal }) => leavesApi.scheduleDays(employeeId, from, to, signal),
+    enabled: enabled && span >= 0 && span < MAX_SCHEDULE_DAYS,
+    staleTime: 60_000,
+  })
+}
 
 export const useLeaveSettings = () => useQuery(leaveSettingsQueryOptions())
 

@@ -66,10 +66,11 @@ function filterFields({
 }
 
 /**
- * Work From Home (frames 2697:5533 … 4013:36535): Requests with My / All,
- * the status tabs and bulk Approved / Unapproved; Approvals with Requested and
- * Delegates. "Completed" replaces "Approved". The API's type is
- * `work_from_home` (`/requests/work-from-home`).
+ * Work From Home (frames 2697:5533 … 4013:36535): Requests with My / All /
+ * Subordinates (the third drawn on one frame: `view=subordinates`, the people
+ * who report to you), the status tabs and bulk Approved / Unapproved; Approvals
+ * with Requested and Delegates. "Completed" replaces "Approved". The API's type
+ * is `work_from_home` (`/requests/work-from-home`).
  */
 export const workFromHomeConfig: StandardKindConfig<WorkFromHomePayload> = {
   kind: 'work-from-home',
@@ -77,7 +78,7 @@ export const workFromHomeConfig: StandardKindConfig<WorkFromHomePayload> = {
   noun: 'WFH',
   requestsTitle: 'WFH Requests',
   approvalsTitle: 'WFH Approvals',
-  scopeLabels: { my: 'My Requests', all: 'All Requests' },
+  scopeLabels: { my: 'My Requests', all: 'All Requests', subordinates: 'Subordinates' },
   // The API decides a cancellation from its own box (Cancellations).
   approvalViews: ['requested', 'cancellations', 'delegates'],
   statusTabs: true,

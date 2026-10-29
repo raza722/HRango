@@ -53,6 +53,12 @@ export const GRADES: OrgItem[] = Array.from({ length: 5 }, (_, index) => ({
   name: `Grade ${String(index + 1)}`,
 }))
 
+/** Job levels (Requests → Promotion's Level picker); ids as the promotion seed uses them. */
+export const JOB_LEVELS: OrgItem[] = ['L1', 'L2', 'L3', 'L4', 'L5'].map((name) => ({
+  id: `jl_${name.toLowerCase()}`,
+  name,
+}))
+
 export const COST_CENTERS: OrgItem[] = [
   { id: 'cc_100', name: 'Head Office', code: 'CC-100' },
   { id: 'cc_200', name: 'Technology', code: 'CC-200' },
@@ -188,6 +194,7 @@ const KINDS: Record<string, readonly OrgItem[]> = {
   departments: DEPARTMENTS,
   'employee-groups': EMPLOYEE_GROUPS,
   grades: GRADES,
+  'job-levels': JOB_LEVELS,
   'cost-centers': COST_CENTERS,
   'job-titles': JOB_TITLES,
 }

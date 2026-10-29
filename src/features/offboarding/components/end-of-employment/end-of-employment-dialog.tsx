@@ -1,7 +1,8 @@
 import { type SyntheticEvent, useId, useState } from 'react'
 import { type Control, useController, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { intervalToDuration, parseISO } from 'date-fns'
+import { useQuery } from '@tanstack/react-query'
+import { addDays, format, intervalToDuration, parseISO } from 'date-fns'
 import { z } from 'zod'
 
 import { AppDialog } from '@/components/feedback/app-dialog'
@@ -23,6 +24,7 @@ import {
   SearchSelectField,
   SectionTitle,
 } from '@/features/payroll'
+import { type Employee, employeeKeys, employeesApi } from '@/features/talent-management'
 import { ApiError } from '@/lib/api-error'
 import type { FileRef } from '@/lib/files'
 import { cn } from '@/lib/utils'
@@ -157,36 +159,40 @@ function checklistErrors(values: Values['checklist'], fields: readonly ActiveChe
   return errors
 }
 
-const plural = (count: number | undefined, word: string) => `${String(count ?? 0)} ${word}`
+/** "1 year", "2 years": the count with its word, singular for one. */
+const plural = (count: number | undefined, word: string) =>
+  `${String(count ?? 0)} ${word}${count === 1 ? '' : 's'}`
 
-/** The card: the record's employee details, or (before saving) what the picker knows. */
+/** A span as "2 years, 8 months, 21 days" (the same words and casing everywhere). */
+function spanText(start: string | null | undefined, end: Date | string): string {
+  if (!start) return '—'
+  const span = intervalToDuration({
+    start: parseISO(start),
+    end: typeof end === 'string' ? parseISO(end) : end,
+  })
+  return `${plural(span.years, 'year')}, ${plural(span.months, 'month')}, ${plural(span.days, 'day')}`
+}
+
+/**
+ * The card: the record's employee details, or (before saving) the picked person's, from their
+ * employee record once it loads (the picker knows only the name, code and designation).
+ */
 function cardOf(
   detail: EndOfEmployment | undefined,
   picked: EmployeeLookupItem | undefined,
+  record: Employee | undefined,
+  lastWorkingDate: string,
 ): EmployeeCardInfo | undefined {
   if (detail) {
-    const age = detail.dateOfBirth
-      ? intervalToDuration({ start: parseISO(detail.dateOfBirth), end: new Date() })
-      : null
-    const worked = detail.joiningDate
-      ? intervalToDuration({
-          start: parseISO(detail.joiningDate),
-          end: parseISO(detail.lastWorkingDate),
-        })
-      : null
     return {
       name: detail.employeeName ?? '',
       designation: detail.designationName ?? '',
       code: detail.employeeCode ?? '',
       photoUrl: detail.photoUrl,
-      age: age
-        ? `${plural(age.years, 'years')}, ${plural(age.months, 'Months')}, ${plural(age.days, 'Days')}`
-        : '—',
+      age: spanText(detail.dateOfBirth, new Date()),
       email: detail.employeeEmail ?? '—',
       phone: detail.employeePhone ?? '—',
-      experience: worked
-        ? `${plural(worked.years, 'Year')} ${plural(worked.months, 'Month')} ${plural(worked.days, 'Days')}`
-        : '—',
+      experience: spanText(detail.joiningDate, detail.lastWorkingDate),
     }
   }
   if (!picked) return undefined
@@ -195,10 +201,11 @@ function cardOf(
     designation: picked.designationName ?? picked.jobTitleName ?? '',
     code: picked.code,
     photoUrl: picked.photoUrl,
-    age: '—',
-    email: '—',
-    phone: '—',
-    experience: '—',
+    age: spanText(record?.dateOfBirth, new Date()),
+    email: record?.email ?? '—',
+    phone: record?.phone1 ?? '—',
+    // Until the last working date is chosen, the time worked so far.
+    experience: spanText(record?.joiningDate, lastWorkingDate || new Date()),
   }
 }
 
@@ -459,10 +466,26 @@ function RecordForm({
     resolver: zodResolver(schema),
     defaultValues: toValues(detail, fields),
   })
-  const [employeeId, serveNotice, needsAssetClearance] = useWatch({
+  const [employeeId, serveNotice, needsAssetClearance, lastWorkingDate] = useWatch({
     control: form.control,
-    name: ['employeeId', 'serveNotice', 'needsAssetClearance'],
+    name: ['employeeId', 'serveNotice', 'needsAssetClearance', 'lastWorkingDate'],
   })
+  // The picked person's record, for the card's age, email, phone and experience before saving.
+  const pickedId = !detail && picked?.id === employeeId ? employeeId : null
+  const pickedRecord = useQuery({
+    queryKey: employeeKeys.detail(pickedId ?? ''),
+    queryFn: ({ signal }) => employeesApi.get(pickedId ?? '', signal),
+    enabled: pickedId !== null,
+  })
+  /** Notice Period Days fills the Last Working Date: that many days from today. */
+  const fillLastDay = (text: string) => {
+    if (!/^\d{1,4}$/.test(text.trim())) return
+    form.setValue(
+      'lastWorkingDate',
+      format(addDays(new Date(), Number(text.trim())), 'yyyy-MM-dd'),
+      { shouldDirty: true, shouldValidate: form.formState.isSubmitted },
+    )
+  }
   // Whoever the record already names keeps their name (they may have left since).
   const known: SearchOption[] = []
   const keep = (value: string | null | undefined, label: string | null | undefined) => {
@@ -549,7 +572,12 @@ function RecordForm({
     }
   })
 
-  const shownCard = cardOf(detail, picked?.id === employeeId ? picked : undefined)
+  const shownCard = cardOf(
+    detail,
+    picked?.id === employeeId ? picked : undefined,
+    pickedId ? pickedRecord.data : undefined,
+    serveNotice ? lastWorkingDate : '',
+  )
   const rootError = form.formState.errors.root?.message
   const waiting = detail?.status === 'pending' ? detail.waitingFor : []
 
@@ -666,6 +694,9 @@ function RecordForm({
                     label="Notice Period Days"
                     inputMode="numeric"
                     disabled={readOnly}
+                    onInput={(event) => {
+                      fillLastDay(event.currentTarget.value)
+                    }}
                   />
                   <DateField
                     control={form.control}

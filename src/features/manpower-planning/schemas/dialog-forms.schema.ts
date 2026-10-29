@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { formatDay as day } from '../utils/format'
 import { toAmount } from '../utils/plan-math'
 
 const amountText = (message: string, { positive = false, whole = false } = {}) =>
@@ -14,22 +15,55 @@ const amountText = (message: string, { positive = false, whole = false } = {}) =
     }
   })
 
-/** Add Budget Duration. */
-export const durationFormSchema = z
-  .object({
-    name: z
-      .string()
-      .trim()
-      .min(1, 'Enter the budget duration')
-      .max(200, 'Keep it under 200 characters'),
-    startDate: z.string().min(1, 'Select the start date'),
-    endDate: z.string().min(1, 'Select the end date'),
-    isCurrent: z.boolean(),
-  })
-  .refine((value) => !value.startDate || !value.endDate || value.endDate >= value.startDate, {
-    path: ['endDate'],
-    message: 'The end date cannot be before the start date',
-  })
+/** A budget duration the new one must not overlap. */
+export interface DurationSpan {
+  id: string
+  name: string
+  startDate: string
+  endDate: string
+}
+
+/**
+ * Add Budget Duration. `others` are the durations already saved (the edited one is skipped by
+ * `selfId`): a plan year cannot overlap another, as the server refuses.
+ */
+export const makeDurationFormSchema = (others: readonly DurationSpan[] = [], selfId?: string) =>
+  z
+    .object({
+      name: z
+        .string()
+        .trim()
+        .min(1, 'Enter the budget duration')
+        .max(200, 'Keep it under 200 characters'),
+      startDate: z.string().min(1, 'Select the start date'),
+      endDate: z.string().min(1, 'Select the end date'),
+      isCurrent: z.boolean(),
+    })
+    .superRefine((value, context) => {
+      if (!value.startDate || !value.endDate) return
+      if (value.endDate < value.startDate) {
+        context.addIssue({
+          code: 'custom',
+          path: ['endDate'],
+          message: 'The end date cannot be before the start date',
+        })
+        return
+      }
+      const clash = others.find(
+        (other) =>
+          other.id !== selfId &&
+          other.startDate <= value.endDate &&
+          value.startDate <= other.endDate,
+      )
+      if (clash) {
+        context.addIssue({
+          code: 'custom',
+          path: ['startDate'],
+          message: `These dates overlap the ${clash.name} budget duration (${day(clash.startDate)} – ${day(clash.endDate)})`,
+        })
+      }
+    })
+export const durationFormSchema = makeDurationFormSchema()
 export type DurationFormValues = z.infer<typeof durationFormSchema>
 
 /** The Employee Position popup. */

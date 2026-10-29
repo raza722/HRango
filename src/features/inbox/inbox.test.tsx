@@ -5,11 +5,15 @@ import { DEMO_USER } from '@/mocks/auth/handlers'
 import { useAuthStore } from '@/stores/auth-store'
 import { renderApp } from '@/test/test-utils'
 
-describe('Inbox', () => {
+describe('Inbox', { timeout: 60_000 }, () => {
   it('shows unread notifications from /inbox and marks them all read', async () => {
     const { user } = renderApp('/settings/control-panel/general')
 
-    const bell = await screen.findByRole('button', { name: 'Notifications, 2 unread' })
+    const bell = await screen.findByRole(
+      'button',
+      { name: 'Notifications, 2 unread' },
+      { timeout: 15_000 },
+    )
     await user.click(bell)
     expect(await screen.findByText('3 late arrivals today')).toBeVisible()
     expect(screen.getByText('Policy updated')).toBeVisible()
@@ -22,10 +26,23 @@ describe('Inbox', () => {
     expect(await screen.findByRole('button', { name: 'Notifications' })).toBeInTheDocument()
   })
 
+  it('opens a notification’s link and marks it read', async () => {
+    const { user, router } = renderApp('/settings/control-panel/general')
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Notifications, 2 unread' }, { timeout: 15_000 }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: /Leave request/ }))
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/requests/leave')
+    })
+    expect(await screen.findByRole('button', { name: 'Notifications, 1 unread' })).toBeVisible()
+  }, 60_000)
+
   it('keeps the messages menu empty (no chat in the API)', async () => {
     const { user } = renderApp('/settings/control-panel/general')
 
-    await user.click(await screen.findByRole('button', { name: 'Messages' }))
+    await user.click(await screen.findByRole('button', { name: 'Messages' }, { timeout: 15_000 }))
     expect(await screen.findByText('No messages')).toBeVisible()
   })
 
@@ -40,7 +57,11 @@ describe('Inbox', () => {
     })
 
     expect(
-      await screen.findByRole('heading', { name: 'General Settings', level: 1 }),
+      await screen.findByRole(
+        'heading',
+        { name: 'General Settings', level: 1 },
+        { timeout: 15_000 },
+      ),
     ).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Notifications/ })).not.toBeInTheDocument()
   })

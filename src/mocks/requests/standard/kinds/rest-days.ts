@@ -88,6 +88,12 @@ function toPayload(
   const department = input.department || employee.department
   const group = rosterGroups.find(input.rosterGroupId)
   if (!group?.isActive) return invalid('Choose a roster.', { rosterGroupId: 'Choose a roster' })
+  // Rest days are off the person's own roster: one they are not enrolled in is refused.
+  const enrolled = rosterOf(context.employeeId)
+  if (enrolled && enrolled !== group.id) {
+    const message = `${employee.name} is on ${rosterGroups.find(enrolled)?.title ?? 'another roster'}, not ${group.title}. Choose their roster.`
+    return invalid(message, { rosterGroupId: message })
+  }
   if (input.from < today()) {
     return invalid('Choose today or a later day.', { fromDate: 'Choose today or a later day' })
   }

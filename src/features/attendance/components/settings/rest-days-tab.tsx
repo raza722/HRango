@@ -99,7 +99,25 @@ function DayChips({
   )
 }
 
-/** "Create New Rest Day" / edit: people, dates, weekdays, repeat, step and payable. */
+/** The fields of the rest day form a message can stand under. */
+type RestDayField = 'employeeIds' | 'fromDate' | 'toDate' | 'weekdays' | 'step'
+const REST_DAY_FIELDS: readonly RestDayField[] = [
+  'employeeIds',
+  'fromDate',
+  'toDate',
+  'weekdays',
+  'step',
+]
+
+/** A field's message, right under it. */
+function FieldError({ message }: { message: string | undefined }) {
+  return message ? <p className="text-xs text-destructive">{message}</p> : null
+}
+
+/**
+ * "Create New Rest Day" / edit: people, dates, weekdays, repeat, step and payable. Every
+ * problem is shown at once under its field, and goes when the field changes.
+ */
 function RestDayRuleForm({ rule, onClose }: { rule: RestDayRule | null; onClose: () => void }) {
   const save = useSaveSetting('restDays')
   const today = toDateValue(new Date())
@@ -112,22 +130,28 @@ function RestDayRuleForm({ rule, onClose }: { rule: RestDayRule | null; onClose:
   const [repeat, setRepeat] = useState(String(rule?.repeatEveryWeeks ?? 0))
   const [step, setStep] = useState(String(rule?.step ?? 1))
   const [payable, setPayable] = useState(rule?.isPayable ?? false)
+  const [errors, setErrors] = useState<Partial<Record<RestDayField, string>>>({})
+  // What the server refused that no field shows.
   const [error, setError] = useState<string | null>(null)
   const repeatWeeks = Number(repeat)
+  const clear = (field: RestDayField) => {
+    setErrors((current) => {
+      if (!current[field]) return current
+      return Object.fromEntries(Object.entries(current).filter(([key]) => key !== field))
+    })
+  }
 
   const submit = async () => {
-    const problem =
-      employeeIds.length === 0
-        ? 'Select at least one employee.'
-        : toDate < fromDate
-          ? 'To must be on or after From.'
-          : weekdays.length === 0
-            ? 'Pick at least one day.'
-            : repeatWeeks > 0 && Number(step) > repeatWeeks
-              ? 'Step is between 1 and the number of weeks in the repeat.'
-              : null
-    if (problem) {
-      setError(problem)
+    const problems: Partial<Record<RestDayField, string>> = {}
+    if (employeeIds.length === 0) problems.employeeIds = 'Select at least one employee'
+    if (toDate < fromDate) problems.toDate = 'Choose From or a later day'
+    if (weekdays.length === 0) problems.weekdays = 'Pick at least one day'
+    if (repeatWeeks > 0 && Number(step) > repeatWeeks) {
+      problems.step = 'Choose a week of the repeat'
+    }
+    setError(null)
+    if (Object.keys(problems).length > 0) {
+      setErrors(problems)
       return
     }
     try {
@@ -145,11 +169,18 @@ function RestDayRuleForm({ rule, onClose }: { rule: RestDayRule | null; onClose:
         },
       })
     } catch (failure) {
-      setError(
-        failure instanceof ApiError
-          ? (Object.values(failure.fieldErrors)[0] ?? failure.message)
-          : 'Could not save.',
-      )
+      if (!(failure instanceof ApiError)) {
+        setError('Could not save.')
+        return
+      }
+      // The server's field messages go under their fields; the rest above the buttons.
+      const placed: Partial<Record<RestDayField, string>> = {}
+      for (const [key, message] of Object.entries(failure.fieldErrors)) {
+        const field = REST_DAY_FIELDS.find((item) => item === key)
+        if (field) placed[field] = message
+      }
+      setErrors(placed)
+      if (Object.keys(placed).length === 0) setError(failure.message)
       return
     }
     onClose()
@@ -188,27 +219,35 @@ function RestDayRuleForm({ rule, onClose }: { rule: RestDayRule | null; onClose:
       }
     >
       <div className="grid gap-5">
-        <EmployeeMultiSelect
-          permission={`${PERMISSION}.view`}
-          value={employeeIds}
-          onChange={(next) => {
-            setEmployeeIds(next)
-            setError(null)
-          }}
-          known={rule?.employees.map((item) => ({
-            id: item.employeeId,
-            label: `${item.employeeName} (${item.employeeCode})`,
-          }))}
-        />
+        <div className="grid gap-2">
+          <EmployeeMultiSelect
+            permission={`${PERMISSION}.view`}
+            value={employeeIds}
+            onChange={(next) => {
+              setEmployeeIds(next)
+              clear('employeeIds')
+            }}
+            known={rule?.employees.map((item) => ({
+              id: item.employeeId,
+              label: `${item.employeeName} (${item.employeeCode})`,
+            }))}
+          />
+          <FieldError message={errors.employeeIds} />
+        </div>
         <div className="grid gap-4 @md:grid-cols-2">
           <DateBox
             label="From"
             variant="form"
             required
             value={fromDate}
+            error={errors.fromDate}
             onChange={(value) => {
               setFromDate(value)
-              if (toDate < value) setToDate(value)
+              clear('fromDate')
+              if (toDate < value) {
+                setToDate(value)
+                clear('toDate')
+              }
             }}
           />
           <DateBox
@@ -216,8 +255,12 @@ function RestDayRuleForm({ rule, onClose }: { rule: RestDayRule | null; onClose:
             variant="form"
             required
             value={toDate}
+            error={errors.toDate}
             minDate={parse(fromDate, 'yyyy-MM-dd', new Date())}
-            onChange={setToDate}
+            onChange={(value) => {
+              setToDate(value)
+              clear('toDate')
+            }}
           />
         </div>
         <fieldset className="grid gap-2">
@@ -226,14 +269,21 @@ function RestDayRuleForm({ rule, onClose }: { rule: RestDayRule | null; onClose:
             value={weekdays}
             onChange={(next) => {
               setWeekdays(next)
-              setError(null)
+              clear('weekdays')
             }}
           />
+          <FieldError message={errors.weekdays} />
         </fieldset>
         <div className="grid gap-4 @md:grid-cols-3">
           <div className="grid gap-2">
             <span className="text-sm leading-none text-title">Repeat</span>
-            <Select value={repeat} onValueChange={setRepeat}>
+            <Select
+              value={repeat}
+              onValueChange={(value) => {
+                setRepeat(value)
+                clear('step')
+              }}
+            >
               <SelectTrigger aria-label="Repeat" className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -249,7 +299,14 @@ function RestDayRuleForm({ rule, onClose }: { rule: RestDayRule | null; onClose:
           </div>
           <div className="grid gap-2">
             <span className="text-sm leading-none text-title">Step</span>
-            <Select value={step} onValueChange={setStep} disabled={repeatWeeks === 0}>
+            <Select
+              value={step}
+              onValueChange={(value) => {
+                setStep(value)
+                clear('step')
+              }}
+              disabled={repeatWeeks === 0}
+            >
               <SelectTrigger aria-label="Step" className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -261,6 +318,7 @@ function RestDayRuleForm({ rule, onClose }: { rule: RestDayRule | null; onClose:
                 ))}
               </SelectContent>
             </Select>
+            <FieldError message={errors.step} />
           </div>
           <label className="flex items-center gap-2 self-end pb-2 text-sm text-title">
             <Checkbox

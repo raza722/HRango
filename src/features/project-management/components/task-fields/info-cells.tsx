@@ -13,12 +13,15 @@ import { taskLink, taskProgress } from './field-utils'
 import type { TaskCellProps } from './task-cell-types'
 
 /** A read-only cell: the white box with its value (Medium 18.97 #626262). */
-const box = cn(fieldStyles.cell, 'cursor-default pl-3 hover:border-[#E9E9E9]')
+const box = cn(
+  fieldStyles.cell,
+  'cursor-default pl-3 hover:border-[#E9E9E9] dark:hover:border-border',
+)
 const empty = <span className="text-[0.8125rem] text-[#B0B0B0]">-</span>
 
 /** The Task Name column's plain name (the List view draws its own name with the adornments). */
 export const NameCell = ({ task }: TaskCellProps) => (
-  <span className="truncate text-[0.8125rem] text-[#4F4F4F]">{task.name}</span>
+  <span className="truncate text-[0.8125rem] text-[#4F4F4F] dark:text-title">{task.name}</span>
 )
 
 /** Progress Bar (Workspace Page 1:2755): the share of subtasks closed, green on grey, and the %. */
@@ -31,7 +34,7 @@ export function ProgressCell({ task, tasks, workspace }: TaskCellProps) {
       : 'Task open'
   return (
     <div
-      className="flex h-10 w-full min-w-0 items-center gap-2.5 rounded-[0.5625rem] bg-white px-2.5"
+      className="flex h-10 w-full min-w-0 items-center gap-2.5 rounded-[0.5625rem] bg-white px-2.5 dark:bg-card"
       title={label}
     >
       <div
@@ -43,13 +46,13 @@ export function ProgressCell({ task, tasks, workspace }: TaskCellProps) {
         aria-valuemax={100}
         className="relative flex h-[0.55rem] min-w-0 flex-1 items-center"
       >
-        <span className="absolute inset-x-0 h-[0.45rem] rounded-full bg-[#E7E7E7]" />
+        <span className="absolute inset-x-0 h-[0.45rem] rounded-full bg-[#E7E7E7] dark:bg-white/10" />
         <span
           className="relative h-[0.55rem] rounded-full bg-[#2CBD4D]"
           style={{ width: `${percent}%` }}
         />
       </div>
-      <span className="w-10 shrink-0 text-right text-sm font-semibold text-[#626262]">
+      <span className="w-10 shrink-0 text-right text-sm font-semibold text-[#626262] dark:text-title">
         {percent}%
       </span>
     </div>
@@ -87,7 +90,10 @@ export function TaskIdCell({ task }: TaskCellProps) {
               )
             }}
             aria-label={`Copy the link of ${task.code}`}
-            className={cn(fieldStyles.cellIcon, 'transition-colors hover:bg-[#EEE7FF]')}
+            className={cn(
+              fieldStyles.cellIcon,
+              'transition-colors hover:bg-[#EEE7FF] dark:hover:bg-[#7127EA]/25',
+            )}
           >
             <CopyIcon />
           </button>
@@ -132,7 +138,7 @@ export function CreatedByCell({ task }: TaskCellProps) {
       {person && (
         <TooltipContent
           side="bottom"
-          className="flex flex-col gap-1 rounded-lg bg-white px-3 py-2 text-[0.6875rem] font-medium text-[#5D5D5D] shadow-[0_0_10px_rgba(0,0,0,0.12)]"
+          className="flex flex-col gap-1 rounded-lg bg-white px-3 py-2 text-[0.6875rem] font-medium text-[#5D5D5D] shadow-[0_0_10px_rgba(0,0,0,0.12)] dark:bg-card dark:text-title"
         >
           <span>Designation: {person.designation || '-'}</span>
           <span>Department: {person.department || '-'}</span>

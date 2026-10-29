@@ -16,7 +16,13 @@ import type {
   Workspace,
   WorkspaceTree,
 } from '../../types/pm.types'
-import { type ColumnAction, ListViewContext, type ListViewContextValue } from './list-context'
+import { BoardView } from './board-view'
+import {
+  type ColumnAction,
+  ListViewContext,
+  type ListViewContextValue,
+  type TaskLayout,
+} from './list-context'
 import {
   childrenByParent,
   deleteColumn,
@@ -26,11 +32,13 @@ import {
   moveColumn,
   orderForMove,
   showColumn,
+  tableColumns,
   topLevel,
   visibleColumns,
 } from './list-utils'
 import { RolePermissionDialog } from './role-permission-dialog'
 import { StatusGroup } from './status-group'
+import { TableBody } from './table-view'
 import { useTaskActions } from './use-task-actions'
 import { useWorkspacePatch } from './use-workspace-patch'
 
@@ -41,9 +49,12 @@ export interface Composer {
 
 /**
  * The List view (Workspace Page 1:2755): tasks grouped by the workspace's statuses, with the
- * column headers, sorting, the header menu and the row menus.
+ * column headers, sorting, the header menu and the row menus. `layout` draws the same tasks,
+ * cells and menus as the Table view (one flat table of every column, the header kept in view,
+ * Export CSV) or the Board view (status columns of cards).
  */
 export function ListView({
+  layout = 'list',
   workspace,
   tree,
   tasks,
@@ -62,6 +73,7 @@ export function ListView({
   onOpenList,
   highlightedId,
 }: {
+  layout?: TaskLayout
   workspace: Workspace
   tree: WorkspaceTree
   /** Every task of the view. */
@@ -115,8 +127,11 @@ export function ListView({
 
   const columns = useMemo(() => {
     const hidden = new Set(hiddenColumns.map((key) => columnFromApi(key, workspace.labelsFieldId)))
-    return visibleColumns(workspace.columns).filter((column) => !hidden.has(column.key))
-  }, [workspace.columns, workspace.labelsFieldId, hiddenColumns])
+    // The Table view: every column, in the List view's order, then the ones it never added.
+    const shown =
+      layout === 'table' ? tableColumns(workspace.columns) : visibleColumns(workspace.columns)
+    return shown.filter((column) => !hidden.has(column.key))
+  }, [layout, workspace.columns, workspace.labelsFieldId, hiddenColumns])
   const children = useMemo(() => childrenByParent(visibleTasks), [visibleTasks])
   const groups = useMemo(
     () => groupByStatus(visibleTasks, workspace.setup.statuses),
@@ -180,15 +195,18 @@ export function ListView({
     const target = tasks.find((task) => task.id === targetId)
     if (!moving || !target) return
     const isTop = (task: TaskRow) => !task.parentId || !ids.has(task.parentId)
+    // The Table view has no status groups: its rows trade places and keep their status.
+    const flat = layout === 'table'
     const siblings = (
       isTop(target)
-        ? topLevel(tasks).filter((task) => task.statusId === target.statusId)
+        ? topLevel(tasks).filter((task) => flat || task.statusId === target.statusId)
         : tasks.filter((task) => task.parentId === target.parentId)
     ).toSorted((a, b) => a.order - b.order)
     const order = orderForMove(siblings, movingId, targetId)
     if (order === null) return
-    // A task dropped into another status group takes that status; subtasks keep theirs.
-    const statusId = isTop(target) ? target.statusId : moving.statusId
+    // A task dropped into another status group (or Board column) takes that status; subtasks
+    // keep theirs.
+    const statusId = isTop(target) && !flat ? target.statusId : moving.statusId
     const others = siblings.filter((task) => task.id !== movingId)
     // The API keeps whole sort orders: a free one goes as it is, else the siblings are renumbered.
     if (Number.isInteger(order) && !others.some((task) => task.order === order)) {
@@ -203,7 +221,18 @@ export function ListView({
     })
   }
 
+  /** A card's or row's task, in the List view of its list, scrolled to and marked. */
+  const openTask = (task: TaskRow) => {
+    void router.navigate({
+      to: '/project-management/workspaces/$workspaceId',
+      params: { workspaceId: workspace.id },
+      search: task.listId ? { list: task.listId } : {},
+      hash: task.id,
+    })
+  }
+
   const value: ListViewContextValue = {
+    layout,
     workspace,
     tree,
     access,
@@ -302,41 +331,63 @@ export function ListView({
         </div>
       )}
 
-      <div className="@container/list overflow-x-auto pb-2">
-        <div className="flex w-max min-w-full flex-col gap-[1.875rem]">
-          {narrowed && shown.length === 0 && (
-            <p role="status" className="sticky left-0 px-2 py-8 text-center text-sm text-[#707070]">
-              No tasks match your search or filters.
-            </p>
-          )}
-          {shown.map(({ status, tasks: groupTasks }) => (
-            <StatusGroup
-              key={status.id}
-              status={status}
-              tasks={groupTasks}
-              childrenOf={(taskId) => children.get(taskId) ?? []}
-              collapsed={collapsed.has(status.id)}
-              onCollapsedChange={(isCollapsed) => {
-                setCollapsed((current) => {
-                  const next = new Set(current)
-                  if (isCollapsed) next.add(status.id)
-                  else next.delete(status.id)
-                  return next
-                })
-              }}
-              composing={composer?.statusId === status.id ? composer.type : null}
-              listId={listId}
-              onCloseComposer={onCloseComposer}
-              onSelectAll={(all) => {
-                value.onSelect(all, true)
-              }}
-              onCollapseAll={(all) => {
-                setCollapsed(all ? new Set(shown.map((group) => group.status.id)) : new Set())
-              }}
-            />
-          ))}
+      {layout === 'board' ? (
+        <BoardView
+          groups={groups}
+          listId={listId}
+          composer={composer}
+          onCloseComposer={onCloseComposer}
+          onOpenTask={openTask}
+        />
+      ) : layout === 'table' ? (
+        <TableBody
+          visibleTasks={visibleTasks}
+          childrenOf={(taskId) => children.get(taskId) ?? []}
+          narrowed={narrowed}
+          tagNames={(ids) =>
+            ids.map((id) => sortContext.tags.get(id)?.name).filter((name) => name !== undefined)
+          }
+        />
+      ) : (
+        <div className="@container/list relative overflow-x-auto pb-2">
+          <div className="flex w-max min-w-full flex-col gap-[1.875rem]">
+            {narrowed && shown.length === 0 && (
+              <p
+                role="status"
+                className="sticky left-0 px-2 py-8 text-center text-sm text-[#707070] dark:text-grey"
+              >
+                No tasks match your search or filters.
+              </p>
+            )}
+            {shown.map(({ status, tasks: groupTasks }) => (
+              <StatusGroup
+                key={status.id}
+                status={status}
+                tasks={groupTasks}
+                childrenOf={(taskId) => children.get(taskId) ?? []}
+                collapsed={collapsed.has(status.id)}
+                onCollapsedChange={(isCollapsed) => {
+                  setCollapsed((current) => {
+                    const next = new Set(current)
+                    if (isCollapsed) next.add(status.id)
+                    else next.delete(status.id)
+                    return next
+                  })
+                }}
+                composing={composer?.statusId === status.id ? composer.type : null}
+                listId={listId}
+                onCloseComposer={onCloseComposer}
+                onSelectAll={(all) => {
+                  value.onSelect(all, true)
+                }}
+                onCollapseAll={(all) => {
+                  setCollapsed(all ? new Set(shown.map((group) => group.status.id)) : new Set())
+                }}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <RolePermissionDialog
         columnKey={permissionKey}

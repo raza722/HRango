@@ -334,8 +334,42 @@ export interface TaskDto extends TaskRowDto {
   dependencies: DependencyDto[]
   checklist: unknown[]
   subtasks: unknown[]
-  extensions: unknown[]
+  extensions: ExtensionDto[]
   hiddenColumns: string[]
+}
+
+/** `ActivityOut`: one line of a workspace's history (`GET /workspaces/{id}/activity`). */
+export interface ActivityDto {
+  id: string
+  entityType: string
+  entityId: string
+  itemCode: string | null
+  itemName: string | null
+  actionName: string
+  fieldName: string | null
+  oldValue: string | null
+  newValue: string | null
+  performedByUserId: string | null
+  performedByName: string | null
+  performedAt: string
+}
+
+/** `ExtensionOut`: a request to move a task's due date (one per task, decided by a manager). */
+export interface ExtensionDto {
+  id: string
+  requestedById: string
+  requestedByName: string
+  oldDueDate: string | null
+  newDueDate: string
+  reason: string | null
+  /** pending | approved | rejected. */
+  status: string
+  decidedById: string | null
+  decidedByName: string | null
+  decidedAt: string | null
+  remarks: string | null
+  createdAt: string
+  rowVersion: string
 }
 
 export interface TaskPageDto {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { z } from 'zod'
 
 import { branchMapper, jobTitleMapper } from '../utils/form-mappers'
-import { branchFormSchema, jobTitleFormSchema } from './org-forms.schema'
+import { branchFormSchema, jobTitleFormSchema, makeJobTitleFormSchema } from './org-forms.schema'
 
 function issuePaths(schema: z.ZodType, values: unknown): string[] {
   const result = schema.safeParse(values)
@@ -72,6 +72,17 @@ describe('jobTitleFormSchema', () => {
     expect(
       issuePaths(jobTitleFormSchema, { ...valid, limitHeadCount: true, maxHeadCount: '12' }),
     ).toEqual([])
+  })
+
+  it('keeps the cap at or above the people who hold the title, naming how many', () => {
+    const held = makeJobTitleFormSchema(12)
+    const result = held.safeParse({ ...valid, limitHeadCount: true, maxHeadCount: '5' })
+    expect(result.success).toBe(false)
+    expect(result.error?.issues[0]?.message).toBe(
+      '12 employees hold this job title now: enter 12 or more',
+    )
+    expect(issuePaths(held, { ...valid, limitHeadCount: true, maxHeadCount: '12' })).toEqual([])
+    expect(issuePaths(held, valid)).toEqual([])
   })
 
   it('drops a leftover cap when the limit is off', () => {

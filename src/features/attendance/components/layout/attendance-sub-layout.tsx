@@ -12,6 +12,7 @@ import {
   ScheduleMenuIcon,
 } from '@/components/icons/attendance-menu-icons'
 import { PageContainer } from '@/components/layout'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,7 +21,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 
-export type AttendanceSection = 'logs' | 'settings' | 'overtime' | 'missing-punch'
+export type AttendanceSection =
+  'scheduling' | 'overtime' | 'official-visits' | 'missing-punch' | 'logs' | 'insights' | 'settings'
 
 interface MenuItem {
   key: string
@@ -33,8 +35,12 @@ const itemClass =
   'flex w-full items-center gap-2 px-6 py-2 text-sm text-[#5C5C5C] outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset dark:text-field-foreground'
 const activeClass = 'bg-sidebar/10 font-medium text-sidebar dark:bg-input dark:text-heading'
 
-/** The design's Attendance sub menu; the pages built elsewhere link to their modules. */
-function buildMenu(current: AttendanceSection, className?: string): MenuItem[] {
+/**
+ * The design's Attendance sub menu. Every entry opens its page beside the menu, Scheduling,
+ * Official Visits and Attendance Insights included (the same screens as the sidebar's
+ * Scheduling, Requests → Official Visits and Attendance Overview).
+ */
+function buildMenu(current: AttendanceSection | null, className?: string): MenuItem[] {
   const content = (Icon: MenuItem['icon'], label: string) => (
     <>
       <Icon className="size-5 shrink-0" />
@@ -48,7 +54,11 @@ function buildMenu(current: AttendanceSection, className?: string): MenuItem[] {
       label: 'Scheduling',
       icon: ScheduleMenuIcon,
       link: (
-        <Link to="/scheduling" className={cls(false)}>
+        <Link
+          to="/attendance/scheduling"
+          aria-current={current === 'scheduling' ? 'page' : undefined}
+          className={cls(current === 'scheduling')}
+        >
           {content(ScheduleMenuIcon, 'Scheduling')}
         </Link>
       ),
@@ -59,8 +69,7 @@ function buildMenu(current: AttendanceSection, className?: string): MenuItem[] {
       icon: OvertimeMenuIcon,
       link: (
         <Link
-          to="/attendance/$section"
-          params={{ section: 'overtime' }}
+          to="/attendance/overtime"
           aria-current={current === 'overtime' ? 'page' : undefined}
           className={cls(current === 'overtime')}
         >
@@ -73,7 +82,11 @@ function buildMenu(current: AttendanceSection, className?: string): MenuItem[] {
       label: 'Official Visits',
       icon: OfficialVisitsMenuIcon,
       link: (
-        <Link to="/requests/$type" params={{ type: 'official-visits' }} className={cls(false)}>
+        <Link
+          to="/attendance/official-visits"
+          aria-current={current === 'official-visits' ? 'page' : undefined}
+          className={cls(current === 'official-visits')}
+        >
           {content(OfficialVisitsMenuIcon, 'Official Visits')}
         </Link>
       ),
@@ -112,7 +125,11 @@ function buildMenu(current: AttendanceSection, className?: string): MenuItem[] {
       label: 'Attendance Insights',
       icon: AttendanceInsightsMenuIcon,
       link: (
-        <Link to="/attendance/overview" className={cls(false)}>
+        <Link
+          to="/attendance/insights"
+          aria-current={current === 'insights' ? 'page' : undefined}
+          className={cls(current === 'insights')}
+        >
           {content(AttendanceInsightsMenuIcon, 'Attendance Insights')}
         </Link>
       ),
@@ -132,6 +149,35 @@ function buildMenu(current: AttendanceSection, className?: string): MenuItem[] {
       ),
     },
   ]
+}
+
+/**
+ * The sub menu's pages from the pages drawn without it (Attendance Overview, Time Sheet): a
+ * "More" button listing Scheduling, Overtime, Official Visits … Settings.
+ */
+export function AttendanceSectionsMenu({ className }: { className?: string }) {
+  const items = buildMenu(null, 'px-3')
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label="More attendance pages"
+          className={cn('gap-1.5', className)}
+        >
+          More <ChevronDown aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-56 p-1">
+        {items.map((item) => (
+          <DropdownMenuItem key={item.key} asChild className="p-0">
+            {item.link}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 }
 
 /**

@@ -1,19 +1,27 @@
+import { type ReactNode, useState } from 'react'
 import { Outlet } from '@tanstack/react-router'
 
 import { NAV_ITEMS } from '@/app/navigation'
 import { LanguageSwitcher, Sidebar, SIDEBAR_WIDTH, ThemeToggle, Topbar } from '@/components/layout'
+import { ChangePasswordDialog } from '@/features/access'
 import { useLogout, useSessionRefresh } from '@/features/auth'
 import { InboxMenu } from '@/features/inbox'
 import { BREAKPOINTS, useMediaQuery } from '@/hooks/use-media-query'
 import { useAuthStore } from '@/stores/auth-store'
 import { useSidebarStore } from '@/stores/sidebar-store'
 
-/** Shell for every signed-in page: navy sidebar, white top bar, grey content area. */
-export function AuthenticatedLayout() {
+import { InShellContext } from './in-shell-context'
+
+/**
+ * Shell for every signed-in page: navy sidebar, white top bar, grey content area. It shows the
+ * matched route, or `children` when given (the 404 page for an unknown URL).
+ */
+export function AuthenticatedLayout({ children }: { children?: ReactNode } = {}) {
   const user = useAuthStore((state) => state.user)
   const collapsed = useSidebarStore((state) => state.collapsed)
   const isDesktop = useMediaQuery(BREAKPOINTS.desktop)
   const logout = useLogout()
+  const [changingPassword, setChangingPassword] = useState(false)
   useSessionRefresh()
 
   const offset = isDesktop ? (collapsed ? SIDEBAR_WIDTH.collapsed : SIDEBAR_WIDTH.expanded) : 0
@@ -33,7 +41,17 @@ export function AuthenticatedLayout() {
         onSignOut={() => {
           void logout()
         }}
+        onChangePassword={() => {
+          setChangingPassword(true)
+        }}
       />
+      {changingPassword && (
+        <ChangePasswordDialog
+          onClose={() => {
+            setChangingPassword(false)
+          }}
+        />
+      )}
 
       <div
         className="flex min-h-dvh min-w-0 flex-col transition-[padding] duration-200 ease-out"
@@ -55,7 +73,7 @@ export function AuthenticatedLayout() {
           // Bottom padding clears the iPhone home indicator.
           className="min-w-0 flex-1 px-4 pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] outline-none sm:px-6 sm:pt-5 lg:px-8 lg:pt-6"
         >
-          <Outlet />
+          <InShellContext value={true}>{children ?? <Outlet />}</InShellContext>
         </main>
       </div>
     </div>

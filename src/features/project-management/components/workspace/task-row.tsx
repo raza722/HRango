@@ -80,7 +80,7 @@ export function TaskRowView({
     return !moving.parentId || !allTasks.some((row) => row.id === moving.parentId)
   }
 
-  const tone = cn(isSelected && 'bg-[#F8F5FF]', dropping && 'border-[#7127EA]')
+  const tone = cn(isSelected && 'bg-[#F8F5FF] dark:bg-[#7127EA]/10', dropping && 'border-[#7127EA]')
 
   return (
     <>
@@ -173,12 +173,12 @@ export function TaskRowView({
             <span className="size-[2.4rem] shrink-0" aria-hidden="true" />
           )}
           <div
-            className="flex h-[3.6875rem] min-w-0 flex-1 items-center rounded-xl border border-[#E9E9E9] bg-white pr-2"
+            className="flex h-[3.6875rem] min-w-0 flex-1 items-center rounded-xl border border-[#E9E9E9] bg-white pr-2 dark:border-border dark:bg-card"
             style={depth ? { marginLeft: `${depth * INDENT_REM}rem` } : undefined}
           >
             <span
               title={status.name}
-              className="mx-[0.594rem] flex size-[2.4rem] shrink-0 items-center justify-center rounded-[0.52rem] bg-[#F8F8F8]"
+              className="mx-[0.594rem] flex size-[2.4rem] shrink-0 items-center justify-center rounded-[0.52rem] bg-[#F8F8F8] dark:bg-white/5"
               style={{ color: status.color }}
             >
               {task.type === 'milestone' ? (
@@ -196,7 +196,7 @@ export function TaskRowView({
               {task.subtaskCount > 0 && (
                 <span
                   title={`${task.subtaskCount} subtask${task.subtaskCount === 1 ? '' : 's'}`}
-                  className="flex h-[1.7rem] items-center gap-2.5 rounded-[0.37rem] bg-[#E7F6FF] px-2 text-[1.1858rem] leading-none text-[#4287B0]"
+                  className="flex h-[1.7rem] items-center gap-2.5 rounded-[0.37rem] bg-[#E7F6FF] px-2 text-[1.1858rem] leading-none text-[#4287B0] dark:bg-sky-500/15 dark:text-sky-300"
                 >
                   <SubtaskIcon className="h-[1.2rem] w-[1.15rem]" />
                   {task.subtaskCount}
@@ -257,7 +257,7 @@ function TaskName({ task }: { task: TaskRow }) {
   if (renamingId !== task.id) {
     return (
       <span
-        className="min-w-0 flex-1 truncate text-[1.1858rem] leading-[1.5] font-medium text-[#626262]"
+        className="min-w-0 flex-1 truncate text-[1.1858rem] leading-[1.5] font-medium text-[#626262] dark:text-title"
         title={task.name}
         onDoubleClick={() => {
           if (access.editTasks) onRename(task.id)
@@ -295,7 +295,7 @@ function TaskName({ task }: { task: TaskRow }) {
       onBlur={(event) => {
         finish(event.currentTarget.value)
       }}
-      className="h-9 min-w-0 flex-1 rounded-lg border border-[#7127EA] bg-white px-2 text-[1.1858rem] font-medium text-[#626262] ring-4 ring-[#7127EA]/20 outline-none"
+      className="h-9 min-w-0 flex-1 rounded-lg border border-[#7127EA] bg-white px-2 text-[1.1858rem] font-medium text-[#626262] ring-4 ring-[#7127EA]/20 outline-none dark:bg-card dark:text-title"
     />
   )
 }

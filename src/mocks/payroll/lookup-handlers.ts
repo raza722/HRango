@@ -16,10 +16,15 @@ import { lookupRow } from './people'
 
 const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-')
 
-function organisation(kind: string): LookupItem[] {
+/** The lists this mock owns; other kinds (grades, job levels…) pass on to the mocks after it. */
+function organisation(kind: string, parentId: string | null = null): LookupItem[] | null {
   switch (kind) {
     case 'branches':
-      return branches.all().map((branch) => ({ id: branch.id, name: branch.name }))
+      // `?parentId=` is a location: only its branches (Requests → Transfer narrows by it).
+      return branches
+        .all()
+        .filter((branch) => !parentId || branch.locationId === parentId)
+        .map((branch) => ({ id: branch.id, name: branch.name, parentId: branch.locationId }))
     case 'locations':
       return locations.all().map((location) => ({ id: location.id, name: location.name }))
     case 'designations':
@@ -30,7 +35,7 @@ function organisation(kind: string): LookupItem[] {
         .sort()
         .map((name) => ({ id: `dep_${slug(name)}`, name }))
     default:
-      return []
+      return null
   }
 }
 
@@ -68,10 +73,15 @@ export const payrollLookupHandlers = [
   }),
 
   http.get(apiPath('/organisation/lookups/:kind'), async ({ request, params }) => {
+    const rows = organisation(
+      String(params.kind),
+      new URL(request.url).searchParams.get('parentId'),
+    )
+    if (!rows) return undefined
     await latency()
     const denied = requireAuth(request)
     if (denied) return denied
-    return HttpResponse.json<ApiItem<LookupItem[]>>({ data: organisation(String(params.kind)) })
+    return HttpResponse.json<ApiItem<LookupItem[]>>({ data: rows })
   }),
 
   http.get(apiPath('/scheduling/options/time-slots'), async ({ request }) => {

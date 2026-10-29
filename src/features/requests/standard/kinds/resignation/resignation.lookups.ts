@@ -12,9 +12,15 @@ export const RESIGNATION_TYPE_LABELS: Record<ResignationType, string> = {
   contract_end: 'Contract End',
 }
 
-/** The Resignation form's own look-ups: the API's fixed list of types. */
+/**
+ * The Resignation form's own look-ups: the API's fixed list of types, less the generic
+ * "Resignation" (every request here is one; a saved request of that type still shows it).
+ */
 export function loadResignationLookups(): Promise<ResignationLookups> {
   return Promise.resolve({
-    types: RESIGNATION_TYPES.map((value) => ({ value, label: RESIGNATION_TYPE_LABELS[value] })),
+    types: RESIGNATION_TYPES.filter((value) => value !== 'resignation').map((value) => ({
+      value,
+      label: RESIGNATION_TYPE_LABELS[value],
+    })),
   })
 }

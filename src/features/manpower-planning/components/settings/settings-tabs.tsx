@@ -18,6 +18,9 @@ export function SettingsTabs({ current }: { current: SettingsTab }) {
             key={tab.value}
             to="/manpower-planning/e-budget-settings"
             search={{ tab: tab.value, page: 1 }}
+            // Defaults are stripped from the URL, so the first tab's link has no search; a
+            // partial match would make the router mark it current on every tab.
+            activeOptions={{ exact: true }}
             aria-current={selected ? 'page' : undefined}
             className={cn(
               'inline-flex h-[2.375rem] items-center rounded-t-[5px] border border-b-0 border-[#EBEFF8] px-3 text-sm font-medium text-heading outline-none focus-visible:ring-[3px] focus-visible:ring-[#7469E8]/35 dark:border-border',

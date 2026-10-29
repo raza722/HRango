@@ -5,6 +5,8 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { ApiError } from '@/lib/api-error'
 
 import { penaltyFormSchema, type PenaltyFormValues } from '../schemas/penalty-form.schema'
+import type { PenaltyPeriod } from '../types/warning-penalty.types'
+import type { TimeSpan } from '../types/warning-policy.types'
 import {
   createDefaultPenaltyValues,
   createEmptyRule,
@@ -24,6 +26,16 @@ function toFormField(key: string): FieldPath<PenaltyFormValues> | null {
   return index !== undefined && field !== undefined
     ? (`rules.${Number(index)}.${field}` as FieldPath<PenaltyFormValues>)
     : 'rules'
+}
+
+/**
+ * A penalty counts a policy's warnings in its own period: a weekly policy's penalties count per
+ * week, a monthly one's per month. Penalties have no daily period, so a daily policy's count
+ * per week, the shortest there is.
+ */
+export function penaltyPeriodOf(period: TimeSpan | undefined): PenaltyPeriod {
+  if (period === 'week' || period === 'month' || period === 'year') return period
+  return period === 'day' ? 'week' : 'month'
 }
 
 interface UsePenaltyFormOptions {
@@ -59,12 +71,14 @@ export function usePenaltyForm({ editingId, onSaved }: UsePenaltyFormOptions) {
     form.reset(createDefaultPenaltyValues())
   }
 
-  /** "+ Add Penalty": same time span as the last block, the next count. */
+  /**
+   * "+ Add Penalty": same time span as the last block (the first one takes the policy's period),
+   * the next count.
+   */
   const addRule = () => {
     const last = form.getValues('rules').at(-1)
-    rules.append(
-      createEmptyRule(last?.period ?? 'month', last ? Number(last.afterCount) + 1 || 1 : 1),
-    )
+    const period = last?.period ?? penaltyPeriodOf(editingQuery.data?.period)
+    rules.append(createEmptyRule(period, last ? Number(last.afterCount) + 1 || 1 : 1))
   }
 
   const submit = form.handleSubmit(async (values) => {

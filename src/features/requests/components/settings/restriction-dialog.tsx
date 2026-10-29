@@ -1,6 +1,7 @@
 import { type SyntheticEvent, useId } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { addDays, format, parseISO, startOfDay } from 'date-fns'
 import { z } from 'zod'
 
 import { TextareaField } from '@/components/form'
@@ -21,18 +22,28 @@ import {
 } from '../../types/request-settings.types'
 import { REQUEST_TYPE_OPTIONS, viewFieldsClass } from './settings-helpers'
 
-const schema = z
-  .object({
-    startDate: z.string().min(1, 'Choose the start date'),
-    endDate: z.string().min(1, 'Choose the end date'),
-    requestType: z.string().min(1, 'Choose the request type'),
-    description: z.string().trim().max(500, 'Keep it under 500 characters'),
-  })
-  .refine((values) => !values.startDate || !values.endDate || values.endDate >= values.startDate, {
-    path: ['endDate'],
-    message: 'End date must be on or after the start date',
-  })
-type Values = z.infer<typeof schema>
+/** The first day a new restriction can start: tomorrow (the API refuses today and before). */
+const tomorrow = () => addDays(startOfDay(new Date()), 1)
+
+/** A new restriction starts in the future; an existing one keeps its start (it may have begun). */
+const schemaFor = (isNew: boolean) =>
+  z
+    .object({
+      startDate: z.string().min(1, 'Choose the start date'),
+      endDate: z.string().min(1, 'Choose the end date'),
+      requestType: z.string().min(1, 'Choose the request type'),
+      description: z.string().trim().max(500, 'Keep it under 500 characters'),
+    })
+    .refine(
+      (values) =>
+        !isNew || !values.startDate || values.startDate >= format(tomorrow(), 'yyyy-MM-dd'),
+      { path: ['startDate'], message: 'Start date must be in the future' },
+    )
+    .refine(
+      (values) => !values.startDate || !values.endDate || values.endDate >= values.startDate,
+      { path: ['endDate'], message: 'End date must be on or after the start date' },
+    )
+type Values = z.infer<ReturnType<typeof schemaFor>>
 
 const FIELDS = ['startDate', 'endDate', 'requestType', 'description'] as const
 
@@ -81,7 +92,7 @@ function RestrictionForm({
   const update = useUpdateRestriction()
   const readOnly = restriction !== undefined && !edit
   const form = useForm<Values>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schemaFor(restriction === undefined)),
     defaultValues: {
       startDate: restriction?.startDate ?? '',
       endDate: restriction?.endDate ?? '',
@@ -89,6 +100,11 @@ function RestrictionForm({
       description: restriction?.description ?? '',
     },
   })
+
+  // The calendars offer only days the form takes: a new start from tomorrow, an end from the start.
+  const startDate = useWatch({ control: form.control, name: 'startDate' })
+  const firstStart = restriction === undefined ? tomorrow() : undefined
+  const firstEnd = startDate ? parseISO(startDate) : firstStart
 
   const submit = form.handleSubmit(async (values) => {
     if (!SETTINGS_REQUEST_TYPES.includes(values.requestType as SettingsRequestType)) return
@@ -147,6 +163,7 @@ function RestrictionForm({
           label="Start Date"
           required={!readOnly}
           disabled={readOnly}
+          minDate={readOnly ? undefined : firstStart}
         />
         <DateField
           control={form.control}
@@ -154,6 +171,7 @@ function RestrictionForm({
           label="End Date"
           required={!readOnly}
           disabled={readOnly}
+          minDate={readOnly ? undefined : firstEnd}
         />
         <SearchSelectField
           control={form.control}

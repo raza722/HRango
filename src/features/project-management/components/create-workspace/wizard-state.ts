@@ -108,6 +108,34 @@ export function stepComplete(step: WizardStep, values: WizardValues): boolean {
   return values.setup !== null
 }
 
+const HINT_LABELS: Partial<Record<keyof WizardValues, string>> = {
+  name: 'Workspace Name',
+  ownerId: 'Owner',
+  description: 'Description',
+  visibility: 'Share Visibility',
+  memberIds: 'Members',
+  departmentId: 'Department',
+  template: 'Workflow',
+}
+
+/**
+ * Why Continue is disabled: "To continue, add: Workspace Name, Owner" (the fields of the step
+ * still missing or invalid), or null when the step is complete.
+ */
+export function stepHint(step: WizardStep, values: WizardValues): string | null {
+  if (step === 'customize') return values.setup ? null : 'To continue, choose a workflow.'
+  const result = (step === 'details' ? detailsSchema : workflowSchema).safeParse(values)
+  if (result.success) return null
+  const labels = [
+    ...new Set(
+      result.error.issues.map(
+        (issue) => HINT_LABELS[String(issue.path[0]) as keyof WizardValues] ?? 'the fields marked',
+      ),
+    ),
+  ]
+  return `To continue, complete: ${labels.join(', ')}.`
+}
+
 /** The first step whose fields are not complete yet, or null when all are. */
 export function firstIncompleteStep(values: WizardValues): WizardStep | null {
   return WIZARD_STEPS.find((step) => !stepComplete(step, values)) ?? null

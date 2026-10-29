@@ -50,6 +50,10 @@ export function usePmAccess(workspace: Pick<Workspace, 'myRole'> | null | undefi
     deleteComments: codes.deleteComment,
     trackTime: codes.trackTime && rank >= 1,
     deleteTime: codes.deleteTime && rank >= 1,
+    /** Ask for a later due date: the task's assignees (the screens check that; so does the API). */
+    requestExtension: codes.editTask && rank >= 1,
+    /** Approve or reject extension requests: managers and above (BRD: "a manager approves"). */
+    decideExtensions: codes.editTask && rank >= 3,
     remind: codes.remind,
     /** Sharing & Permissions: reading needs the code; saving needs managers and above. */
     viewSharing: codes.viewSharing,

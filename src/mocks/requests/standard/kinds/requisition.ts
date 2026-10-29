@@ -59,7 +59,10 @@ const schema = z.object({
     .array(
       z.object({
         itemName: z.string().trim().min(1).max(200),
-        quantity: number.pipe(z.number().gt(0)),
+        // Whole items only (2.5 chairs is refused).
+        quantity: number.pipe(
+          z.number().int('Enter a whole number').gt(0).max(100_000, 'Ask for 100,000 at most'),
+        ),
         unit: z.string().trim().max(50).nullish(),
         estimatedUnitCost: number.pipe(z.number().min(0)).nullish(),
         description: z.string().max(4000).nullish(),

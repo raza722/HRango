@@ -22,7 +22,7 @@ interface MonthCalendarProps {
 }
 
 const arrowButton =
-  'flex size-8 items-center justify-center rounded-[0.53rem] bg-white text-[#7127EA] shadow-[0_0_6px_rgba(0,0,0,0.08)] transition-colors hover:bg-[#F8F5FF]'
+  'flex size-8 items-center justify-center rounded-[0.53rem] bg-white dark:bg-card text-[#7127EA] dark:text-[#C4ABFF] shadow-[0_0_6px_rgba(0,0,0,0.08)] transition-colors hover:bg-[#F8F5FF] dark:hover:bg-[#7127EA]/15'
 
 /**
  * The month of the Calendar popup (1:10061): "April 2025" and Today in purple, previous / next
@@ -42,12 +42,15 @@ export function MonthCalendar({
 
   return (
     <div
-      className={cn('rounded-[0.95rem] border border-[#E9E9E9] bg-white px-2 pt-3 pb-2', className)}
+      className={cn(
+        'rounded-[0.95rem] border border-[#E9E9E9] bg-white px-2 pt-3 pb-2 dark:border-border dark:bg-card',
+        className,
+      )}
     >
       <div className="flex items-center gap-1 px-1">
         <h4
           aria-live="polite"
-          className="text-sm font-bold tracking-[0.01em] whitespace-nowrap text-[#7127EA]"
+          className="text-sm font-bold tracking-[0.01em] whitespace-nowrap text-[#7127EA] dark:text-[#C4ABFF]"
         >
           {title}
         </h4>
@@ -56,7 +59,7 @@ export function MonthCalendar({
           onClick={() => {
             setMonth(startOfMonth(new Date()))
           }}
-          className="ml-auto rounded-[0.63rem] px-3 py-1.5 text-sm font-semibold tracking-[0.01em] text-[#7127EA] hover:bg-[#F8F5FF]"
+          className="ml-auto rounded-[0.63rem] px-3 py-1.5 text-sm font-semibold tracking-[0.01em] text-[#7127EA] hover:bg-[#F8F5FF] dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/15"
         >
           Today
         </button>
@@ -90,7 +93,7 @@ export function MonthCalendar({
             <span
               key={weekday}
               role="columnheader"
-              className="text-center text-[0.84rem] font-bold text-[#4A4A4A]"
+              className="text-center text-[0.84rem] font-bold text-[#4A4A4A] dark:text-title"
             >
               {weekday}
             </span>
@@ -116,10 +119,12 @@ export function MonthCalendar({
                       className={cn(
                         'flex size-[1.625rem] items-center justify-center rounded-full text-xs font-semibold transition-colors',
                         compact ? 'my-0.5' : 'my-[0.15rem]',
-                        outside ? 'text-[rgba(73,18,160,0.37)]' : 'text-[#4A4A4A]',
+                        outside ? 'text-[rgba(73,18,160,0.37)]' : 'text-[#4A4A4A] dark:text-title',
                         isToday(date) && !isSelected && 'ring-1 ring-[#A181FF]',
-                        isMarked && 'bg-[#EEE7FF]',
-                        isSelected ? 'bg-[#7127EA] text-white' : 'hover:bg-[#EEE7FF]',
+                        isMarked && 'bg-[#EEE7FF] dark:bg-[#7127EA]/10',
+                        isSelected
+                          ? 'bg-[#7127EA] text-white'
+                          : 'hover:bg-[#EEE7FF] dark:hover:bg-[#7127EA]/25',
                       )}
                     >
                       {format(date, 'd')}

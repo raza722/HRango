@@ -157,7 +157,7 @@ export const useSetDelegationsActive = () =>
       return changed
     },
     ({ active }, changed) =>
-      `${count(changed, 'delegation')} ${active ? 'made active' : 'made in active'}`,
+      `${count(changed, 'delegation')} ${active ? 'made active' : 'made inactive'}`,
   )
 
 /** Creates a flow, or saves a new version of one (`id`). */

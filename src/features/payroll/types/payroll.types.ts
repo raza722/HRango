@@ -62,6 +62,10 @@ export interface TimeSlotOption {
 export interface LeaveTypeOption {
   id: string
   name: string
+  /** The type's Encashment switch and its Min / Max Limit, in days (Leave Settings). */
+  allowEncashment: boolean
+  encashmentMin: number | null
+  encashmentMax: number | null
 }
 
 interface Stamped {
@@ -265,6 +269,26 @@ export interface AccountTypeInput {
   refId: string | null
   rowVersion?: string | null
 }
+
+/**
+ * What a disbursement bank's codes look like (the form and the API check the same):
+ * an account number of digits (dashes or spaces between them) or a Pakistani IBAN, a branch
+ * code of letters and digits, and a tax payer ID (NTN) of digits and dashes.
+ */
+export const BANK_FORMATS = {
+  accountNumber: {
+    pattern: /^(?:PK\d{2}[A-Z]{4}\d{16}|\d[\d -]{4,32}\d)$/i,
+    message: 'Use digits (dashes allowed), e.g. 0245-1029384756, or an IBAN',
+  },
+  branchCode: {
+    pattern: /^[A-Za-z0-9]{2,10}$/,
+    message: 'Use 2 to 10 letters or digits, e.g. 0245',
+  },
+  taxPayerId: {
+    pattern: /^\d[\d-]{3,28}\d$/,
+    message: 'Use digits and dashes, e.g. 7364519-2',
+  },
+} as const
 
 export interface DisbursementBank extends Stamped {
   id: string
@@ -785,7 +809,8 @@ export const VOUCHER_TYPES = [
   'travel_allowance',
 ] as const
 export type VoucherType = (typeof VOUCHER_TYPES)[number]
-export type VoucherLineType = VoucherType | 'daily_wage'
+/** Plus the lines payroll makes: daily wages, and manual leave encashments (one per person). */
+export type VoucherLineType = VoucherType | 'daily_wage' | 'leave_encashment'
 
 export const PAYMENT_METHODS = ['bank_transfer', 'cash', 'cheque', 'pay_order'] as const
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number]

@@ -36,6 +36,7 @@ import {
   personNameClass,
   toolbarButtonClass,
 } from '../../utils/settings-styles'
+import { DeviceMachineCell } from '../devices/device-machine-cell'
 import { AttendanceSubLayout } from '../layout/attendance-sub-layout'
 import { DateBox } from '../shared/date-box'
 import { EmployeeFilter } from '../shared/employee-filter'
@@ -91,15 +92,14 @@ const columns: DataTableColumn<AttendanceLogRow>[] = [
   {
     id: 'machine',
     header: 'Machine',
-    cell: (row) =>
-      row.deviceId ? (
-        <span className="leading-tight">
-          {row.deviceName ?? 'Machine'}
-          {row.deviceCode && <span className="block">({row.deviceCode})</span>}
-        </span>
-      ) : (
-        '—'
-      ),
+    // Opens the device in Settings → Biometric Devices for those who may see it.
+    cell: (row) => (
+      <DeviceMachineCell
+        deviceId={row.deviceId}
+        deviceCode={row.deviceCode}
+        deviceName={row.deviceName}
+      />
+    ),
   },
   {
     id: 'description',

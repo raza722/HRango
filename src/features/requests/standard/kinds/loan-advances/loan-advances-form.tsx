@@ -72,11 +72,15 @@ const today = () => {
   return date
 }
 
+/** "12 installments" / "1 installment". */
+const counted = (count: number, one: string, many: string) =>
+  `${String(count)} ${count === 1 ? one : many}`
+
 /** "12 installments, 6 months of service": a loan type's terms. */
 function terms(type: LoanTypeOption): string {
-  const parts = [`${String(type.installments)} installments`]
+  const parts = [counted(type.installments, 'installment', 'installments')]
   if (type.minExperienceMonths > 0) {
-    parts.push(`${String(type.minExperienceMonths)} months of service`)
+    parts.push(`${counted(type.minExperienceMonths, 'month', 'months')} of service`)
   }
   if (type.guarantorRequired) parts.push('guarantor needed')
   return parts.join(', ')

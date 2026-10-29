@@ -63,10 +63,18 @@ interface RetriableConfig extends InternalAxiosRequestConfig {
 const looksLikeHtml = (data: unknown): boolean =>
   typeof data === 'string' && /^\s*<(!doctype|html)/i.test(data)
 
-/** True when the mock never saw the request (a host 404 or an HTML page, not an API body). */
+/** The dev server's proxy answering for an API it cannot reach: a gateway error with no API body. */
+const isGatewayError = (response: AxiosResponse): boolean =>
+  [502, 503, 504].includes(response.status) && !isApiErrorBody(response.data)
+
+/**
+ * True when the mock never saw the request: a host 404, an HTML page, or the dev proxy's
+ * gateway error (`vite.config.ts` sends `/api` on to the real API when the worker misses it).
+ */
 function passedThroughMock(response: AxiosResponse): boolean {
   const data: unknown = response.data
   if (looksLikeHtml(data)) return true
+  if (isGatewayError(response)) return true
   return response.status === 404 && !isApiErrorBody(data)
 }
 

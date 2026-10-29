@@ -294,7 +294,8 @@ export function ClearanceFormsPage() {
                   setDialog({ type: 'view', row })
                 },
               },
-              ...(canDelete
+              // An approved form is final (the server refuses to delete it), as for Edit.
+              ...(row.status === 'in_progress' && canDelete
                 ? [
                     {
                       label: 'Delete',
@@ -340,7 +341,7 @@ export function ClearanceFormsPage() {
         title={
           dialog?.type === 'unapprove' ? 'Unapprove clearance forms' : 'Approve clearance forms'
         }
-        message="Are you sure you want to Perform this action?"
+        message={`${dialog?.type === 'unapprove' ? 'Unapprove' : 'Approve'} ${String(selected.size)} clearance ${selected.size === 1 ? 'form' : 'forms'}?`}
         onConfirm={() => {
           runBulk(dialog?.type === 'approve')
         }}
@@ -351,7 +352,7 @@ export function ClearanceFormsPage() {
           if (!open) close()
         }}
         title="Delete clearance form"
-        message="Are you sure you want to Delete this?"
+        message={`Delete the clearance form of ${dialog?.type === 'delete' ? (dialog.row.employeeName ?? 'this employee') : 'this employee'}?`}
         onConfirm={() => {
           if (dialog?.type !== 'delete') return
           remove.mutate(dialog.row, {

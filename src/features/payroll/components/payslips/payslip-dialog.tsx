@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 
 import { usePayslip, usePayslipHistory, useUpdatePayslip } from '../../hooks/use-payroll'
 import type { PayslipDetail, PayslipLine } from '../../types/payroll.types'
-import { formatAmount, formatMonth, profileOf } from '../../utils/format'
+import { formatAmount, formatMonth, formatRs, profileOf } from '../../utils/format'
 import { btn, dialogFieldType, footerButton } from '../../utils/styles'
 import { ChangeLogDialog } from '../shared/change-log'
 import { EmployeeCard } from '../shared/employee-card'
@@ -30,10 +30,32 @@ const draftsOf = (slip: PayslipDetail): Record<string, Draft> =>
 
 const nameOf = (line: PayslipLine) => line.payItemLabel ?? line.payItemName
 
-/** Amounts may be negative (adjustments); only non-numbers are refused. */
+/** A number typed in a box ("1,500" reads as 1500); null when it is not one. */
 const toAmount = (text: string) => {
   const value = Number(text.replace(/,/g, ''))
   return text.trim() !== '' && Number.isFinite(value) ? value : null
+}
+
+/** The largest amount a line takes (the API's limit). */
+const MAX_AMOUNT = 1e10
+
+/** Why a line's box is refused, or null: an amount is needed, and none may be negative. */
+function amountProblem(text: string, name: string): string | null {
+  const value = toAmount(text)
+  if (value === null) return `Enter an amount for ${name}.`
+  if (value < 0) return `${name} cannot be negative.`
+  if (value > MAX_AMOUNT) return `${name} is too large.`
+  return null
+}
+
+/** Net payable of the drafts: earnings and reimbursements less deductions (as the API sums). */
+function draftNet(lines: readonly PayslipLine[], amountOf: (line: PayslipLine) => number) {
+  return lines
+    .filter((line) => !line.calculateOnly && !line.isDisplayOnly)
+    .reduce(
+      (sum, line) => sum + (line.itemType === 'deduction' ? -amountOf(line) : amountOf(line)),
+      0,
+    )
 }
 
 function RsInput({
@@ -42,12 +64,14 @@ function RsInput({
   onChange,
   readOnly,
   invalid,
+  describedBy,
 }: {
   label: string
   value: string
   onChange: (value: string) => void
   readOnly: boolean
   invalid?: boolean
+  describedBy?: string | undefined
 }) {
   return (
     <span className="flex h-10 min-w-0 overflow-hidden rounded-md border border-input bg-card focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/25">
@@ -60,6 +84,7 @@ function RsInput({
       <Input
         aria-label={label}
         aria-invalid={invalid}
+        aria-describedby={describedBy}
         inputMode="decimal"
         readOnly={readOnly}
         value={readOnly ? formatAmount(Number(value) || 0) : value}
@@ -70,6 +95,15 @@ function RsInput({
       />
     </span>
   )
+}
+
+/** A box's problem under it. */
+function FieldProblem({ id, text }: { id: string; text: string | undefined }) {
+  return text ? (
+    <p id={id} className="mt-1 text-xs text-destructive">
+      {text}
+    </p>
+  ) : null
 }
 
 const nameBox =
@@ -151,17 +185,39 @@ function PayslipForm({
     setError(null)
   }
   const draftOf = (id: string): Draft => drafts[id] ?? { value: '0', employer: '0' }
-  const invalid = (text: string) => toAmount(text) === null
+  // Each box's problem (empty, negative, too large) and the net the drafts add up to. A
+  // negative line or net is refused here, before anything is sent (the API refuses it too).
+  const [tried, setTried] = useState(false)
+  const problems = new Map<string, string>()
+  for (const line of readOnly ? [] : lines) {
+    const draft = draftOf(line.payItemId)
+    const value = amountProblem(draft.value, nameOf(line))
+    if (value) problems.set(`${line.payItemId}:value`, value)
+    if (line.employerContribution !== null) {
+      const employer = amountProblem(draft.employer, `${nameOf(line)} (employer)`)
+      if (employer) problems.set(`${line.payItemId}:employer`, employer)
+    }
+  }
+  const net = draftNet(lines, (line) => toAmount(draftOf(line.payItemId).value) ?? 0)
+  const netProblem =
+    !readOnly && problems.size === 0 && net < 0
+      ? `The net payable would be ${formatRs(net)}. It cannot be below zero: lower a deduction or raise an earning.`
+      : null
+  /** A box's problem when it should show: an empty box only after Save was pressed. */
+  const problemOf = (line: PayslipLine, part: 'value' | 'employer') => {
+    const text = problems.get(`${line.payItemId}:${part}`)
+    return text && (tried || !text.startsWith('Enter an amount')) ? text : undefined
+  }
+  const problemId = (line: PayslipLine, part: 'value' | 'employer') =>
+    `${formId}-${line.payItemId}-${part}-error`
+  const invalid = (line: PayslipLine, part: 'value' | 'employer') =>
+    problemOf(line, part) !== undefined
 
   const submit = (event: SyntheticEvent) => {
     event.preventDefault()
-    const bad = lines.find(
-      (line) =>
-        invalid(draftOf(line.payItemId).value) ||
-        (line.employerContribution !== null && invalid(draftOf(line.payItemId).employer)),
-    )
-    if (bad) {
-      setError(`Enter an amount for ${nameOf(bad)}.`)
+    setTried(true)
+    if (problems.size > 0 || netProblem) {
+      setError(null)
       return
     }
     // Only changed lines are sent: the API marks them Manually Updated (kept on recalculation).
@@ -282,15 +338,22 @@ function PayslipForm({
                         <td className="w-[38%] pr-6">
                           <span className={nameBox}>{nameOf(line)}</span>
                         </td>
-                        <td className="w-[30%]">
+                        <td className="w-[30%] align-top">
                           <RsInput
                             label={`${nameOf(line)} value`}
                             value={draft.value}
                             readOnly={readOnly}
-                            invalid={invalid(draft.value)}
+                            invalid={invalid(line, 'value')}
+                            describedBy={
+                              invalid(line, 'value') ? problemId(line, 'value') : undefined
+                            }
                             onChange={(text) => {
                               patch(line.payItemId, { value: text })
                             }}
+                          />
+                          <FieldProblem
+                            id={problemId(line, 'value')}
+                            text={problemOf(line, 'value')}
                           />
                         </td>
                         <td className="text-center">
@@ -345,26 +408,40 @@ function PayslipForm({
                           <td className="w-[22%] pr-3">
                             <span className={nameBox}>{nameOf(line)}</span>
                           </td>
-                          <td className="pr-3">
+                          <td className="pr-3 align-top">
                             <RsInput
                               label={`${nameOf(line)} employee contribution`}
                               value={draft.value}
                               readOnly={readOnly}
-                              invalid={invalid(draft.value)}
+                              invalid={invalid(line, 'value')}
+                              describedBy={
+                                invalid(line, 'value') ? problemId(line, 'value') : undefined
+                              }
                               onChange={(text) => {
                                 patch(line.payItemId, { value: text })
                               }}
                             />
+                            <FieldProblem
+                              id={problemId(line, 'value')}
+                              text={problemOf(line, 'value')}
+                            />
                           </td>
-                          <td className="pr-3">
+                          <td className="pr-3 align-top">
                             <RsInput
                               label={`${nameOf(line)} employer contribution`}
                               value={draft.employer}
                               readOnly={readOnly}
-                              invalid={invalid(draft.employer)}
+                              invalid={invalid(line, 'employer')}
+                              describedBy={
+                                invalid(line, 'employer') ? problemId(line, 'employer') : undefined
+                              }
                               onChange={(text) => {
                                 patch(line.payItemId, { employer: text })
                               }}
+                            />
+                            <FieldProblem
+                              id={problemId(line, 'employer')}
+                              text={problemOf(line, 'employer')}
                             />
                           </td>
                           <td className="pr-3">
@@ -390,6 +467,19 @@ function PayslipForm({
                 </table>
               </div>
             </section>
+          )}
+
+          {!readOnly && (
+            <div className="grid justify-items-end gap-1">
+              <p className="font-inter text-base text-heading">
+                Net Payable: <span className="font-semibold">{formatRs(net)}</span>
+              </p>
+              {netProblem && (
+                <p role="alert" className="text-sm text-destructive">
+                  {netProblem}
+                </p>
+              )}
+            </div>
           )}
         </form>
       </AppDialog>

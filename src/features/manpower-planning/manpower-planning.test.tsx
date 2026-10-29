@@ -44,6 +44,9 @@ async function rowOfMenu(name: string) {
   return row
 }
 
+/** The Total Positions cell of an Open Positions row (Sr#, Positions, Total Positions …). */
+const totalOf = (row: HTMLElement) => within(row).getAllByRole('cell')[2]?.textContent
+
 async function openMenu(user: UserEvent, name: string, item: string) {
   await user.click(await screen.findByRole('button', { name }))
   await user.click(await screen.findByRole('menuitem', { name: item }))
@@ -125,8 +128,8 @@ describe('Planning', () => {
     ).toBeVisible()
     expect(screen.getByRole('heading', { name: 'Employee Planning' })).toBeVisible()
     const apps = await rowOf('Apps Planning')
-    expect(within(apps).getByText('50000')).toBeVisible()
-    expect(within(apps).getByText('100000')).toBeVisible()
+    expect(within(apps).getByText('50,000')).toBeVisible()
+    expect(within(apps).getByText('100,000')).toBeVisible()
     expect(within(apps).getByText('2025')).toBeVisible()
     expect(within(apps).getByText('Approved')).toBeVisible()
     expect(within(apps).getByText('Current')).toBeInTheDocument()
@@ -216,11 +219,11 @@ describe('Planning', () => {
     const allowance = screen.getByRole('textbox', { name: 'Total allowance, line 1' })
     await user.clear(allowance)
     await user.type(allowance, '5000')
-    expect(screen.getByLabelText('Total salary, line 1')).toHaveTextContent('50000')
+    expect(screen.getByLabelText('Total salary, line 1')).toHaveTextContent('50,000')
     const headcount = screen.getByRole('textbox', { name: 'Head count, line 1' })
     await user.clear(headcount)
     await user.type(headcount, '2')
-    expect(screen.getByLabelText('Total salary, line 1')).toHaveTextContent('100000')
+    expect(screen.getByLabelText('Total salary, line 1')).toHaveTextContent('100,000')
     await user.clear(headcount)
     await user.type(headcount, '1')
 
@@ -239,16 +242,16 @@ describe('Planning', () => {
     // The picker searches the lookup on the server; each option shows the code as its hint.
     await choose(user, 'Employee, line 1', /^Maryam Javed/)
     expect(screen.getByLabelText('Total Monthly Amount')).toHaveTextContent(
-      '50000 + current salaries',
+      '50,000 + current salaries',
     )
     await user.type(screen.getByRole('textbox', { name: 'Monthly salary, line 1' }), '80000')
-    expect(screen.getByLabelText('Total Monthly Amount')).toHaveTextContent('130000')
+    expect(screen.getByLabelText('Total Monthly Amount')).toHaveTextContent('130,000')
 
     await user.click(screen.getByRole('button', { name: 'Submit' }))
     expect(await screen.findByText('Plan submitted for approval')).toBeInTheDocument()
     const row = await rowOf('Design Hiring')
     expect(within(row).getByText('Pending')).toBeVisible()
-    expect(within(row).getByText('130000')).toBeVisible()
+    expect(within(row).getByText('130,000')).toBeVisible()
 
     const plan = plans.all().find((item) => item.title === 'Design Hiring')
     expect(plan?.status).toBe('pending')
@@ -432,7 +435,7 @@ describe('Budget Approvals', () => {
     await user.click(sidebarLink('Open Positions'))
     expect(await screen.findByRole('heading', { name: 'Open Positions', level: 1 })).toBeVisible()
     const open = await rowOfMenu('Actions for Accountant')
-    expect(within(open).getByText('02')).toBeVisible()
+    expect(totalOf(open)).toBe('2')
     expect(within(open).getByText('31 Dec 2025')).toBeVisible()
   })
 
@@ -480,7 +483,7 @@ describe('E-Budgeting', () => {
 
     expect(await screen.findByRole('heading', { name: 'E-Budgeting' })).toBeVisible()
     const accounts = await rowOfMenu('Actions for Accounts 2024')
-    for (const text of ['2024', '150000', '1 Jan 2024', '31 Dec 2024', 'Active']) {
+    for (const text of ['2024', '150,000', '1 Jan 2024', '31 Dec 2024', 'Active']) {
       expect(within(accounts).getByText(text)).toBeVisible()
     }
 
@@ -560,8 +563,10 @@ describe('Open Positions', () => {
 
     expect(await screen.findByRole('heading', { name: 'Open Positions', level: 1 })).toBeVisible()
     const accounts = await rowOfMenu('Actions for Accounts')
-    expect(within(accounts).getByText('05')).toBeVisible()
+    expect(totalOf(accounts)).toBe('5')
     expect(within(accounts).getByText('31 Dec 2024')).toBeVisible()
+    // Its end date has passed: shown as expired, not active.
+    expect(within(accounts).getByText('Expired')).toBeVisible()
     expect(within(await rowOfMenu('Actions for Marketing')).getByText('No JD yet')).toBeVisible()
 
     await user.click(within(accounts).getByRole('button', { name: 'Download the JD of Accounts' }))
@@ -588,7 +593,9 @@ describe('Open Positions', () => {
     expect(await within(dialog).findByText('accounts-jd-2025.pdf')).toBeVisible()
     await user.click(within(dialog).getByRole('button', { name: 'Save Position' }))
     expect(await screen.findByText('Open position updated')).toBeInTheDocument()
-    expect(await within(await rowOfMenu('Actions for Accounts')).findByText('06')).toBeVisible()
+    await waitFor(async () => {
+      expect(totalOf(await rowOfMenu('Actions for Accounts'))).toBe('6')
+    })
     expect(openPositions.find('op_accounts')?.jdFile?.id).not.toBe('file_jd_op_accounts')
 
     await openMenu(user, 'Actions for Accounts', 'Close Position')
@@ -600,6 +607,8 @@ describe('Open Positions', () => {
 
 describe('E-Budget Settings', () => {
   it('adds a budget duration with validation and makes it the current one', async () => {
+    // The dates are picked in this month: 2026's plan year would overlap them (refused).
+    durations.remove('bd_2026')
     const { user } = renderApp('/manpower-planning/e-budget-settings')
 
     expect(await screen.findByRole('heading', { name: 'Employee Budget Settings' })).toBeVisible()
@@ -615,9 +624,7 @@ describe('E-Budget Settings', () => {
     await user.type(within(dialog).getByRole('textbox', { name: 'Enter Budget Duration' }), '2024')
     await pickDay(user, 'Select Start Date', 1)
     await pickDay(user, 'Select End Date', 28)
-    await user.click(
-      within(dialog).getByRole('checkbox', { name: 'IsCurrentBudgetDurationPeriod' }),
-    )
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Current budget duration' }))
     await user.click(within(dialog).getByRole('button', { name: 'Add Duration' }))
     expect(
       await within(dialog).findByText('A budget duration with this name already exists.'),
@@ -752,12 +759,12 @@ describe('E-Budget Settings', () => {
 
     await openMenu(user, 'Actions for Accountant 12212', 'Salary Ranges')
     const dialog = await screen.findByRole('dialog', { name: 'Salary Ranges: Accountant (12212)' })
-    expect(await within(dialog).findByText('100000')).toBeVisible()
+    expect(await within(dialog).findByText('100,000')).toBeVisible()
     await pickDay(user, 'From', 1)
     await user.type(within(dialog).getByRole('textbox', { name: 'Minimum Salary' }), '55000')
     await user.type(within(dialog).getByRole('textbox', { name: 'Maximum Salary' }), '110000')
     await user.click(within(dialog).getByRole('button', { name: 'Add Range' }))
     expect(await screen.findByText('Salary range saved')).toBeInTheDocument()
-    expect(await within(dialog).findByText('110000')).toBeVisible()
+    expect(await within(dialog).findByText('110,000')).toBeVisible()
   })
 })

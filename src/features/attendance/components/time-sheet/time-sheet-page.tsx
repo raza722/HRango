@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
-import { endOfMonth, format } from 'date-fns'
+import { endOfMonth, format, parseISO } from 'date-fns'
 import { Download, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import { ErrorState } from '@/components/feedback/error-state'
 import { PageContainer, Pagination } from '@/components/layout'
 import { ScopeTabs } from '@/components/layout'
@@ -33,6 +34,7 @@ import {
 import { rowActions } from '../../utils/row-actions'
 import { TimeSheetEditDialog } from '../dialogs/time-sheet-edit-dialog'
 import { TimeSheetViewDialog } from '../dialogs/time-sheet-view-dialog'
+import { AttendanceSectionsMenu } from '../layout/attendance-sub-layout'
 import { ClockCard } from './clock-card'
 import { DaysOverviewCard } from './days-overview-card'
 import { TimeSheetFilters } from './time-sheet-filters'
@@ -61,6 +63,7 @@ export function TimeSheetPage() {
   const navigate = routeApi.useNavigate()
   const [today] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [dialog, setDialog] = useState<DialogState>(null)
+  const [confirmProcess, setConfirmProcess] = useState(false)
   const canClock = useCan('attendance.time_sheet.clock')
   const canEdit = useCan('attendance.time_sheet.edit')
   const canExport = useCan('attendance.time_sheet.export')
@@ -207,17 +210,14 @@ export function TimeSheetPage() {
             </button>
           )}
           <div className="flex flex-wrap items-center gap-2">
+            <AttendanceSectionsMenu />
             {canProcess && !isMy && (
               <Button
                 variant="outline"
                 size="sm"
                 disabled={process.isPending}
                 onClick={() => {
-                  process.mutate({
-                    fromDate: from,
-                    toDate: to,
-                    ...(employeeId ? { employeeIds: [employeeId] } : {}),
-                  })
+                  setConfirmProcess(true)
                 }}
                 title="Work the time sheet out again from the punches, schedules and requests"
               >
@@ -294,6 +294,31 @@ export function TimeSheetPage() {
           </div>
         )}
       </section>
+
+      <ConfirmDialog
+        open={confirmProcess}
+        onOpenChange={setConfirmProcess}
+        title="Process the time sheet?"
+        description={
+          <>
+            This works out attendance again for {personName ?? 'everyone in this view'} from{' '}
+            {format(parseISO(from), 'd MMMM yyyy')} to {format(parseISO(to), 'd MMMM yyyy')}
+            {meta ? ` (${meta.total.toLocaleString()} days)` : ''}, from the punches, schedules and
+            approved requests. Days changed by hand keep their changes. A long range can take a
+            while.
+          </>
+        }
+        confirmLabel="Process"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          setConfirmProcess(false)
+          process.mutate({
+            fromDate: from,
+            toDate: to,
+            ...(employeeId ? { employeeIds: [employeeId] } : {}),
+          })
+        }}
+      />
 
       {dialog?.action === 'edit' && (
         <TimeSheetEditDialog dayKey={keyOf(dialog.day)} onClose={close} />

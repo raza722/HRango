@@ -1,13 +1,14 @@
-import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useEffect, useRef, useState } from 'react'
+import { type Resolver, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
 import { ApiError } from '@/lib/api-error'
 
 import {
+  type ExistingPlanYear,
   PLAN_YEAR_STEP_FIELDS,
-  planYearFormSchema,
   type PlanYearFormValues,
+  planYearSchemaFor,
 } from '../schemas/benefits.schema'
 import type { PlanYear, PlanYearInput } from '../types/benefits.types'
 
@@ -75,16 +76,23 @@ function stepOf(field: string): PlanYearStep {
 export function usePlanYearWizard({
   initial,
   startStep = 'details',
+  others = [],
   save,
 }: {
   initial: PlanYearFormValues
   startStep?: PlanYearStep
+  /** The other plan years: a new name and dates that miss theirs are checked on Details. */
+  others?: readonly ExistingPlanYear[]
   save: (input: PlanYearInput) => Promise<unknown>
 }) {
-  const form = useForm<PlanYearFormValues>({
-    resolver: zodResolver(planYearFormSchema),
-    defaultValues: initial,
-  })
+  // The list arrives after the form is made: the resolver reads the latest one.
+  const othersRef = useRef(others)
+  useEffect(() => {
+    othersRef.current = others
+  }, [others])
+  const resolver: Resolver<PlanYearFormValues> = (values, context, options) =>
+    zodResolver(planYearSchemaFor(othersRef.current))(values, context, options)
+  const form = useForm<PlanYearFormValues>({ resolver, defaultValues: initial })
   const [step, setStep] = useState<PlanYearStep>(startStep)
   // Opening an existing plan year at a later step treats the steps before it as done.
   const [done, setDone] = useState<PlanYearStep[]>(ORDER.slice(0, ORDER.indexOf(startStep)))

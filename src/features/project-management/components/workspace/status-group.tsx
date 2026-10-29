@@ -69,7 +69,7 @@ export function StatusGroup({
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-5">
-      <div className="sticky left-0 flex h-[4.3125rem] w-fit max-w-full min-w-0 items-center gap-5 rounded-[0.625rem] bg-white pr-3 pl-2.5 sm:min-w-[30rem]">
+      <div className="sticky left-0 flex h-[4.3125rem] w-fit max-w-full min-w-0 items-center gap-5 rounded-[0.625rem] bg-white pr-3 pl-2.5 sm:min-w-[30rem] dark:bg-card">
         <span className="flex min-w-0 items-center gap-3">
           <button
             type="button"
@@ -88,24 +88,24 @@ export function StatusGroup({
               )}
             />
           </button>
-          <span className="flex h-[3.0625rem] min-w-0 items-center gap-[1.6875rem] rounded-lg bg-[#F8F8F8] px-2.5">
+          <span className="flex h-[3.0625rem] min-w-0 items-center gap-[1.6875rem] rounded-lg bg-[#F8F8F8] px-2.5 dark:bg-white/5">
             <span className="flex min-w-0 items-center">
               <span
-                className="flex size-[2.4rem] shrink-0 items-center justify-center rounded-[0.61rem] bg-white"
+                className="flex size-[2.4rem] shrink-0 items-center justify-center rounded-[0.61rem] bg-white dark:bg-card"
                 style={{ color: status.color }}
               >
                 <StatusRingIcon className="size-[1.8rem]" />
               </span>
               <h3
                 id={headingId}
-                className="truncate px-2.5 text-lg leading-[1.5] font-semibold text-[#626262]"
+                className="truncate px-2.5 text-lg leading-[1.5] font-semibold text-[#626262] dark:text-title"
               >
                 {status.name}
               </h3>
             </span>
             <span
               aria-label={`${tasks.length} task${tasks.length === 1 ? '' : 's'}`}
-              className="flex h-[1.6875rem] shrink-0 items-center rounded bg-white px-[0.9375rem] text-lg font-medium text-[#626262]"
+              className="flex h-[1.6875rem] shrink-0 items-center rounded bg-white px-[0.9375rem] text-lg font-medium text-[#626262] dark:bg-card dark:text-title"
             >
               {tasks.length}
             </span>
@@ -207,7 +207,7 @@ export function StatusGroup({
                       style={{ width: COLUMN_WIDTHS[column.key], marginLeft: COLUMN_GAP }}
                     >
                       {column.key === 'storyPoints' && (
-                        <span className="flex h-[2.4375rem] items-center justify-between gap-3 rounded-md bg-white px-1.5 text-lg font-semibold text-[#626262]">
+                        <span className="flex h-[2.4375rem] items-center justify-between gap-3 rounded-md bg-white px-1.5 text-lg font-semibold text-[#626262] dark:bg-card dark:text-title">
                           Average Story Points
                           <span className="font-medium">
                             {average === null ? '—' : Number(average.toFixed(1))}
@@ -246,7 +246,7 @@ export function AddTaskMenu({
         <button
           type="button"
           aria-label={label}
-          className="inline-flex h-[3.19rem] shrink-0 items-center gap-[0.6rem] rounded-[0.72rem] px-[0.96rem] text-[1.078rem] leading-[1.5] font-semibold text-[#7127EA] outline-none hover:bg-[#F8F5FF] focus-visible:ring-2 focus-visible:ring-[#A181FF]"
+          className="inline-flex h-[3.19rem] shrink-0 items-center gap-[0.6rem] rounded-[0.72rem] px-[0.96rem] text-[1.078rem] leading-[1.5] font-semibold text-[#7127EA] outline-none hover:bg-[#F8F5FF] focus-visible:ring-2 focus-visible:ring-[#A181FF] dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/15"
         >
           Add Task
           <ChevronDownIcon className="h-2 w-3.5" />

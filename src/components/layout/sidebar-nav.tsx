@@ -1,6 +1,6 @@
 import { type ReactElement, useId, useState } from 'react'
 import { Link, useMatchRoute } from '@tanstack/react-router'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 
 import type { NavChild, NavItem } from '@/app/navigation'
 import {
@@ -341,7 +341,14 @@ function NavTree({
       >
         <item.icon className={iconClassName} />
         <span className="flex-1 truncate">{item.label}</span>
-        <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-sidebar-muted" />
+        {/* The same chevron as every group: down when closed, turned up when open. */}
+        <ChevronDown
+          aria-hidden="true"
+          className={cn(
+            'size-4 shrink-0 text-sidebar-muted transition-transform',
+            open && 'rotate-180',
+          )}
+        />
       </button>
       <ul id={listId} hidden={!open} className="mt-1 flex flex-col gap-1 pl-1.5">
         {item.children.map((child) => (

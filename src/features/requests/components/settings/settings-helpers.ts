@@ -58,10 +58,10 @@ export const AUTHORITY_OPTIONS: readonly SearchOption[] = FLOW_AUTHORITIES.map((
   label: FLOW_AUTHORITY_LABELS[authority],
 }))
 
-/** "Active" / "In Active" as the API's isActive filter. */
+/** "Active" / "Inactive" as the API's isActive filter. */
 export const ACTIVE_OPTIONS: readonly SearchOption[] = [
   { value: 'true', label: 'Active' },
-  { value: 'false', label: 'In Active' },
+  { value: 'false', label: 'Inactive' },
 ]
 
 /** Puts an API error's field messages on a react-hook-form form, or its message at the top. */

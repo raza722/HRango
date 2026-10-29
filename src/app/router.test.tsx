@@ -14,9 +14,29 @@ describe('routing and auth gate', () => {
     expect(router.state.location.search).toEqual({ redirect: '/warning/policy?page=2' })
   })
 
-  it('shows the 404 page for unknown URLs', async () => {
+  it('shows the 404 page for unknown URLs, inside the shell with its own title', async () => {
     renderApp('/no-such-page')
-    expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: 'Page not found' }, { timeout: 15_000 }),
+    ).toBeInTheDocument()
+    // Signed in: the sidebar and top bar are there, and the page is the shell's main region.
+    const main = screen.getByRole('main')
+    expect(within(main).getByRole('heading', { name: 'Page not found' })).toBeVisible()
+    expect(screen.getAllByRole('main')).toHaveLength(1)
+    expect(screen.getByRole('link', { name: 'Dashboard' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.title).toBe('Page not found | hRango')
+    })
+  })
+
+  it('shows the 404 page signed out in a main region of its own', async () => {
+    renderApp('/no-such-page', { signedIn: false })
+    expect(
+      await screen.findByRole('heading', { name: 'Page not found' }, { timeout: 15_000 }),
+    ).toBeInTheDocument()
+    expect(
+      within(screen.getByRole('main')).getByRole('link', { name: /Back to dashboard/ }),
+    ).toBeVisible()
   })
 
   it('opens the Warning overview with both lists inside the shell', async () => {
@@ -48,12 +68,14 @@ describe('phone layout', () => {
     // Pager keeps its accessible names even though the words are icons here.
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
 
-    await user.click(screen.getByRole('button', { name: 'Expand sidebar' }))
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
     const drawer = await screen.findByRole('dialog', { name: 'Main navigation' })
-    await user.click(within(drawer).getByRole('link', { name: 'Performance' }))
+    // Performance is a tree: open it, then follow one of its pages.
+    await user.click(within(drawer).getByRole('button', { name: /^Performance/ }))
+    await user.click(await within(drawer).findByRole('link', { name: 'Overview' }))
 
     expect(
-      await screen.findByRole('heading', { name: 'Performance', level: 1 }),
+      await screen.findByRole('heading', { name: 'Performance Overview', level: 1 }),
     ).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Main navigation' })).not.toBeInTheDocument()

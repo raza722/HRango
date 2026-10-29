@@ -1,6 +1,7 @@
 import { type SyntheticEvent, useId, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { format } from 'date-fns'
 
 import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
@@ -76,6 +77,8 @@ export function OpenEnrollmentDialog({
   const chosenYearId = useWatch({ control: form.control, name: 'planYearId' })
   const year = lookups.data?.planYears.find((item) => item.id === chosenYearId)
   const yearPlans = (lookups.data?.plans ?? []).filter((plan) => year?.planIds.includes(plan.id))
+  // The calendars offer only days a new window can take: from today, within the plan year.
+  const today = format(new Date(), 'yyyy-MM-dd')
 
   const submit = form.handleSubmit(async (values) => {
     try {
@@ -208,7 +211,7 @@ export function OpenEnrollmentDialog({
                             {...a11y}
                             value={field.value}
                             onChange={field.onChange}
-                            minDate={year?.startDate}
+                            minDate={year && year.startDate > today ? year.startDate : today}
                             maxDate={year?.endDate}
                           />
                         )}
@@ -226,7 +229,13 @@ export function OpenEnrollmentDialog({
                         error={fieldState.error?.message}
                       >
                         {(a11y) => (
-                          <DateBox {...a11y} value={field.value} onChange={field.onChange} />
+                          <DateBox
+                            {...a11y}
+                            value={field.value}
+                            onChange={field.onChange}
+                            minDate={today}
+                            maxDate={year?.endDate}
+                          />
                         )}
                       </FieldRow>
                     )}

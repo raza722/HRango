@@ -123,14 +123,19 @@ function TimeEstimateForm({
             Subtask.
           </TooltipContent>
         </Tooltip>
-        <span className="ml-auto text-[0.71875rem] font-medium tracking-[0.01em] text-[#454545]">
+        <span className="ml-auto text-[0.71875rem] font-medium tracking-[0.01em] text-[#454545] dark:text-title">
           Total with Subtask{' '}
-          <strong className="font-semibold text-[#4382EE]">{formatDuration(withSubtasks)}</strong>
+          <strong className="font-semibold text-[#4382EE] dark:text-[#8FB0FF]">
+            {formatDuration(withSubtasks)}
+          </strong>
         </span>
       </div>
 
       <div
-        className={cn(fieldStyles.panel, 'flex flex-col gap-3 border border-[#E9E9E9] p-[0.9rem]')}
+        className={cn(
+          fieldStyles.panel,
+          'flex flex-col gap-3 border border-[#E9E9E9] p-[0.9rem] dark:border-border',
+        )}
       >
         <label>
           <span className="sr-only">Time estimate</span>
@@ -148,7 +153,7 @@ function TimeEstimateForm({
             }}
             placeholder="Enter Time (ex: 3h 30min)"
             aria-invalid={error !== null}
-            className="h-10 w-full rounded-[0.8125rem] border border-[#E9E9E9] bg-white px-3 text-sm tracking-[0.01em] text-[#3D3D3D] outline-none placeholder:text-[#909090] focus:border-[#A181FF]"
+            className="h-10 w-full rounded-[0.8125rem] border border-[#E9E9E9] bg-white px-3 text-sm tracking-[0.01em] text-[#3D3D3D] outline-none placeholder:text-[#909090] focus:border-[#A181FF] dark:border-border dark:bg-card dark:text-title"
           />
         </label>
         {error && (
@@ -164,7 +169,7 @@ function TimeEstimateForm({
               set(minutes + step * 60)
             }}
           />
-          <span className="pb-2 text-[1.05rem] font-bold text-[#626262]">:</span>
+          <span className="pb-2 text-[1.05rem] font-bold text-[#626262] dark:text-title">:</span>
           <Unit
             label="Minute"
             value={rest}
@@ -202,13 +207,13 @@ function Unit({
   onStep: (step: 1 | -1) => void
 }) {
   const stepButton =
-    'flex size-6 items-center justify-center rounded text-base leading-none font-semibold text-[#7127EA] hover:bg-[#EEE7FF]'
+    'flex size-6 items-center justify-center rounded text-base leading-none font-semibold text-[#7127EA] dark:text-[#C4ABFF] hover:bg-[#EEE7FF] dark:hover:bg-[#7127EA]/25'
   return (
     <div className="flex flex-col items-center gap-2">
-      <span className="flex h-[2.1rem] w-[4.75rem] items-center justify-center rounded-md bg-[#DFD7FF] text-[0.8125rem] font-semibold tracking-[0.01em] text-[#4A4A4A]">
+      <span className="flex h-[2.1rem] w-[4.75rem] items-center justify-center rounded-md bg-[#DFD7FF] text-[0.8125rem] font-semibold tracking-[0.01em] text-[#4A4A4A] dark:bg-[#7127EA]/25 dark:text-title">
         {label}
       </span>
-      <span className="flex h-10 w-full items-center justify-between rounded-[0.375rem] bg-white px-1.5 shadow-[0_0_7px_rgba(0,0,0,0.1)]">
+      <span className="flex h-10 w-full items-center justify-between rounded-[0.375rem] bg-white px-1.5 shadow-[0_0_7px_rgba(0,0,0,0.1)] dark:bg-card">
         <button
           type="button"
           aria-label={`Fewer ${label.toLowerCase()}s`}
@@ -221,7 +226,7 @@ function Unit({
         </button>
         <span
           aria-label={`${label}s`}
-          className="flex h-[1.6rem] min-w-9 items-center justify-center rounded-[0.125rem] bg-[#F6F4FF] px-1 text-[1.05rem] font-medium text-[#626262]"
+          className="flex h-[1.6rem] min-w-9 items-center justify-center rounded-[0.125rem] bg-[#F6F4FF] px-1 text-[1.05rem] font-medium text-[#626262] dark:bg-[#7127EA]/10 dark:text-title"
         >
           {String(value).padStart(2, '0')}
         </span>

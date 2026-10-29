@@ -48,7 +48,19 @@ describe('Company Assets', () => {
       within(dialog).getByRole('textbox', { name: /^Identification Number/ }),
       '123456789',
     )
-    await user.type(within(dialog).getByRole('textbox', { name: /^Current Value/ }), '75000')
+    // Current Value: a number, at most 999,999,999,999.99.
+    const value = within(dialog).getByRole('textbox', { name: /^Current Value/ })
+    await user.type(value, 'abc')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(dialog).findByText('Enter a number')).toBeVisible()
+    await user.clear(value)
+    await user.type(value, '99999999999999999999')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(
+      await within(dialog).findByText('Enter an amount up to 999,999,999,999.99'),
+    ).toBeVisible()
+    await user.clear(value)
+    await user.type(value, '75000')
     await pickToday(user, /^Acquired date/)
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(
@@ -88,6 +100,29 @@ describe('Company Assets', () => {
     expect(within(history).getByText('Create')).toBeVisible()
   })
 
+  it('names the asset in Delete, and offers no Delete for one allocated before', async () => {
+    const { user } = renderApp('/assets/company-assets')
+
+    // AST-00001 is allocated: its Delete says why it is not offered.
+    await openRowMenu(user, 'Actions for AST-00001, Laptop')
+    const blocked = await screen.findByRole('menuitem', {
+      name: 'Delete (allocated before: deactivate it instead)',
+    })
+    expect(blocked).toHaveAttribute('aria-disabled', 'true')
+    await user.keyboard('{Escape}')
+
+    const never = assets
+      .all()
+      .find((asset) => !allocations.all().some((row) => row.assetId === asset.id))
+    if (!never) throw new Error('Every asset was allocated')
+    await openRowMenu(user, `Actions for ${never.code}, ${never.name}`)
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    const confirm = await screen.findByRole('alertdialog', { name: 'Delete asset' })
+    expect(
+      within(confirm).getByText(`Delete ${never.code}, ${never.name}? This cannot be undone.`),
+    ).toBeVisible()
+  })
+
   it('refuses to deactivate an allocated asset and activates an unavailable one', async () => {
     const { user } = renderApp('/assets/company-assets')
 
@@ -109,7 +144,8 @@ describe('Asset Type', () => {
   it('creates a type, refuses a duplicate name and keeps a type in use', async () => {
     const { user } = renderApp('/assets/types')
 
-    expect(await screen.findByRole('heading', { name: 'Asset Type', level: 1 })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Asset Types', level: 1 })).toBeVisible()
+    expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Asset Type Create' })
     const name = within(dialog).getByRole('textbox', { name: /^Name/ })
@@ -124,14 +160,16 @@ describe('Asset Type', () => {
     expect(await screen.findByText('Asset type created')).toBeInTheDocument()
     expect(assetTypes.all().some((type) => type.name === 'Tablet' && type.isActive)).toBe(true)
 
+    // A type in use is not deleted but deactivated, from its own menu.
     await openRowMenu(user, 'Actions for AITP-00001, Laptop')
-    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
-    await user.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Yes' }),
-    )
     expect(
-      await screen.findByText('Assets of this type exist. Deactivate the type instead.'),
-    ).toBeInTheDocument()
+      await screen.findByRole('menuitem', { name: /^Delete \(used by \d+ assets?\)$/ }),
+    ).toHaveAttribute('aria-disabled', 'true')
+    await user.click(screen.getByRole('menuitem', { name: 'Deactivate' }))
+    expect(await screen.findByText('Asset type deactivated')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(assetTypes.find('at_laptop')?.isActive).toBe(false)
+    })
 
     await openRowMenu(user, 'Actions for AITP-00006, Printer')
     await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))

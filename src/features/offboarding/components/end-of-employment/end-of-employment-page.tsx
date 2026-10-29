@@ -41,8 +41,14 @@ import {
   useCompleteEndOfEmployment,
   useDeleteEndOfEmployment,
   useEndOfEmployments,
+  useWaitingLists,
 } from '../../hooks/use-offboarding'
-import type { EndOfEmployment, EndOfEmploymentRow, EoeScope } from '../../types/offboarding.types'
+import type {
+  EndOfEmployment,
+  EndOfEmploymentRow,
+  EoeScope,
+  WaitingItem,
+} from '../../types/offboarding.types'
 import { EndOfEmploymentDialog } from './end-of-employment-dialog'
 import { RehireDialog } from './rehire-dialog'
 
@@ -72,7 +78,7 @@ const columns: DataTableColumn<EndOfEmploymentRow>[] = [
   { id: 'location', header: 'Location', cell: (row) => row.locationName ?? '—' },
   { id: 'department', header: 'Department', cell: (row) => row.departmentName ?? '—' },
   { id: 'designation', header: 'Designation', cell: (row) => row.designationName ?? '—' },
-  { id: 'date', header: 'Date', cell: (row) => formatWeekday(row.lastWorkingDate) },
+  { id: 'date', header: 'Last Working Date', cell: (row) => formatWeekday(row.lastWorkingDate) },
   { id: 'created', header: 'Creation Date', cell: (row) => day(row.createdAt) },
   {
     id: 'completed',
@@ -89,6 +95,13 @@ const columns: DataTableColumn<EndOfEmploymentRow>[] = [
 
 const orgOptions = (items: readonly { id: string; name: string }[] | undefined) =>
   (items ?? []).map((item) => ({ value: item.id, label: item.name }))
+
+/** Complete's menu text: plain once nothing is waiting, else what it waits for. */
+function completeLabel(waiting: readonly WaitingItem[] | undefined): string {
+  if (waiting === undefined) return 'Complete (checking…)'
+  if (waiting.length === 0) return 'Complete'
+  return `Complete (waiting for ${waiting.map((item) => item.label).join(', ')})`
+}
 
 /**
  * End of Employment (All / Completed / Pending in the sidebar): who is
@@ -125,6 +138,11 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
     from: filters.from,
     to: filters.to,
   })
+  // The waiting lists of the pending rows shown, for Complete.
+  const waiting = useWaitingLists(
+    (list.data?.data ?? []).filter((row) => row.status === 'pending').map((row) => row.id),
+    canEdit,
+  )
   const goTo = (next: number) => {
     void navigate({ search: (prev) => ({ ...prev, page: next }) })
   }
@@ -295,7 +313,9 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
                     ...(canEdit
                       ? [
                           {
-                            label: 'Complete',
+                            // Offered once nothing is waiting; until then it says what is.
+                            label: completeLabel(waiting.get(row.id)),
+                            disabled: waiting.get(row.id)?.length !== 0,
                             onSelect: () => {
                               complete.mutate(row, {
                                 onError: failed('Could not complete the record.'),
@@ -340,7 +360,7 @@ export function EndOfEmploymentPage({ scope }: { scope: EoeScope }) {
       />
       <ListFooter
         meta={list.data?.meta}
-        noun="records"
+        noun={list.data?.meta.total === 1 ? 'record' : 'records'}
         disabled={list.isFetching}
         onPageChange={goTo}
       />

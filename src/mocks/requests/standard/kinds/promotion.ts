@@ -1,6 +1,7 @@
 import { addDays, format, subDays } from 'date-fns'
 import { z } from 'zod'
 
+import { GRADES, JOB_LEVELS } from '../../../manpower-planning/org-lookups'
 import { payItems, salaryRevisions, type StoredSalaryRevision } from '../../../payroll/db'
 import { salaryOn } from '../../../payroll/engine'
 import { nextCode } from '../../../payroll/http'
@@ -48,6 +49,16 @@ export const PROMOTION_DESIGNATIONS = [
 const nameIn = (list: readonly { id: string; name: string }[], id: string | null) =>
   id ? (list.find((item) => item.id === id)?.name ?? null) : null
 
+/*
+ * The pickers show the shared organisation lists (`/organisation/lookups/grades|job-levels|
+ * designations`: the Manpower Planning sample grades and levels, the Settings job titles as
+ * designations); the seed's own G1–G6 grades and designations still read for its requests.
+ */
+const gradeName = (id: string | null) => nameIn(GRADES, id) ?? nameIn(PROMOTION_GRADES, id)
+const levelName = (id: string | null) => nameIn(JOB_LEVELS, id) ?? nameIn(PROMOTION_LEVELS, id)
+const designationName = (id: string | null) =>
+  nameIn(PROMOTION_DESIGNATIONS, id) ?? (id ? (jobTitles.find(id)?.name ?? null) : null)
+
 const ymd = /^\d{4}-\d{2}-\d{2}$/
 const id = z.union([z.string(), z.number()]).transform(String)
 const schema = z.object({
@@ -87,13 +98,13 @@ function toPayload(
     records: readonly StoredStandardRequest[]
   },
 ): Response | Record<string, unknown> {
-  if (!nameIn(PROMOTION_GRADES, input.gradeId)) {
+  if (!gradeName(input.gradeId)) {
     return invalid('Grade not found.', { gradeId: 'Grade not found.' })
   }
-  if (input.jobLevelId && !nameIn(PROMOTION_LEVELS, input.jobLevelId)) {
+  if (input.jobLevelId && !levelName(input.jobLevelId)) {
     return invalid('Job level not found.', { jobLevelId: 'Job level not found.' })
   }
-  if (!nameIn(PROMOTION_DESIGNATIONS, input.designationId)) {
+  if (!designationName(input.designationId)) {
     return invalid('Designation not found.', { designationId: 'Designation not found.' })
   }
   if (!jobTitles.find(input.jobTitleId)) {
@@ -169,6 +180,9 @@ function recordRevision(record: StoredStandardRequest): Effect {
     percentage: null,
     previousSalary: salaryOn(record.employeeId, dayBefore),
     salary: payload.newSalary,
+    // Payroll's Salary Revision shows it but leaves it to the promotion (cancel that to undo).
+    source: 'promotion',
+    sourceCode: record.code,
   }
   salaryRevisions.insert(revision)
   return { revisionId: revision.id }
@@ -209,11 +223,11 @@ const def: StandardKindServer<Input> = {
     return {
       isDemotion: value.isDemotion,
       gradeId: value.gradeId,
-      gradeName: nameIn(PROMOTION_GRADES, value.gradeId),
+      gradeName: gradeName(value.gradeId),
       jobLevelId: value.jobLevelId,
-      jobLevelName: nameIn(PROMOTION_LEVELS, value.jobLevelId),
+      jobLevelName: levelName(value.jobLevelId),
       designationId: value.designationId,
-      designationName: nameIn(PROMOTION_DESIGNATIONS, value.designationId),
+      designationName: designationName(value.designationId),
       jobTitleId: value.jobTitleId,
       jobTitleName: jobTitles.find(value.jobTitleId)?.name ?? null,
       previousSalary: value.previousSalary,

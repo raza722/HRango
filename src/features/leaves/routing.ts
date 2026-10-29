@@ -7,11 +7,13 @@ export const LEAVE_LIST_SEARCH_DEFAULTS = { page: 1 } as const
 
 /**
  * `/leaves/my-leaves?status=pending&page=2`, the same for `/leaves/applications`, which also
- * takes `tab=subordinates` (the backend's My / Subordinates / All; All when left out).
+ * takes `tab=subordinates` (the backend's My / Subordinates / All; All when left out) and
+ * `employeeId` (one person's applications, as a profile's link opens them).
  */
 export const leaveListSearchSchema = z.object({
   status: z.enum(LEAVE_STATUSES).optional().catch(undefined),
   tab: z.enum(['subordinates', 'all']).optional().catch(undefined),
+  employeeId: z.string().trim().min(1).max(64).optional().catch(undefined),
   page: z.number().int().min(1).default(1).catch(1),
 })
 export type LeaveListSearch = z.infer<typeof leaveListSearchSchema>

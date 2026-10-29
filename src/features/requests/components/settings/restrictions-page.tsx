@@ -76,6 +76,7 @@ export function RestrictionsPage() {
   const close = () => {
     setDialog(null)
   }
+  const tickedCount = rows.filter((row) => ticked.has(row.id)).length
   const allTicked = rows.length > 0 && rows.every((row) => ticked.has(row.id))
 
   const deleteRows = (picked: readonly RequestRestriction[]) => {
@@ -244,7 +245,11 @@ export function RestrictionsPage() {
         title={
           dialog?.type === 'bulk-delete' ? 'Delete the ticked restrictions' : 'Delete restriction'
         }
-        message="Are you sure you want to Delete this?"
+        message={
+          dialog?.type === 'bulk-delete'
+            ? `Are you sure you want to delete the ${String(tickedCount)} ticked ${tickedCount === 1 ? 'restriction' : 'restrictions'}?`
+            : 'Are you sure you want to delete this restriction?'
+        }
         onConfirm={() => {
           if (dialog?.type === 'delete') deleteRows([dialog.row])
           if (dialog?.type === 'bulk-delete') deleteRows(rows.filter((row) => ticked.has(row.id)))

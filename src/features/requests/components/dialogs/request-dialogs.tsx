@@ -418,8 +418,9 @@ export function RequestHistoryDialog({
 }
 
 /**
- * "Cancel": a pending request is withdrawn at once; an approved one goes
- * through the cancellation flow. A reason is required either way.
+ * Withdraw / cancel: a pending request is withdrawn at once ("Withdraw request"); an approved
+ * one goes through the cancellation flow ("Cancel approved request"). A reason is required
+ * either way. Unlike Delete, the request stays on the list.
  */
 export function CancelRequestDialog({
   request,
@@ -431,9 +432,10 @@ export function CancelRequestDialog({
   const cancel = useCancelRequest(request.kind)
   const [reason, setReason] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const withdrawing = request.status === 'pending'
   const submit = async () => {
     if (!reason.trim()) {
-      setError('Give a reason for cancellation')
+      setError(withdrawing ? 'Give a reason for withdrawing' : 'Give a reason for cancellation')
       return
     }
     try {
@@ -450,10 +452,10 @@ export function CancelRequestDialog({
   }
   return (
     <AppDialog
-      title={`${KIND_LABELS[request.kind].title} Cancel`}
+      title={withdrawing ? 'Withdraw request' : 'Cancel approved request'}
       description={
-        request.status === 'pending'
-          ? `${request.code}: the request is withdrawn at once.`
+        withdrawing
+          ? `${request.code} is withdrawn at once and stays on the list as Cancelled.`
           : `${request.code}: the cancellation goes for approval before it takes effect.`
       }
       onRequestClose={onClose}
@@ -466,7 +468,7 @@ export function CancelRequestDialog({
             onClick={() => void submit()}
             className={cn(dialogButtonClass, 'bg-sidebar text-white hover:bg-sidebar/90')}
           >
-            Save
+            {withdrawing ? 'Withdraw' : 'Send for approval'}
           </Button>
           <Button variant="destructive" size="lg" onClick={onClose} className={dialogButtonClass}>
             Cancel
@@ -475,7 +477,7 @@ export function CancelRequestDialog({
       }
     >
       <RemarksField
-        label="Reason for Cancellation"
+        label={withdrawing ? 'Reason for Withdrawing' : 'Reason for Cancellation'}
         required
         value={reason}
         onChange={(value) => {

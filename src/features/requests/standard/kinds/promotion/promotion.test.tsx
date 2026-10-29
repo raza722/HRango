@@ -73,8 +73,10 @@ describe('Promotion (the request engine’s promotion type)', () => {
 
     await choose(user, /^Employee/, /^Hina Raza/)
     const previous = salaryOn('em_hina', today())
-    // The API reads the previous salary from payroll when the request is saved.
-    expect(within(dialog).getByRole('status')).toHaveTextContent('—')
+    // Payroll's salary today shows once she is picked (the API keeps it when saved).
+    await waitFor(() => {
+      expect(within(dialog).getByRole('status')).toHaveTextContent(amount(previous))
+    })
 
     await choose(user, /^Grade/, 'G5')
     await choose(user, /^Level/, 'L3')
@@ -87,7 +89,12 @@ describe('Promotion (the request engine’s promotion type)', () => {
     const effective = addDays(new Date(), 10)
     await pickDate(user, /^Effective Date/, effective)
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-    expect(await within(dialog).findByText('A promotion cannot lower the salary.')).toBeVisible()
+    // Checked by the form against that salary, before anything is sent.
+    expect(
+      await within(dialog).findByText(
+        `A promotion cannot lower the salary (now Rs ${amount(previous)})`,
+      ),
+    ).toBeVisible()
 
     await user.clear(within(dialog).getByLabelText(/^Salary/))
     await user.paste(String(previous + 50_000))
@@ -156,5 +163,30 @@ describe('Promotion (the request engine’s promotion type)', () => {
       await screen.findByRole('cell', { name: 'RQ-PRM-0002' }, { timeout: 5000 }),
     ).toBeVisible()
     expect(screen.queryByRole('cell', { name: 'RQ-PRM-0001' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Promotion pickers (the shared organisation lookups)', { timeout: 60_000 }, () => {
+  it('fills Grade and Level from the API and shows the person’s current salary', async () => {
+    const { user } = renderApp('/requests/promotion')
+
+    await user.click(await screen.findByRole('button', { name: 'Create' }, { timeout: 15_000 }))
+    const dialog = await screen.findByRole('dialog', { name: 'Promotion Request Create' })
+    // No overrides here: /organisation/lookups/grades and /job-levels answer as the app does.
+    await user.click(within(dialog).getByRole('combobox', { name: /^Grade/ }))
+    expect(await screen.findByRole('option', { name: 'Grade 1' })).toBeVisible()
+    await user.click(screen.getByRole('option', { name: 'Grade 3' }))
+    await user.click(within(dialog).getByRole('combobox', { name: /^Level/ }))
+    await user.click(await screen.findByRole('option', { name: 'L2' }))
+    expect(within(dialog).getByRole('combobox', { name: /^Grade/ })).toHaveTextContent('Grade 3')
+    expect(within(dialog).getByRole('combobox', { name: /^Level/ })).toHaveTextContent('L2')
+
+    expect(within(dialog).getByRole('status')).toHaveTextContent('—')
+    await choose(user, /^Employee/, /^Hina Raza/)
+    await waitFor(() => {
+      expect(within(dialog).getByRole('status')).toHaveTextContent(
+        amount(salaryOn('em_hina', today())),
+      )
+    })
   })
 })

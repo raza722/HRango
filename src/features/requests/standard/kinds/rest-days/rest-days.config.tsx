@@ -83,7 +83,7 @@ export const restDaysConfig: StandardKindConfig<RestDayPayload> = {
     col.text('count', 'Days', (row) => row.days ?? row.payload.days.length),
     col.text('payable', 'Payable', (row) => (
       <span className="text-xs font-medium text-sidebar dark:text-heading">
-        {row.payload.isPayable ? 'YES' : 'NO'}
+        {row.payload.isPayable ? 'Yes' : 'No'}
       </span>
     )),
     col.status({}),

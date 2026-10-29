@@ -1,5 +1,5 @@
 import { type SyntheticEvent, useId } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
@@ -69,6 +69,12 @@ function DelegationForm({
     },
   })
 
+  // Nobody delegates to themselves: each picker leaves out whom the other chose.
+  const [delegatorId, delegateeId] = useWatch({
+    control: form.control,
+    name: ['delegatorId', 'delegateeId'],
+  })
+
   // The two of a delegation stay named when they have left.
   const saved = delegation
     ? [
@@ -120,6 +126,7 @@ function DelegationForm({
           permission={permission}
           current={saved}
           label="Delegator"
+          exclude={readOnly ? [] : [delegateeId]}
           placeholder="Select Delegator"
           required={!readOnly}
           disabled={readOnly}
@@ -139,6 +146,7 @@ function DelegationForm({
           permission={permission}
           current={saved}
           label="Delegatee"
+          exclude={readOnly ? [] : [delegatorId]}
           placeholder="Select Employees"
           required={!readOnly}
           disabled={readOnly}

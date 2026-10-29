@@ -1,13 +1,16 @@
-import { useEffect } from 'react'
+import { use, useEffect } from 'react'
 import { useQueryErrorResetBoundary } from '@tanstack/react-query'
 import { type ErrorComponentProps, Link, useRouter } from '@tanstack/react-router'
 import { Compass, Home } from 'lucide-react'
 
 import { ErrorState } from '@/components/feedback/error-state'
 import { Button } from '@/components/ui/button'
+import { selectIsAuthenticated, useAuthStore } from '@/stores/auth-store'
 
-/** 404 page, used for unknown URLs and for `throw notFound()` in loaders. */
-export function NotFoundPage() {
+import { AuthenticatedLayout } from './layouts/authenticated-layout'
+import { InShellContext } from './layouts/in-shell-context'
+
+function NotFoundContent() {
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-6 text-center">
       <span className="flex size-16 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
@@ -24,6 +27,29 @@ export function NotFoundPage() {
         </Link>
       </Button>
     </div>
+  )
+}
+
+/**
+ * 404 page, used for unknown URLs and for `throw notFound()` in loaders. Signed in, it is drawn
+ * inside the app shell (sidebar and top bar, its `<main>`); signed out, in a `<main>` of its
+ * own. The document title is the root route's ("Page not found | hRango", `routes/__root.tsx`).
+ */
+export function NotFoundPage() {
+  const inShell = use(InShellContext)
+  const signedIn = useAuthStore(selectIsAuthenticated)
+  if (inShell) return <NotFoundContent />
+  if (signedIn) {
+    return (
+      <AuthenticatedLayout>
+        <NotFoundContent />
+      </AuthenticatedLayout>
+    )
+  }
+  return (
+    <main id="main-content" className="min-h-dvh bg-background">
+      <NotFoundContent />
+    </main>
   )
 }
 

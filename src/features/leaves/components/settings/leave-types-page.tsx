@@ -21,16 +21,18 @@ const routeApi = getRouteApi('/_app/leaves/settings/leave-types')
 
 /**
  * Settings → Leave Types (frame 4428:90291, `/leaves/types`): the list under the tabs with
- * Sr#., Type, No. of Leaves, Leave Encashment and Status as navy switches, and the pencil in
- * Actions that opens the type; "+ Add New" in the title row opens "Add Leave Types" and
- * "Allotment" the allotment / carry forward run. A type in use cannot be deleted. Buttons
- * follow `leaves.settings.types.*` and `leaves.allotment.process`.
+ * Sr#, Type, No. of Leaves, Leave Encashment and Status as navy switches, and the pencil in
+ * Actions that opens the type; "+ Add New" in the title row opens "Add Leave Type" and
+ * "Allotment" the allotment / carry forward run. Switching a type's Status off asks first. A
+ * type in use cannot be deleted. Buttons follow `leaves.settings.types.*` and
+ * `leaves.allotment.process`.
  */
 export function LeaveTypesPage() {
   const { page, dialog } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
   const [editing, setEditing] = useState<LeaveType | null>(null)
   const [deleting, setDeleting] = useState<LeaveType | null>(null)
+  const [deactivating, setDeactivating] = useState<LeaveType | null>(null)
   const list = useLeaveTypes({ page, pageSize: LEAVES_PAGE_SIZE })
   const save = useSaveLeaveType()
   const remove = useDeleteLeaveType()
@@ -48,7 +50,7 @@ export function LeaveTypesPage() {
   const columns: DataTableColumn<LeaveType>[] = [
     {
       id: 'serial',
-      header: 'Sr#.',
+      header: 'Sr#',
       mobile: 'hidden',
       cell: (_row, index) => serial(list.data?.meta.page ?? page, LEAVES_PAGE_SIZE, index),
     },
@@ -78,7 +80,9 @@ export function LeaveTypesPage() {
           checked={row.isActive}
           disabled={save.isPending || !canEdit}
           onCheckedChange={(checked) => {
-            toggle(row, { isActive: checked })
+            // Switching a type off stops new applications for it: ask first.
+            if (checked) toggle(row, { isActive: true })
+            else setDeactivating(row)
           }}
           className={listSwitchClass}
         />
@@ -155,6 +159,20 @@ export function LeaveTypesPage() {
           }
         />
       )}
+      <ConfirmDialog
+        open={deactivating !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeactivating(null)
+        }}
+        title={deactivating ? `Make ${deactivating.title} inactive` : 'Make inactive'}
+        description="Nobody can apply for it any more and new allotments leave it out. Applications already made and balances stay as they are. Make it inactive?"
+        confirmLabel="Yes"
+        cancelLabel="No"
+        onConfirm={() => {
+          if (deactivating) toggle(deactivating, { isActive: false })
+          setDeactivating(null)
+        }}
+      />
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(open) => {

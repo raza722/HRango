@@ -65,6 +65,7 @@ import {
 } from './http'
 import { departmentId } from './lookup-handlers'
 import { isActive, nextRowVersion, personFields } from './people'
+import { ensureClosedSlips } from './records-handlers'
 
 // Monthly and daily-wage payrolls, the salary sheet, payslips, reports and the dashboard, as
 // `backend/app/routers/payroll_runs.py` and `payroll_reports.py` serve them.
@@ -82,6 +83,8 @@ const guarded =
     const denied = requireAuth(args.request)
     if (denied) return denied
     ensureRunsSeeded()
+    // Closed final settlements' released slips are pay slips too.
+    ensureClosedSlips()
     return handler(args)
   }
 
@@ -107,7 +110,10 @@ function ensureRunsSeeded() {
       if (payroll.status === 'closed') closeRun(payrolls.find(payroll.id) ?? payroll)
       continue
     }
+    // People the seeded run could not pay (its Error list) get no payslip.
+    const failed = new Set((payroll.errors ?? []).map((entry) => entry.employeeId))
     for (const employeeId of payroll.employeeIds) {
+      if (failed.has(employeeId)) continue
       const slip = computePayslip(payroll, employeeId)
       payslips.insert({
         ...slip,
@@ -269,6 +275,65 @@ function employeeRow(payrollId: string, employeeId: string): PayrollEmployeeRow 
   }
 }
 
+// --- one payroll per person per month ---------------------------------------------------------
+
+/** The other monthly payrolls of the same month. */
+const sameMonthRuns = (payroll: Pick<StoredPayroll, 'id' | 'kind' | 'payrollMonth'>) =>
+  payroll.kind !== 'monthly' || !payroll.payrollMonth
+    ? []
+    : payrolls
+        .all()
+        .filter(
+          (other) =>
+            other.id !== payroll.id &&
+            other.kind === 'monthly' &&
+            other.payrollMonth === payroll.payrollMonth,
+        )
+
+/** The other monthly payroll of the month a person is already on, if any. */
+export function otherPayrollOf(
+  payroll: Pick<StoredPayroll, 'id' | 'kind' | 'payrollMonth'>,
+  employeeId: string,
+): StoredPayroll | undefined {
+  return sameMonthRuns(payroll).find((other) => other.employeeIds.includes(employeeId))
+}
+
+const monthName = (month: string | null) =>
+  month ? format(new Date(`${month.slice(0, 7)}-01T00:00:00`), 'MMMM yyyy') : 'this month'
+
+const onOtherPayroll = (employeeId: string, other: StoredPayroll) =>
+  `${personFields(employeeId).employeeName} is already on ${other.name} (${other.code}) for ${monthName(other.payrollMonth)}.`
+
+/** 422 when any of `added` is on another payroll of the month (`fieldErrors.employeeIds`). */
+function refuseDoublePayroll(payroll: StoredPayroll, added: readonly string[]) {
+  const clashes = added
+    .map((employeeId) => ({ employeeId, other: otherPayrollOf(payroll, employeeId) }))
+    .filter((clash): clash is { employeeId: string; other: StoredPayroll } => !!clash.other)
+  if (clashes.length === 0) return undefined
+  const message = clashes.map((clash) => onOtherPayroll(clash.employeeId, clash.other)).join(' ')
+  return invalid(message, { employeeIds: message })
+}
+
+/** Errors for people on this payroll who are also on another payroll of the month. */
+function doublePayrollErrors(payroll: StoredPayroll): PayrollError[] {
+  return payroll.employeeIds.flatMap((employeeId) => {
+    const other = otherPayrollOf(payroll, employeeId)
+    if (!other) return []
+    const person = personFields(employeeId)
+    return [
+      {
+        id: `${payroll.id}_double_${employeeId}`,
+        payrollRunLogId: payroll.history.at(-1)?.id ?? `${payroll.id}_run`,
+        employeeId,
+        employeeCode: person.employeeCode,
+        employeeName: person.employeeName,
+        message: `Also on ${other.name} (${other.code}) for ${monthName(other.payrollMonth)}. A person can be on one payroll a month: take them off one of them.`,
+        startedAt: payroll.lastRunAt,
+      },
+    ]
+  })
+}
+
 /** Runs (or reruns) a monthly payroll: released slips stay, the rest are worked out again. */
 function runMonthly(payroll: StoredPayroll): RunLog {
   const errors: PayrollError[] = []
@@ -278,20 +343,35 @@ function runMonthly(payroll: StoredPayroll): RunLog {
   for (const slip of payslips.all().filter((item) => item.payrollId === payroll.id)) {
     if (!keep.has(slip.employeeId) && slip.status !== 'released') payslips.remove(slip.id)
   }
+  const failed = (employeeId: string, message: string) => {
+    const person = personFields(employeeId)
+    errors.push({
+      id: `${logId}_${employeeId}`,
+      payrollRunLogId: logId,
+      employeeId,
+      employeeCode: person.employeeCode,
+      employeeName: person.employeeName,
+      message,
+      startedAt: now(),
+    })
+  }
   for (const employeeId of payroll.employeeIds) {
     const previous = payslips.find(payslipIdOf(payroll.id, employeeId))
     if (previous?.status === 'released') continue
     if (!isActive(employeeId)) {
-      const person = personFields(employeeId)
-      errors.push({
-        id: `${logId}_${employeeId}`,
-        payrollRunLogId: logId,
+      failed(employeeId, 'The employee is not active in the payroll month.')
+      continue
+    }
+    // Paid on another payroll of the month already: no second payslip.
+    const paidElsewhere = sameMonthRuns(payroll).find((other) =>
+      payslips.find(payslipIdOf(other.id, employeeId)),
+    )
+    if (paidElsewhere) {
+      if (previous) payslips.remove(previous.id)
+      failed(
         employeeId,
-        employeeCode: person.employeeCode,
-        employeeName: person.employeeName,
-        message: 'The employee is not active in the payroll month.',
-        startedAt: now(),
-      })
+        `Has a payslip on ${paidElsewhere.name} (${paidElsewhere.code}) for ${monthName(paidElsewhere.payrollMonth)}. No second payslip was made.`,
+      )
       continue
     }
     const slip = computePayslip({ ...payroll, status: 'running' }, employeeId, previous)
@@ -515,8 +595,13 @@ const payslipEdit = z.object({
     .array(
       z.object({
         payItemId: z.string(),
-        amount: z.number(),
-        employerContribution: z.number().nullable().optional(),
+        amount: z.number().min(0, 'An amount cannot be negative').max(1e10),
+        employerContribution: z
+          .number()
+          .min(0, 'An employer contribution cannot be negative')
+          .max(1e10)
+          .nullable()
+          .optional(),
       }),
     )
     .min(1, 'Change at least one line'),
@@ -538,7 +623,8 @@ function visibleSlips(url: URL): StoredPayslip[] {
   const list = payslips.all().filter((slip) => {
     const employee = findEmployee(slip.employeeId)
     return (
-      (scope !== 'my' || slip.employeeId === ME) &&
+      // An employee's own list holds released (or paid) slips only.
+      (scope !== 'my' || (slip.employeeId === ME && slip.status === 'released')) &&
       (param(url, 'payrollId') === undefined || slip.payrollId === param(url, 'payrollId')) &&
       (param(url, 'month') === undefined || slip.payslipMonth === param(url, 'month')) &&
       (param(url, 'status') === undefined || slip.status === param(url, 'status')) &&
@@ -887,6 +973,18 @@ export const payrollRunHandlers = [
       if (!parsed.success) return rejected(parsed.error)
       const input = parsed.data
       if (input.rowVersion && input.rowVersion !== payroll.rowVersion) return staleRun()
+      if (input.payrollMonth !== payroll.payrollMonth) {
+        const clash = payroll.employeeIds
+          .map((employeeId) => ({
+            employeeId,
+            other: otherPayrollOf({ ...payroll, payrollMonth: input.payrollMonth }, employeeId),
+          }))
+          .find((item) => item.other)
+        if (clash?.other) {
+          const message = onOtherPayroll(clash.employeeId, clash.other)
+          return invalid(message, { payrollMonth: message })
+        }
+      }
       const next: StoredPayroll = {
         ...payroll,
         name: input.name.trim(),
@@ -920,9 +1018,17 @@ export const payrollRunHandlers = [
       const rowVersion = param(url, 'rowVersion')
       if (rowVersion && rowVersion !== payroll.rowVersion) return Promise.resolve(staleRun())
       const slips = payslips.all().filter((slip) => slip.payrollId === payroll.id)
-      if (payroll.status === 'closed' || slips.some((slip) => slip.status === 'released')) {
+      if (payroll.status === 'closed') {
         return Promise.resolve(
-          conflict('This payroll has released payslips. It cannot be deleted', 'PAYROLL_CLOSED'),
+          conflict('This payroll is closed. It cannot be deleted', 'PAYROLL_CLOSED'),
+        )
+      }
+      if (slips.some((slip) => slip.status === 'released' || slip.paidAt)) {
+        return Promise.resolve(
+          conflict(
+            'This payroll has released or paid payslips. It cannot be deleted',
+            'PAYROLL_RELEASED',
+          ),
         )
       }
       for (const slip of slips) payslips.remove(slip.id)
@@ -966,6 +1072,11 @@ export const payrollRunHandlers = [
       if (released.some((employeeId) => !employeeIds.includes(employeeId))) {
         return conflict('A person with a released payslip cannot be taken off the payroll')
       }
+      const double = refuseDoublePayroll(
+        payroll,
+        employeeIds.filter((employeeId) => !payroll.employeeIds.includes(employeeId)),
+      )
+      if (double) return double
       payrolls.update(payroll.id, {
         ...payroll,
         employeeIds,
@@ -998,7 +1109,11 @@ export const payrollRunHandlers = [
           (!filter.departmentId || departmentId(employee.department) === filter.departmentId) &&
           (filter.employeeStatus !== 'active' || isActive(employee.id)),
       ).map((employee) => employee.id)
-      const added = matching.filter((employeeId) => !payroll.employeeIds.includes(employeeId))
+      // People already on this payroll, or on another payroll of the month, are skipped.
+      const added = matching.filter(
+        (employeeId) =>
+          !payroll.employeeIds.includes(employeeId) && !otherPayrollOf(payroll, employeeId),
+      )
       const employeeIds = [...payroll.employeeIds, ...added]
       payrolls.update(payroll.id, {
         ...payroll,
@@ -1092,9 +1207,17 @@ export const payrollRunHandlers = [
       const payroll = findRun(params.id, 'monthly')
       if (!payroll) return Promise.resolve(notFound('payroll'))
       const runLogId = param(new URL(request.url), 'runLogId')
+      const stored = payroll.errors ?? []
+      // Someone on two payrolls of the month is flagged whether or not a run has seen it yet.
+      const double = doublePayrollErrors(payroll).filter(
+        (entry) =>
+          !stored.some(
+            (item) => item.employeeId === entry.employeeId && item.message?.includes('payslip on'),
+          ),
+      )
       return Promise.resolve(
         ok(
-          (payroll.errors ?? []).filter(
+          [...stored, ...(runLogId === undefined ? double : [])].filter(
             (entry) => runLogId === undefined || entry.payrollRunLogId === runLogId,
           ),
         ),
@@ -1323,6 +1446,19 @@ export const payrollRunHandlers = [
           conflict('Close the payroll before making its vouchers', 'PAYROLL_NOT_CLOSED'),
         )
       }
+      const due = (payroll.rows ?? []).filter(
+        (row) => !row.voucherId && row.payslipId && row.netPayable,
+      )
+      if (due.length === 0) {
+        return Promise.resolve(
+          conflict(
+            (payroll.rows ?? []).some((row) => row.voucherId)
+              ? 'The vouchers of this payroll are already made'
+              : 'Nobody on this payroll has an amount to pay',
+            'VOUCHERS_EXIST',
+          ),
+        )
+      }
       let created = 0
       const rows = (payroll.rows ?? []).map((row) => {
         if (row.voucherId || !row.payslipId || !row.netPayable) return row
@@ -1535,6 +1671,10 @@ export const payrollRunHandlers = [
         updatedAt: now(),
         rowVersion: nextRowVersion(),
       })
+      if ((saved.netPayable ?? 0) < 0) {
+        const message = `The net payable would be Rs ${Math.round(saved.netPayable ?? 0).toLocaleString('en-US')}. It cannot be below zero.`
+        return invalid(message, { lines: message })
+      }
       payslips.update(slip.id, saved)
       if (slip.payrollId) refresh(slip.payrollId)
       return ok(detail(saved))

@@ -133,14 +133,14 @@ function BreakTypeDialog({
           <TextField
             control={form.control}
             name="startIdentifier"
-            label={record ? 'Start Identifier' : 'Start Indicator'}
+            label="Start Identifier"
             placeholder="Enter start identifier name"
             required
           />
           <TextField
             control={form.control}
             name="endIdentifier"
-            label={record ? 'End Identifier' : 'End Indicator'}
+            label="End Identifier"
             placeholder="Enter end identifier name"
             required
           />

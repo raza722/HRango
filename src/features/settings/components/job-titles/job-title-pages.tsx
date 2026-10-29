@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { FormProvider, useWatch } from 'react-hook-form'
 import { getRouteApi, Link, useNavigate } from '@tanstack/react-router'
 
@@ -9,7 +10,8 @@ import { Badge } from '@/components/ui/badge'
 import { jobTitleResource } from '../../api/org-resource'
 import { useOrgPermissions } from '../../hooks/use-org-permissions'
 import { useOrgRecordForm } from '../../hooks/use-org-record-form'
-import { jobTitleFormSchema } from '../../schemas/org-forms.schema'
+import { useOrgRecord } from '../../hooks/use-org-records'
+import { makeJobTitleFormSchema } from '../../schemas/org-forms.schema'
 import { DESCRIPTION_MAX_LENGTH, NAME_MAX_LENGTH } from '../../schemas/shared'
 import type { JobTitleRow } from '../../types/settings.types'
 import { jobTitleMapper } from '../../utils/form-mappers'
@@ -102,10 +104,13 @@ export function JobTitleListPage() {
 export function JobTitleFormPage({ jobTitleId }: { jobTitleId?: string }) {
   const navigate = useNavigate()
   const goToList = () => navigate({ to: LIST_PATH })
+  // The people holding the title now (the form's own query of the record, from the cache).
+  const held = useOrgRecord(jobTitleResource, jobTitleId).data?.headCount ?? 0
+  const schema = useMemo(() => makeJobTitleFormSchema(held), [held])
   const jobTitleForm = useOrgRecordForm({
     resource: jobTitleResource,
     id: jobTitleId,
-    schema: jobTitleFormSchema,
+    schema,
     mapper: jobTitleMapper,
     onSaved: goToList,
   })
@@ -162,7 +167,11 @@ export function JobTitleFormPage({ jobTitleId }: { jobTitleId?: string }) {
             inputMode="numeric"
             autoComplete="off"
             placeholder="e.g. 25"
-            description="New hires into this title stop once the count is reached."
+            description={
+              held > 0
+                ? `New hires into this title stop once the count is reached. ${held.toLocaleString('en-US')} ${held === 1 ? 'employee holds' : 'employees hold'} it now.`
+                : 'New hires into this title stop once the count is reached.'
+            }
             inputClassName="@xl:max-w-xs"
           />
         )}

@@ -1,7 +1,16 @@
 import { useId, useRef, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { addDays, differenceInCalendarDays, parse, startOfToday } from 'date-fns'
+import {
+  addDays,
+  differenceInCalendarDays,
+  eachDayOfInterval,
+  endOfWeek,
+  format,
+  parse,
+  startOfToday,
+  startOfWeek,
+} from 'date-fns'
 import { Paperclip } from 'lucide-react'
 import { z } from 'zod'
 
@@ -18,7 +27,7 @@ import { ApiError } from '@/lib/api-error'
 import { ACCEPTED_FILE_TYPES, deleteUpload, uploadFile } from '@/lib/files'
 
 import { CATEGORY_LABELS, LEAVE_CODES, SHORT_LEAVE_LABELS } from '../../constants'
-import { useApplyLeave, useLeaveTypeOptions } from '../../hooks/use-leaves'
+import { useApplyLeave, useLeaveSchedule, useLeaveTypeOptions } from '../../hooks/use-leaves'
 import { type LeaveRequestInput, SHORT_LEAVE_TYPES } from '../../types/leaves.types'
 import { balanceDays } from '../../utils/format'
 
@@ -67,6 +76,51 @@ const schema = z
 type Values = z.infer<typeof schema>
 
 const day = (date: string) => parse(date, 'yyyy-MM-dd', new Date())
+const iso = (date: Date) => format(date, 'yyyy-MM-dd')
+const weekOptions = { weekStartsOn: 1 } as const
+
+/** A day the leave does not count, and why ("Iqbal Day", "Day off"). */
+interface SkippedDay {
+  date: string
+  label: string
+  holiday: boolean
+}
+
+/** "Iqbal Day (Monday, 9 November)", "Saturday, 7 November (day off)". */
+function describe(skipped: SkippedDay): string {
+  const when = format(day(skipped.date), 'EEEE, d MMMM')
+  return skipped.holiday ? `${skipped.label} (${when})` : `${when} (${skipped.label.toLowerCase()})`
+}
+
+/**
+ * The days of the leave that are holidays or days off, from the person's schedule: a holiday,
+ * a rest day, or a day without a shift in weeks that have shifts. Null while it is not known.
+ */
+function useSkippedDays(
+  employeeId: string | undefined,
+  from: string,
+  last: string,
+  enabled: boolean,
+): SkippedDay[] | null {
+  const valid = Boolean(from && last && last >= from)
+  // Whole weeks, so a day without a shift reads as a day off and not as "not scheduled".
+  const weekFrom = valid ? iso(startOfWeek(day(from), weekOptions)) : ''
+  const weekTo = valid ? iso(endOfWeek(day(last), weekOptions)) : ''
+  const schedule = useLeaveSchedule(employeeId, weekFrom, weekTo, enabled && valid)
+  if (!valid || !schedule.data) return null
+  const { shiftDates, holidays, restDates } = schedule.data
+  const scheduled = shiftDates.length > 0
+  return eachDayOfInterval({ start: day(from), end: day(last) }).flatMap((date): SkippedDay[] => {
+    const value = iso(date)
+    const holiday = holidays.find((item) => item.date === value)
+    if (holiday) return [{ date: value, label: holiday.name, holiday: true }]
+    if (restDates.includes(value)) return [{ date: value, label: 'Rest day', holiday: false }]
+    if (scheduled && !shiftDates.includes(value)) {
+      return [{ date: value, label: 'Day off', holiday: false }]
+    }
+    return []
+  })
+}
 
 /** The server's field names → this form's. */
 const FIELD_OF: Record<string, keyof Values> = {
@@ -169,8 +223,10 @@ function AttachmentUpload({
  * Single or Multiple, Leave Type with the person's available balance of each type, the
  * date (or Start / End Date), a short leave (half or quarter day with its times) on a single
  * day, Attachment and Reason. From Leave Applications it first asks for the employee. The
- * days, the type's rules and the balance are worked out on the server, which answers with
- * the field to fix.
+ * person's schedule (Scheduling's board) shows which chosen days are holidays or days off:
+ * they are named and left out of Selected Days, and a leave of only such days is refused.
+ * The days, the type's rules and the balance are worked out on the server, which answers
+ * with the field to fix.
  */
 export function ApplyLeaveDialog({
   forOthers = false,
@@ -227,14 +283,20 @@ export function ApplyLeaveDialog({
   const maxDate =
     offer && offer.futureLimitDays !== null ? addDays(today, offer.futureLimitDays) : undefined
   const last = category === 'single' ? from : to
-  const calendarDays =
-    from && last && last >= from
-      ? category === 'single' && isShort
-        ? shortLeaveType === 'quarter_day'
-          ? 0.25
-          : 0.5
-        : differenceInCalendarDays(day(last), day(from)) + 1
-      : 0
+  // Holidays and days off in the chosen dates (the server does not count them).
+  const skipped = useSkippedDays(owner, from, last, !forOthers || Boolean(employeeId))
+  const span = from && last && last >= from ? differenceInCalendarDays(day(last), day(from)) + 1 : 0
+  const noWorkingDay = skipped !== null && span > 0 && skipped.length === span
+  const selectedDays =
+    span === 0
+      ? 0
+      : category === 'single' && isShort
+        ? noWorkingDay
+          ? 0
+          : shortLeaveType === 'quarter_day'
+            ? 0.25
+            : 0.5
+        : span - (skipped?.length ?? 0)
   const available = offer ? (offer.isDeductible ? balanceDays(offer.available) : 'No limit') : ''
 
   const submit = form.handleSubmit(async (values) => {
@@ -252,6 +314,15 @@ export function ApplyLeaveDialog({
       return
     }
     const lastDay = values.category === 'single' ? values.from : values.to
+    const firstSkipped = skipped?.[0]
+    if (noWorkingDay && firstSkipped) {
+      form.setError('from', {
+        message: firstSkipped.holiday
+          ? `${firstSkipped.label} is a holiday: choose a working day`
+          : 'Choose a working day: these dates are days off',
+      })
+      return
+    }
     if (offer && minDate && values.from && day(values.from) < minDate) {
       form.setError('from', {
         message: offer.allowBackDate
@@ -449,13 +520,23 @@ export function ApplyLeaveDialog({
               aria-live="polite"
               className="w-fit min-w-8 rounded-[5px] bg-[#FFE3E3] px-1.5 py-1 text-center font-inter text-sm font-semibold text-[#333C48] dark:bg-red-500/15 dark:text-heading"
             >
-              {String(calendarDays)}
+              {balanceDays(selectedDays)}
             </span>
             <span className="text-xs text-muted-foreground">
-              Calendar days; the server counts the days that apply.
+              Working days only: holidays and days off are not counted.
             </span>
           </span>
         </div>
+        {skipped && skipped.length > 0 && (
+          <p
+            role="status"
+            className="-mt-2 rounded-md bg-[#FFF3D9] px-4 py-3 font-inter text-sm text-[#8A5A00] dark:bg-amber-500/15 dark:text-amber-200"
+          >
+            {noWorkingDay
+              ? `No working day to take off: ${skipped.map(describe).join(', ')}.`
+              : `Not counted: ${skipped.map(describe).join(', ')}.`}
+          </p>
+        )}
         <AttachmentUpload
           label={attachmentRequired ? 'Attachment *' : 'Attachment'}
           value={attachment}

@@ -1,12 +1,6 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Outlet } from '@tanstack/react-router'
 
-import { MODULES } from '@/app/modules'
-import { ModulePlaceholder } from '@/components/layout'
-import { pageTitle } from '@/lib/constants'
-
-const config = MODULES.customForm
-
+/** Custom Form: every page below `/custom-form` (the sidebar carries its menu). */
 export const Route = createFileRoute('/_app/custom-form')({
-  head: () => ({ meta: [{ title: pageTitle(config.title) }] }),
-  component: () => <ModulePlaceholder {...config} />,
+  component: Outlet,
 })

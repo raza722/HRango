@@ -34,9 +34,10 @@ export function ColumnHeaderRow({
   /** Every task drawn in the group, for "select all". */
   taskIds: readonly string[]
 }) {
-  const { columns, selected, onSelect, onShowColumn, workspace, access } = useListView()
+  const { columns, selected, onSelect, onShowColumn, workspace, access, layout } = useListView()
   const chosen = taskIds.filter((id) => selected.has(id)).length
-  const addable = addableColumns(workspace.columns, TASK_COLUMN_KEYS)
+  // The Table view shows every column already; its columns are not arranged here.
+  const addable = layout === 'table' ? [] : addableColumns(workspace.columns, TASK_COLUMN_KEYS)
 
   const name = columns.find((column) => column.key === 'name')
   const rest = columns.filter((column) => column.key !== 'name')
@@ -75,7 +76,7 @@ export function ColumnHeaderRow({
                 <button
                   type="button"
                   aria-label="Add Column"
-                  className="flex size-[1.84rem] items-center justify-center rounded-full border-[0.075rem] border-[#F0EDFF] bg-[linear-gradient(61.34deg,#7127EA_8.55%,#B792F4_149.44%)] text-white transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[#A181FF] focus-visible:outline-none disabled:opacity-40"
+                  className="flex size-[1.84rem] items-center justify-center rounded-full border-[0.075rem] border-[#F0EDFF] bg-[linear-gradient(61.34deg,#7127EA_8.55%,#B792F4_149.44%)] text-white transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[#A181FF] focus-visible:outline-none disabled:opacity-40 dark:border-border"
                 >
                   <AddColumnIcon className="size-[0.742rem]" />
                 </button>
@@ -106,9 +107,9 @@ export function ColumnHeaderRow({
 }
 
 function ColumnHeader({ columnKey }: { columnKey: TaskColumnKey }) {
-  const { sort, onSort, onColumnAction, onOpenPermission, access } = useListView()
-  /** Members keep their own column layout; readers who are not members cannot. */
-  const canArrange = access.rank > 0
+  const { sort, onSort, onColumnAction, onOpenPermission, access, layout } = useListView()
+  /** Members keep their own column layout (List view only); readers who are not members cannot. */
+  const canArrange = access.rank > 0 && layout === 'list'
   const label = COLUMN_LABELS[columnKey]
   const direction = sort?.key === columnKey ? sort.direction : null
   const isName = columnKey === 'name'
@@ -184,7 +185,9 @@ function ColumnHeader({ columnKey }: { columnKey: TaskColumnKey }) {
               {!isName && access.editWorkspace && (
                 <HeaderItem
                   icon={<PermissionIcon />}
-                  trailing={<ChevronRightIcon className="h-3 w-1.5 shrink-0 text-[#7127EA]" />}
+                  trailing={
+                    <ChevronRightIcon className="h-3 w-1.5 shrink-0 text-[#7127EA] dark:text-[#C4ABFF]" />
+                  }
                   onSelect={() => {
                     onOpenPermission(columnKey)
                   }}
@@ -210,7 +213,7 @@ function ColumnHeader({ columnKey }: { columnKey: TaskColumnKey }) {
           type="button"
           onClick={cycleSort}
           aria-label={`Sort by ${label}`}
-          className="flex h-6 w-4 shrink-0 items-center justify-center rounded text-[#7127EA] outline-none hover:bg-[#F0E9FD] focus-visible:ring-2 focus-visible:ring-[#A181FF]"
+          className="flex h-6 w-4 shrink-0 items-center justify-center rounded text-[#7127EA] outline-none hover:bg-[#F0E9FD] focus-visible:ring-2 focus-visible:ring-[#A181FF] dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/25"
         >
           <SortArrowsIcon direction={direction} className="h-[1.195rem] w-[0.7rem]" />
         </button>
@@ -227,7 +230,7 @@ function HeaderItem({
 }: ComponentProps<typeof Menu.Item> & { icon: ReactNode; trailing?: ReactNode }) {
   return (
     <Menu.Item className={headerMenuStyles.item} {...props}>
-      <span className="flex size-6 shrink-0 items-center justify-center text-[#7127EA] [&_svg]:size-5">
+      <span className="flex size-6 shrink-0 items-center justify-center text-[#7127EA] dark:text-[#C4ABFF] [&_svg]:size-5">
         {icon}
       </span>
       <span className="min-w-0 flex-1 truncate">{children}</span>
@@ -243,7 +246,7 @@ function HeaderCheck({
 }: ComponentProps<typeof Menu.CheckboxItem> & { icon: ReactNode }) {
   return (
     <Menu.CheckboxItem className={headerMenuStyles.item} {...props}>
-      <span className="flex size-6 shrink-0 items-center justify-center text-[#7127EA] [&_svg]:size-5">
+      <span className="flex size-6 shrink-0 items-center justify-center text-[#7127EA] dark:text-[#C4ABFF] [&_svg]:size-5">
         {icon}
       </span>
       <span className="min-w-0 flex-1 truncate">{children}</span>

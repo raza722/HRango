@@ -6,10 +6,13 @@ import { toast } from 'sonner'
 
 import { ErrorState } from '@/components/feedback/error-state'
 import { PageSpinner } from '@/components/feedback/spinner'
+import { UnsavedChangesDialog } from '@/components/feedback/unsaved-changes-dialog'
 import { PageContainer } from '@/components/layout'
 import { downloadText, toCsv } from '@/features/payroll'
+import { useUnsavedChangesGuard } from '@/hooks/use-unsaved-changes-guard'
 import { ApiError } from '@/lib/api-error'
 import { ACCEPTED_FILE_TYPES, uploadFile } from '@/lib/files'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { manpowerApi } from '../../api/manpower.api'
@@ -111,16 +114,21 @@ function PlanForm({
   const [uploading, setUploading] = useState(false)
   // The people the existing-position picker offers: those the user reaches with this screen.
   const permission = mode === 'edit' ? MP_CODES.planningEdit : MP_CODES.planningCreate
+  const canEdit = useCan(MP_CODES.planningEdit)
   const schema = useMemo(() => makePlanFormSchema(lookups.durations), [lookups.durations])
+  const [initialValues] = useState(() => (plan ? toPlanFormValues(plan) : EMPTY_PLAN))
   const form = useForm<PlanFormValues>({
     resolver: zodResolver(schema),
-    defaultValues: plan ? toPlanFormValues(plan) : EMPTY_PLAN,
+    defaultValues: initialValues,
   })
   const { control, register, setValue, getValues, handleSubmit, formState, setError } = form
   const newLines = useFieldArray({ control, name: 'newPositions', keyName: 'fieldKey' })
   const existingLines = useFieldArray({ control, name: 'existingPositions', keyName: 'fieldKey' })
   const files = useFieldArray({ control, name: 'files', keyName: 'fieldKey' })
   const watched = useWatch({ control })
+  // The pickers set values without marking the form dirty, so compare with what it opened with.
+  const changed = formState.isDirty || JSON.stringify(watched) !== JSON.stringify(initialValues)
+  const guard = useUnsavedChangesGuard(!readOnly && changed && !save.isSuccess)
   const [budgetDurationId, departmentId] = useWatch({
     control,
     name: ['budgetDurationId', 'departmentId'],
@@ -332,6 +340,7 @@ function PlanForm({
       { id: plan?.id, input: toPlanInput(values, plan?.rowVersion) },
       {
         onSuccess: () => {
+          guard.allowNextNavigation()
           void navigate({ to: '/manpower-planning/planning' })
         },
         onError: (error) => {
@@ -355,11 +364,32 @@ function PlanForm({
 
   const errors = formState.errors
   const linesError = errors.newPositions?.message ?? errors.newPositions?.root?.message
+  // Plan Details: back to the list, or on to Edit when the plan can still change.
+  const editLink =
+    mode === 'view' && plan && canEdit && !plan.isLocked ? (
+      <Link
+        to="/manpower-planning/planning/$planId/edit"
+        params={{ planId: plan.id }}
+        className={cn(footerButton, accent.bg)}
+      >
+        Edit
+      </Link>
+    ) : null
 
   return (
     <form noValidate onSubmit={(event) => void submit(event)} aria-label={title}>
       <MpCard
         as="h1"
+        actions={
+          mode === 'view' ? (
+            <>
+              <Link to="/manpower-planning/planning" className={cn(footerButton, accent.outline)}>
+                Back
+              </Link>
+              {editLink}
+            </>
+          ) : undefined
+        }
         title={
           <>
             {title}
@@ -379,12 +409,12 @@ function PlanForm({
         )}
         <fieldset disabled={readOnly} className="grid min-w-0 gap-8">
           <div className="grid grid-cols-1 gap-x-5 gap-y-6 px-4 sm:px-6 @md:grid-cols-2 @4xl:grid-cols-4">
-            <MpField label="Title" error={errors.title?.message}>
+            <MpField label="Title" required error={errors.title?.message}>
               {(a11y) => (
                 <input {...a11y} {...register('title')} className={cn(boxClass, 'w-full')} />
               )}
             </MpField>
-            <MpField label="Plan Year" error={errors.budgetDurationId?.message}>
+            <MpField label="Plan Year" required error={errors.budgetDurationId?.message}>
               {(a11y) => (
                 <MpSelect
                   {...a11y}
@@ -482,7 +512,7 @@ function PlanForm({
             </MpField>
           </div>
 
-          <section aria-labelledby="new-positions" className="grid gap-5">
+          <section aria-labelledby="new-positions" className="grid min-w-0 gap-5">
             <BarTitle
               id="new-positions"
               actions={
@@ -534,7 +564,7 @@ function PlanForm({
             </div>
           </section>
 
-          <section aria-labelledby="existing-positions" className="grid gap-5">
+          <section aria-labelledby="existing-positions" className="grid min-w-0 gap-5">
             <BarTitle
               id="existing-positions"
               actions={
@@ -583,7 +613,7 @@ function PlanForm({
             </div>
           </section>
 
-          <section aria-labelledby="plan-description" className="grid gap-4">
+          <section aria-labelledby="plan-description" className="grid min-w-0 gap-4">
             <BarTitle id="plan-description">Description</BarTitle>
             <div className="px-4 sm:pr-7 sm:pl-7">
               <textarea
@@ -599,7 +629,7 @@ function PlanForm({
             </div>
           </section>
 
-          <section aria-labelledby="plan-files" className="grid gap-4">
+          <section aria-labelledby="plan-files" className="grid min-w-0 gap-4">
             <BarTitle
               id="plan-files"
               actions={
@@ -675,27 +705,31 @@ function PlanForm({
           </section>
         </fieldset>
 
-        <div className="flex flex-wrap justify-end gap-4 px-4 sm:px-7">
-          {readOnly ? (
-            <Link to="/manpower-planning/planning" className={cn(footerButton, accent.outline)}>
-              Back
-            </Link>
-          ) : (
-            <>
+        {/* Plan Details has its Back and Edit beside the title. */}
+        {mode !== 'view' && (
+          <div className="flex flex-wrap justify-end gap-4 px-4 sm:px-7">
+            {readOnly ? (
               <Link to="/manpower-planning/planning" className={cn(footerButton, accent.outline)}>
-                Cancel
+                Back
               </Link>
-              <button
-                type="submit"
-                disabled={save.isPending || uploading}
-                className={cn(footerButton, accent.bg)}
-              >
-                {save.isPending ? 'Submitting…' : 'Submit'}
-              </button>
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                <Link to="/manpower-planning/planning" className={cn(footerButton, accent.outline)}>
+                  Cancel
+                </Link>
+                <button
+                  type="submit"
+                  disabled={save.isPending || uploading}
+                  className={cn(footerButton, accent.bg)}
+                >
+                  {save.isPending ? 'Submitting…' : 'Submit'}
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </MpCard>
+      <UnsavedChangesDialog guard={guard} />
     </form>
   )
 }

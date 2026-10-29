@@ -75,7 +75,7 @@ function PointsBadge({ points, className }: { points: number; className?: string
   return (
     <span
       className={cn(
-        'flex h-[1.75rem] shrink-0 items-center gap-1.5 rounded-[0.4rem] bg-[#F6F2FF] px-2 text-[#626262]',
+        'flex h-[1.75rem] shrink-0 items-center gap-1.5 rounded-[0.4rem] bg-[#F6F2FF] px-2 text-[#626262] dark:bg-[#7127EA]/10 dark:text-title',
         className,
       )}
     >
@@ -179,7 +179,7 @@ function StoryPointsPanel({ task, onClose }: { task: TaskRow; onClose: () => voi
                   <DropdownMenu>
                     <DropdownMenuTrigger
                       aria-label={`Options for ${name}'s story points`}
-                      className="flex size-7 shrink-0 items-center justify-center rounded-full text-[#626262] hover:bg-white"
+                      className="flex size-7 shrink-0 items-center justify-center rounded-full text-[#626262] hover:bg-white dark:text-title dark:hover:bg-white/5"
                     >
                       <MoreVerticalIcon className="size-4" />
                     </DropdownMenuTrigger>
@@ -195,9 +195,9 @@ function StoryPointsPanel({ task, onClose }: { task: TaskRow; onClose: () => voi
                             ),
                           )
                         }}
-                        className="h-9 gap-2 rounded-lg text-[0.8125rem] text-[#626262]"
+                        className="h-9 gap-2 rounded-lg text-[0.8125rem] text-[#626262] dark:text-title"
                       >
-                        <DeleteIcon className="size-4 text-[#DC3545]" />
+                        <DeleteIcon className="size-4 text-[#DC3545] dark:text-[#FF8A94]" />
                         Delete Story Points
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -250,7 +250,7 @@ function StoryPointsPanel({ task, onClose }: { task: TaskRow; onClose: () => voi
       </section>
 
       <div className="flex items-center justify-between rounded-[0.5625rem] bg-[rgba(221,221,221,0.2)] px-3 py-2">
-        <span className="text-[0.8125rem] font-medium text-[#626262]">
+        <span className="text-[0.8125rem] font-medium text-[#626262] dark:text-title">
           {RATING_LABELS[task.rating - 1] ?? 'Rate the results'}
         </span>
         <RatingStars
@@ -288,9 +288,9 @@ function PointsStepper({
     if (points !== value) onChange(points)
   }
   const stepButton =
-    'flex size-5 items-center justify-center rounded text-sm leading-none font-semibold text-[#7127EA] hover:bg-[#EEE7FF] disabled:opacity-40'
+    'flex size-5 items-center justify-center rounded text-sm leading-none font-semibold text-[#7127EA] dark:text-[#C4ABFF] hover:bg-[#EEE7FF] dark:hover:bg-[#7127EA]/25 disabled:opacity-40'
   return (
-    <span className="flex shrink-0 items-center gap-1 rounded-md bg-white px-1 py-0.5 shadow-[0_0_7px_rgba(0,0,0,0.1)]">
+    <span className="flex shrink-0 items-center gap-1 rounded-md bg-white px-1 py-0.5 shadow-[0_0_7px_rgba(0,0,0,0.1)] dark:bg-card">
       <button
         type="button"
         aria-label={`Fewer story points for ${name}`}
@@ -319,9 +319,9 @@ function PointsStepper({
             commit()
           }
         }}
-        className="h-6 w-8 rounded-[0.125rem] bg-[#F6F4FF] text-center text-[0.9rem] font-medium text-[#626262] outline-none focus:ring-1 focus:ring-[#A181FF]"
+        className="h-6 w-8 rounded-[0.125rem] bg-[#F6F4FF] text-center text-[0.9rem] font-medium text-[#626262] outline-none focus:ring-1 focus:ring-[#A181FF] dark:bg-[#7127EA]/10 dark:text-title"
       />
-      <span className="text-[0.6875rem] font-medium text-[#626262]">Points</span>
+      <span className="text-[0.6875rem] font-medium text-[#626262] dark:text-title">Points</span>
       <button
         type="button"
         aria-label={`More story points for ${name}`}

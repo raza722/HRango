@@ -6,8 +6,9 @@ import { ACCEPTED_FILE_TYPES, type FileRef, uploadFile } from '@/lib/files'
 
 /**
  * "Attachment" as drawn, with a real upload: the file goes to `POST /files` (module
- * `payroll`) as soon as it is chosen, and the form keeps `{id, name, url}` to send `fileId`.
- * A saved file shows as a link (signed, it expires; reopen the record for a fresh one).
+ * `payroll`) as soon as it is chosen, showing how much has gone, and the form keeps
+ * `{id, name, url}` to send `fileId`. A saved file shows as a link (signed, it expires;
+ * reopen the record for a fresh one).
  */
 export function UploadField({
   value,
@@ -26,7 +27,9 @@ export function UploadField({
 }) {
   const input = useRef<HTMLInputElement>(null)
   const inputId = useId()
-  const [busy, setBusy] = useState(false)
+  // 0-100 while a file is going up; null otherwise.
+  const [progress, setProgress] = useState<number | null>(null)
+  const busy = progress !== null
   const [failed, setFailed] = useState<string | null>(null)
   const message = failed ?? error
   return (
@@ -38,7 +41,7 @@ export function UploadField({
             className="flex min-w-0 flex-1 items-center truncate px-4 font-inter text-sm text-field-value"
           >
             {busy ? (
-              'Uploading…'
+              <span className="text-muted-foreground">Uploading {progress}%</span>
             ) : value ? (
               <a
                 href={value.url}
@@ -91,9 +94,9 @@ export function UploadField({
               const file = event.target.files?.[0]
               event.target.value = ''
               if (!file) return
-              setBusy(true)
+              setProgress(0)
               setFailed(null)
-              uploadFile(file, 'payroll')
+              uploadFile(file, 'payroll', setProgress)
                 .then((uploaded) => {
                   onChange({ id: uploaded.id, name: uploaded.name, url: uploaded.url })
                 })
@@ -103,7 +106,7 @@ export function UploadField({
                   )
                 })
                 .finally(() => {
-                  setBusy(false)
+                  setProgress(null)
                 })
             }}
           />

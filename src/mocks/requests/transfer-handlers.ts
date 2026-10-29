@@ -101,6 +101,11 @@ export const transferDef: CoreKindDef<StoredTransferRequest> = {
           fromDepartment: current.payload.fromDepartment,
         }
       : currentPlace(employeeId)
+    // A move to where the person already works (same branch and department) is no transfer.
+    if (from.fromBranchId === branch.id && from.fromDepartment === department.name) {
+      const message = `${nameOf(employeeId) ?? 'The employee'} already works in ${department.name} at ${branch.name}. Choose another branch or department.`
+      return invalid(message, { branchId: message })
+    }
     return {
       ...from,
       locationId: location.id,

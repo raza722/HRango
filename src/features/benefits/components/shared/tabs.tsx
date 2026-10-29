@@ -42,6 +42,7 @@ export function SubMenuTabs({
               <Link
                 to={item.to}
                 search={year ? { year } : {}}
+                activeOptions={{ exact: true }}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
                   tabClass,

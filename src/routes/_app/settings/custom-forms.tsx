@@ -1,9 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
-import { SettingsPlaceholder } from '@/features/settings'
-import { pageTitle } from '@/lib/constants'
-
+/** Settings → Custom Forms opens the Custom Form module's builder. */
 export const Route = createFileRoute('/_app/settings/custom-forms')({
-  head: () => ({ meta: [{ title: pageTitle('Custom Forms') }] }),
-  component: () => <SettingsPlaceholder section="customForms" standalone />,
+  beforeLoad: () => {
+    throw redirect({ to: '/custom-form/forms', replace: true })
+  },
 })

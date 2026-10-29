@@ -1,12 +1,7 @@
-import { MissingPunchMenuIcon, OvertimeMenuIcon } from '@/components/icons/attendance-menu-icons'
+import { MissingPunchMenuIcon } from '@/components/icons/attendance-menu-icons'
 
 /** Attendance menu entries that are not built yet. */
 export const PLANNED_SECTIONS = {
-  overtime: {
-    label: 'Overtime',
-    icon: OvertimeMenuIcon,
-    planned: 'Overtime claims with their approvals and the hours each day earns.',
-  },
   'missing-punch': {
     label: 'Missing Punch',
     icon: MissingPunchMenuIcon,

@@ -284,8 +284,9 @@ stateId, cityId, religion}` plus names in responses. Removed the rule **Name** f
 
 Backend features with no screen here:
 
-- **Overtime settings** (`GET/PUT /attendance/settings/overtime`: six switches + encashment shift minutes) — no tab.
-- **Overtime policies** (`/attendance/settings/overtime-policies` with slabs) — no tab.
+- **Overtime settings** (`GET/PUT /attendance/settings/overtime`) and **overtime policies**
+  (`/attendance/settings/overtime-policies` with slabs) — built as the Settings and Overtime Policy tabs of
+  Attendance → Overtime, see [attendance-overtime.md](./attendance-overtime.md).
 - **Biometric devices** (`/attendance/settings/devices` CRUD, `/enrolments`, `/punches`) — no tab (Logs' "Machine"
   import was removed).
 - **Time slots** (`/scheduling/settings/time-slots`) — no Time Slots tab (Scheduling's create form only).
@@ -457,8 +458,8 @@ number; API ids are numeric strings) and is turned into a string. On the penalty
 Backend has, no screen:
 
 - **Biometric devices** (`/attendance/settings/devices` CRUD, `/enrolments`, `/punches` for a connector).
-- **Overtime settings** (`/attendance/settings/overtime`) and **overtime policies**
-  (`/attendance/settings/overtime-policies` with slabs).
+- (Now built: overtime settings and policies, under Attendance → Overtime; see
+  [attendance-overtime.md](./attendance-overtime.md).)
 - **Time slots** (`/scheduling/settings/time-slots`): no Time Slots tab.
 - `POST /attendance/logs/import/csv` (raw CSV; the screen parses the file and uses the JSON import instead).
 - `GET /attendance/overview/summary` (count tiles of the overview; the overview has no tiles).
@@ -476,9 +477,9 @@ Frontend has (had), backend lacks:
   company, joining date, designation) on the day.
 - Import from a machine (needs a device connector); legend states Leave Applied, Workable shifts / hours, Official
   Duty.
-- Attendance menu placeholders **Overtime** and **Missing Punch** (`/attendance/$section`) stay placeholders: overtime
-  is a request kind (requests module); missing punches are the time sheet's `?flag=missing_punch` list plus punch
-  requests.
+- Attendance menu placeholder **Missing Punch** (`/attendance/$section`) stays a placeholder: missing punches are the
+  time sheet's `?flag=missing_punch` list plus punch requests. **Overtime** is built (`/attendance/overtime`) on the
+  request kind `overtime` and the overtime settings, see [attendance-overtime.md](./attendance-overtime.md).
 - Scheduling settings tab switches (see Settings).
 
 ## Backend issues found (route and what is wrong)

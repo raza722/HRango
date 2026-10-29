@@ -176,13 +176,14 @@ function GeoFenceWizard({
       footer={
         step === 1 ? (
           <>
+            {/* Step 1 has no step before it: this closes the dialog. */}
             <Button
-              variant="outline"
+              variant="destructive"
               size="lg"
               onClick={onClose}
-              className={cn(stepDialogButtonClass, 'mr-auto text-sidebar dark:text-heading')}
+              className={cn(stepDialogButtonClass, 'mr-auto')}
             >
-              Back
+              Cancel
             </Button>
             <Button size="lg" onClick={next} className={cn(stepDialogButtonClass, navyButtonClass)}>
               Next
@@ -424,7 +425,7 @@ const columns: DataTableColumn<GeoFenceSetting>[] = [
     header: 'For Shift',
     cell: (row) => (
       <span className="font-medium text-sidebar dark:text-heading">
-        {row.isForShift ? 'YES' : 'NO'}
+        {row.isForShift ? 'Yes' : 'No'}
       </span>
     ),
   },

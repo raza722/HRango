@@ -1,10 +1,13 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
 import { addDays, differenceInCalendarMonths, format, nextMonday } from 'date-fns'
+import { http } from 'msw'
 import { describe, expect, it } from 'vitest'
 
+import { server } from '@/mocks/node'
 import { standardRequests } from '@/mocks/requests/standard'
 import { scheduleEntries } from '@/mocks/scheduling/handlers'
+import { apiPath } from '@/mocks/utils'
 import { renderApp } from '@/test/test-utils'
 
 /** Opens a date field's calendar (on `opensOn`'s month) and picks the day. */
@@ -127,5 +130,43 @@ describe('Work From Home (the shared standard request pages, on /requests/work-f
       expect(standardRequests.find('wfh_0005')?.status).toBe('cancelled')
     })
     for (const date of dates) expect(entryOf('em_laiba', date)?.workFromHome).toBe(false)
+  })
+
+  it('lists the requests of the people who report to you under Subordinates', async () => {
+    const views: (string | null)[] = []
+    server.use(
+      http.get(apiPath('/requests/work-from-home'), ({ request }) => {
+        views.push(new URL(request.url).searchParams.get('view'))
+      }),
+    )
+    const { user, router } = renderApp('/requests/work-from-home')
+    const whose = await screen.findByRole('tablist', { name: 'Whose requests' })
+    expect(
+      within(whose)
+        .getAllByRole('tab')
+        .map((tab) => tab.textContent),
+    ).toEqual(['My Requests', 'All Requests', 'Subordinates'])
+    expect(await screen.findByRole('cell', { name: 'WFH-0007' })).toBeVisible()
+
+    await user.click(within(whose).getByRole('tab', { name: 'Subordinates' }))
+    expect(await screen.findByRole('cell', { name: 'WFH-0001' })).toBeVisible()
+    // The mock's Subordinates is everyone but you: your own WFH-0007 is not listed.
+    expect(screen.queryByRole('cell', { name: 'WFH-0007' })).not.toBeInTheDocument()
+    expect(within(whose).getByRole('tab', { name: 'Subordinates' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(router.state.location.search).toMatchObject({ scope: 'subordinates' })
+    expect(views).toContain('subordinates')
+  })
+
+  it('keeps Subordinates to the types that draw it', async () => {
+    renderApp('/requests/relaxation?scope=subordinates')
+    const whose = await screen.findByRole('tablist', { name: 'Whose requests' })
+    expect(within(whose).queryByRole('tab', { name: 'Subordinates' })).not.toBeInTheDocument()
+    expect(within(whose).getByRole('tab', { name: 'My Requests' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
   })
 })

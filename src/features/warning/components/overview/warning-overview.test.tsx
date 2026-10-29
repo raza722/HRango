@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import { DEMO_USER } from '@/mocks/auth/handlers'
 import { MOCK_TOKEN_PREFIX } from '@/mocks/utils'
+import { warningPenalties } from '@/mocks/warning-policies/store'
 import { useAuthStore } from '@/stores/auth-store'
 import { renderApp } from '@/test/test-utils'
 
@@ -100,11 +101,41 @@ describe('Warning → Penalty, end to end', () => {
 
     await user.click(screen.getByRole('button', { name: 'Add Penalty' }))
     expect(screen.getByLabelText('Count')).toHaveValue('1')
+    // The first penalty counts in the policy's own period (Half Day Leave is yearly).
+    expect(screen.getByRole('combobox', { name: /^Time Span/ })).toHaveTextContent('Year')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByText('Penalties saved')).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.getByText('Showing 1–5 of 7')).toBeInTheDocument()
     })
+    expect(screen.getByRole('cell', { name: '1st / Year' })).toBeInTheDocument()
   })
+
+  it('lists penalties in their policy’s period, and shows the page new penalties land on', async () => {
+    const { user, router } = renderApp('/warning/penalty')
+    await screen.findByRole('table', { name: 'Penalties' }, { timeout: 15_000 })
+    // Early Departure is weekly, Overtime Cap daily: their penalties count per week.
+    expect(await screen.findByRole('cell', { name: '1st / Week' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '3rd / Week' })).toBeInTheDocument()
+
+    // From the list's second page, Half Day Leave's first penalties (listed fifth) open page 1.
+    await router.navigate({ to: '/warning/penalty', search: { page: 2, edit: '4' } })
+    expect(await screen.findByText('Showing 6–6 of 6')).toBeInTheDocument()
+    expect(await screen.findByText(/Penalties of/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Add Penalty' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect((await screen.findAllByText('Penalties saved')).length).toBeGreaterThan(0)
+    await waitFor(() => {
+      expect(router.state.location.search).toMatchObject({ page: 1 })
+    })
+    expect(warningPenalties.all().find((penalty) => penalty.warningPolicyId === '4')).toMatchObject(
+      { afterCount: 1, period: 'year' },
+    )
+    // Page 1 now lists Half Day Leave's new penalty among the first five.
+    expect(
+      await screen.findByText('Showing 1–5 of 7', undefined, { timeout: 15_000 }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: /^Half Day Leave/ })).toBeInTheDocument()
+  }, 60_000)
 })

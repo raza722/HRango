@@ -1,4 +1,4 @@
-import { type SyntheticEvent, useId, useState } from 'react'
+import { type SyntheticEvent, useEffect, useId, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -35,17 +35,35 @@ const chosen = (message: string) =>
     .nullable()
     .refine((value) => Boolean(value), { message })
 
-const schema = z.object({
-  employeeId: chosen('Choose the employee'),
-  locationId: chosen('Choose the location'),
-  branchId: chosen('Choose the branch'),
-  departmentId: chosen('Choose the department'),
-  lineManagerId: chosen('Choose the line manager'),
-  finalAuthorityId: chosen('Choose the final authority'),
-  effectiveDate: z.string().min(1, 'Choose the effective date'),
-  description: z.string().trim().max(4000, 'Keep it under 4000 characters'),
-  application: z.string().max(20_000, 'The application is too long'),
-})
+const schema = z
+  .object({
+    employeeId: chosen('Choose the employee'),
+    locationId: chosen('Choose the location'),
+    branchId: chosen('Choose the branch'),
+    departmentId: chosen('Choose the department'),
+    lineManagerId: chosen('Choose the line manager'),
+    finalAuthorityId: chosen('Choose the final authority'),
+    effectiveDate: z.string().min(1, 'Choose the effective date'),
+    description: z.string().trim().max(4000, 'Keep it under 4000 characters'),
+    application: z.string().max(20_000, 'The application is too long'),
+    /** Where the person works now (read, not chosen), once it is known. */
+    current: z.object({ branchId: z.string().nullable(), departmentId: z.string().nullable() }),
+  })
+  .superRefine((values, ctx) => {
+    // A move to the same branch and department is no transfer (the API refuses it too).
+    if (
+      values.branchId &&
+      values.departmentId &&
+      values.branchId === values.current.branchId &&
+      values.departmentId === values.current.departmentId
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['branchId'],
+        message: 'The employee already works in this branch and department. Choose another.',
+      })
+    }
+  })
 type Values = z.infer<typeof schema>
 
 const FIELDS = [
@@ -78,6 +96,7 @@ const toValues = (request: TransferRequest | undefined): Values => ({
   effectiveDate: request?.payload.effectiveDate ?? '',
   description: request?.description ?? '',
   application: request?.application ?? '',
+  current: { branchId: null, departmentId: null },
 })
 
 const today = () => {
@@ -141,6 +160,19 @@ export function TransferRequestDialog({
     label: item.name,
   }))
   const existing = detail.data?.request.attachments ?? []
+  // Where the person works now: the picked person's lookup row, or (a saved request) the
+  // branch and department its employee card names.
+  const currentBranchId =
+    person?.branchId ??
+    lookups.data?.branches.find((item) => item.name === request?.employee.branch)?.id ??
+    null
+  const currentDepartmentId =
+    person?.departmentId ??
+    lookups.data?.departments.find((item) => item.name === request?.employee.department)?.id ??
+    null
+  useEffect(() => {
+    form.setValue('current', { branchId: currentBranchId, departmentId: currentDepartmentId })
+  }, [form, currentBranchId, currentDepartmentId])
 
   const regenerate = () => {
     const values = form.getValues()

@@ -1,4 +1,5 @@
 import { type ReactNode, useRef } from 'react'
+import { CalendarClock } from 'lucide-react'
 
 import { Checkbox } from '@/components/ui/checkbox'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -16,7 +17,14 @@ import {
   type ViewKind,
   type Workspace,
 } from '../../types/pm.types'
-import { filterCount, hideColumn, showColumn, stepColumn, type TaskFilters } from './list-utils'
+import {
+  filterCount,
+  hideColumn,
+  NO_ASSIGNEE,
+  showColumn,
+  stepColumn,
+  type TaskFilters,
+} from './list-utils'
 import { PmMenu, PmMenuContent, PmMenuItem, PmMenuLabel, PmMenuTrigger } from './menu-parts'
 import { VIEW_ICONS } from './view-icons'
 import {
@@ -31,7 +39,7 @@ import { popupStyles } from './workspace-styles'
 
 /** View, Filters and Customize buttons: 51 px, 12 px radius, Medium 18 #3D3D3D, icons #5D5D5D. */
 const barButton =
-  'inline-flex h-[3.1875rem] shrink-0 items-center gap-[0.6875rem] rounded-xl px-4 text-lg leading-[1.5] font-medium text-[#3D3D3D] outline-none transition-colors hover:bg-[#F8F5FF] focus-visible:ring-2 focus-visible:ring-[#A181FF] data-[state=open]:bg-[#F8F5FF] [&_svg]:text-[#5D5D5D]'
+  'inline-flex h-[3.1875rem] shrink-0 items-center gap-[0.6875rem] rounded-xl px-4 text-lg leading-[1.5] font-medium text-[#3D3D3D] dark:text-title outline-none transition-colors hover:bg-[#F8F5FF] dark:hover:bg-[#7127EA]/15 focus-visible:ring-2 focus-visible:ring-[#A181FF] data-[state=open]:bg-[#F8F5FF] dark:data-[state=open]:bg-[#7127EA]/15 [&_svg]:text-[#5D5D5D] dark:[&_svg]:text-title'
 
 /** The 35 px grey rules between the view buttons and before Add Task. */
 const Divider = () => (
@@ -43,12 +51,14 @@ const Divider = () => (
 
 /**
  * The view bar (Header Section 1:3769): List and the workspace's other views, "+ View", Filters,
- * Customize and the purple "Add Task" button with its drop-down.
+ * Customize and the purple "Add Task" button with its drop-down. After the views, the Overdue tab
+ * (not drawn; the BRD's "overdue tab") with how many open tasks are past their due date.
  */
 export function ViewBar({
   workspace,
   view,
   onView,
+  overdue,
   onAddView,
   filters,
   onFilters,
@@ -60,6 +70,7 @@ export function ViewBar({
   workspace: Workspace
   view: ViewKind
   onView: (view: ViewKind) => void
+  overdue: { count: number; active: boolean; onSelect: () => void }
   onAddView: (view: ViewKind) => void
   filters: TaskFilters
   onFilters: (filters: TaskFilters) => void
@@ -74,11 +85,11 @@ export function ViewBar({
   const missing = VIEW_KINDS.filter((kind) => !views.includes(kind))
 
   return (
-    <div className="flex min-h-[4.6875rem] flex-wrap items-center gap-2 rounded-xl bg-white p-3">
+    <div className="flex min-h-[4.6875rem] flex-wrap items-center gap-2 rounded-xl bg-white p-3 dark:bg-card">
       <nav aria-label="Views" className="flex min-w-0 flex-wrap items-center gap-2">
         {views.map((kind) => {
           const { Icon, size } = VIEW_ICONS[kind]
-          const active = kind === view
+          const active = kind === view && !overdue.active
           return (
             <button
               key={kind}
@@ -89,7 +100,8 @@ export function ViewBar({
               }}
               className={cn(
                 barButton,
-                active && 'bg-[#F8F5FF] font-semibold text-[#7127EA] [&_svg]:text-[#7127EA]',
+                active &&
+                  'bg-[#F8F5FF] font-semibold text-[#7127EA] dark:bg-[#7127EA]/10 dark:text-[#C4ABFF] [&_svg]:text-[#7127EA] dark:[&_svg]:text-[#C4ABFF]',
               )}
             >
               <Icon className={size} />
@@ -97,6 +109,25 @@ export function ViewBar({
             </button>
           )
         })}
+        <button
+          type="button"
+          aria-label={overdue.count > 0 ? `Overdue (${String(overdue.count)})` : 'Overdue'}
+          aria-current={overdue.active ? 'page' : undefined}
+          onClick={overdue.onSelect}
+          className={cn(
+            barButton,
+            overdue.active &&
+              'bg-[#F8F5FF] font-semibold text-[#7127EA] dark:bg-[#7127EA]/10 dark:text-[#C4ABFF] [&_svg]:text-[#7127EA] dark:[&_svg]:text-[#C4ABFF]',
+          )}
+        >
+          <CalendarClock aria-hidden="true" className="size-5" />
+          Overdue
+          {overdue.count > 0 && (
+            <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-[#FDECEE] px-1.5 text-sm font-semibold text-[#B7192C] dark:bg-[#DC3545]/15 dark:text-[#FF9AA3]">
+              {overdue.count}
+            </span>
+          )}
+        </button>
         {canAddView && <Divider />}
         {canAddView && (
           <PmMenu modal={false}>
@@ -218,7 +249,7 @@ function CheckRow({
   children?: ReactNode
 }) {
   return (
-    <li className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-[#FAFAFA]">
+    <li className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-[#FAFAFA] dark:hover:bg-white/5">
       <Checkbox
         id={id}
         tone="violet"
@@ -229,7 +260,10 @@ function CheckRow({
         }}
         className="size-4"
       />
-      <label htmlFor={id} className="min-w-0 flex-1 truncate text-[0.8125rem] text-[#4F4F4F]">
+      <label
+        htmlFor={id}
+        className="min-w-0 flex-1 truncate text-[0.8125rem] text-[#4F4F4F] dark:text-title"
+      >
         {label}
       </label>
       {children}
@@ -263,7 +297,10 @@ function FiltersPopover({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button type="button" className={cn(barButton, count > 0 && 'text-[#7127EA]')}>
+        <button
+          type="button"
+          className={cn(barButton, count > 0 && 'text-[#7127EA] dark:text-[#C4ABFF]')}
+        >
           <FiltersIcon className="h-[1.1875rem] w-[1.0625rem]" />
           Filters
           {count > 0 && (
@@ -289,7 +326,7 @@ function FiltersPopover({
             onClick={() => {
               onFilters({ statusIds: [], priorities: [], assigneeIds: [] })
             }}
-            className="text-xs font-medium text-[#7127EA] hover:underline disabled:opacity-40"
+            className="text-xs font-medium text-[#7127EA] hover:underline disabled:opacity-40 dark:text-[#C4ABFF]"
           >
             Clear all
           </button>
@@ -348,6 +385,14 @@ function FiltersPopover({
                 }}
               />
             ))}
+            <CheckRow
+              id="filter-assignee-none"
+              label="No assignee"
+              checked={filters.assigneeIds.includes(NO_ASSIGNEE)}
+              onChange={(on) => {
+                toggle('assigneeIds', NO_ASSIGNEE, on)
+              }}
+            />
           </ul>
         </fieldset>
       </PopoverContent>
@@ -414,7 +459,7 @@ function CustomizePopover({
                       onClick={() => {
                         onColumns(stepColumn(columns, key, -1))
                       }}
-                      className="flex size-6 items-center justify-center rounded text-[#7127EA] hover:bg-[#F0E9FD] disabled:opacity-30"
+                      className="flex size-6 items-center justify-center rounded text-[#7127EA] hover:bg-[#F0E9FD] disabled:opacity-30 dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/25"
                     >
                       <ChevronDownIcon className="size-4 rotate-180" />
                     </button>
@@ -425,7 +470,7 @@ function CustomizePopover({
                       onClick={() => {
                         onColumns(stepColumn(columns, key, 1))
                       }}
-                      className="flex size-6 items-center justify-center rounded text-[#7127EA] hover:bg-[#F0E9FD] disabled:opacity-30"
+                      className="flex size-6 items-center justify-center rounded text-[#7127EA] hover:bg-[#F0E9FD] disabled:opacity-30 dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/25"
                     >
                       <ChevronDownIcon className="size-4" />
                     </button>

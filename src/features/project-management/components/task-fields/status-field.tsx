@@ -21,7 +21,7 @@ const TASK_TYPE_INFO =
   "Customize names and icons to match your workflow needs. Whether it's Epics, Customers, People, or 1on1s."
 
 const optionRow =
-  'flex h-[2.4rem] w-full items-center gap-2.5 rounded-[0.5rem] border px-2.5 text-[0.8125rem] font-medium text-[#626262] transition-colors'
+  'flex h-[2.4rem] w-full items-center gap-2.5 rounded-[0.5rem] border px-2.5 text-[0.8125rem] font-medium text-[#626262] dark:text-title transition-colors'
 
 /**
  * Status column ("Status Column Field Dropdown", 1:64968): the status chip; the popup has the
@@ -66,7 +66,7 @@ export function StatusCell({ task, workspace, onOpenStatusSettings }: TaskCellPr
         >
           <StatusChip status={current} />
           {task.type === 'milestone' && (
-            <MilestoneIcon className="size-4 shrink-0 text-[#D9A800]" />
+            <MilestoneIcon className="size-4 shrink-0 text-[#D9A800] dark:text-[#E8D36A]" />
           )}
           <ChevronDownIcon className={fieldStyles.cellChevron} />
         </button>
@@ -75,7 +75,7 @@ export function StatusCell({ task, workspace, onOpenStatusSettings }: TaskCellPr
       <div
         role="tablist"
         aria-label="Status or Task Type"
-        className="flex gap-1 rounded-[0.6rem] border border-[#E9E9E9] p-1"
+        className="flex gap-1 rounded-[0.6rem] border border-[#E9E9E9] p-1 dark:border-border"
       >
         {(
           [
@@ -94,8 +94,8 @@ export function StatusCell({ task, workspace, onOpenStatusSettings }: TaskCellPr
             className={cn(
               'h-8 flex-1 rounded-[0.45rem] border text-[0.8125rem] font-medium transition-colors',
               tab === key
-                ? 'border-[#7127EA] bg-[#F6F4FF] text-[#3D3D3D]'
-                : 'border-transparent text-[#5D5D5D] hover:bg-[#F8F5FF]',
+                ? 'border-[#7127EA] bg-[#F6F4FF] text-[#3D3D3D] dark:bg-[#7127EA]/10 dark:text-title'
+                : 'border-transparent text-[#5D5D5D] hover:bg-[#F8F5FF] dark:text-title dark:hover:bg-[#7127EA]/15',
             )}
           >
             {label}
@@ -125,7 +125,7 @@ export function StatusCell({ task, workspace, onOpenStatusSettings }: TaskCellPr
                     onOpenStatusSettings()
                   }}
                   className={cn(
-                    'flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-[#3D3D3D] shadow-[0_0_6.6px_rgba(0,0,0,0.12)]',
+                    'flex size-9 shrink-0 items-center justify-center rounded-full bg-white text-[#3D3D3D] shadow-[0_0_6.6px_rgba(0,0,0,0.12)] dark:bg-card dark:text-title',
                     !onOpenStatusSettings && 'cursor-not-allowed opacity-60',
                   )}
                 >
@@ -144,7 +144,7 @@ export function StatusCell({ task, workspace, onOpenStatusSettings }: TaskCellPr
             {groups.map(({ group, statuses: inGroup }, index) => (
               <section key={group} aria-label={STATUS_GROUP_LABELS[group]}>
                 {index > 0 && <div className={cn(fieldStyles.divider, 'mb-3')} />}
-                <h4 className="text-[0.8125rem] font-medium text-[#3D3D3D]">
+                <h4 className="text-[0.8125rem] font-medium text-[#3D3D3D] dark:text-title">
                   {STATUS_GROUP_LABELS[group]}
                 </h4>
                 <ul className="mt-2 flex flex-col gap-1.5">
@@ -161,8 +161,8 @@ export function StatusCell({ task, workspace, onOpenStatusSettings }: TaskCellPr
                           className={cn(
                             optionRow,
                             selected
-                              ? 'border-[#7127EA] bg-[#F6F4FF]'
-                              : 'border-transparent bg-[#F7F7F7] hover:bg-[#F6F4FF]',
+                              ? 'border-[#7127EA] bg-[#F6F4FF] dark:bg-[#7127EA]/10'
+                              : 'border-transparent bg-[#F7F7F7] hover:bg-[#F6F4FF] dark:bg-white/5 dark:hover:bg-[#7127EA]/15',
                           )}
                         >
                           <StatusIconBox color={status.color} />
@@ -181,13 +181,15 @@ export function StatusCell({ task, workspace, onOpenStatusSettings }: TaskCellPr
         <div role="tabpanel" aria-label="Task Type" className="mt-3">
           <div className={cn(fieldStyles.divider, 'mb-3')} />
           <div className="flex items-center gap-1.5">
-            <h4 className="text-[0.8125rem] font-medium text-[#3D3D3D]">Task Types</h4>
+            <h4 className="text-[0.8125rem] font-medium text-[#3D3D3D] dark:text-title">
+              Task Types
+            </h4>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
                   aria-label="About task types"
-                  className="flex size-5 items-center justify-center rounded-full text-[#777676] hover:bg-[#F7F7F7]"
+                  className="flex size-5 items-center justify-center rounded-full text-[#777676] hover:bg-[#F7F7F7] dark:text-grey dark:hover:bg-white/5"
                 >
                   <InfoIcon className="size-3.5" />
                 </button>
@@ -211,18 +213,20 @@ export function StatusCell({ task, workspace, onOpenStatusSettings }: TaskCellPr
                     className={cn(
                       optionRow,
                       selected
-                        ? 'border-[#7127EA] bg-[#F6F4FF]'
-                        : 'border-transparent bg-[#F7F7F7] hover:bg-[#F6F4FF]',
+                        ? 'border-[#7127EA] bg-[#F6F4FF] dark:bg-[#7127EA]/10'
+                        : 'border-transparent bg-[#F7F7F7] hover:bg-[#F6F4FF] dark:bg-white/5 dark:hover:bg-[#7127EA]/15',
                     )}
                   >
                     {type.key === 'task' ? (
                       <StatusIconBox color="#2E64E2" />
                     ) : (
-                      <MilestoneIcon className="size-[1.05rem] text-[#D9A800]" />
+                      <MilestoneIcon className="size-[1.05rem] text-[#D9A800] dark:text-[#E8D36A]" />
                     )}
                     {type.label}
                     {type.note && (
-                      <span className="text-[0.6875rem] text-[#707070]">{type.note}</span>
+                      <span className="text-[0.6875rem] text-[#707070] dark:text-grey">
+                        {type.note}
+                      </span>
                     )}
                   </button>
                 </li>

@@ -129,12 +129,12 @@ export function seedGeoFences(): GeoFence[] {
     createdAt: created,
   })
   return [
-    circle('gf_001', 'Islamabad Blue Area (GF-001)', 33.7104, 73.0567, 300),
-    circle('gf_002', 'Karachi Showroom Clifton (GF-002)', 24.8138, 67.0299, 200),
-    circle('gf_004', 'Rawalpindi Saddar (GF-004)', 33.5973, 73.0479, 250),
+    circle('gf_001', 'Islamabad Blue Area', 33.7104, 73.0567, 300),
+    circle('gf_002', 'Karachi Showroom Clifton', 24.8138, 67.0299, 200),
+    circle('gf_004', 'Rawalpindi Saddar', 33.5973, 73.0479, 250),
     {
       id: 'gf_006',
-      name: 'Dubai Business Bay (GF-006)',
+      name: 'Dubai Business Bay',
       shape: {
         type: 'polygon',
         points: [
@@ -148,13 +148,13 @@ export function seedGeoFences(): GeoFence[] {
     },
     {
       id: 'gf_003',
-      name: 'Head Office Gulberg (GF-003)',
+      name: 'Head Office Gulberg',
       shape: { type: 'circle', latitude: 31.5136, longitude: 74.3434, radiusMeters: 250 },
       createdAt: created,
     },
     {
       id: 'gf_005',
-      name: 'Johar Town Campus (GF-005)',
+      name: 'Johar Town Campus',
       shape: {
         type: 'polygon',
         points: [

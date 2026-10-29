@@ -23,6 +23,9 @@ const optional = (max: number) =>
     .trim()
     .max(max, `Keep it under ${String(max)} characters`)
 
+/** The largest Current Value kept exactly (beyond it the number loses its cents). */
+const MAX_ASSET_VALUE = 999_999_999_999.99
+
 const schema = z.object({
   name: z.string().trim().min(1, 'Enter the name').max(200, 'Keep it under 200 characters'),
   assetTypeId: z.string().min(1, 'Choose the asset type'),
@@ -31,10 +34,21 @@ const schema = z.object({
   assetCondition: z.enum(ASSET_CONDITIONS),
   manufacturer: optional(100),
   model: optional(100),
-  currentValue: z.string().refine((value) => {
+  currentValue: z.string().superRefine((value, ctx) => {
     const text = value.replace(/,/g, '').trim()
-    return text === '' || (Number.isFinite(Number(text)) && Number(text) >= 0)
-  }, 'Enter an amount of 0 or more'),
+    if (text === '') return
+    const amount = Number(text)
+    const problem = !Number.isFinite(amount)
+      ? 'Enter a number'
+      : amount < 0
+        ? 'Enter an amount of 0 or more'
+        : amount > MAX_ASSET_VALUE
+          ? 'Enter an amount up to 999,999,999,999.99'
+          : (text.split('.')[1]?.length ?? 0) > 2
+            ? 'Use at most 2 decimal places'
+            : null
+    if (problem) ctx.addIssue({ code: 'custom', message: problem })
+  }),
   acquiredDate: z.string(),
   description: optional(2000),
 })
@@ -186,14 +200,20 @@ function AssetForm({
         onSubmit={(event: SyntheticEvent) => void submit(event)}
         className={cn('grid gap-5', readOnly && viewFieldsClass)}
       >
-        <TextField control={form.control} name="name" label="Name" required disabled={readOnly} />
+        <TextField
+          control={form.control}
+          name="name"
+          label="Name"
+          required={!readOnly}
+          disabled={readOnly}
+        />
         <SelectField
           control={form.control}
           name="assetTypeId"
           label="Asset Type"
           placeholder="Select Asset Type"
           options={typeOptions}
-          required
+          required={!readOnly}
           disabled={readOnly}
         />
         <TextField
@@ -219,7 +239,7 @@ function AssetForm({
               value,
               label: ASSET_CONDITION_LABELS[value],
             }))}
-            required
+            required={!readOnly}
             disabled={readOnly}
           />
         </div>

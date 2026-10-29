@@ -9,16 +9,17 @@ import {
   startOfDay,
 } from 'date-fns'
 
-import type {
-  ListColumn,
-  PmPerson,
-  PmRole,
-  Priority,
-  Tag,
-  TaskColumnKey,
-  TaskRow,
-  TaskStatus,
-  Workspace,
+import {
+  type ListColumn,
+  type PmPerson,
+  type PmRole,
+  type Priority,
+  type Tag,
+  TASK_COLUMN_KEYS,
+  type TaskColumnKey,
+  type TaskRow,
+  type TaskStatus,
+  type Workspace,
 } from '../../types/pm.types'
 
 // --- columns ------------------------------------------------------------------------------------
@@ -62,6 +63,19 @@ export function visibleColumns(columns: readonly ListColumn[]): ListColumn[] {
   const shown = columns.filter((column) => column.visible && column.key !== 'name')
   const name = columns.find((column) => column.key === 'name')
   return name ? [{ ...name, visible: true }, ...shown] : shown
+}
+
+/**
+ * The Table view's columns: every column, hidden or deleted in the List view or not, in the
+ * List view's order and then the rest in their usual order; Task Name leads.
+ */
+export function tableColumns(columns: readonly ListColumn[]): ListColumn[] {
+  const known = new Set(columns.map((column) => column.key))
+  const all = [
+    ...columns,
+    ...TASK_COLUMN_KEYS.filter((key) => !known.has(key)).map(defaultColumn),
+  ].map((column) => ({ ...column, visible: true }))
+  return visibleColumns(all)
 }
 
 /** Columns the round "+" can add: hidden ones, and deleted ones (no longer in the list). */
@@ -269,9 +283,13 @@ export function groupByStatus(
   return groups
 }
 
+/** In `TaskFilters.assigneeIds`: the tasks nobody is assigned to. */
+export const NO_ASSIGNEE = 'none'
+
 export interface TaskFilters {
   statusIds: string[]
   priorities: (Priority | 'none')[]
+  /** Employee ids, and `NO_ASSIGNEE`. */
   assigneeIds: string[]
 }
 
@@ -287,11 +305,21 @@ function matchesFilters(task: TaskRow, filters: TaskFilters): boolean {
   }
   if (
     filters.assigneeIds.length &&
-    !task.assigneeIds.some((id) => filters.assigneeIds.includes(id))
+    !task.assigneeIds.some((id) => filters.assigneeIds.includes(id)) &&
+    !(task.assigneeIds.length === 0 && filters.assigneeIds.includes(NO_ASSIGNEE))
   ) {
     return false
   }
   return true
+}
+
+/** Whether a task itself matches the banner search (name or code) and Filters. */
+export function taskMatches(task: TaskRow, query: string, filters: TaskFilters): boolean {
+  const text = query.trim().toLowerCase()
+  return (
+    (!text || task.name.toLowerCase().includes(text) || task.code.toLowerCase().includes(text)) &&
+    matchesFilters(task, filters)
+  )
 }
 
 /**
@@ -309,10 +337,7 @@ export function narrowTasks(
   const keep = new Set<string>()
   const expand = new Set<string>()
   for (const task of tasks) {
-    const hit =
-      (!text || task.name.toLowerCase().includes(text) || task.code.toLowerCase().includes(text)) &&
-      matchesFilters(task, filters)
-    if (!hit) continue
+    if (!taskMatches(task, text, filters)) continue
     keep.add(task.id)
     let parentId = task.parentId
     while (parentId && byId.has(parentId) && !keep.has(parentId)) {

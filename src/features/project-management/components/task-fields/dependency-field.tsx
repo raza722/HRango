@@ -65,7 +65,7 @@ const relationOf = (key: DependencyRelation) => (key === 'waitingOn' ? WAITING_O
 function RelationLabel({ relation }: { relation: DependencyRelation }) {
   const { title, Icon } = relationOf(relation)
   return (
-    <span className="flex h-[1.2rem] shrink-0 items-center gap-1.5 rounded-[0.25rem] bg-[#EBE6FF] px-1.5 text-[0.71875rem] font-medium text-[#626262]">
+    <span className="flex h-[1.2rem] shrink-0 items-center gap-1.5 rounded-[0.25rem] bg-[#EBE6FF] px-1.5 text-[0.71875rem] font-medium text-[#626262] dark:bg-[#7127EA]/10 dark:text-title">
       <Icon className="size-[0.95rem]" />
       {title}
     </span>
@@ -102,13 +102,13 @@ export function DependenciesCell({ task, workspace, tasks }: TaskCellProps) {
           className={fieldStyles.cell}
         >
           {count > 0 ? (
-            <span className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md bg-[#F6F4FF] py-[0.15rem] pr-2 pl-[0.2rem]">
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md bg-[#F6F4FF] py-[0.15rem] pr-2 pl-[0.2rem] dark:bg-[#7127EA]/10">
               <RelationLabel relation={firstRelation} />
               <span className="min-w-0 truncate">
                 {shown} {shown === 1 ? 'task' : 'tasks'}
               </span>
               {count > shown && (
-                <span className="shrink-0 text-[0.6875rem] font-semibold text-[#7127EA]">
+                <span className="shrink-0 text-[0.6875rem] font-semibold text-[#7127EA] dark:text-[#C4ABFF]">
                   +{count - shown}
                 </span>
               )}
@@ -121,7 +121,9 @@ export function DependenciesCell({ task, workspace, tasks }: TaskCellProps) {
               <span className={cn(fieldStyles.placeholder, 'text-[#909090]')}>Dependencies</span>
             </>
           )}
-          {blocked && <WarningIcon className="h-[0.85rem] w-auto shrink-0 text-[#B0A042]" />}
+          {blocked && (
+            <WarningIcon className="h-[0.85rem] w-auto shrink-0 text-[#B0A042] dark:text-[#E8D36A]" />
+          )}
           <ChevronDownIcon className={cn(fieldStyles.cellChevron, count > 0 && 'ml-0')} />
         </button>
       }
@@ -246,13 +248,13 @@ function DependenciesPanel({
           </div>
           <div className={cn(fieldStyles.divider, 'my-[0.6rem]')} />
 
-          <div className={cn(fieldStyles.scroll, 'overflow-x-auto pb-1')}>
+          <div className={cn(fieldStyles.scroll, 'relative overflow-x-auto pb-1')}>
             {detail.isPending ? (
               <p className="flex h-[2.4rem] items-center px-3 text-[0.8125rem] text-[#909090]">
                 Loading dependencies...
               </p>
             ) : links.length === 0 ? (
-              <p className="flex h-[2.4rem] items-center rounded-[0.5625rem] border border-[#E9E9E9] px-3 text-[0.8125rem] font-medium text-[#626262]">
+              <p className="flex h-[2.4rem] items-center rounded-[0.5625rem] border border-[#E9E9E9] px-3 text-[0.8125rem] font-medium text-[#626262] dark:border-border dark:text-title">
                 There are no tasks to link as dependencies
               </p>
             ) : (
@@ -265,7 +267,7 @@ function DependenciesPanel({
                       </th>
                       {rollups.map((key) => (
                         <th key={key} className="px-1 text-left">
-                          <span className="flex h-7 items-center rounded-[0.25rem] bg-[#F8F5FF] px-2 text-[0.8125rem] font-semibold whitespace-nowrap text-[#626262]">
+                          <span className="flex h-7 items-center rounded-[0.25rem] bg-[#F8F5FF] px-2 text-[0.8125rem] font-semibold whitespace-nowrap text-[#626262] dark:bg-[#7127EA]/10 dark:text-title">
                             {ROLLUP_COLUMNS.find((column) => column.key === key)?.label}
                           </span>
                         </th>
@@ -322,7 +324,7 @@ interface LinkedTaskRowProps {
 }
 
 const linkCell =
-  'h-11 border-y border-[#E9E9E9] bg-white px-2 text-[0.8125rem] font-medium whitespace-nowrap text-[#626262]'
+  'h-11 border-y border-[#E9E9E9] dark:border-border bg-white dark:bg-card px-2 text-[0.8125rem] font-medium whitespace-nowrap text-[#626262] dark:text-title'
 
 /** One link: the status, the relation label and the name, then any roll-up columns. */
 function LinkedTaskRow({ link, task, relation, workspace, rollups, onRemove }: LinkedTaskRowProps) {
@@ -344,7 +346,7 @@ function LinkedTaskRow({ link, task, relation, workspace, rollups, onRemove }: L
                 group: 'active',
               }}
             />
-            <span className="flex min-w-0 items-center gap-2 rounded-md bg-[#F6F4FF] py-[0.15rem] pr-2 pl-[0.2rem]">
+            <span className="flex min-w-0 items-center gap-2 rounded-md bg-[#F6F4FF] py-[0.15rem] pr-2 pl-[0.2rem] dark:bg-[#7127EA]/10">
               <RelationLabel relation={relation} />
               <span className="max-w-[26rem] truncate">{link.name}</span>
             </span>
@@ -417,7 +419,7 @@ function LinkedTaskRow({ link, task, relation, workspace, rollups, onRemove }: L
       <td className={cn(linkCell, 'rounded-l-[0.5625rem] border-l pl-2.5')}>
         <span className="flex items-center gap-2">
           {!rollups.includes('status') && <StatusChip status={status} />}
-          <span className="flex min-w-0 items-center gap-2 rounded-md bg-[#F6F4FF] py-[0.15rem] pr-2 pl-[0.2rem]">
+          <span className="flex min-w-0 items-center gap-2 rounded-md bg-[#F6F4FF] py-[0.15rem] pr-2 pl-[0.2rem] dark:bg-[#7127EA]/10">
             <RelationLabel relation={relation} />
             <span className="max-w-[26rem] truncate">{task.name}</span>
           </span>
@@ -482,7 +484,7 @@ function RollupMenu({
       <ul className={cn(fieldStyles.scroll, 'mt-3 flex max-h-80 flex-col gap-1.5 overflow-y-auto')}>
         {listed.map((column) => (
           <li key={column.key}>
-            <label className="flex h-10 cursor-pointer items-center gap-2.5 rounded-[0.5625rem] border border-[#E9E9E9] bg-white px-3 text-[0.8125rem] font-semibold tracking-[0.01em] text-[#4A4A4A] hover:bg-[#F8F5FF]">
+            <label className="flex h-10 cursor-pointer items-center gap-2.5 rounded-[0.5625rem] border border-[#E9E9E9] bg-white px-3 text-[0.8125rem] font-semibold tracking-[0.01em] text-[#4A4A4A] hover:bg-[#F8F5FF] dark:border-border dark:bg-card dark:text-title dark:hover:bg-[#7127EA]/15">
               <input
                 type="checkbox"
                 checked={value.includes(column.key)}
@@ -585,13 +587,15 @@ function AddDependency({ task, workspace, tasks, linkedIds, onLink }: AddDepende
               onClick={() => {
                 setRelation(entry.key)
               }}
-              className="flex flex-col gap-2 rounded-[0.5625rem] border border-transparent bg-[#F8F8F8] p-3 text-left transition-colors hover:border-[#7127EA]"
+              className="flex flex-col gap-2 rounded-[0.5625rem] border border-transparent bg-[#F8F8F8] p-3 text-left transition-colors hover:border-[#7127EA] dark:bg-white/5"
             >
-              <span className="flex items-center gap-2 text-[0.8125rem] font-semibold text-[#626262]">
+              <span className="flex items-center gap-2 text-[0.8125rem] font-semibold text-[#626262] dark:text-title">
                 <entry.Icon className="size-4" />
                 {entry.title}
               </span>
-              <span className="text-[0.71875rem] font-medium text-[#626262]">{entry.hint}</span>
+              <span className="text-[0.71875rem] font-medium text-[#626262] dark:text-title">
+                {entry.hint}
+              </span>
             </button>
           ))}
           {creating ? (
@@ -683,21 +687,21 @@ function TaskPicker({ workspace, linkedIds, tasks, relation, onBack, onPick }: T
             void onPick(other)
           }}
           aria-label={`Link ${other.name}`}
-          className="flex min-h-[2.6rem] w-full items-center gap-2.5 rounded-[0.5625rem] bg-[#F7F7F7] px-2 py-1 text-left transition-colors hover:bg-[#EEE7FF]"
+          className="flex min-h-[2.6rem] w-full items-center gap-2.5 rounded-[0.5625rem] bg-[#F7F7F7] px-2 py-1 text-left transition-colors hover:bg-[#EEE7FF] dark:bg-white/5 dark:hover:bg-[#7127EA]/25"
         >
           <StatusChip status={status} />
           <span className="flex min-w-0 flex-1 flex-col">
             {parent && (
-              <span className="truncate text-[0.625rem] font-medium text-[#626262]">
+              <span className="truncate text-[0.625rem] font-medium text-[#626262] dark:text-title">
                 {parent.name}
               </span>
             )}
-            <span className="truncate text-[0.8125rem] font-medium text-[#626262]">
+            <span className="truncate text-[0.8125rem] font-medium text-[#626262] dark:text-title">
               {other.name}
             </span>
           </span>
           {showCode && (
-            <span className="shrink-0 text-[0.8125rem] font-medium text-[#7127EA]">
+            <span className="shrink-0 text-[0.8125rem] font-medium text-[#7127EA] dark:text-[#C4ABFF]">
               {other.code}
             </span>
           )}
@@ -726,11 +730,11 @@ function TaskPicker({ workspace, linkedIds, tasks, relation, onBack, onPick }: T
             else onBack()
           }}
           aria-label="Back"
-          className="flex size-[2.0625rem] shrink-0 items-center justify-center rounded-full border-[1.5px] border-[#7127EA] text-[#7127EA] hover:bg-[#F8F5FF]"
+          className="flex size-[2.0625rem] shrink-0 items-center justify-center rounded-full border-[1.5px] border-[#7127EA] text-[#7127EA] hover:bg-[#F8F5FF] dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/15"
         >
           <BackIcon className="size-5" />
         </button>
-        <span className="text-[0.8125rem] font-semibold text-[#626262]">
+        <span className="text-[0.8125rem] font-semibold text-[#626262] dark:text-title">
           Add as {relationOf(relation).title}
         </span>
       </div>
@@ -774,7 +778,7 @@ function TaskPicker({ workspace, linkedIds, tasks, relation, onBack, onPick }: T
                 onClick={() => {
                   setListId(list.id)
                 }}
-                className="flex h-[2.6rem] w-full items-center gap-2.5 rounded-[0.5625rem] bg-[#F7F7F7] px-3 text-left text-[0.8125rem] font-medium text-[#626262] hover:bg-[#EEE7FF]"
+                className="flex h-[2.6rem] w-full items-center gap-2.5 rounded-[0.5625rem] bg-[#F7F7F7] px-3 text-left text-[0.8125rem] font-medium text-[#626262] hover:bg-[#EEE7FF] dark:bg-white/5 dark:text-title dark:hover:bg-[#7127EA]/25"
               >
                 <span className="min-w-0 flex-1 truncate">
                   {list.id ? list.name : `${workspace.name} (no list)`}
@@ -784,7 +788,7 @@ function TaskPicker({ workspace, linkedIds, tasks, relation, onBack, onPick }: T
                     {folderName(list.parentId)}
                   </span>
                 )}
-                <ChevronRightIcon className="size-4 shrink-0 text-[#7127EA]" />
+                <ChevronRightIcon className="size-4 shrink-0 text-[#7127EA] dark:text-[#C4ABFF]" />
               </button>
             </li>
           ))}

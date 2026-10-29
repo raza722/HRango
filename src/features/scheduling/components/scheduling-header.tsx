@@ -12,7 +12,7 @@ import { schedulingType } from './type-styles'
 
 const SCOPE_ICONS = { my: User, all: SquareCheck, subordinates: Network } as const
 
-interface SchedulingHeaderProps {
+export interface SchedulingHeaderProps {
   scope: ScheduleScope
   onScopeChange: (scope: ScheduleScope) => void
   searchText: string

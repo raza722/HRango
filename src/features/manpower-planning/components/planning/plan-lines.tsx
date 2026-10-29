@@ -203,7 +203,7 @@ export function NewPositionsTable({
     label: `${position.jobTitleName} (${position.code})`,
   })
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full min-w-[62rem] text-sm">
         <caption className="sr-only">Plan for new positions</caption>
         <TableHead
@@ -453,7 +453,7 @@ export function ExistingPositionsTable({
 }) {
   const lines = useWatch({ control, name: 'existingPositions' })
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full min-w-[57rem] text-sm">
         <caption className="sr-only">Plan for existing positions</caption>
         <TableHead

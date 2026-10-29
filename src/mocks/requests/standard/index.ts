@@ -6,6 +6,7 @@ import { bindExpenseRecords, expenseServer, resetExpenseSettingsDb } from './kin
 import { leaveServer } from './kinds/leave'
 import { loanAdvancesServer } from './kinds/loan-advances'
 import { officialVisitsServer } from './kinds/official-visits'
+import { bindOvertimeRecords, overtimeServer } from './kinds/overtime'
 import { promotionServer } from './kinds/promotion'
 import { relaxationServer } from './kinds/relaxation'
 import { requisitionServer } from './kinds/requisition'
@@ -24,6 +25,8 @@ const SERVERS: readonly StandardKindModule[] = [
   leaveServer,
   loanAdvancesServer,
   officialVisitsServer,
+  // Attendance → Overtime files its requests on the same engine (`/requests/overtime`).
+  overtimeServer,
   promotionServer,
   relaxationServer,
   requisitionServer,
@@ -49,6 +52,7 @@ export const standardRequestHandlers = [
 ]
 
 bindExpenseRecords(() => standardRequests.all().filter((record) => record.kind === 'expense'))
+bindOvertimeRecords(() => standardRequests.all().filter((record) => record.kind === 'overtime'))
 
 export function resetStandardRequestsDb(): void {
   standardRequests.reset()

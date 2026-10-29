@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type {
   ApprovalDetails,
   BackendAttachment,
+  BackendRequest,
   BackendRequestDetail,
   BackendRequestPage,
   RequestStatus,
@@ -22,6 +23,7 @@ import {
   cancelBodySchema,
   filesFrom,
   forwardRecord,
+  matchesFilters,
   pageOf,
   registerApprovalSource,
   type RequestBodyIn,
@@ -62,14 +64,21 @@ import { restrictionFor } from '../settings-db'
  *   POST   /requests/<type>/:id/cancel  { reason, rowVersion }: withdraws a pending request,
  *                                         asks to cancel an approved one
  *   POST/DELETE /requests/<type>/:id/attachments[/:attachmentId]
+ *   GET    /requests/<type>/export      the list's filters → CSV (the spec leaves the format open)
  * Approvals (`/requests/approvals…`) are shared across types (../backend.ts).
  * A type supplies its definition (`StandardKindServer`): how to read its
  * `details`, check and store them, show them, its seeds and what approval changes.
  */
 
+/**
+ * The kinds the mock engine serves: the Requests module's standard kinds, plus request types
+ * other modules file on the same engine (Attendance → Overtime, `/requests/overtime`).
+ */
+export type MockStandardKind = StandardKind | 'overtime'
+
 /** A stored request of a standard type; `effect` remembers what its approval changed. */
 export type StoredStandardRequest = Omit<StoredPunchRequest, 'kind' | 'payload' | 'applied'> & {
-  kind: StandardKind
+  kind: MockStandardKind
   payload: Record<string, unknown>
   applied: null
   effect?: unknown
@@ -86,7 +95,7 @@ export interface PayloadContext {
 }
 
 export interface StandardKindServer<I> {
-  kind: StandardKind
+  kind: MockStandardKind
   /** The backend's request type code (`rest_day`); the URL is the code with hyphens. */
   typeCode: string
   /** `GET /requests/types` name ("Rest Day"). */
@@ -132,6 +141,32 @@ export interface StandardKindServer<I> {
   seed: () => StoredStandardRequest[]
   /** Endpoints of the type's own (Loan settings, look-ups …), registered before the shared ones. */
   extraHandlers?: HttpHandler[]
+  /** The type's own CSV columns in `GET …/export`, after the shared ones: a header and a value. */
+  exportColumns?: readonly ExportColumn[]
+}
+
+/** One column of a type's CSV export, read from the row as the list sends it. */
+export type ExportColumn = readonly [
+  header: string,
+  value: (row: BackendRequest) => string | number | null | undefined,
+]
+
+const SHARED_EXPORT_COLUMNS: readonly ExportColumn[] = [
+  ['Code', (row) => row.code],
+  ['Employee Code', (row) => row.employeeCode],
+  ['Employee', (row) => row.employeeName],
+  ['Department', (row) => row.departmentName],
+  ['Status', (row) => row.status],
+  ['From', (row) => row.fromDate],
+  ['To', (row) => row.toDate],
+  ['Reason', (row) => row.reason],
+  ['Submitted At', (row) => row.submittedAt],
+]
+
+/** A CSV cell: quoted when it holds a comma, a quote or a line break. */
+const csvCell = (value: string | number | null | undefined) => {
+  const text = value === null || value === undefined ? '' : String(value)
+  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
 }
 
 /** The approver's fields as the decision schema reads them. */
@@ -355,6 +390,19 @@ export function createStandardHandlers<I>(
 
   const actionsFor = (record: StoredStandardRequest) => backendActions(record, def.typeCode)
 
+  /** The records a list (or its export) shows: its view, then the type's own filters. */
+  const inView = (url: URL) => {
+    const view = url.searchParams.get('view') ?? 'my'
+    const all = records()
+    const shown =
+      view === 'all'
+        ? all
+        : view === 'subordinates'
+          ? all.filter((record) => record.employeeId !== ME)
+          : all.filter((record) => record.employeeId === ME)
+    return shown.filter((record) => matches(def, record, url))
+  }
+
   registerApprovalSource({
     typeCode: def.typeCode,
     records,
@@ -457,22 +505,31 @@ export function createStandardHandlers<I>(
       const unauthorized = await guard(request)
       if (unauthorized) return unauthorized
       const url = new URL(request.url)
-      const view = url.searchParams.get('view') ?? 'my'
-      const all = records()
-      const shown =
-        view === 'all'
-          ? all
-          : view === 'subordinates'
-            ? all.filter((record) => record.employeeId !== ME)
-            : all.filter((record) => record.employeeId === ME)
       return HttpResponse.json<BackendRequestPage>(
         pageOf(
           url,
-          shown
-            .filter((record) => matches(def, record, url))
-            .map((record) => ({ row: serializeRequest(record, info(record)) })),
+          inView(url).map((record) => ({ row: serializeRequest(record, info(record)) })),
         ),
       )
+    }),
+
+    // The list's rows (its view and filters, every page) as CSV; registered before `/:id`.
+    http.get(path('/export'), async ({ request }) => {
+      const unauthorized = await guard(request)
+      if (unauthorized) return unauthorized
+      const url = new URL(request.url)
+      const status = url.searchParams.get('status')
+      const rows = inView(url)
+        .map((record) => serializeRequest(record, info(record)))
+        .filter((row) => matchesFilters(row, url) && (!status || row.status === status))
+      const columns = [...SHARED_EXPORT_COLUMNS, ...(def.exportColumns ?? [])]
+      const lines = [
+        columns.map(([header]) => csvCell(header)).join(','),
+        ...rows.map((row) => columns.map(([, value]) => csvCell(value(row))).join(',')),
+      ]
+      return new HttpResponse(lines.join('\n') + '\n', {
+        headers: { 'Content-Type': 'text/csv; charset=utf-8' },
+      })
     }),
 
     http.get(path('/:id'), async ({ request, params }) => {
@@ -613,7 +670,7 @@ export function createStandardHandlers<I>(
 
 /** A type ready for the mock server: its seeds and its endpoints over the shared table. */
 export interface StandardKindModule {
-  kind: StandardKind
+  kind: MockStandardKind
   seed: () => StoredStandardRequest[]
   handlers: (collection: MockCollection<StoredStandardRequest>) => HttpHandler[]
 }

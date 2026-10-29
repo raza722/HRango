@@ -38,6 +38,19 @@ export function rejected(error: z.ZodError) {
   )
 }
 
+/** Every issue of a failed parse as the 422 body's `fieldErrors` (the first message per field). */
+export function rejectedAll(error: z.ZodError, message = 'Some fields are not valid.') {
+  const fieldErrors: Record<string, string> = {}
+  for (const issue of error.issues) {
+    const field = issue.path.join('.')
+    if (field && !(field in fieldErrors)) fieldErrors[field] = issue.message
+  }
+  return invalid(
+    Object.keys(fieldErrors).length > 0 ? message : (error.issues[0]?.message ?? message),
+    fieldErrors,
+  )
+}
+
 export const ok = <T>(data: T) => HttpResponse.json<ApiItem<T>>({ data })
 
 export function page<T>(url: URL, items: readonly T[]) {

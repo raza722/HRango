@@ -7,7 +7,7 @@ export function CreateWorkspaceLanding({ onCreate }: { onCreate: () => void }) {
   return (
     <section
       aria-labelledby="create-workspace-heading"
-      className="flex h-full min-h-[28rem] flex-col items-center justify-center gap-6 rounded-[1.625rem] bg-[#F1F5F9] px-6 py-10 text-center"
+      className="flex h-full min-h-[28rem] flex-col items-center justify-center gap-6 rounded-[1.625rem] bg-[#F1F5F9] px-6 py-10 text-center dark:bg-white/5"
     >
       <img
         src={illustrationUrl}
@@ -18,7 +18,7 @@ export function CreateWorkspaceLanding({ onCreate }: { onCreate: () => void }) {
       />
       <h1
         id="create-workspace-heading"
-        className="text-xl leading-tight font-medium text-[#454545] sm:text-[1.75rem] sm:leading-[2.625rem]"
+        className="text-xl leading-tight font-medium text-[#454545] sm:text-[1.75rem] sm:leading-[2.625rem] dark:text-title"
       >
         Create your own workspace!
       </h1>

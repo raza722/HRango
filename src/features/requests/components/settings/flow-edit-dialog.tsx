@@ -37,6 +37,13 @@ import {
 } from '../../types/request-settings.types'
 import { RequestEmployeeSelect } from '../shared/request-employee-field'
 
+/** A scope that already has a flow of the type (the API keeps one flow per scope). */
+export interface TakenScope {
+  flowId: string
+  scopeType: FlowScope
+  scopeId: string | null
+}
+
 /** A row being edited: the node may not be chosen yet, and the numbers are typed text. */
 interface DraftRow {
   stepNo: number
@@ -195,12 +202,15 @@ export function FlowEditDialog({
   requestType,
   purpose,
   flowId,
+  taken = [],
   onSaved,
   onClose,
 }: {
   requestType: SettingsRequestType
   purpose: FlowPurpose
   flowId: string | null
+  /** The scopes this type and purpose already have a flow for (one flow per scope). */
+  taken?: readonly TakenScope[]
   onSaved?: (id: string) => void
   onClose: () => void
 }) {
@@ -217,6 +227,7 @@ export function FlowEditDialog({
       requestType={requestType}
       purpose={purpose}
       flow={flow.data}
+      taken={taken.filter((scope) => scope.flowId !== flowId)}
       onSaved={onSaved}
       onClose={onClose}
     />
@@ -227,12 +238,14 @@ function FlowForm({
   requestType,
   purpose,
   flow,
+  taken,
   onSaved,
   onClose,
 }: {
   requestType: SettingsRequestType
   purpose: FlowPurpose
   flow: RequestFlowDetail | undefined
+  taken: readonly TakenScope[]
   onSaved: ((id: string) => void) | undefined
   onClose: () => void
 }) {
@@ -241,7 +254,11 @@ function FlowForm({
   const roles = useRoleOptions(useCan('access.roles.view'))
   const save = useSaveRequestFlow()
   const [name, setName] = useState(flow?.name ?? '')
-  const [scopeType, setScopeType] = useState<FlowScope>(flow?.scopeType ?? 'company')
+  // The company has one flow per type: a new flow starts on the first scope still open to it.
+  const companyTaken = taken.some((scope) => scope.scopeType === 'company')
+  const [scopeType, setScopeType] = useState<FlowScope>(
+    flow?.scopeType ?? (companyTaken ? 'branch' : 'company'),
+  )
   const [scopeId, setScopeId] = useState<string | null>(flow?.scopeId ?? null)
   const [description, setDescription] = useState(flow?.description ?? '')
   const [isActive, setIsActive] = useState(flow?.isActive ?? true)
@@ -249,19 +266,31 @@ function FlowForm({
     flow ? flow.nodes.map(toDraft) : [blankRow(1)],
   )
   const [error, setError] = useState<string | null>(null)
+  const [nameError, setNameError] = useState<string | null>(null)
+  const [scopeError, setScopeError] = useState<string | null>(null)
   const permission = 'requests.settings.flows.view'
+  /** Ids of this scope type that already have a flow (left out of the list). */
+  const takenIds = new Set(
+    taken.filter((scope) => scope.scopeType === scopeType).map((scope) => scope.scopeId),
+  )
+  const scopeProblem =
+    scopeType === 'company' && companyTaken
+      ? 'The company already has a flow of this type. Choose a branch, department or employee, or edit the company flow.'
+      : scopeId && takenIds.has(scopeId)
+        ? `This ${FLOW_SCOPE_LABELS[scopeType].toLowerCase()} already has a flow of this type. Edit that one.`
+        : null
   // The flow's saved people stay named when they have left.
   const savedPeople = [
     ...(flow?.scopeType === 'employee' ? [{ id: flow.scopeId, name: flow.scopeName }] : []),
     ...(flow?.nodes ?? []).map((node) => ({ id: node.employeeId, name: node.employeeName })),
   ]
   const roleOptions = (roles.data ?? []).map((role) => ({ value: role.id, label: role.name }))
-  const scopeOptions = (
-    scopeType === 'branch' ? (branches.data ?? []) : (departments.data ?? [])
-  ).map((unit) => ({
-    value: unit.id,
-    label: unit.name,
-  }))
+  const scopeOptions = (scopeType === 'branch' ? (branches.data ?? []) : (departments.data ?? []))
+    .filter((unit) => !takenIds.has(unit.id))
+    .map((unit) => ({
+      value: unit.id,
+      label: unit.name,
+    }))
 
   const patch = (stepNo: number, change: Partial<DraftRow>) => {
     setError(null)
@@ -278,12 +307,17 @@ function FlowForm({
   }
 
   const submit = () => {
-    if (!name.trim()) {
-      setError('Give the flow a name.')
-      return
-    }
-    if (scopeType !== 'company' && !scopeId) {
-      setError('Choose the branch, department or employee this flow is for.')
+    // Field problems show at their field, all at once.
+    const missingName = name.trim() ? null : 'Give the flow a name.'
+    const missingScope =
+      scopeProblem ??
+      (scopeType !== 'company' && !scopeId
+        ? `Choose the ${FLOW_SCOPE_LABELS[scopeType].toLowerCase()} this flow is for.`
+        : null)
+    setNameError(missingName)
+    setScopeError(missingScope)
+    if (missingName || missingScope) {
+      setError(null)
       return
     }
     const nodes = toNodes(rows)
@@ -332,7 +366,7 @@ function FlowForm({
           {flowRequestTypeLabel(joinFlowType(requestType, purpose))}
         </p>
         <div className="grid gap-4 md:grid-cols-2">
-          <FormField label="Name" required>
+          <FormField label="Name" required error={nameError ?? undefined}>
             {(a11y) => (
               <Input
                 {...a11y}
@@ -340,12 +374,17 @@ function FlowForm({
                 maxLength={200}
                 onChange={(event) => {
                   setName(event.target.value)
+                  setNameError(null)
                   setError(null)
                 }}
               />
             )}
           </FormField>
-          <FormField label="Applies To" required>
+          <FormField
+            label="Applies To"
+            required
+            error={scopeType === 'company' ? (scopeError ?? scopeProblem ?? undefined) : undefined}
+          >
             {(a11y) => (
               <SearchSelect
                 {...a11y}
@@ -353,6 +392,7 @@ function FlowForm({
                 onChange={(next) => {
                   setScopeType((next ?? 'company') as FlowScope)
                   setScopeId(null)
+                  setScopeError(null)
                   setError(null)
                 }}
                 placeholder="Select Applies To"
@@ -364,7 +404,11 @@ function FlowForm({
             )}
           </FormField>
           {scopeType !== 'company' && (
-            <FormField label={FLOW_SCOPE_LABELS[scopeType]} required>
+            <FormField
+              label={FLOW_SCOPE_LABELS[scopeType]}
+              required
+              error={scopeError ?? scopeProblem ?? undefined}
+            >
               {(a11y) =>
                 scopeType === 'employee' ? (
                   <RequestEmployeeSelect
@@ -374,6 +418,7 @@ function FlowForm({
                     value={scopeId}
                     onChange={(next) => {
                       setScopeId(next)
+                      setScopeError(null)
                       setError(null)
                     }}
                     placeholder={`Select ${FLOW_SCOPE_LABELS[scopeType]}`}
@@ -384,6 +429,7 @@ function FlowForm({
                     value={scopeId}
                     onChange={(next) => {
                       setScopeId(next)
+                      setScopeError(null)
                       setError(null)
                     }}
                     options={[

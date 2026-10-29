@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import {
@@ -16,6 +16,7 @@ import {
 import type {
   AllocationInput,
   AssetInput,
+  AssetType,
   AssetTypeInput,
   ClearanceInput,
   ClearanceRef,
@@ -69,6 +70,29 @@ export const useAssetHistory = (id: string | null) =>
 
 export const useAllocations = (params: PageQuery<AllocationFilters>) =>
   useQuery(assetListQueryOptions('allocations', params, assetsApi.allocations))
+
+/**
+ * Whether each asset was ever allocated (an allocation, open or returned, names it): such an
+ * asset cannot be deleted. `undefined` while its answer loads.
+ */
+export function useEverAllocated(assetIds: readonly string[], enabled: boolean) {
+  const results = useQueries({
+    queries: assetIds.map((assetId) => ({
+      ...assetListQueryOptions(
+        'allocations',
+        { page: 1, pageSize: 1, assetId },
+        assetsApi.allocations,
+      ),
+      enabled,
+    })),
+  })
+  return new Map(
+    assetIds.map((id, index) => {
+      const data = results[index]?.data
+      return [id, data ? data.meta.total > 0 : undefined] as const
+    }),
+  )
+}
 
 export const useAllocation = (id: string | null) =>
   useQuery({
@@ -130,6 +154,19 @@ export const useDeleteAssetType = () =>
   useAssetsMutation(
     (record: Versioned) => assetsApi.deleteAssetType(record),
     () => 'Asset type deleted',
+  )
+
+/** Deactivate (or Activate) a type: an in-use type cannot be deleted, so it is retired. */
+export const useSetAssetTypeActive = () =>
+  useAssetsMutation(
+    ({ record, active }: { record: AssetType; active: boolean }) =>
+      assetsApi.updateAssetType(record.id, {
+        name: record.name,
+        description: record.description,
+        isActive: active,
+        rowVersion: record.rowVersion,
+      }),
+    ({ active }) => (active ? 'Asset type activated' : 'Asset type deactivated'),
   )
 
 export const useSaveAsset = () =>

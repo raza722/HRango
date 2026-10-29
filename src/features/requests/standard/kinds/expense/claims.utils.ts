@@ -103,3 +103,27 @@ export function claimFilterFields({
 export function requestBody<D extends object>(body: RequestBody<D>): RequestBody {
   return { ...body, details: { ...body.details } as Record<string, unknown> }
 }
+
+/** The largest amount one claim may be (the API refuses more). */
+export const MAX_CLAIM_AMOUNT = 10_000_000
+
+/**
+ * Expense "Approve": a lowered amount may not be above its claim. Keyed `lines.<id>` so each
+ * shows once, at its own box; empty when everything is fine.
+ */
+export function expenseDecisionProblems(
+  request: { payload: { lines: readonly { id: string; amount: number | string }[] } },
+  value: Record<string, unknown>,
+): Record<string, string> {
+  const lines = Array.isArray(value.lines)
+    ? (value.lines as { id: string; approvedAmount: number }[])
+    : []
+  const problems: Record<string, string> = {}
+  for (const line of request.payload.lines) {
+    const approved = lines.find((item) => item.id === line.id)?.approvedAmount
+    if (approved !== undefined && approved > (toAmount(line.amount) ?? 0)) {
+      problems[`lines.${line.id}`] = 'Not more than the claim'
+    }
+  }
+  return problems
+}

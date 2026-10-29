@@ -89,7 +89,7 @@ export function WorkspaceBanner({
       style={coverStyle(workspace.cover?.url ?? null)}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-56">
           {renaming ? (
             <RenameField
               initial={workspace.name}
@@ -110,7 +110,9 @@ export function WorkspaceBanner({
             Workspace
           </p>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 sm:mt-1.5 sm:gap-5">
+        {/* max-w-full, not shrink-0: a hovered label grows its button, so the row wraps
+            inside the banner instead of pushing the page sideways. */}
+        <div className="flex max-w-full flex-wrap items-center justify-end gap-3 sm:mt-1.5 sm:gap-5">
           <PmMenu modal={false}>
             <PmMenuTrigger asChild>
               <button type="button" className={bannerStyles.iconButton}>
@@ -198,7 +200,7 @@ export function WorkspaceBanner({
             className="min-w-0 flex-1 bg-transparent text-[1.0547rem] text-[#1D1A1A] outline-none placeholder:text-[#1D1A1A]"
           />
         </label>
-        <div className="ml-auto flex items-center gap-4">
+        <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-4">
           <Popover>
             <PopoverTrigger asChild>
               <button
@@ -227,14 +229,14 @@ export function WorkspaceBanner({
               </button>
             </PopoverTrigger>
             <PopoverContent align="end" className={cn(popupStyles.content, 'w-80')}>
-              <h2 className="px-1 pb-2 text-base font-semibold text-[#393636]">
+              <h2 className="px-1 pb-2 text-base font-semibold text-[#393636] dark:text-title">
                 {members.length} Members
               </h2>
               <ul className="flex max-h-80 flex-col gap-2 overflow-y-auto">
                 {members.map((person) => (
                   <li
                     key={person.id}
-                    className="flex items-center gap-2.5 rounded-full bg-[#F4F4F4] py-1 pr-3 pl-1"
+                    className="flex items-center gap-2.5 rounded-full bg-[#F4F4F4] py-1 pr-3 pl-1 dark:bg-white/5"
                   >
                     <EmployeeAvatar
                       name={person.name}
@@ -243,14 +245,14 @@ export function WorkspaceBanner({
                       fallbackClassName="text-[0.6rem]"
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold text-[#5D5D5D]">
+                      <span className="block truncate text-sm font-semibold text-[#5D5D5D] dark:text-title">
                         {person.name}
                       </span>
                       <span className="block truncate text-xs text-[#909090]">
                         {person.designation}
                       </span>
                     </span>
-                    <span className="shrink-0 rounded-md bg-[#F0E9FD] px-2 py-0.5 text-[0.6875rem] text-[#7127EA]">
+                    <span className="shrink-0 rounded-md bg-[#F0E9FD] px-2 py-0.5 text-[0.6875rem] text-[#7127EA] dark:bg-[#7127EA]/20 dark:text-[#C4ABFF]">
                       {person.id === workspace.ownerId ? 'Owner' : ROLE_LABELS[roleOf(person.id)]}
                     </span>
                   </li>

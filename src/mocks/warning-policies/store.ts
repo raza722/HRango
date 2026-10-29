@@ -147,8 +147,9 @@ function seedPenalties(): PenaltyRecord[] {
   return [
     rule('1', '1', 1, 'month', 'half_day', 50, 'payroll'),
     rule('2', '1', 2, 'month', 'full_day', 100, 'both', casual),
-    rule('3', '2', 1, 'month', 'percentage', 25, 'payroll'),
-    rule('4', '3', 3, 'month', 'half_day', 50, 'leave', casual),
+    // A penalty counts in its policy's period (a daily policy's per week, the shortest there is).
+    rule('3', '2', 1, 'week', 'percentage', 25, 'payroll'),
+    rule('4', '3', 3, 'week', 'half_day', 50, 'leave', casual),
     rule('5', '5', 1, 'year', 'percentage', 10, 'payroll'),
     rule('6', '6', 2, 'week', 'full_day', 100, 'payroll'),
   ]
@@ -160,7 +161,7 @@ export const warningPolicies = createMockCollection<PolicyRecord>({
 })
 
 export const warningPenalties = createMockCollection<PenaltyRecord>({
-  storageKey: 'hrms-mock-warning-penalties-v2',
+  storageKey: 'hrms-mock-warning-penalties-v3',
   seed: seedPenalties,
 })
 
