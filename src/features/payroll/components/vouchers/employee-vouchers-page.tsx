@@ -175,7 +175,7 @@ export function EmployeeVouchersPage() {
           },
         },
       can.delete &&
-        row.status !== 'processed' && {
+        (row.status === 'pending' || row.status === 'rejected') && {
           label: 'Delete',
           variant: 'destructive',
           onSelect: () => {

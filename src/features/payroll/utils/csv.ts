@@ -27,9 +27,19 @@ export function parseCsv(text: string, headerWord: string): string[][] {
   return body.map(splitLine)
 }
 
+/**
+ * Text a spreadsheet would run as a formula (`=`, `+`, `-`, `@`, tab or return first) gets a
+ * leading apostrophe, so a typed answer like `=HYPERLINK(…)` stays text. Plain numbers
+ * ("-5000", "+92 300") are left alone.
+ */
+function defuse(text: string): string {
+  if (!/^[=+\-@\t\r]/.test(text)) return text
+  return /^[-+]?[\d\s,.()]+$/.test(text) ? text : `'${text}`
+}
+
 const quote = (value: string | number) => {
-  const text = String(value)
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+  const text = typeof value === 'number' ? String(value) : defuse(value)
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
 export function toCsv(
@@ -39,8 +49,10 @@ export function toCsv(
   return `${[header, ...rows].map((row) => row.map(quote).join(',')).join('\n')}\n`
 }
 
+/** A CSV starts with a byte order mark, so Excel reads it as UTF-8 (names with accents, Urdu). */
 export function downloadText(text: string, fileName: string, type = 'text/csv;charset=utf-8') {
-  const url = URL.createObjectURL(new Blob([text], { type }))
+  const body = type.startsWith('text/csv') && !text.startsWith('\uFEFF') ? `\uFEFF${text}` : text
+  const url = URL.createObjectURL(new Blob([body], { type }))
   const link = document.createElement('a')
   link.href = url
   link.download = fileName

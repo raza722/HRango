@@ -86,7 +86,7 @@ function CloseDialog({ row, onClose }: { row: FinalSettlementRow; onClose: () =>
         <ReadOnlyRow label="Last Working Date" value={formatLong(row.lastWorkingDate)} />
         <ReadOnlyRow
           label="Net Payable"
-          value={row.netPayable === null ? '—' : formatRs(row.netPayable)}
+          value={row.netPayable === null ? 'Not calculated yet' : formatRs(row.netPayable)}
         />
         <UploadField label="Signed Settlement Letter" value={file} onChange={setFile} />
         <p className="text-sm text-muted-foreground">
@@ -109,7 +109,13 @@ const columns: DataTableColumn<FinalSettlementRow>[] = [
   {
     id: 'net',
     header: 'Net Payable',
-    cell: (row) => (row.netPayable === null ? '—' : formatRs(row.netPayable)),
+    cell: (row) =>
+      row.netPayable === null ? (
+        // Pending: worked out by Recalculate.
+        <span className="text-muted-foreground">Not calculated yet</span>
+      ) : (
+        formatRs(row.netPayable)
+      ),
   },
   {
     id: 'status',

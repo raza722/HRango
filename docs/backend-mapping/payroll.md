@@ -168,6 +168,12 @@ voucherCode, payrollId, from, to, amountFrom/To`), `POST /vouchers/{id}/approve|
   menu entry; both write the same `lv.leave_encashment` tables.
 - Input `{leaveTypeId (from /leaves/types), fiscalYear, allEmployees, employeeIds, mode, basis,
 amountPerLeave}`; `amountPerLeave` required unless basis `earned_salary`. `isPaid` locks editing.
+- Limits: the picker reads `allowEncashment`, `encashmentMin`, `encashmentMax` (days per person) from
+  `GET /leaves/types`; the form shows them under Leave Type and refuses a type with Encashment off. How the API
+  applies min / max to each person's days is assumed (Backend Dependencies P4); the server's `leaveTypeId` and
+  `employeeIds` field errors land on those fields. The mock leaves out people under the minimum, pays the
+  maximum to those above it, and the seed turns Encashment on for Casual Leaves (2–10), Sick Leave (1–8) and
+  Annual Leave (1–10).
 
 ### Reports
 
@@ -177,9 +183,19 @@ Employee account report shows `accounts[]`, `taxPaid`, `taxRebate` (was fixed pr
 
 ### Dashboard
 
-`GET /dashboard?year&month` (`payroll.dashboard.view`): tiles, salary statistics by month, salary breakup.
-The yearly comparison, expenses, loan/advance and per-employee earning charts were dropped (not in the API
-or the documents).
+The drawn dashboard (28 Oct 2026), from endpoints that exist:
+
+- Payroll Comparison Yearly: `GET /dashboard?year` for this year and last year, `salaryStatistics[].netPayable`.
+- Expenses Month Wise: this year's `salaryStatistics[].gross` (gross pay as the payroll expense).
+- Expense Report: `GET /dashboard?year&month` → `salaryBreakup` (pay item totals of the month; with no month,
+  the latest month that has payslips).
+- Month Wise Loan & Advance: `GET /loans/installments?monthFrom&monthTo` (every page) added up per `dueMonth`:
+  `amount` (due) and `paidAmount` (repaid). Needs the Loans module's read permission; an error shows in the card.
+- Employee Month Wise Earning: `GET /payroll/payslips?scope=all&employeeId` (final settlements left out),
+  `totalEarnings` (else `gross`) per month, the last 12; it opens on the person of the latest payslip
+  (`pageSize=1`), and the picker is `GET /employees/lookup?permission=payroll.payslips.view`.
+- The tiles in `GET /dashboard` are not drawn and not shown. A dashboard aggregate for the loans would save
+  reading every instalment page of a large company.
 
 ## Employee pickers
 

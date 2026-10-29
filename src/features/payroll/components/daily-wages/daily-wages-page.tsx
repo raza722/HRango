@@ -102,6 +102,7 @@ export function DailyWagesPage() {
     delete: useCan('payroll.daily_wages.delete'),
     export: useCan('payroll.daily_wages.export'),
   }
+  const canVoucher = useCan('payroll.vouchers.create')
   const list = useDailyWages({
     page,
     pageSize: PAGE_SIZE,
@@ -221,6 +222,14 @@ export function DailyWagesPage() {
               show: row.status === 'running' && can.close,
               run: () => {
                 setDialog({ type: 'close', row })
+              },
+            },
+            {
+              // Opens the details, where Voucher makes the lines (or says they are made).
+              label: 'Voucher',
+              show: row.status === 'closed' && canVoucher,
+              run: () => {
+                setDialog({ type: 'view', id: row.id })
               },
             },
             {

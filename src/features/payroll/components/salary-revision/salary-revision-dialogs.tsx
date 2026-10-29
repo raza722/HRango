@@ -1,4 +1,4 @@
-import { type SyntheticEvent, useId } from 'react'
+import { type SyntheticEvent, useEffect, useId } from 'react'
 import { useController, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { format, isValid, parseISO, subDays } from 'date-fns'
@@ -11,7 +11,7 @@ import { ApiError } from '@/lib/api-error'
 import { useCurrentSalary, useSalaryRevision, useSaveSalaryRevision } from '../../hooks/use-payroll'
 import { personHint, usePayrollOptions } from '../../hooks/use-payroll-records'
 import type { SalaryRevisionRow } from '../../types/payroll.types'
-import { formatAmount, formatLong, profileOf } from '../../utils/format'
+import { formatAmount, formatLong, formatRs, profileOf } from '../../utils/format'
 import { ReadOnlyRow, RsInput } from '../balances/list-parts'
 import { DateField } from '../shared/date-input'
 import { EmployeeCard } from '../shared/employee-card'
@@ -20,6 +20,14 @@ import { PayrollDialog } from '../shared/payroll-dialog'
 import { TwoWaySwitch } from '../shared/two-way-switch'
 
 const DATE = 'MMMM d, yyyy'
+
+/** Where a salary came from (`source`). */
+const SOURCE_LABELS: Record<string, string> = {
+  revision: 'Salary Revision',
+  promotion: 'Promotion',
+  joining: 'Joining salary',
+  import: 'Import',
+}
 
 type ChangeType = 'flat' | 'percent'
 
@@ -32,17 +40,36 @@ const schema = z
     effectiveDate: z.string().min(1, 'Choose the effective date'),
     changeType: z.enum(['flat', 'percent']),
     changeValue: z.string(),
+    /** The salary the change applies to (read, not typed), once it is known. */
+    previousSalary: z.number().nullable(),
   })
-  .refine(
-    (value) => {
-      const number = Number(value.changeValue.replace(/,/g, ''))
-      return value.changeValue.trim() !== '' && Number.isFinite(number) && number !== 0
-    },
-    { message: 'Enter the change (not zero)', path: ['changeValue'] },
-  )
-  .refine((value) => value.changeType === 'flat' || Number(value.changeValue) > -100, {
-    message: 'A percentage cut cannot be 100% or more',
-    path: ['changeValue'],
+  .superRefine((value, ctx) => {
+    const number = Number(value.changeValue.replace(/,/g, ''))
+    if (value.changeValue.trim() === '' || !Number.isFinite(number) || number === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Enter the change (not zero)',
+        path: ['changeValue'],
+      })
+      return
+    }
+    if (value.changeType === 'percent' && number <= -100) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'A percentage cut cannot be 100% or more',
+        path: ['changeValue'],
+      })
+      return
+    }
+    if (value.previousSalary === null) return
+    const next = revisedSalary(value.previousSalary, value.changeType, value.changeValue)
+    if (next !== null && next <= 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `The new salary would be ${formatRs(next)}. It must be more than zero.`,
+        path: ['changeValue'],
+      })
+    }
   })
 type Values = z.infer<typeof schema>
 
@@ -172,13 +199,24 @@ export function SalaryRevisionCreateDialog({ onClose }: { onClose: () => void })
   const options = usePayrollOptions('payroll.salary_revision.view')
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { employeeId: null, effectiveDate: '', changeType: 'flat', changeValue: '' },
+    defaultValues: {
+      employeeId: null,
+      effectiveDate: '',
+      changeType: 'flat',
+      changeValue: '',
+      previousSalary: null,
+    },
   })
   const [employeeId, effectiveDate] = useWatch({
     control: form.control,
     name: ['employeeId', 'effectiveDate'],
   })
   const current = useCurrentSalary(employeeId, dayBefore(effectiveDate))
+  // The schema checks the new salary against it, so a change below zero shows on the field.
+  const previous = current.data?.salary ?? null
+  useEffect(() => {
+    form.setValue('previousSalary', previous)
+  }, [form, previous])
   const { save, submit } = useSubmit(form, onClose)
 
   return (
@@ -243,6 +281,7 @@ function EditForm({ revision, onClose }: { revision: SalaryRevisionRow; onClose:
         revision.changeValue === null
           ? String(revision.amount - (revision.previousAmount ?? 0))
           : String(revision.changeValue),
+      previousSalary: revision.previousAmount ?? 0,
     },
   })
   const { save, submit } = useSubmit(form, onClose, revision)
@@ -303,7 +342,16 @@ export function SalaryRevisionViewDialog({ id, onClose }: { id: string; onClose:
               }
             />
             <ReadOnlyRow label="Salary" value={`RS ${formatAmount(data.amount)}`} />
-            <ReadOnlyRow label="Source" value={data.source ?? '—'} />
+            <ReadOnlyRow
+              label="Source"
+              value={SOURCE_LABELS[data.source ?? ''] ?? data.source ?? '—'}
+            />
+            {data.source === 'promotion' && (
+              <p className="text-sm text-muted-foreground">
+                This salary was set by an approved promotion. It cannot be edited or deleted here:
+                cancel the promotion in Requests → Promotion to undo it.
+              </p>
+            )}
           </div>
         ) : (
           <Skeleton className="h-36 w-full" />

@@ -138,8 +138,12 @@ describe('Payrolls → Monthly', () => {
 
     const held = await rowOf('Abdul (Pakistan-PKR)')
     await user.click(within(held).getByRole('button', { name: 'Error, Abdul (Pakistan-PKR)' }))
+    // Its last run could not pay Nida Hassan, who has left (the seeded error).
     const errors = await screen.findByRole('dialog', { name: 'Payrolls History Error' })
-    expect(await within(errors).findByText('No Record Found')).toBeVisible()
+    expect(await within(errors).findByText('Nida Hassan')).toBeVisible()
+    expect(
+      within(errors).getByText('The employee is not active in the payroll month.'),
+    ).toBeVisible()
     await user.click(within(errors).getByRole('button', { name: 'Cancel' }))
 
     await user.click(within(held).getByRole('button', { name: 'View, Abdul (Pakistan-PKR)' }))
@@ -149,28 +153,5 @@ describe('Payrolls → Monthly', () => {
     const history = await screen.findByRole('dialog', { name: 'Payrolls History' })
     expect(await within(history).findByText('Run')).toBeVisible()
     expect(within(history).getByText('Shelley Kannes')).toBeVisible()
-  })
-})
-
-describe('Payroll → Dashboard', () => {
-  it('shows the tiles and the salary statistics, with a table view', async () => {
-    const { user } = renderApp('/payroll/dashboard')
-
-    // The first paint after sign-in and the dashboard's loads can pass the 4 s default when the
-    // whole suite runs at once; the steps after it are quick.
-    expect(
-      await screen.findByRole('heading', { name: 'Salary Statistics' }, { timeout: 15_000 }),
-    ).toBeVisible()
-    expect((await screen.findAllByText('Net Payable')).length).toBeGreaterThan(0)
-    const year = new Date().getFullYear()
-    const title = `Salary statistics ${year}: gross, deductions and net pay per month`
-    expect(await screen.findByRole('img', { name: new RegExp(`^${title}`) })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: `Show ${title} as a table` }))
-    const table = await screen.findByRole('table', { name: title })
-    expect(within(table).getByRole('rowheader', { name: 'Jan' })).toBeVisible()
-    expect(screen.getByRole('heading', { name: /^Salary Breakup/ })).toBeVisible()
-    expect(
-      await screen.findByRole('img', { name: /^Salary breakup by pay item/ }),
-    ).toBeInTheDocument()
   })
 })

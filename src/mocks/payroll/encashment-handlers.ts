@@ -7,11 +7,12 @@ import { ENCASHMENT_BASES, ENCASHMENT_TYPES, type LeaveEncashmentDetail } from '
 import { DIRECTORY, findEmployee } from '../employees/seed'
 import { leaveTypes } from '../leaves/db'
 import { createId, latency, requireAuth } from '../utils'
-import { leaveEncashments } from './db'
+import { leaveEncashments, vouchers } from './db'
 import {
   base,
   conflict,
   invalid,
+  nextCode,
   notFound,
   numberParam,
   ok,
@@ -22,10 +23,11 @@ import {
   searched,
 } from './http'
 import { isActive, nextRowVersion, salaryOn } from './people'
-import { encashmentWithLines } from './seed-records'
+import { encashmentVoucher, encashmentWithLines } from './seed-records'
 
 // Leave encashment as `/api/payroll/leave-encashments` serves it. Days are what is left of the
-// leave type's quota in the year (a fixed quota per type here, less what was encashed already).
+// leave type's quota in the year (a fixed quota per type here, less what was encashed already),
+// within the type's Encashment Min / Max Limit; a type with Encashment off is refused.
 
 const authed = async (request: Request) => {
   await latency()
@@ -67,6 +69,32 @@ const input = z
     message: 'Give the amount per leave for this basis.',
     path: ['amountPerLeave'],
   })
+
+/** The voucher lines of an encashment (manual ones get one per person). */
+const vouchersOf = (encashmentId: string) =>
+  vouchers.all().filter((item) => item.id.startsWith(`vc_${encashmentId}_`))
+
+/** A manual encashment whose voucher Finance has paid out (processed) is paid. */
+const paidOut = (encashmentId: string) =>
+  vouchersOf(encashmentId).some((item) => item.status === 'processed')
+
+/** Keeps a manual encashment's voucher lines in step with its people; other modes have none. */
+function syncVouchers(detail: LeaveEncashmentDetail) {
+  for (const item of vouchersOf(detail.id)) vouchers.remove(item.id)
+  if (detail.mode !== 'manual') return
+  for (const line of detail.employees) {
+    vouchers.insert(
+      encashmentVoucher(
+        detail,
+        line,
+        nextCode(
+          'VCH-',
+          vouchers.all().map((item) => item.voucherNo),
+        ),
+      ),
+    )
+  }
+}
 
 export const payrollEncashmentHandlers = [
   http.get(base('/leave-encashments'), async ({ request }) => {
@@ -113,24 +141,37 @@ export const payrollEncashmentHandlers = [
         if (current && value.rowVersion && value.rowVersion !== current.rowVersion) {
           return conflict('Someone else changed this leave encashment. Reload it and try again')
         }
-        if (current?.isPaid) {
+        if (current?.isPaid || (current && paidOut(current.id))) {
           return conflict('This encashment was paid. It cannot be changed', 'ENCASHMENT_PAID')
         }
         if (!value.allEmployees && value.employeeIds.length === 0) {
           return invalid('Choose the employees.', { employeeIds: 'Choose the employees.' })
         }
+        // The leave type's Encashment switch and Min / Max Limit (days per person), as set in
+        // Leave Settings: the mock's reading of them (the spec does not say how the API applies them).
+        const type = leaveTypes.find(value.leaveTypeId)
+        if (type && !type.allowEncashment) {
+          const message = `${type.title} cannot be encashed: its Encashment is turned off.`
+          return invalid(message, { leaveTypeId: message })
+        }
+        const min = type?.encashmentMin ?? null
+        const max = type?.encashmentMax ?? null
         const people = value.allEmployees
           ? DIRECTORY.filter((employee) => isActive(employee.id)).map((employee) => employee.id)
           : value.employeeIds.filter((id) => Boolean(findEmployee(id)))
-        const lines = people
-          .map(
-            (id) => [id, daysLeft(id, value.leaveTypeId, value.fiscalYear, current?.id)] as const,
-          )
-          .filter(([, days]) => days > 0)
+        const left = people.map(
+          (id) => [id, daysLeft(id, value.leaveTypeId, value.fiscalYear, current?.id)] as const,
+        )
+        // Fewer days left than the minimum: left out; more than the maximum: paid for the maximum.
+        const lines = left
+          .filter(([, days]) => days > 0 && (min === null || days >= min))
+          .map(([id, days]) => [id, max === null ? days : Math.min(days, max)] as const)
         if (lines.length === 0) {
-          return invalid('Nobody chosen has leave days to encash.', {
-            employeeIds: 'Nobody chosen has leave days to encash.',
-          })
+          const message =
+            min !== null && left.some(([, days]) => days > 0)
+              ? `Nobody chosen has the ${String(min)} days of ${leaveName(value.leaveTypeId)} its minimum asks for.`
+              : 'Nobody chosen has leave days to encash.'
+          return invalid(message, { employeeIds: message })
         }
         // Earned salary: a day's salary (monthly / 30) of the first person; the API works it out
         // per person, the mock keeps one rate per encashment.
@@ -156,6 +197,8 @@ export const payrollEncashmentHandlers = [
         )
         if (current) leaveEncashments.update(detail.id, detail)
         else leaveEncashments.insert(detail)
+        // Manual encashments are paid by voucher: a line per person on Vouchers.
+        syncVouchers(detail)
         return HttpResponse.json({ data: detail }, { status: current ? 200 : 201 })
       },
     ),
@@ -170,10 +213,11 @@ export const payrollEncashmentHandlers = [
     if (sent && sent !== found.rowVersion) {
       return conflict('Someone else changed this leave encashment. Reload it and try again')
     }
-    if (found.isPaid) {
+    if (found.isPaid || paidOut(found.id)) {
       return conflict('This encashment was paid. It cannot be deleted', 'ENCASHMENT_PAID')
     }
     leaveEncashments.remove(found.id)
+    for (const item of vouchersOf(found.id)) vouchers.remove(item.id)
     return new HttpResponse(null, { status: 204 })
   }),
 ]

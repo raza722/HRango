@@ -55,16 +55,17 @@ describe('Employee Voucher', () => {
     expect(await screen.findByText('Voucher created')).toBeInTheDocument()
 
     const created = vouchers.all().find((item) => item.purpose === 'Hotel stay')
-    expect(created?.voucherNo).toBe('VCH-00004')
+    // After the three seeded vouchers and the two manual leave encashment lines (VCH-00004, 5).
+    expect(created?.voucherNo).toBe('VCH-00006')
     expect(created?.status).toBe('pending')
 
-    await rowAction(user, 'Actions for Omar Siddiqui, voucher VCH-00004', 'Approve')
+    await rowAction(user, 'Actions for Omar Siddiqui, voucher VCH-00006', 'Approve')
     const approve = await screen.findByRole('dialog', { name: 'Approve Voucher' })
     await user.type(within(approve).getByRole('textbox', { name: 'Remarks' }), 'Within policy')
     await user.click(within(approve).getByRole('button', { name: 'Approve' }))
     expect(await screen.findByText('Voucher approved')).toBeInTheDocument()
 
-    await rowAction(user, 'Actions for Omar Siddiqui, voucher VCH-00004', 'Verify')
+    await rowAction(user, 'Actions for Omar Siddiqui, voucher VCH-00006', 'Verify')
     const verify = await screen.findByRole('dialog', { name: 'Verify Voucher' })
     await user.click(within(verify).getByRole('button', { name: 'Verify' }))
     expect(await screen.findByText('Voucher verified for payment')).toBeInTheDocument()

@@ -141,6 +141,14 @@ export function SalaryRevisionPage() {
             setDialog({ type: 'delete', row })
           },
         },
+      // A promotion's salary is undone by cancelling the promotion, not here.
+      (can.edit || can.delete) &&
+        !row.canEdit &&
+        row.source === 'promotion' && {
+          label: 'From a promotion: cancel it in Requests to undo',
+          disabled: true,
+          onSelect: () => undefined,
+        },
     ]
     return items.filter((item): item is RowAction => item !== false)
   }

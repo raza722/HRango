@@ -21,6 +21,7 @@ import {
   ENCASHMENT_TYPES,
   type LeaveEncashmentDetail,
 } from '../../types/payroll.types'
+import { encashmentLimitText, encashmentRefusal } from '../../utils/encashment-limits'
 import { formatRs } from '../../utils/format'
 import { currentLeaveYear } from '../../utils/leave-year'
 import { RsField } from '../balances/list-parts'
@@ -81,6 +82,11 @@ const viewFieldsClass = cn(
  * "Leave Encashment Create" / Edit / View (`/payroll/leave-encashments`): Leave Type, All
  * Employees (or the chosen Employees), Year, Type Payroll (next monthly run) or Manually, and the
  * "Amount Per Leave" basis: Earned Salary is a day's salary; other bases need the amount.
+ *
+ * Under Leave Type, the type's Encashment Min / Max Limit (days per person, from Leave Settings).
+ * The form has no days to check: the API works out each person's days from what they have left
+ * and refuses on Employees when nobody qualifies; Save itself refuses a type whose Encashment is
+ * turned off.
  */
 export function LeaveEncashmentDialog({
   id,
@@ -121,8 +127,13 @@ function EncashmentForm({
   const readOnly = mode === 'view' || locked
   const creating = mode === 'create'
   const form = useForm<Values>({ resolver: zodResolver(schema), defaultValues: toValues(detail) })
-  const [allEmployees, basis] = useWatch({ control: form.control, name: ['allEmployees', 'basis'] })
+  const [allEmployees, basis, leaveTypeId] = useWatch({
+    control: form.control,
+    name: ['allEmployees', 'basis', 'leaveTypeId'],
+  })
   const leaveOptions = (leaveTypes.data ?? []).map((item) => ({ value: item.id, label: item.name }))
+  // The chosen type's encashment rule (days per person); the API works out the days.
+  const chosenType = leaveTypes.data?.find((item) => item.id === leaveTypeId)
   if (detail && !leaveOptions.some((item) => item.value === detail.leaveTypeId)) {
     leaveOptions.push({ value: detail.leaveTypeId, label: detail.leaveTypeName })
   }
@@ -133,6 +144,13 @@ function EncashmentForm({
   }))
 
   const submit = form.handleSubmit(async (values) => {
+    const refusal = encashmentRefusal(
+      leaveTypes.data?.find((item) => item.id === values.leaveTypeId),
+    )
+    if (refusal) {
+      form.setError('leaveTypeId', { message: refusal })
+      return
+    }
     try {
       await save.mutateAsync({
         id: detail?.id,
@@ -190,6 +208,7 @@ function EncashmentForm({
           label="Leave Type"
           placeholder="Select Leave Type"
           options={leaveOptions}
+          description={chosenType ? encashmentLimitText(chosenType) : undefined}
           required={creating}
           disabled={readOnly}
         />

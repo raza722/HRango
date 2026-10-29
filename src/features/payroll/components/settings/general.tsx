@@ -1,6 +1,8 @@
 import { useId } from 'react'
-import { Controller, useForm, useWatch } from 'react-hook-form'
+import { Controller, type Path, useForm, type UseFormSetError, useWatch } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
 import { toast } from 'sonner'
+import { z } from 'zod'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -27,7 +29,7 @@ import {
 import type { PayrollSettings } from '../../types/payroll.types'
 import { btn, toolbarButton } from '../../utils/styles'
 import { SearchSelect } from '../shared/search-select'
-import { errorMessage, orNull } from './settings-helpers'
+import { applyApiError, errorMessage, orNull } from './settings-helpers'
 import { ViewHeader } from './settings-list'
 import type { SettingsView } from './settings-nav'
 
@@ -86,6 +88,91 @@ const cleaned = (values: PayrollSettings): PayrollSettings => ({
   notesOtherLanguage: orNull(values.notesOtherLanguage),
 })
 
+/** Days in each month; 29 February is allowed, it comes round in leap years. */
+const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+/** "07-01" → "1 July"; null when it is not a month and day. */
+function monthDayLabel(value: string): string | null {
+  const match = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.exec(value.trim())
+  if (!match) return null
+  const month = Number(match[1])
+  const day = Number(match[2])
+  if (day > (MONTH_DAYS[month - 1] ?? 0)) return null
+  return `${String(day)} ${MONTH_NAMES[month - 1] ?? ''}`
+}
+
+const HEX_COLOUR = /^#[0-9A-Fa-f]{6}$/
+
+/**
+ * What the settings form refuses before saving (the API refuses the same): numbers outside
+ * their range, a revision date that is not a month and day, a colour that is not `#RRGGBB`.
+ */
+const settingsSchema = z.custom<PayrollSettings>().superRefine((values, ctx) => {
+  for (const item of CONFIGURATION_ITEMS) {
+    const value = values[item.key]
+    if (item.control.kind === 'number' && value !== null) {
+      const { min, max } = item.control
+      if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [item.key],
+          message: `Enter a whole number from ${String(min)} to ${String(max)}`,
+        })
+      }
+    }
+  }
+  const date = orNull(values.revisionFixedDate)
+  if (date !== null && monthDayLabel(date) === null) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['revisionFixedDate'],
+      message: 'Enter a month and day as MM-DD, e.g. 07-01 for 1 July',
+    })
+  }
+  const colour = orNull(values.payslipColor)
+  if (colour !== null && !HEX_COLOUR.test(colour)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['payslipColor'],
+      message: 'Choose a colour, or type one like #17263A',
+    })
+  }
+  const cpl = values.maxEarnedCpl
+  if (cpl !== null && (!Number.isInteger(cpl) || cpl < 0 || cpl > 365)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['maxEarnedCpl'],
+      message: 'Enter a whole number from 0 to 365',
+    })
+  }
+})
+
+/** A typed number box's value: `null` when empty, otherwise the number (checked by the schema). */
+const numberValue = (text: string) => (text.trim() === '' ? null : Number(text))
+
+/** Every settings key: where an API field error can go. */
+const SETTINGS_FIELDS = [
+  ...CONFIGURATION_ITEMS.map((item) => item.key),
+  'maxEarnedCpl',
+  'cplLeaveTypeId',
+  'fiscalYearStartMonth',
+] as const satisfies readonly Path<PayrollSettings>[]
+
+/** Field errors of a refused save go on their fields; anything else is a toast. */
+function onSaveError(error: unknown, setError: UseFormSetError<PayrollSettings>) {
+  const rest = applyApiError(error, setError, SETTINGS_FIELDS)
+  if (rest) toast.error(errorMessage(error, rest))
+}
+
+/** A control's error line under it. */
+function FieldError({ id, message }: { id: string; message: string | undefined }) {
+  return message ? (
+    <p id={id} className="text-xs text-destructive @xl:col-start-2">
+      {message}
+    </p>
+  ) : null
+}
+
 /**
  * "Payroll Configurations": the numbered options with their controls, one per key of
  * `GET/PUT /payroll/settings/general` (the whole object is saved with its `rowVersion`).
@@ -93,11 +180,14 @@ const cleaned = (values: PayrollSettings): PayrollSettings => ({
 function ConfigurationForm({ settings }: { settings: PayrollSettings }) {
   const save = useSavePayrollSettings()
   const baseId = useId()
-  const form = useForm<PayrollSettings>({ defaultValues: settings })
+  const form = useForm<PayrollSettings>({
+    defaultValues: settings,
+    resolver: zodResolver(settingsSchema),
+  })
   const submit = form.handleSubmit((values) => {
     save.mutate(cleaned(values), {
       onError: (error) => {
-        toast.error(errorMessage(error, 'Could not save the settings.'))
+        onSaveError(error, form.setError)
       },
     })
   })
@@ -120,7 +210,13 @@ function ConfigurationForm({ settings }: { settings: PayrollSettings }) {
               <Controller
                 control={form.control}
                 name={item.key}
-                render={({ field }) => {
+                render={({ field, fieldState }) => {
+                  const errorId = `${id}-error`
+                  const a11y = {
+                    'aria-invalid': fieldState.invalid || undefined,
+                    'aria-describedby': fieldState.error ? errorId : undefined,
+                  }
+                  const error = <FieldError id={errorId} message={fieldState.error?.message} />
                   if (item.control.kind === 'checkbox') {
                     return (
                       <span className="flex h-6 items-center">
@@ -137,31 +233,103 @@ function ConfigurationForm({ settings }: { settings: PayrollSettings }) {
                   if (item.control.kind === 'number') {
                     const { min, max } = item.control
                     return (
-                      <Input
-                        id={id}
-                        inputMode="numeric"
-                        value={typeof field.value === 'number' ? String(field.value) : ''}
-                        onChange={(event) => {
-                          const text = event.target.value.replace(/\D/g, '')
-                          field.onChange(
-                            text === '' ? null : Math.max(min, Math.min(max, Number(text))),
-                          )
-                        }}
-                        className={valueText}
-                      />
+                      <>
+                        <Input
+                          id={id}
+                          {...a11y}
+                          type="number"
+                          inputMode="numeric"
+                          min={min}
+                          max={max}
+                          step={1}
+                          placeholder={`${String(min)} to ${String(max)}`}
+                          value={typeof field.value === 'number' ? String(field.value) : ''}
+                          onChange={(event) => {
+                            field.onChange(numberValue(event.target.value))
+                          }}
+                          onBlur={field.onBlur}
+                          className={valueText}
+                        />
+                        {error}
+                      </>
+                    )
+                  }
+                  if (item.control.kind === 'monthDay') {
+                    const text = typeof field.value === 'string' ? field.value : ''
+                    const readable = monthDayLabel(text)
+                    const hintId = `${id}-hint`
+                    return (
+                      <>
+                        <Input
+                          id={id}
+                          {...a11y}
+                          aria-describedby={cn(hintId, fieldState.error && errorId)}
+                          inputMode="numeric"
+                          maxLength={5}
+                          placeholder="MM-DD, e.g. 07-01"
+                          value={text}
+                          onChange={(event) => {
+                            field.onChange(event.target.value)
+                          }}
+                          onBlur={field.onBlur}
+                          className={valueText}
+                        />
+                        <p id={hintId} className="text-xs text-muted-foreground @xl:col-start-2">
+                          {readable
+                            ? `Every year on ${readable}`
+                            : 'Month, then day: 07-01 is 1 July'}
+                        </p>
+                        {error}
+                      </>
+                    )
+                  }
+                  if (item.control.kind === 'color') {
+                    const text = typeof field.value === 'string' ? field.value : ''
+                    return (
+                      <>
+                        <span className="flex items-center gap-2">
+                          <input
+                            type="color"
+                            aria-label={`${label}, colour picker`}
+                            value={HEX_COLOUR.test(text) ? text.toLowerCase() : '#17263a'}
+                            onChange={(event) => {
+                              field.onChange(event.target.value.toUpperCase())
+                            }}
+                            className="h-10 w-12 shrink-0 cursor-pointer rounded-md border border-input bg-card p-1"
+                          />
+                          <Input
+                            id={id}
+                            {...a11y}
+                            maxLength={7}
+                            placeholder="#17263A (default)"
+                            value={text}
+                            onChange={(event) => {
+                              field.onChange(event.target.value)
+                            }}
+                            onBlur={field.onBlur}
+                            className={valueText}
+                          />
+                        </span>
+                        {error}
+                      </>
                     )
                   }
                   if (item.control.kind === 'text') {
                     return (
-                      <Textarea
-                        id={id}
-                        rows={2}
-                        value={typeof field.value === 'string' ? field.value : ''}
-                        onChange={(event) => {
-                          field.onChange(event.target.value)
-                        }}
-                        className={cn('min-h-10', valueText)}
-                      />
+                      <>
+                        <Textarea
+                          id={id}
+                          {...a11y}
+                          rows={2}
+                          maxLength={1000}
+                          value={typeof field.value === 'string' ? field.value : ''}
+                          onChange={(event) => {
+                            field.onChange(event.target.value)
+                          }}
+                          className={cn('min-h-10', valueText)}
+                        />
+                        {error}
+                      </>
                     )
                   }
                   const { options, labels } = item.control
@@ -226,7 +394,10 @@ function LeaveForm({ settings }: { settings: PayrollSettings }) {
     deductCasualLeaves: useId(),
     deductSickLeaves: useId(),
   }
-  const form = useForm<PayrollSettings>({ defaultValues: settings })
+  const form = useForm<PayrollSettings>({
+    defaultValues: settings,
+    resolver: zodResolver(settingsSchema),
+  })
   const [fiscalYear, startMonth] = useWatch({
     control: form.control,
     name: ['leaveYearBasis', 'fiscalYearStartMonth'],
@@ -243,12 +414,13 @@ function LeaveForm({ settings }: { settings: PayrollSettings }) {
       }),
       {
         onError: (error) => {
-          toast.error(errorMessage(error, 'Could not save the settings.'))
+          onSaveError(error, form.setError)
         },
       },
     )
   })
   const row = 'grid items-center gap-2 @xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] @xl:gap-6'
+  const maxError = `${ids.max}-error`
 
   return (
     <form noValidate onSubmit={(event) => void submit(event)} className="grid gap-5">
@@ -285,17 +457,27 @@ function LeaveForm({ settings }: { settings: PayrollSettings }) {
         <Controller
           control={form.control}
           name="maxEarnedCpl"
-          render={({ field }) => (
-            <Input
-              id={ids.max}
-              className={valueText}
-              inputMode="numeric"
-              value={field.value === null ? '' : String(field.value)}
-              onChange={(event) => {
-                const text = event.target.value.replace(/\D/g, '')
-                field.onChange(text === '' ? null : Math.min(365, Number(text)))
-              }}
-            />
+          render={({ field, fieldState }) => (
+            <>
+              <Input
+                id={ids.max}
+                className={valueText}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={365}
+                step={1}
+                placeholder="0 to 365"
+                aria-invalid={fieldState.invalid || undefined}
+                aria-describedby={fieldState.error ? maxError : undefined}
+                value={field.value === null ? '' : String(field.value)}
+                onChange={(event) => {
+                  field.onChange(numberValue(event.target.value))
+                }}
+                onBlur={field.onBlur}
+              />
+              <FieldError id={maxError} message={fieldState.error?.message} />
+            </>
           )}
         />
       </div>

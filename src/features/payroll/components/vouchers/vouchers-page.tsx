@@ -133,7 +133,8 @@ export function VouchersPage() {
         setDialog({ type: 'view', row })
       },
     },
-    ...(canDelete && row.status !== 'processed'
+    // Approved and processed vouchers stay (they are the record of a payment).
+    ...(canDelete && (row.status === 'pending' || row.status === 'rejected')
       ? [
           {
             label: 'Delete',

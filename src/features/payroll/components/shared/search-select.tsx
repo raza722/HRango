@@ -1,4 +1,4 @@
-import { type ReactNode, useId, useMemo, useState } from 'react'
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useState } from 'react'
 import {
   type Control,
   type FieldPathByValue,
@@ -47,7 +47,8 @@ interface SearchSelectProps {
 
 /**
  * The designs' drop-downs: a field that opens a list with a search box on top
- * (employees, pay items, time slots, payrolls).
+ * (employees, pay items, time slots, payrolls). From the search box, the arrow keys move
+ * through the choices and Enter picks one; Enter alone picks the only match.
  */
 export function SearchSelect({
   id,
@@ -77,10 +78,50 @@ export function SearchSelect({
       : options
   }, [options, query, onSearch])
 
+  const [highlight, setHighlight] = useState(-1)
+  /** What the arrow keys move through: "placeholder" (clears) first when clearable. */
+  const choices: (string | null)[] = [
+    ...(clearable ? [null] : []),
+    ...shown.map((option) => option.value),
+  ]
+  const optionId = (index: number) => `${listId}-option-${String(index)}`
+  const field = (aria['aria-label'] ?? placeholder.replace(/^Selects*/i, '')).trim()
+  const searchLabel = `Search ${field ? field.toLowerCase() : 'options'}`
+
+  // A shorter list (a new search, fewer matches) drops a highlight past its end.
+  const activeIndex = highlight < choices.length ? highlight : -1
+  // Keep the highlighted choice in view.
+  useEffect(() => {
+    if (activeIndex < 0) return
+    try {
+      document.getElementById(optionId(activeIndex))?.scrollIntoView({ block: 'nearest' })
+    } catch {
+      // jsdom has no layout to scroll.
+    }
+    // optionId only depends on listId, which never changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndex])
+
   const pick = (next: string | null) => {
     onChange(next)
     setOpen(false)
     setQuery('')
+  }
+
+  const onSearchKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (choices.length === 0) return
+      setHighlight((current) =>
+        event.key === 'ArrowDown'
+          ? Math.min(choices.length - 1, current + 1)
+          : Math.max(0, current - 1),
+      )
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      const index = activeIndex >= 0 ? activeIndex : shown.length === 1 ? choices.length - 1 : -1
+      if (index >= 0 && index < choices.length) pick(choices[index] ?? null)
+    }
   }
 
   return (
@@ -88,6 +129,7 @@ export function SearchSelect({
       open={open}
       onOpenChange={(next) => {
         setOpen(next)
+        setHighlight(-1)
         if (!next && query) {
           setQuery('')
           onSearch?.('')
@@ -121,10 +163,14 @@ export function SearchSelect({
           <input
             type="search"
             autoFocus
-            aria-label={`Search ${placeholder.replace(/^Select /, '').toLowerCase()}`}
+            aria-label={searchLabel}
+            aria-controls={listId}
+            aria-activedescendant={activeIndex >= 0 ? optionId(activeIndex) : undefined}
+            onKeyDown={onSearchKey}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value)
+              setHighlight(-1)
               onSearch?.(event.target.value)
             }}
             className="h-8 w-full rounded-sm border border-input bg-card pr-8 pl-2.5 text-sm text-field-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25"
@@ -137,17 +183,28 @@ export function SearchSelect({
         <div
           id={listId}
           role="listbox"
+          aria-label={field || 'Options'}
+          aria-busy={loading || undefined}
           className="grid scrollbar-thin max-h-64 gap-0.5 overflow-y-auto"
         >
+          {loading && shown.length > 0 && (
+            <p role="status" className="px-2.5 py-1 text-xs text-muted-foreground">
+              Searching…
+            </p>
+          )}
           {clearable && (
             <button
+              id={optionId(0)}
               type="button"
               role="option"
               aria-selected={!selected}
               onClick={() => {
                 pick(null)
               }}
-              className="rounded-sm px-2.5 py-1.5 text-left text-sm text-label outline-none hover:bg-muted focus-visible:bg-muted"
+              className={cn(
+                'rounded-sm px-2.5 py-1.5 text-left text-sm text-label outline-none hover:bg-muted focus-visible:bg-muted',
+                activeIndex === 0 && 'bg-muted',
+              )}
             >
               {placeholder}
             </button>
@@ -157,11 +214,13 @@ export function SearchSelect({
               {loading ? 'Searching…' : 'Nothing matches.'}
             </p>
           ) : (
-            shown.map((option) => {
+            shown.map((option, position) => {
               const active = option.value === value
+              const index = position + (clearable ? 1 : 0)
               return (
                 <button
                   key={option.value}
+                  id={optionId(index)}
                   type="button"
                   role="option"
                   aria-selected={active}
@@ -170,6 +229,8 @@ export function SearchSelect({
                   }}
                   className={cn(
                     'flex items-center justify-between gap-2 rounded-sm px-2.5 py-1.5 text-left text-sm text-field-foreground outline-none hover:bg-muted focus-visible:bg-muted',
+                    index === activeIndex && !active && 'bg-muted ring-1 ring-ring/40',
+                    index === activeIndex && active && 'ring-2 ring-ring/60',
                     active &&
                       'bg-[#748897] text-white hover:bg-[#748897] focus-visible:bg-[#748897]',
                   )}

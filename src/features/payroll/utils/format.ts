@@ -54,16 +54,23 @@ export const formatWeekday = (date: string) => {
   return value ? format(value, 'EEE,d MMM yyyy') : date
 }
 
-/** "September 5, 2024 04:22 PM" (Last Running / Last Closing). */
+/**
+ * The API's date-times are UTC; a stamp without an offset (`2026-10-28T09:53:00`) is read as
+ * UTC too, so it shows in the viewer's own time.
+ */
+export const utcStamp = (iso: string) =>
+  /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(iso) ? `${iso}Z` : iso
+
+/** "September 5, 2024 04:22 PM" (Last Running / Last Closing), in local time. */
 export const formatStamp = (iso: string) => {
-  const value = toDate(iso)
-  return value ? format(value, 'MMMM d, yyyy hh:mm a') : iso
+  const value = iso.length > 10 ? parseISO(utcStamp(iso)) : toDate(iso)
+  return value && isValid(value) ? format(value, 'MMMM d, yyyy hh:mm a') : iso
 }
 
-/** "Sep 5, 2024" (Employee Accounts month column). */
+/** "Sep 2024" (Employee Accounts and Account Statement month column). */
 export const formatMonthShort = (month: string) => {
-  const value = toDate(month.length === 7 ? `${month}-05` : month)
-  return value ? format(value, 'MMM d, yyyy') : month
+  const value = toDate(month.length === 7 ? `${month}-01` : month)
+  return value ? format(value, 'MMM yyyy') : month
 }
 
 /** "1, January 2024" (person card joining date). */

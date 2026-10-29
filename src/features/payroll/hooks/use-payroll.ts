@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { useEmployeeLookupSearch } from '@/hooks/use-employee-lookup'
@@ -38,6 +38,7 @@ import type {
   OpeningBalanceImportRow,
   OpeningBalanceInput,
   PayrollInput,
+  PayrollRow,
   PayrollSettings,
   PayslipLineInput,
   SalaryImportRow,
@@ -140,6 +141,43 @@ export const usePayrollEmployees = (id: string, q: string) =>
   })
 /** Kept name. */
 export const useEmployments = usePayrollEmployees
+
+/**
+ * Who is already on another monthly payroll of the same month (a person is paid on one
+ * payroll a month): employee id → that payroll. Reads the month's payrolls and their people.
+ */
+export function useOtherPayrollMembers(payroll: PayrollRow) {
+  const month = payroll.kind === 'monthly' ? (payroll.payrollMonth ?? undefined) : undefined
+  const others = useQuery({
+    ...listQueryOptions('payrolls', { page: 1, pageSize: 100, month }, payrollApi.payrolls),
+    enabled: month !== undefined,
+  })
+  const runs = (others.data?.data ?? []).filter(
+    (other) => other.id !== payroll.id && other.kind === 'monthly',
+  )
+  return useQueries({
+    queries: runs.map((other) => ({
+      queryKey: [...payrollKeys.payroll(other.id, 'employees'), ''],
+      queryFn: ({ signal }: { signal: AbortSignal }) =>
+        payrollApi.payrollEmployees(other.id, '', signal),
+    })),
+    combine: (results) => {
+      const taken = new Map<string, { payroll: PayrollRow; employeeName: string }>()
+      results.forEach((result, index) => {
+        const other = runs[index]
+        if (!other) return
+        for (const row of result.data ?? []) {
+          taken.set(row.employeeId, { payroll: other, employeeName: row.employeeName })
+        }
+      })
+      return {
+        taken,
+        isPending: others.isPending && month !== undefined,
+        isLoading: results.some((result) => result.isPending),
+      }
+    },
+  })
+}
 
 export const usePayrollHistory = (id: string) =>
   useQuery({
@@ -417,7 +455,12 @@ export const useAddPayrollEmployees = () =>
   usePayrollMutation(
     ({ id, filter }: { id: string; filter: EmployeeFilterInput }) =>
       payrollApi.addPayrollEmployees(id, filter),
-    (_vars, result) => `${plural(result.added ?? 0, 'employee')} added`,
+    (_vars, result) =>
+      `${plural(result.added ?? 0, 'employee')} added${
+        result.skipped
+          ? ` (${String(result.skipped)} skipped: already on this payroll or another one this month)`
+          : ''
+      }`,
   )
 
 export const useUpdatePayslip = () =>

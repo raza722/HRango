@@ -283,7 +283,14 @@ export function PayslipsPage({ scope }: { scope: 'my' | 'all' }) {
   }
   const canPrint = useCan('payroll.payslips.print')
   const canExport = useCan('payroll.payslips.export')
-  const params = { page, pageSize: PAGE_SIZE, scope, ...toParams(filters) }
+  // An employee sees a pay slip only once it is released (paid ones are released too).
+  const params = {
+    page,
+    pageSize: PAGE_SIZE,
+    scope,
+    ...toParams(filters),
+    ...(scope === 'my' ? { status: 'released' } : {}),
+  }
   const list = usePayslips(params)
   const rows = list.data?.data ?? []
   const meta = list.data?.meta
@@ -496,13 +503,7 @@ export function PayslipsPage({ scope }: { scope: 'my' | 'all' }) {
             placeholder: 'Select Payroll',
             options: payrolls,
           },
-          {
-            kind: 'select',
-            key: 'status',
-            label: 'Status',
-            placeholder: 'Status',
-            options: statuses,
-          },
+          // No Status filter: My Pay Slips lists released slips only.
           { kind: 'month', key: 'month', label: 'Month' },
           { kind: 'range', key: 'net', label: 'Net Payable', from: 'netFrom', to: 'netTo' },
         ]

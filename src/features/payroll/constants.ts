@@ -112,6 +112,10 @@ type ConfigControl =
   | { kind: 'select'; options: readonly string[]; labels: Record<string, string> }
   | { kind: 'text' }
   | { kind: 'number'; min: number; max: number }
+  /** A month and day every year (`MM-DD`). */
+  | { kind: 'monthDay' }
+  /** A `#RRGGBB` colour. */
+  | { kind: 'color' }
 
 /** Keys of the general settings that are payroll options (the rest is leave configuration). */
 export type PayrollConfigurationKey = Exclude<
@@ -165,7 +169,11 @@ export const CONFIGURATION_ITEMS: readonly {
     label: 'Apply Salary Revision on Fixed Days',
     control: { kind: 'checkbox' },
   },
-  { key: 'revisionFixedDate', label: 'Fixed Revision Date (MM-DD)', control: { kind: 'text' } },
+  {
+    key: 'revisionFixedDate',
+    label: 'Fixed Revision Date (MM-DD)',
+    control: { kind: 'monthDay' },
+  },
   {
     key: 'revisionOnShiftDays',
     label: 'Apply Salary Revision Based on Shift Days',
@@ -197,7 +205,7 @@ export const CONFIGURATION_ITEMS: readonly {
     label: 'Show Salary Breakdown on Pay slip',
     control: { kind: 'checkbox' },
   },
-  { key: 'payslipColor', label: 'Main Color for Payslip', control: { kind: 'text' } },
+  { key: 'payslipColor', label: 'Main Color for Payslip', control: { kind: 'color' } },
   {
     key: 'taxRounding',
     label: 'Round Off Tax Amount in Payroll',
@@ -303,6 +311,7 @@ export const VOUCHER_TYPE_LABELS: Record<VoucherLineType, string> = {
   bonus: 'Bonus',
   travel_allowance: 'Travel Allowance',
   daily_wage: 'Daily Wages',
+  leave_encashment: 'Leave Encashment',
 }
 
 export const ENCASHMENT_TYPE_LABELS: Record<EncashmentType, string> = {

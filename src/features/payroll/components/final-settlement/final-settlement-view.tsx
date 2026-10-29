@@ -9,7 +9,8 @@ import { formatLong, formatRs, formatStamp } from '../../utils/format'
 import { btn, footerButton } from '../../utils/styles'
 import { ReadOnlyRow } from '../balances/list-parts'
 
-const amount = (value: number | null) => (value === null ? '—' : formatRs(value))
+/** A total, or "Not calculated yet" while the settlement is pending (Recalculate works it out). */
+const amount = (value: number | null) => (value === null ? 'Not calculated yet' : formatRs(value))
 
 /**
  * "Final Settlement View" (`GET /final-settlements/{id}`): the separation as Off-boarding recorded

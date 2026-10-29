@@ -46,7 +46,7 @@ describe('Payroll Settings', () => {
     )
     expect(within(menu).getByRole('link', { name: 'Pay Runs' })).toHaveAttribute(
       'href',
-      '/payroll/payrolls/monthly',
+      '/payroll/settings/pay-runs',
     )
     const tabs = screen.getByRole('navigation', { name: 'Payroll Settings' })
     expect(within(tabs).getByRole('link', { name: 'General' })).toHaveAttribute(

@@ -7,6 +7,15 @@ export const pageSearchSchema = z.object({
 export type PageSearch = z.infer<typeof pageSearchSchema>
 export const PAGE_SEARCH_DEFAULTS = { page: 1 } as const
 
+/** Reports: the open tab (`?report=`) and its page. */
+export const REPORT_TABS = ['accounts', 'employee-wise', 'daily-wages', 'summary'] as const
+export const reportSearchSchema = z.object({
+  page: z.number().int().min(1).default(1).catch(1),
+  report: z.enum(REPORT_TABS).default('accounts').catch('accounts'),
+})
+export type ReportSearch = z.infer<typeof reportSearchSchema>
+export const REPORT_SEARCH_DEFAULTS = { page: 1, report: 'accounts' } as const
+
 export const salarySheetSearchSchema = z.object({
   payrollId: z.string().optional().catch(undefined),
   month: z

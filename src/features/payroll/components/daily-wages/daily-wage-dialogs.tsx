@@ -488,6 +488,19 @@ export function DailyWageDetailsDialog({ id, onClose }: { id: string; onClose: (
   const canVoucher = useCan('payroll.vouchers.create')
   const [error, setError] = useState<string | null>(null)
   const data = detail.data
+  // People with pay and no voucher yet; once everyone has one, Voucher has nothing left to do.
+  const due = (data?.rows ?? []).filter((row) => row.payslipId && row.netPayable && !row.voucherId)
+  const made = (data?.rows ?? []).filter((row) => row.voucherId).length
+  const voucherNote =
+    data?.status !== 'closed'
+      ? null
+      : due.length === 0
+        ? made > 0
+          ? `Vouchers made for everyone (${String(made)}). See them on Vouchers.`
+          : 'Nobody on this payroll has an amount to pay.'
+        : made > 0
+          ? `${String(made)} made; Voucher makes the other ${String(due.length)}.`
+          : null
   return (
     <AppDialog
       title={
@@ -500,17 +513,29 @@ export function DailyWageDetailsDialog({ id, onClose }: { id: string; onClose: (
       className="max-w-5xl"
       footer={
         <>
-          {error && (
+          {error ? (
             <p role="alert" className="mr-auto self-center text-sm text-destructive">
               {error}
             </p>
+          ) : (
+            canVoucher &&
+            voucherNote && (
+              <p
+                id={`${id}-voucher-note`}
+                role="status"
+                className="mr-auto self-center text-sm text-muted-foreground"
+              >
+                {voucherNote}
+              </p>
+            )
           )}
           <Button onClick={onClose} className={cn(footerButton, btn.orange)}>
             Back
           </Button>
           {canVoucher && data?.status === 'closed' && (
             <Button
-              disabled={vouchers.isPending}
+              disabled={vouchers.isPending || due.length === 0}
+              aria-describedby={voucherNote ? `${id}-voucher-note` : undefined}
               onClick={() => {
                 setError(null)
                 vouchers.mutate(id, {

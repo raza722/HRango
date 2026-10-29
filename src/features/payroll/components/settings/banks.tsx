@@ -7,7 +7,7 @@ import { TextField } from '@/components/form'
 import type { DataTableColumn } from '@/components/layout'
 
 import { useDeleteResource, useResourceList, useSaveResource } from '../../hooks/use-payroll'
-import type { DisbursementBank } from '../../types/payroll.types'
+import { BANK_FORMATS, type DisbursementBank } from '../../types/payroll.types'
 import { formatLong } from '../../utils/format'
 import { DateField } from '../shared/date-input'
 import { PayrollDialog } from '../shared/payroll-dialog'
@@ -20,14 +20,21 @@ import { rowMenuHandlers, useSettingsCan } from './settings-permissions'
 const required = (label: string, max: number) =>
   z.string().trim().min(1, `Enter the ${label}`).max(max, `Keep it under ${max} characters`)
 
+/** A required code in its format (`BANK_FORMATS`). */
+const code = (
+  label: string,
+  max: number,
+  format: (typeof BANK_FORMATS)[keyof typeof BANK_FORMATS],
+) => required(label, max).regex(format.pattern, format.message)
+
 const schema = z.object({
   accountHolder: required('account holder', 200),
-  accountNumber: required('account number', 50),
+  accountNumber: code('account number', 50, BANK_FORMATS.accountNumber),
   bankName: required('bank name', 200),
   branchName: z.string().trim().max(200),
-  branchCode: required('branch code', 30),
+  branchCode: code('branch code', 30, BANK_FORMATS.branchCode),
   branchLocation: required('branch location', 200),
-  taxPayerId: required('tax payer ID', 30),
+  taxPayerId: code('tax payer ID', 30, BANK_FORMATS.taxPayerId),
   effectiveDate: z.string(),
   description: z.string().trim().max(2000),
 })

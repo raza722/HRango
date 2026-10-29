@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 
 import { AppDialog } from '@/components/feedback/app-dialog'
 import { EmployeeAvatar } from '@/components/layout'
@@ -14,6 +14,7 @@ import { PAYSLIP_STATUS_META } from '../../constants'
 import {
   useAddPayrollEmployees,
   useOrganisationLookup,
+  useOtherPayrollMembers,
   usePayrollEmployees,
   usePayrollErrors,
   usePayrollHistory,
@@ -21,7 +22,7 @@ import {
 } from '../../hooks/use-payroll'
 import { personHint } from '../../hooks/use-payroll-records'
 import type { PayrollError, PayrollRow } from '../../types/payroll.types'
-import { formatJoining, formatRs, formatStamp } from '../../utils/format'
+import { formatJoining, formatMonth, formatRs, formatStamp } from '../../utils/format'
 import { btn, fieldValueText, footerButton, toolbarButton } from '../../utils/styles'
 import { EmployeeMultiSearchSelect } from '../shared/employee-search-select'
 import { NoRecord } from '../shared/no-record'
@@ -291,14 +292,23 @@ function AddEmployeesDialog({
   const departments = useOrganisationLookup('departments')
   const setEmployees = useSetPayrollEmployees()
   const addByFilter = useAddPayrollEmployees()
+  const others = useOtherPayrollMembers(payroll)
+  const hintId = useId()
+  const errorId = useId()
   const [ids, setIds] = useState<string[]>(current)
   const [branchId, setBranchId] = useState<string | null>(null)
   const [departmentId, setDepartmentId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const pending = setEmployees.isPending || addByFilter.isPending
+  const pending = setEmployees.isPending || addByFilter.isPending || others.isLoading
   const fail = (failure: unknown) => {
     setError(failure instanceof ApiError ? failure.message : 'The employees could not be saved.')
   }
+  const month = payroll.payrollMonth ? formatMonth(payroll.payrollMonth) : 'this month'
+  /** People newly picked who are on another payroll of the month (one payroll a month each). */
+  const clashes = ids.flatMap((id) => {
+    const other = current.includes(id) ? undefined : others.taken.get(id)
+    return other ? [`${other.employeeName} is already on ${other.payroll.name} for ${month}.`] : []
+  })
 
   return (
     <AppDialog
@@ -316,6 +326,10 @@ function AddEmployeesDialog({
             disabled={pending}
             onClick={() => {
               setError(null)
+              if (clashes.length > 0) {
+                setError(clashes.join(' '))
+                return
+              }
               setEmployees.mutate(
                 { id: payroll.id, employeeIds: ids },
                 { onSuccess: onClose, onError: fail },
@@ -336,18 +350,36 @@ function AddEmployeesDialog({
           <p className="font-inter text-sm text-heading">Employees on the payroll</p>
           <EmployeeMultiSearchSelect
             aria-label="Employees"
+            aria-describedby={clashes.length > 0 ? `${hintId} ${errorId}` : hintId}
+            aria-invalid={clashes.length > 0}
             value={ids}
-            onChange={setIds}
+            onChange={(next) => {
+              setIds(next)
+              setError(null)
+            }}
             filters={{ permission: 'payroll.payrolls.edit' }}
             known={known}
+            include={(row) => !others.taken.has(row.id)}
             hint={personHint}
             placeholder="Select Employees"
           />
-          <p className="text-xs text-muted-foreground">{ids.length} selected</p>
+          <p id={hintId} className="text-xs text-muted-foreground">
+            {ids.length} selected
+            {others.taken.size > 0 &&
+              ` · ${String(others.taken.size)} ${others.taken.size === 1 ? 'person is' : 'people are'} on another payroll for ${month} and not listed`}
+          </p>
+          {clashes.length > 0 && (
+            <p id={errorId} role="alert" className="text-sm text-destructive">
+              {clashes.join(' ')}
+            </p>
+          )}
         </div>
         <div className="grid gap-2 rounded-lg border p-4">
           <p className="font-inter text-sm text-heading">
             Or add everyone of a branch / department
+          </p>
+          <p className="text-xs text-muted-foreground">
+            People already on another payroll for {month} are skipped.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <SearchSelect

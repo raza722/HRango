@@ -37,6 +37,7 @@ export function ViewHeader({
                 key={item}
                 to={TAB_PATHS[tab]}
                 search={{ view: item, page: 1 }}
+                activeOptions={{ exact: true }}
                 aria-current={selected ? 'page' : undefined}
                 className={cn(
                   'flex items-center gap-2.5 rounded-sm py-1 text-sm leading-6 font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50',

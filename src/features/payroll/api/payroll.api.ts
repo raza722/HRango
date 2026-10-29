@@ -483,11 +483,23 @@ export const lookupApi = {
     return data.data
   },
   leaveTypes: async (signal?: AbortSignal) => {
-    const { data } = await apiClient.get<Paginated<{ id: string; title: string }>>(
-      '/leaves/types',
-      { params: { page: 1, pageSize: 100 }, signal },
-    )
-    return data.data.map((type): LeaveTypeOption => ({ id: type.id, name: type.title }))
+    const { data } = await apiClient.get<
+      Paginated<{
+        id: string
+        title: string
+        allowEncashment?: boolean | null
+        encashmentMin?: number | null
+        encashmentMax?: number | null
+      }>
+    >('/leaves/types', { params: { page: 1, pageSize: 100 }, signal })
+    return data.data.map((type): LeaveTypeOption => ({
+      id: type.id,
+      name: type.title,
+      // Left out by an older API: nothing to refuse on.
+      allowEncashment: type.allowEncashment ?? true,
+      encashmentMin: type.encashmentMin ?? null,
+      encashmentMax: type.encashmentMax ?? null,
+    }))
   },
 }
 

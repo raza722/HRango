@@ -8,7 +8,12 @@ import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import type { ReportFilters } from '../../api/payroll.api'
-import { PAY_ITEM_TYPE_LABELS } from '../../constants'
+import {
+  PAY_ITEM_TYPE_LABELS,
+  PAYROLL_STATUS_META,
+  PAYSLIP_STATUS_META,
+  RELEASED_WITH_FS_META,
+} from '../../constants'
 import {
   useDailyWagesReport,
   useEmployeeAccountReport,
@@ -17,6 +22,7 @@ import {
   usePayrollSummary,
 } from '../../hooks/use-payroll'
 import { usePayrollOptions } from '../../hooks/use-payroll-records'
+import type { ReportSearch } from '../../routing'
 import type {
   DailyWagesReportRow,
   EmployeeAccountReportRow,
@@ -35,7 +41,7 @@ import { SearchSelect } from '../shared/search-select'
 const routeApi = getRouteApi('/_app/payroll/reports/employee-accounts')
 const PAGE_SIZE = 10
 
-type Report = 'accounts' | 'employee-wise' | 'daily-wages' | 'summary'
+type Report = ReportSearch['report']
 const REPORTS: { key: Report; label: string }[] = [
   { key: 'accounts', label: 'Employee Accounts' },
   { key: 'employee-wise', label: 'Employee Wise' },
@@ -85,6 +91,10 @@ const accountColumns: DataTableColumn<EmployeeAccountReportRow>[] = [
 
 const money = (value: number | null) => formatRs(value ?? 0)
 
+/** A status as the lists label it ("On Hold", "Run"), not the API's code. */
+const statusLabel = (meta: Record<string, { label: string }>, status: string) =>
+  meta[status]?.label ?? status.replace(/_/g, ' ')
+
 const employeeWiseColumns: DataTableColumn<EmployeeWiseRow>[] = [
   {
     id: 'name',
@@ -108,7 +118,14 @@ const employeeWiseColumns: DataTableColumn<EmployeeWiseRow>[] = [
   { id: 'deductions', header: 'Deductions', cell: (row) => money(row.totalDeductions) },
   { id: 'tax', header: 'Tax', cell: (row) => money(row.taxAmount) },
   { id: 'net', header: 'Net Payable', cell: (row) => money(row.netPayable) },
-  { id: 'status', header: 'Status', cell: (row) => row.status.replace(/_/g, ' ') },
+  {
+    id: 'status',
+    header: 'Status',
+    cell: (row) =>
+      row.status === 'released' && row.isFinalSettlement
+        ? RELEASED_WITH_FS_META.label
+        : statusLabel(PAYSLIP_STATUS_META, row.status),
+  },
 ]
 
 const dailyWagesColumns: DataTableColumn<DailyWagesReportRow>[] = [
@@ -124,7 +141,7 @@ const dailyWagesColumns: DataTableColumn<DailyWagesReportRow>[] = [
     align: 'center',
     cell: (row) => `${row.voucherCount} (${row.vouchersProcessed})`,
   },
-  { id: 'status', header: 'Status', cell: (row) => row.status.replace(/_/g, ' ') },
+  { id: 'status', header: 'Status', cell: (row) => statusLabel(PAYROLL_STATUS_META, row.status) },
 ]
 
 /** The filters as the report endpoints take them (`from` / `to` are months or days). */
@@ -146,11 +163,10 @@ function toReportFilters(values: FilterValues, months: boolean): ReportFilters {
  * (`/reports/payroll-summary/{payrollId}`), as tabs of the one Reports page.
  */
 export function EmployeeAccountReportPage() {
-  const { page } = routeApi.useSearch()
+  const { page, report } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
   const allowed = useCan('payroll.reports.view')
   const canExport = useCan('payroll.reports.export')
-  const [report, setReport] = useState<Report>('accounts')
   const options = usePayrollOptions('payroll.reports.view')
   const [filters, setFilters] = useFilters(`payroll-report-${report}`)
   const [filtering, setFiltering] = useState(false)
@@ -244,7 +260,7 @@ export function EmployeeAccountReportPage() {
             row.employeeCount,
             row.netPayable,
             row.voucherCount,
-            row.status,
+            statusLabel(PAYROLL_STATUS_META, row.status),
           ]),
         ),
         'daily-wages-report.csv',
@@ -304,9 +320,9 @@ export function EmployeeAccountReportPage() {
             role="tab"
             aria-selected={report === item.key}
             onClick={() => {
-              setReport(item.key)
+              // The open tab is kept in the URL (`?report=`), so a reload or a shared link keeps it.
               setFilters({})
-              goTo(1)
+              void navigate({ search: (prev) => ({ ...prev, report: item.key, page: 1 }) })
             }}
             className={cn(
               'rounded-md px-3 py-1.5 text-xs font-medium',

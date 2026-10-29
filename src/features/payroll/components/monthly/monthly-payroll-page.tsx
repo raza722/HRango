@@ -28,8 +28,9 @@ import {
   usePayrolls,
   useRunPayroll,
 } from '../../hooks/use-payroll'
+import type { PageSearch } from '../../routing'
 import type { PayrollRow, PayrollStatus } from '../../types/payroll.types'
-import { formatMonthComma, formatRs, formatStamp } from '../../utils/format'
+import { formatMonth, formatMonthComma, formatRs, formatStamp } from '../../utils/format'
 import { btn, payrollTableClass, toolbarButton } from '../../utils/styles'
 import { ActionIcon } from '../shared/action-icon'
 import { ConfirmAction } from '../shared/confirm-action'
@@ -99,14 +100,57 @@ type Dialog =
   | null
 
 /**
- * Payrolls → Monthly (`GET /payroll/payrolls`): month, last run and closing, status and the
- * round action icons; + Create.
+ * Where the list is shown: `page` is the sidebar's Payrolls → Monthly; `pay-runs` and
+ * `history` open beside the Payroll Settings menu, History with only the closed payrolls.
  */
+export type MonthlyPayrollVariant = 'page' | 'pay-runs' | 'history'
+
+const VARIANTS: Record<
+  MonthlyPayrollVariant,
+  { title: string; caption: string; status?: PayrollStatus; create: boolean }
+> = {
+  page: { title: 'Payrolls Monthly', caption: 'Monthly payrolls', create: true },
+  'pay-runs': { title: 'Pay Runs', caption: 'Monthly payrolls', create: true },
+  // A new payroll is never closed, so History has no + Create.
+  history: {
+    title: 'Payroll History',
+    caption: 'Closed monthly payrolls',
+    status: 'closed',
+    create: false,
+  },
+}
+
+/** Payrolls → Monthly, the sidebar's page: the list with its page in the URL. */
 export function MonthlyPayrollPage() {
   const search = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
+  return (
+    <MonthlyPayrollView
+      search={search}
+      onSearch={(patch) => {
+        void navigate({ search: (prev) => ({ ...prev, ...patch }) })
+      }}
+    />
+  )
+}
+
+/**
+ * The Monthly list (`GET /payroll/payrolls`): month, last run and closing, status and the
+ * round action icons; + Create. The route that shows it owns the URL: the sidebar's
+ * Payrolls → Monthly, and Pay Runs / Payroll History beside the Payroll Settings menu.
+ */
+export function MonthlyPayrollView({
+  search,
+  onSearch,
+  variant = 'page',
+}: {
+  search: PageSearch
+  onSearch: (patch: Partial<PageSearch>) => void
+  variant?: MonthlyPayrollVariant
+}) {
+  const shown = VARIANTS[variant]
   const goTo = useNavigate()
-  const list = usePayrolls({ page: search.page, pageSize: PAGE_SIZE })
+  const list = usePayrolls({ page: search.page, pageSize: PAGE_SIZE, status: shown.status })
   const run = useRunPayroll()
   const close = useClosePayroll()
   const hold = useHoldPayroll()
@@ -124,7 +168,7 @@ export function MonthlyPayrollPage() {
     unhold: useCan(ACTION_CODES.unhold),
     delete: useCan(ACTION_CODES.delete),
   }
-  const canCreate = useCan('payroll.payrolls.create')
+  const canCreate = useCan('payroll.payrolls.create') && shown.create
   const rows = list.data?.data ?? []
   const meta = list.data?.meta
 
@@ -218,7 +262,8 @@ export function MonthlyPayrollPage() {
 
   return (
     <PayrollCard
-      title="Payrolls Monthly"
+      title={shown.title}
+      standalone={variant === 'page'}
       actions={
         canCreate && (
           <Button
@@ -236,7 +281,7 @@ export function MonthlyPayrollPage() {
         columns={columns}
         data={rows}
         getRowId={(row) => row.id}
-        caption="Monthly payrolls"
+        caption={shown.caption}
         isLoading={list.isPending}
         isFetching={list.isFetching}
         className={payrollTableClass}
@@ -249,7 +294,7 @@ export function MonthlyPayrollPage() {
             totalPages={meta.totalPages}
             disabled={list.isFetching}
             onPageChange={(page) => {
-              void navigate({ search: (prev) => ({ ...prev, page }) })
+              onSearch({ page })
             }}
           />
         </div>
@@ -322,7 +367,11 @@ export function MonthlyPayrollPage() {
         }}
         tone="danger"
         title="Delete payroll"
-        message="Delete this payroll and its payslips?"
+        message={
+          dialog?.type === 'delete' && dialog.payroll.payslipCount > 0
+            ? `Delete ${dialog.payroll.name}? Its ${String(dialog.payroll.payslipCount)} ${dialog.payroll.payslipCount === 1 ? 'payslip is' : 'payslips are'} deleted with it, and the people on it are no longer paid for ${dialog.payroll.payrollMonth ? formatMonth(dialog.payroll.payrollMonth) : 'the month'}. This cannot be undone.`
+            : `Delete ${dialog?.type === 'delete' ? dialog.payroll.name : 'this payroll'}? It has no payslips yet. This cannot be undone.`
+        }
         onConfirm={() => {
           if (dialog?.type !== 'delete') return
           remove.mutate(
