@@ -1,6 +1,7 @@
 import { type SyntheticEvent, useId, useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { format } from 'date-fns'
 import { z } from 'zod'
 
 import { SelectField, TextareaField, TextField } from '@/components/form'
@@ -37,7 +38,14 @@ const schema = z.object({
     .string()
     .nullable()
     .refine((value) => Boolean(value), { message: 'Choose the asset' }),
-  allocatedOn: z.string().min(1, 'Choose the allocation date'),
+  allocatedOn: z
+    .string()
+    .min(1, 'Choose the allocation date')
+    // The asset shows as allocated from this day: a later one would be allocated before it is.
+    .refine(
+      (value) => value <= format(new Date(), 'yyyy-MM-dd'),
+      'Choose today or an earlier date',
+    ),
   identificationNo: z.string(),
   deallocatedOn: z.string(),
   returnCondition: z.string(),
@@ -223,6 +231,7 @@ function AllocationForm({
           label="Allocation Date"
           required={!readOnly}
           disabled={readOnly}
+          maxDate={new Date()}
           display={DATE}
         />
         {readOnly && allocation.deallocatedOn && (

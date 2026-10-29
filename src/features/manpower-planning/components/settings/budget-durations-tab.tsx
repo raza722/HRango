@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
@@ -10,8 +10,13 @@ import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { DEFAULT_PAGE_SIZE, MP_CODES } from '../../constants'
-import { useBudgetDurations, useDeleteDuration, useSaveDuration } from '../../hooks/use-manpower'
-import { durationFormSchema, type DurationFormValues } from '../../schemas/dialog-forms.schema'
+import {
+  useBudgetDurations,
+  useDeleteDuration,
+  useManpowerLookups,
+  useSaveDuration,
+} from '../../hooks/use-manpower'
+import { type DurationFormValues, makeDurationFormSchema } from '../../schemas/dialog-forms.schema'
 import type { BudgetDuration } from '../../types/manpower.types'
 import { showSaveError, toastError } from '../../utils/errors'
 import { formatDay, stampOf } from '../../utils/format'
@@ -35,8 +40,8 @@ import { CardBody, MpCard } from '../shared/page-shell'
 import { ConfirmPopup, MpDialog } from '../shared/popups'
 import { SettingsTabs } from './settings-tabs'
 
-/** The flag's name as the design writes it ("Bduget" corrected). */
-const CURRENT_LABEL = 'IsCurrentBudgetDurationPeriod'
+/** The design's "IsCurrentBudgetDurationPeriod" flag, in words. */
+const CURRENT_LABEL = 'Current budget duration'
 
 const iconButton =
   'inline-flex size-8 items-center justify-center rounded-md outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-[#7469E8]/35'
@@ -50,8 +55,12 @@ function DurationDialog({
   onClose: () => void
 }) {
   const save = useSaveDuration()
+  // Every saved duration (the forms' lookups), so an overlap shows before the save.
+  const lookups = useManpowerLookups()
+  const others = lookups.data?.durations
+  const schema = useMemo(() => makeDurationFormSchema(others, duration?.id), [others, duration?.id])
   const form = useForm<DurationFormValues>({
-    resolver: zodResolver(durationFormSchema),
+    resolver: zodResolver(schema),
     defaultValues: duration
       ? {
           name: duration.name,
@@ -94,7 +103,7 @@ function DurationDialog({
             <input
               {...a11y}
               {...register('name')}
-              placeholder="2024"
+              placeholder="e.g. 2027"
               className={cn(dialogBoxClass, 'w-full')}
             />
           )}
@@ -103,13 +112,17 @@ function DurationDialog({
           control={control}
           name="startDate"
           render={({ field, fieldState }) => (
-            <MpField label="Select Start Date" layout="inline" error={fieldState.error?.message}>
+            <MpField
+              label="Select Start Date"
+              required
+              layout="inline"
+              error={fieldState.error?.message}
+            >
               {(a11y) => (
                 <DateBox
                   {...a11y}
                   value={field.value}
                   onChange={field.onChange}
-                  placeholder="1 Jan 2024"
                   className={dialogBoxClass}
                 />
               )}
@@ -120,13 +133,17 @@ function DurationDialog({
           control={control}
           name="endDate"
           render={({ field, fieldState }) => (
-            <MpField label="Select End Date" layout="inline" error={fieldState.error?.message}>
+            <MpField
+              label="Select End Date"
+              required
+              layout="inline"
+              error={fieldState.error?.message}
+            >
               {(a11y) => (
                 <DateBox
                   {...a11y}
                   value={field.value}
                   onChange={field.onChange}
-                  placeholder="30 Jan 2024"
                   className={dialogBoxClass}
                 />
               )}
@@ -195,7 +212,7 @@ export function BudgetDurationsTab({
     },
     {
       id: 'current',
-      header: CURRENT_LABEL,
+      header: 'Current',
       align: 'center',
       cell: (row) =>
         row.isCurrent ? (

@@ -120,12 +120,40 @@ describe('Job titles', () => {
 
     await user.type(maxHeadCount, '3')
     await user.click(screen.getByRole('button', { name: 'Save' }))
-    // "HR Manager" already exists: the API's field error lands on Name.
-    // (The same text is also the error toast.)
+    // "HR Manager" already exists: the API's field error lands on Name, and only there.
     await waitFor(() => {
       expect(screen.getByRole('textbox', { name: 'Name' })).toHaveAccessibleDescription(
         'A job title with this name already exists.',
       )
+    })
+    expect(screen.getAllByText('A job title with this name already exists.')).toHaveLength(1)
+  })
+
+  it('says "Add Job Title" on the list', async () => {
+    renderApp('/settings/control-panel/job-titles')
+    expect(
+      await screen.findByRole('link', { name: 'Add Job Title' }, { timeout: 15_000 }),
+    ).toBeVisible()
+  })
+})
+
+describe('General Settings', { timeout: 60_000 }, () => {
+  it('drops the edits on Cancel', async () => {
+    const { user } = renderApp('/settings/control-panel/general')
+    const name = await screen.findByRole(
+      'textbox',
+      { name: /^Organization Name/ },
+      { timeout: 15_000 },
+    )
+    await waitFor(() => {
+      expect(name).not.toHaveValue('')
+    })
+    const saved = (name as HTMLInputElement).value
+    await user.clear(name)
+    await user.type(name, 'Renamed Company')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => {
+      expect(name).toHaveValue(saved)
     })
   })
 })

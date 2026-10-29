@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Eye, Pencil, X } from 'lucide-react'
 import { z } from 'zod'
 
+import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import { TextareaField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -101,6 +102,18 @@ function ChecklistForm({
   )
   const [fieldDialog, setFieldDialog] = useState<FieldDialog>(null)
   const [deleting, setDeleting] = useState<DraftField | null>(null)
+  // Added, edited or removed fields are changes too: Cancel asks before dropping them.
+  const [initialFields] = useState(() =>
+    JSON.stringify(fields.map(({ key: _key, ...rest }) => rest)),
+  )
+  const [discarding, setDiscarding] = useState(false)
+  const changed =
+    form.formState.isDirty ||
+    JSON.stringify(fields.map(({ key: _key, ...rest }) => rest)) !== initialFields
+  const requestClose = () => {
+    if (!readOnly && changed) setDiscarding(true)
+    else onClose()
+  }
 
   const submit = form.handleSubmit(async (values) => {
     try {
@@ -134,7 +147,7 @@ function ChecklistForm({
     <>
       <PayrollDialog
         title={TITLES[mode]}
-        onClose={onClose}
+        onClose={requestClose}
         formId={formId}
         readOnly={readOnly}
         pending={save.isPending}
@@ -196,7 +209,7 @@ function ChecklistForm({
             {fields.length === 0 ? (
               <NoRecord />
             ) : (
-              <div className="-mx-4 scrollbar-thin overflow-x-auto sm:-mx-6">
+              <div className="relative -mx-4 scrollbar-thin overflow-x-auto sm:-mx-6">
                 <table className="w-full min-w-[26rem] text-left text-sm">
                   <caption className="sr-only">Additional Information</caption>
                   <thead>
@@ -290,6 +303,16 @@ function ChecklistForm({
           }}
         />
       )}
+      <ConfirmDialog
+        open={discarding}
+        onOpenChange={setDiscarding}
+        title="Discard your changes?"
+        description="This checklist has changes that are not saved, its fields too. They will be lost if you leave."
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        variant="destructive"
+        onConfirm={onClose}
+      />
       <BinConfirm
         open={deleting !== null}
         onOpenChange={(open) => {

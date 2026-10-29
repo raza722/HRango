@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import {
@@ -30,6 +30,21 @@ export const useEndOfEmployment = (id: string | null) =>
     queryFn: ({ signal }) => offboardingApi.endOfEmployment(id ?? '', signal),
     enabled: id !== null,
   })
+
+/**
+ * What each pending record still waits for (its detail's `waitingFor`), so Complete can say why
+ * it is not offered yet. `undefined` while a record loads.
+ */
+export function useWaitingLists(ids: readonly string[], enabled: boolean) {
+  const results = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: offboardingKeys.detail('end-of-employment', id),
+      queryFn: ({ signal }: { signal: AbortSignal }) => offboardingApi.endOfEmployment(id, signal),
+      enabled,
+    })),
+  })
+  return new Map(ids.map((id, index) => [id, results[index]?.data?.waitingFor] as const))
+}
 
 export const useChecklistFields = () =>
   useQuery({

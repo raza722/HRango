@@ -115,7 +115,7 @@ export function AssetHistoryDialog({
       ) : entries.length === 0 ? (
         <NoRecord />
       ) : (
-        <div className="-mx-1 scrollbar-thin overflow-x-auto px-1">
+        <div className="relative -mx-1 scrollbar-thin overflow-x-auto px-1">
           <table className="w-full min-w-[36rem] text-left text-sm">
             <caption className="sr-only">History of {assetName}</caption>
             <thead>

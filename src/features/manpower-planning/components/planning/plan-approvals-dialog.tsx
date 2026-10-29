@@ -39,7 +39,7 @@ export function PlanApprovalsDialog({ planId, onClose }: { planId: string; onClo
         </p>
       ) : (
         <div className="grid gap-5">
-          <div className="overflow-x-auto">
+          <div className="relative overflow-x-auto">
             <table className="w-full min-w-[36rem] text-sm">
               <caption className="sr-only">Budgets of {plan.data.title}</caption>
               <thead>

@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils'
 import type { OrgListParams, OrgResource } from '../../api/org-resource'
 import { useOrgPermissions } from '../../hooks/use-org-permissions'
 import { useDeleteOrgRecord, useOrgList } from '../../hooks/use-org-records'
-import { capitalize } from '../../utils/text'
+import { capitalize, titleCase } from '../../utils/text'
 import { settingsType } from './type-styles'
 
 interface AnyRecord {
@@ -94,7 +94,7 @@ export function OrgListPage<TRecord extends AnyRecord, TInput, TRow extends AnyR
   }
   const filtered = q !== '' || Object.values(filterParams ?? {}).some(Boolean)
 
-  const singular = capitalize(resource.singular)
+  const singular = titleCase(resource.singular)
   const offset = ((query.data?.meta.page ?? page) - 1) * (query.data?.meta.pageSize ?? pageSize)
   const allColumns: DataTableColumn<TRow>[] = [
     {

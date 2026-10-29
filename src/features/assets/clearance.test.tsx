@@ -40,7 +40,7 @@ describe('Asset Clearance Form', () => {
     )
     await user.click(screen.getByRole('button', { name: 'Approved' }))
     const confirm = await screen.findByRole('alertdialog', { name: 'Approve clearance forms' })
-    expect(within(confirm).getByText('Are you sure you want to Perform this action?')).toBeVisible()
+    expect(within(confirm).getByText('Approve 1 clearance form?')).toBeVisible()
     await user.click(within(confirm).getByRole('button', { name: 'Yes' }))
     expect(await screen.findByText('1 form approved')).toBeInTheDocument()
     await waitFor(() => {
@@ -62,19 +62,15 @@ describe('Asset Clearance Form', () => {
     expect(allocations.find('al_4')?.deallocatedOn).toBeNull()
   })
 
-  it('refuses to delete an approved form', async () => {
+  it('offers neither Edit nor Delete on an approved form', async () => {
     const { user } = renderApp('/assets/clearance-form')
 
     await user.click(
       await screen.findByRole('button', { name: "Actions for Nida Hassan's clearance form" }),
     )
+    expect(await screen.findByRole('menuitem', { name: 'View' })).toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: 'Edit' })).not.toBeInTheDocument()
-    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
-    const confirm = await screen.findByRole('alertdialog', { name: 'Delete clearance form' })
-    await user.click(within(confirm).getByRole('button', { name: 'Yes' }))
-    expect(
-      await screen.findByText('This clearance form is approved. Unapprove it first.'),
-    ).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument()
     expect(clearances.find('cf_1')).toBeDefined()
   })
 

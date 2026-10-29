@@ -1,7 +1,7 @@
 import { type SyntheticEvent, useId, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
+import { addDays, format, parseISO } from 'date-fns'
 
 import { FormField } from '@/components/form'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -15,12 +15,11 @@ import {
 import { ApiError } from '@/lib/api-error'
 
 import { useEndOfEmployment, useRehire } from '../../hooks/use-offboarding'
+import { makeRehireSchema, REHIRE_DATE, type RehireValues } from '../../schemas/rehire.schema'
 import type { EndOfEmployment } from '../../types/offboarding.types'
 
-const DATE = 'MMMM d,yyyy'
-
-const schema = z.object({ joiningDate: z.string().min(1, 'Choose the joining date') })
-type Values = z.infer<typeof schema>
+const DATE = REHIRE_DATE
+type Values = RehireValues
 
 /**
  * "End of Employment Rehire": the person and their last working date (kept
@@ -42,11 +41,13 @@ function RehireForm({ record, onClose }: { record: EndOfEmployment; onClose: () 
   const formId = useId()
   const rehire = useRehire()
   const [confirming, setConfirming] = useState<string | null>(null)
+  const last = record.lastWorkingDate
+  const [today] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [schema] = useState(() => makeRehireSchema(last))
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: { joiningDate: '' },
   })
-  const last = record.lastWorkingDate
   const name = record.employeeName ?? record.employeeCode ?? 'the employee'
 
   const submit = form.handleSubmit((values) => {
@@ -121,7 +122,10 @@ function RehireForm({ record, onClose }: { record: EndOfEmployment; onClose: () 
             name="joiningDate"
             label="Joining Date"
             required
-            display="MMMM d, yyyy"
+            // Only a last day still to come limits the calendar (it would open on that month);
+            // an earlier joining date is refused by the form either way.
+            minDate={last >= today ? addDays(parseISO(last), 1) : undefined}
+            display={DATE}
           />
         </form>
       </PayrollDialog>
@@ -131,7 +135,7 @@ function RehireForm({ record, onClose }: { record: EndOfEmployment; onClose: () 
           if (!open) setConfirming(null)
         }}
         title={`Rehire ${name}`}
-        message="Are you sure you want to Perform this action?"
+        message={`Rehire ${name}, joining on ${confirming ? format(parseISO(confirming), DATE) : ''}?`}
         onConfirm={confirm}
       />
     </>

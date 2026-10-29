@@ -60,6 +60,8 @@ export function useSaveOrgRecord<TRecord extends AnyRecord, TInput, TRow extends
       input: TInput
       rowVersion?: string | undefined
     }) => (id ? resource.api.update(id, input, rowVersion ?? '') : resource.api.create(input)),
+    // The form shows a field's error on the field, and toasts the rest itself.
+    meta: { suppressErrorToast: true },
     onSuccess: async (record, { id }) => {
       queryClient.setQueryData(resource.detailQuery(record.id).queryKey, record)
       toast.success(
