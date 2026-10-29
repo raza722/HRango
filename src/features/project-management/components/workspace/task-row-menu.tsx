@@ -1,14 +1,17 @@
 import { useMemo, useRef, useState } from 'react'
 import { useQueries } from '@tanstack/react-query'
+import { CalendarClock } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { pmApi, pmKeys } from '../../api/pm.api'
 import { useReminder } from '../../hooks/use-pm'
 import type { TaskRow, WorkspaceSummary } from '../../types/pm.types'
 import { ShareDialog } from '../task-fields/share-dialog'
+import { ExtensionRequestDialog } from './extension-dialogs'
 import { useListView } from './list-context'
 import { descendantIds, topLevel } from './list-utils'
 import {
@@ -41,7 +44,7 @@ import {
 } from './workspace-icons'
 import { listStyles, menuStyles, popupStyles } from './workspace-styles'
 
-type Dialog = 'share' | 'delete' | 'convert-list' | 'reminder' | null
+type Dialog = 'share' | 'delete' | 'convert-list' | 'reminder' | 'extension' | null
 
 /** The three-dot menu of a task row (task row menu 288:156930). */
 export function TaskRowMenu({ task }: { task: TaskRow }) {
@@ -58,6 +61,14 @@ export function TaskRowMenu({ task }: { task: TaskRow }) {
   } = useListView()
   const [dialog, setDialog] = useState<Dialog>(null)
   const reminder = useReminder(task.id, dialog === 'reminder')
+  const myEmployeeId = useAuthStore((state) => state.user?.employeeId ?? null)
+  // An assignee of an open task with a due date may ask for more time (the API allows one).
+  const mayAskExtension =
+    access.requestExtension &&
+    task.closedAt === null &&
+    task.dueDate !== null &&
+    myEmployeeId !== null &&
+    task.assigneeIds.includes(myEmployeeId)
   /** The rename box or a popup takes focus when the menu closes, not the menu button. */
   const keepFocus = useRef(false)
 
@@ -239,8 +250,19 @@ export function TaskRowMenu({ task }: { task: TaskRow }) {
                 >
                   <span className="flex items-center justify-between gap-2">
                     Remind Me
-                    <ChevronRightIcon className="h-3 w-1.5 shrink-0 text-[#7127EA]" />
+                    <ChevronRightIcon className="h-3 w-1.5 shrink-0 text-[#7127EA] dark:text-[#C4ABFF]" />
                   </span>
+                </PmMenuItem>
+              )}
+              {mayAskExtension && (
+                <PmMenuItem
+                  icon={<CalendarClock />}
+                  onSelect={() => {
+                    keepFocus.current = true
+                    setDialog('extension')
+                  }}
+                >
+                  Request Extension
                 </PmMenuItem>
               )}
               <PmMenuItem
@@ -287,6 +309,13 @@ export function TaskRowMenu({ task }: { task: TaskRow }) {
         </span>
       </ReminderPopover>
 
+      <ExtensionRequestDialog
+        task={task}
+        open={dialog === 'extension'}
+        onOpenChange={(open) => {
+          setDialog(open ? 'extension' : null)
+        }}
+      />
       <ShareDialog
         open={dialog === 'share'}
         onOpenChange={(open) => {

@@ -1,5 +1,11 @@
 import { useMemo } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { useAuthStore } from '@/stores/auth-store'
@@ -12,12 +18,15 @@ import {
   pmTreeQueryOptions,
 } from '../api/pm.api'
 import type {
+  ActivityFilters,
   ColumnPermission,
   CommentInput,
   CommentPatch,
+  ExtensionRequest,
   PmLookups,
   PmPerson,
   Reminder,
+  ReminderEntry,
   ShareEntity,
   ShareSettings,
   Tag,
@@ -310,6 +319,58 @@ export const useSetReminder = () =>
       at: Date | null
       current: Reminder | null
     }) => pmApi.setReminder(task, at, current),
+  )
+
+/** The Activity view: a workspace's history, newest first, a page at a time ("Load more"). */
+export const useWorkspaceActivity = (workspaceId: string, filters: ActivityFilters) =>
+  useInfiniteQuery({
+    queryKey: pmKeys.activity(workspaceId, filters),
+    queryFn: ({ pageParam, signal }) => pmApi.activity(workspaceId, filters, pageParam, signal),
+    initialPageParam: 1,
+    getNextPageParam: (last) =>
+      last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined,
+    placeholderData: keepPreviousData,
+  })
+
+/** The Reminders page: the caller's reminders (`includeDone` adds the sent and past ones). */
+export const useReminders = (includeDone: boolean) =>
+  useQuery({
+    queryKey: pmKeys.reminders(includeDone),
+    queryFn: ({ signal }) => pmApi.reminders(includeDone, signal),
+  })
+
+export const useMoveReminder = () =>
+  usePmMutation(
+    ({ reminder, at }: { reminder: ReminderEntry; at: Date }) => pmApi.moveReminder(reminder, at),
+    'Reminder moved',
+  )
+
+export const useDeleteReminder = () =>
+  usePmMutation((id: string) => pmApi.deleteReminder(id), 'Reminder deleted')
+
+/** Request Extension: the error stays in the popup (on its fields). */
+export const useRequestExtension = () =>
+  usePmMutation(
+    ({ taskId, input }: { taskId: string; input: { newDueDate: string; reason: string } }) =>
+      pmApi.requestExtension(taskId, input),
+    'Extension requested',
+    true,
+  )
+
+/** Approve / Reject an extension request; approving moves the due date. */
+export const useDecideExtension = () =>
+  usePmMutation(
+    ({
+      extension,
+      decision,
+      remarks,
+    }: {
+      extension: Pick<ExtensionRequest, 'id' | 'rowVersion'>
+      decision: 'approve' | 'reject'
+      remarks: string | null
+    }) => pmApi.decideExtension(extension, decision, remarks),
+    undefined,
+    true,
   )
 
 export const useCreateTag = () =>

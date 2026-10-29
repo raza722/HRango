@@ -141,7 +141,7 @@ describe('Add Assignee', () => {
 
   it('lists the assignees beyond the stacked avatars in "+n Members"', async () => {
     const { user } = renderCell('tk_quali', 'assignees')
-    await user.click(await screen.findByRole('button', { name: '1 more assignees' }))
+    await user.click(await screen.findByRole('button', { name: '1 more assignee' }))
     const members = await screen.findByRole('dialog', { name: '+1 Members' })
     await user.click(within(members).getByRole('button', { name: 'Remove Saad Hadier' }))
     await waitFor(() => {
@@ -449,6 +449,23 @@ describe('Time Estimate and Time Tracked', () => {
     const form = within(popup).getByRole('form', { name: 'Add time entry' })
     await user.click(within(form).getByRole('button', { name: 'Save' }))
     expect(await within(form).findByText('Choose the start time')).toBeVisible()
+    // Save also takes a typed time (no Enter needed), and the saved entry clears the errors.
+    await user.type(field, '45min')
+    await user.click(within(form).getByRole('button', { name: 'Save' }))
+    await waitFor(() => {
+      expect(
+        entriesOf('tk_wire')
+          .map((entry) => entry.minutes)
+          .toSorted(),
+      ).toEqual([45, 75])
+    })
+    await waitFor(() => {
+      expect(within(form).queryByText('Choose the start time')).not.toBeInTheDocument()
+    })
+    expect(field).toHaveValue('')
+
+    await user.click(within(form).getByRole('button', { name: 'Save' }))
+    expect(await within(form).findByText('Choose the start time')).toBeVisible()
     await user.click(within(form).getByRole('button', { name: 'Start Time' }))
     await user.click(await screen.findByRole('menuitem', { name: '9:00 am' }))
     await user.click(within(form).getByRole('button', { name: 'Stop Time' }))
@@ -456,7 +473,7 @@ describe('Time Estimate and Time Tracked', () => {
     await user.type(within(form).getByRole('textbox', { name: 'Notes' }), 'Persona workshop')
     await user.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => {
-      expect(entriesOf('tk_wire')).toHaveLength(2)
+      expect(entriesOf('tk_wire')).toHaveLength(3)
     })
     const made = entriesOf('tk_wire').find((entry) => entry.notes === 'Persona workshop')
     expect(made?.minutes).toBe(75)

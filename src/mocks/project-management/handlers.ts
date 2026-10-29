@@ -26,12 +26,14 @@ import {
   requireAuth,
 } from '../utils'
 import {
+  activities,
   attachments,
   columnPermissions,
   type CommentRecord,
   comments,
   customFields,
   dependencies,
+  extensions,
   favorites,
   folders,
   lists,
@@ -120,6 +122,9 @@ const roleIn = (workspace: WorkspaceRecord, employeeId = ME) =>
   workspace.members.find((member) => member.employeeId === employeeId)?.memberRole ?? null
 
 const rankIn = (workspace: WorkspaceRecord) => RANK[roleIn(workspace) ?? ''] ?? 0
+
+/** Managers and above answer extension requests. */
+const MANAGER_RANK = 3
 
 const canRead = (workspace: WorkspaceRecord) =>
   workspace.privacy !== 'private' || roleIn(workspace) !== null
@@ -315,7 +320,7 @@ function row(task: TaskRecord, hidden: readonly string[] = []): TaskRowDto {
     startTime: task.startTime,
     dueDate: task.dueDate,
     dueTime: task.dueTime,
-    originalDueDate: null,
+    originalDueDate: task.originalDueDate ?? null,
     isOverdue:
       task.dueDate !== null && task.dueDate < today && !closedGroups.has(status?.statusGroup ?? ''),
     timeEstimateMinutes: task.timeEstimateMinutes,
@@ -325,7 +330,9 @@ function row(task: TaskRecord, hidden: readonly string[] = []): TaskRowDto {
     url: task.url,
     recurrence: task.recurrence,
     closedAt: task.closedAt,
-    isClosedLate: false,
+    // Closed on a later day than it was due (the due date an approved extension set).
+    isClosedLate:
+      task.closedAt !== null && task.dueDate !== null && task.closedAt.slice(0, 10) > task.dueDate,
     sortOrder: task.sortOrder,
     createdByUserId: task.createdByUserId,
     createdByName: task.createdByName,
@@ -401,18 +408,99 @@ function taskDetail(task: TaskRecord): TaskDto {
     dependencies: hidden.includes('dependencies') ? [] : links,
     checklist: [],
     subtasks: [],
-    extensions: [],
+    extensions: extensions
+      .all()
+      .filter((entry) => entry.taskId === task.id)
+      .map((entry) => ({
+        id: entry.id,
+        requestedById: entry.requestedById,
+        requestedByName: nameOf(entry.requestedById) ?? '',
+        oldDueDate: entry.oldDueDate,
+        newDueDate: entry.newDueDate,
+        reason: entry.reason,
+        status: entry.status,
+        decidedById: entry.decidedById,
+        decidedByName: nameOf(entry.decidedById),
+        decidedAt: entry.decidedAt,
+        remarks: entry.remarks,
+        createdAt: entry.createdAt,
+        rowVersion: entry.rowVersion,
+      })),
     hiddenColumns: hidden,
   }
 }
 
-const touch = (task: TaskRecord, changes: Partial<TaskRecord>) =>
-  tasks.update(task.id, {
-    ...task,
-    ...changes,
-    updatedAt: utcNow(),
-    rowVersion: nextRowVersion(),
-  }) ?? task
+// --- history (`pm.activity_log`) ----------------------------------------------------------------------
+
+interface LoggedField {
+  name: string
+  old: string | null
+  new: string | null
+}
+
+/** One line of the workspace's history, by the caller, now. */
+function logActivity(task: TaskRecord, action: string, field: LoggedField | null = null) {
+  activities.insert({
+    id: createId('act'),
+    workspaceId: task.workspaceId,
+    entityType: 'task',
+    entityId: task.id,
+    itemCode: task.code,
+    itemName: task.name,
+    actionName: action,
+    fieldName: field?.name ?? null,
+    oldValue: field?.old ?? null,
+    newValue: field?.new ?? null,
+    performedByUserId: ME_USER_ID,
+    performedByName: nameOf(ME),
+    performedAt: utcNow(),
+  })
+}
+
+const assigneeNames = (task: TaskRecord) =>
+  task.assignees.map((entry) => nameOf(entry.employeeId) ?? entry.employeeId).join(', ') || null
+
+const listName = (listId: string | null) => (listId ? (lists.find(listId)?.name ?? null) : null)
+
+/**
+ * The fields an edit is logged by, with the values as the history shows them (status and list by
+ * name, assignees as names, dates `yyyy-MM-dd`). The names are assumed: the backend's own are not
+ * documented.
+ */
+const LOGGED: { name: string; value: (task: TaskRecord) => string | null }[] = [
+  { name: 'name', value: (task) => task.name },
+  { name: 'status', value: (task) => statusOf(task)?.name ?? null },
+  { name: 'priority', value: (task) => task.priority },
+  { name: 'start_date', value: (task) => task.startDate },
+  { name: 'due_date', value: (task) => task.dueDate },
+  { name: 'assignees', value: assigneeNames },
+  { name: 'task_list', value: (task) => listName(task.taskListId) },
+]
+
+/** Logs an `updated` line for each logged field an edit changed. */
+function logChanges(before: TaskRecord, after: TaskRecord) {
+  for (const field of LOGGED) {
+    const old = field.value(before)
+    const value = field.value(after)
+    if (old !== value) logActivity(after, 'updated', { name: field.name, old, new: value })
+  }
+  if ((before.description ?? '') !== (after.description ?? '')) {
+    logActivity(after, 'updated', { name: 'description', old: null, new: null })
+  }
+}
+
+/** Saves an edit to a task (and logs it, unless the caller logs it its own way). */
+const touch = (task: TaskRecord, changes: Partial<TaskRecord>, log = true) => {
+  const next =
+    tasks.update(task.id, {
+      ...task,
+      ...changes,
+      updatedAt: utcNow(),
+      rowVersion: nextRowVersion(),
+    }) ?? task
+  if (log) logChanges(task, next)
+  return next
+}
 
 function commentDto(comment: CommentRecord): CommentDto {
   return {
@@ -1376,6 +1464,36 @@ export const projectManagementHandlers = [
     return HttpResponse.json(body)
   }),
 
+  /** The workspace's history, newest first; `q` looks in the item's name and code and who did it. */
+  http.get(base('/workspaces/:id/activity'), async ({ request, params }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const workspace = readable(param(params))
+    if (!workspace) return notFound('workspace')
+    const url = new URL(request.url)
+    const action = url.searchParams.get('action') ?? ''
+    const from = url.searchParams.get('fromDate') ?? ''
+    const to = url.searchParams.get('toDate') ?? ''
+    const q = (url.searchParams.get('q') ?? '').trim().toLowerCase()
+    const lines = activities
+      .all()
+      .filter((entry) => entry.workspaceId === workspace.id)
+      .filter((entry) => !action || entry.actionName === action)
+      .filter((entry) => !from || entry.performedAt.slice(0, 10) >= from)
+      .filter((entry) => !to || entry.performedAt.slice(0, 10) <= to)
+      .filter(
+        (entry) =>
+          !q ||
+          [entry.itemName, entry.itemCode, entry.performedByName].some((text) =>
+            (text ?? '').toLowerCase().includes(q),
+          ),
+      )
+      .toSorted((a, b) => b.performedAt.localeCompare(a.performedAt))
+      .map(({ workspaceId: _workspaceId, ...entry }) => entry)
+    const { page, pageSize } = readPageParams(url)
+    return HttpResponse.json(paginate(lines, page, pageSize))
+  }),
+
   http.post(base('/tasks'), async ({ request }) => {
     const denied = await authed(request)
     if (denied) return denied
@@ -1441,6 +1559,7 @@ export const projectManagementHandlers = [
       cover: null,
       rowVersion: nextRowVersion(),
     })
+    logActivity(task, 'created')
     return created(taskDetail(task))
   }),
 
@@ -1498,6 +1617,7 @@ export const projectManagementHandlers = [
     if (!sent) return invalid('rowVersion is required.', { rowVersion: 'Required.' })
     if (staleRow(task, sent)) return stale()
     const doomed = family(task.id)
+    logActivity(task, 'deleted')
     for (const taskId of doomed) tasks.remove(taskId)
     for (const entry of dependencies.all()) {
       if (doomed.has(entry.taskId) || doomed.has(entry.otherTaskId)) dependencies.remove(entry.id)
@@ -1694,6 +1814,13 @@ export const projectManagementHandlers = [
       }
     }
     const moved = tasks.find(task.id)
+    if (moved && moved.taskListId !== task.taskListId && moved.workspaceId === task.workspaceId) {
+      logActivity(moved, 'updated', {
+        name: 'task_list',
+        old: listName(task.taskListId),
+        new: listName(moved.taskListId),
+      })
+    }
     return moved ? ok(taskDetail(moved)) : notFound('task')
   }),
 
@@ -1832,6 +1959,7 @@ export const projectManagementHandlers = [
       })),
       rowVersion: nextRowVersion(),
     })
+    logActivity(task, 'commented')
     return created(commentDto(comment))
   }),
 
@@ -2097,11 +2225,15 @@ export const projectManagementHandlers = [
     const url = new URL(request.url)
     const entityType = url.searchParams.get('entityType')
     const entityId = url.searchParams.get('entityId')
+    // Done: sent, or its time has passed (left out unless asked for).
+    const includeDone = url.searchParams.get('includeDone') === 'true'
+    const now = utcNow()
     const mine = reminders
       .all()
       .filter((entry) => entry.ownerId === ME)
       .filter((entry) => !entityType || entry.entityType === entityType)
       .filter((entry) => !entityId || entry.entityId === entityId)
+      .filter((entry) => includeDone || (entry.notifiedAt === null && entry.remindAt >= now))
       .toSorted((a, b) => a.remindAt.localeCompare(b.remindAt))
     const { page, pageSize } = readPageParams(url)
     return HttpResponse.json(paginate(mine, page, pageSize))
@@ -2159,6 +2291,137 @@ export const projectManagementHandlers = [
     if (!reminders.remove(param(params))) return notFound('reminder')
     return noContent()
   }),
+
+  // --- extension requests (overdue handling) ----------------------------------------------------------
+  // The mock's reading of the BRD: an assignee asks for a later due date with a reason, one
+  // request at a time (a rejected one may be followed by another); a manager or above in the
+  // workspace, other than the one who asked, approves (the due date moves, the first one is kept
+  // as originalDueDate) or rejects with remarks.
+
+  http.post(base('/tasks/:id/extension-requests'), async ({ request, params }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const task = taskOf(param(params))
+    if (!task) return notFound('task')
+    const parsed = await readBody(
+      request,
+      z.object({
+        newDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose the new due date.'),
+        reason: z.string().trim().min(1, 'Give the reason.').max(1000, 'At most 1000 characters.'),
+      }),
+    )
+    if (!parsed.success) return rejected(parsed.error)
+    if (!task.assignees.some((entry) => entry.employeeId === ME)) {
+      return forbidden('Only the people assigned to this task can ask for more time.')
+    }
+    if (closedGroups.has(statusOf(task)?.statusGroup ?? '')) {
+      return conflict('This task is closed; there is nothing to extend.', 'TASK_CLOSED')
+    }
+    if (!task.dueDate) {
+      return invalid('The task has no due date to extend.', { newDueDate: 'No due date yet.' })
+    }
+    if (parsed.data.newDueDate <= task.dueDate) {
+      return invalid('Choose a date after the due date.', {
+        newDueDate: `Choose a date after ${task.dueDate}.`,
+      })
+    }
+    const localToday = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000)
+      .toISOString()
+      .slice(0, 10)
+    if (parsed.data.newDueDate < localToday) {
+      return invalid('The new due date has already passed.', {
+        newDueDate: 'Choose today or a later date.',
+      })
+    }
+    const open = extensions
+      .all()
+      .find((entry) => entry.taskId === task.id && entry.status !== 'rejected')
+    if (open) {
+      return conflict(
+        open.status === 'pending'
+          ? 'This task already has an extension request waiting for an answer.'
+          : 'This task was already given an extension.',
+        'EXTENSION_EXISTS',
+      )
+    }
+    extensions.insert({
+      id: createId('ext'),
+      taskId: task.id,
+      requestedById: ME,
+      oldDueDate: task.dueDate,
+      newDueDate: parsed.data.newDueDate,
+      reason: parsed.data.reason,
+      status: 'pending',
+      decidedById: null,
+      decidedAt: null,
+      remarks: null,
+      createdAt: utcNow(),
+      rowVersion: nextRowVersion(),
+    })
+    logActivity(task, 'extension_requested', {
+      name: 'due_date',
+      old: task.dueDate,
+      new: parsed.data.newDueDate,
+    })
+    return created(taskDetail(task))
+  }),
+
+  ...(['approve', 'reject'] as const).map((decision) =>
+    http.patch(base(`/extension-requests/:id/${decision}`), async ({ request, params }) => {
+      const denied = await authed(request)
+      if (denied) return denied
+      const extension = extensions.find(param(params))
+      const task = extension ? taskOf(extension.taskId) : undefined
+      const workspace = task ? workspaces.find(task.workspaceId) : undefined
+      if (!extension || !task || !workspace) return notFound('extension request')
+      const parsed = await readBody(
+        request,
+        z.object({ remarks: z.string().trim().max(1000).nullish(), rowVersion }),
+      )
+      if (!parsed.success) return rejected(parsed.error)
+      if (staleRow(extension, parsed.data.rowVersion)) return stale()
+      if (rankIn(workspace) < MANAGER_RANK) {
+        return forbidden('Only managers of this workspace can answer extension requests.')
+      }
+      if (extension.requestedById === ME) {
+        return forbidden('You cannot answer your own extension request.')
+      }
+      if (extension.status !== 'pending') {
+        return conflict('This extension request was already answered.', 'EXTENSION_DECIDED')
+      }
+      const remarks = parsed.data.remarks ?? null
+      if (decision === 'reject' && !remarks) {
+        return invalid('Give the reason for rejecting.', { remarks: 'Give the reason.' })
+      }
+      extensions.update(extension.id, {
+        ...extension,
+        status: decision === 'approve' ? 'approved' : 'rejected',
+        decidedById: ME,
+        decidedAt: utcNow(),
+        remarks,
+        rowVersion: nextRowVersion(),
+      })
+      const next =
+        decision === 'approve'
+          ? touch(
+              task,
+              {
+                originalDueDate: task.originalDueDate ?? task.dueDate,
+                dueDate: extension.newDueDate,
+              },
+              false,
+            )
+          : task
+      logActivity(
+        next,
+        decision === 'approve' ? 'extension_approved' : 'extension_rejected',
+        decision === 'approve'
+          ? { name: 'due_date', old: task.dueDate, new: extension.newDueDate }
+          : null,
+      )
+      return ok(taskDetail(next))
+    }),
+  ),
 
   // --- sharing ---------------------------------------------------------------------------------------
 

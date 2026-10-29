@@ -379,6 +379,10 @@ export interface Task {
   createdByName: string | null
   createdAt: string
   closedAt: string | null
+  /** The due date before an approved extension moved it; null while it never moved. */
+  originalDueDate: string | null
+  /** Closed after its due date. */
+  isClosedLate: boolean
   order: number
   cover: FileRef | null
   rowVersion: string
@@ -448,6 +452,31 @@ export interface TaskDetail extends TaskRow {
   waitingOn: string[]
   blocking: string[]
   hiddenColumns: string[]
+  /** Its extension requests, newest first. */
+  extensions: ExtensionRequest[]
+}
+
+export const EXTENSION_STATUSES = ['pending', 'approved', 'rejected'] as const
+export type ExtensionStatus = (typeof EXTENSION_STATUSES)[number]
+
+/**
+ * An assignee's request for more time on a task (`/projects/tasks/{id}/extension-requests`): a
+ * manager approves it, which moves the due date, or rejects it.
+ */
+export interface ExtensionRequest {
+  id: string
+  requestedById: string
+  requestedByName: string
+  /** The due date when it was asked. */
+  oldDueDate: string | null
+  newDueDate: string
+  reason: string | null
+  status: ExtensionStatus
+  decidedByName: string | null
+  decidedAt: string | null
+  remarks: string | null
+  createdAt: string
+  rowVersion: string
 }
 
 /** The List view's rows and what the caller may not see. */
@@ -521,6 +550,48 @@ export interface Reminder {
   id: string
   remindAt: string
   rowVersion: string
+}
+
+/** One line of a workspace's history (the Activity view). */
+export interface ActivityEntry {
+  id: string
+  /** task, task_list, workspace, comment … */
+  entityType: string
+  entityId: string
+  itemCode: string | null
+  itemName: string | null
+  /** The API's word: created, updated, deleted, commented … */
+  action: string
+  /** The field an update changed (`status`, `due_date` …), and its values as text. */
+  fieldName: string | null
+  oldValue: string | null
+  newValue: string | null
+  performedByName: string | null
+  /** ISO instant. */
+  performedAt: string
+}
+
+/** The Activity view's filters (`GET /workspaces/{id}/activity`). */
+export interface ActivityFilters {
+  q: string
+  action: string
+  /** `yyyy-MM-dd`. */
+  from: string
+  to: string
+}
+
+/** One of the caller's reminders as the Reminders page lists them. */
+export interface ReminderEntry extends Reminder {
+  workspaceId: string
+  /** task, task_list, workspace … */
+  entityType: string
+  entityId: string
+  /** The task's (or list's) name. */
+  entityName: string | null
+  name: string
+  notifyBeforeMinutes: number | null
+  /** Set once the server has sent it. */
+  notifiedAt: string | null
 }
 
 export type ShareEntity = 'task' | 'task_list' | 'workspace'

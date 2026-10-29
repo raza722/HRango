@@ -5,14 +5,17 @@ import type { StatusDto, TemplateDto } from '@/features/project-management/api/p
 import { DIRECTORY } from '../employees/seed'
 import { CURRENT_EMPLOYEE_ID } from '../scheduling/seed'
 import type {
+  ActivityRecord,
   AttachmentRecord,
   ColumnPermissionRecord,
   CommentRecord,
   CustomFieldRecord,
   DependencyRecord,
+  ExtensionRecord,
   FavoriteRecord,
   FolderRecord,
   ListRecord,
+  ReminderRecord,
   TagRecord,
   TaskRecord,
   TimeEntryRecord,
@@ -335,6 +338,10 @@ export function seedWorkspaces(): WorkspaceRecord[] {
       [
         ['em_bilal', 'workspace_admin'],
         [ME, 'hr'],
+        // The overdue examples' assignees.
+        ['em_saad', 'contributor'],
+        ['em_areeba', 'contributor'],
+        ['em_jack', 'contributor'],
       ],
       'st_q_',
     ),
@@ -557,6 +564,180 @@ export function seedTasks(): TaskRecord[] {
       closedAt: at(2),
       fieldValues: labels('Prototype Testing'),
     }),
+    // Overdue handling (QA Testing Phase's Overdue tab): two open tasks past their due date, one
+    // closed late.
+    task('tk_audit', 8, null, 'Accessibility audit of the old portal', 'st_q_progress', {
+      workspaceId: 'ws_qa',
+      assignees: [
+        { employeeId: ME, storyPoints: 3 },
+        { employeeId: 'em_saad', storyPoints: null },
+      ],
+      startDate: day(-9),
+      dueDate: day(-3),
+      priority: 'high',
+    }),
+    task('tk_copy', 9, null, 'Write the onboarding copy', 'st_q_todo', {
+      workspaceId: 'ws_qa',
+      assignees: [{ employeeId: 'em_areeba', storyPoints: 2 }],
+      startDate: day(-6),
+      dueDate: day(-1),
+      priority: 'normal',
+    }),
+    task('tk_icons', 10, null, 'Icon set for the side menu', 'st_q_completed', {
+      workspaceId: 'ws_qa',
+      assignees: [{ employeeId: 'em_jack', storyPoints: 5 }],
+      startDate: day(-14),
+      dueDate: day(-6),
+      priority: 'low',
+      closedAt: at(4),
+    }),
+  ]
+}
+
+/** The workspaces' recent history (the Activity view); the handlers add to it as things change. */
+export function seedActivities(): ActivityRecord[] {
+  const who = (employeeId: string) =>
+    DIRECTORY.find((employee) => employee.id === employeeId)?.name ?? null
+  let count = 0
+  const line = (
+    workspaceId: string,
+    taskId: string,
+    code: string,
+    name: string,
+    action: string,
+    by: string,
+    daysAgo: number,
+    hour: number,
+    field: { name: string; old: string | null; new: string | null } | null = null,
+  ): ActivityRecord => ({
+    id: `act_seed_${String((count += 1))}`,
+    workspaceId,
+    entityType: 'task',
+    entityId: taskId,
+    itemCode: code,
+    itemName: name,
+    actionName: action,
+    fieldName: field?.name ?? null,
+    oldValue: field?.old ?? null,
+    newValue: field?.new ?? null,
+    performedByUserId: null,
+    performedByName: who(by),
+    performedAt: at(daysAgo, hour),
+  })
+  return [
+    line('ws_uxui', 'tk_quali', 'HR000000001', 'User Qualitative Research', 'created', ME, 10, 6),
+    line('ws_uxui', 'tk_persona', 'HR000000004', 'User Persona List', 'created', ME, 10, 7),
+    line('ws_uxui', 'tk_flow', 'HR000000005', 'Iteration List', 'updated', 'em_haroon', 5, 9, {
+      name: 'status',
+      old: 'To Do',
+      new: 'In-Progress',
+    }),
+    line(
+      'ws_uxui',
+      'tk_ui',
+      'HR000000007',
+      'Prototype the List view',
+      'updated',
+      'em_saad',
+      2,
+      11,
+      {
+        name: 'status',
+        old: 'In-Progress',
+        new: 'Completed',
+      },
+    ),
+    line('ws_uxui', 'tk_quali', 'HR000000001', 'User Qualitative Research', 'commented', ME, 1, 8),
+    line(
+      'ws_uxui',
+      'tk_wire',
+      'HR000000006',
+      'Low fidelity wire-frames for Create Workspace',
+      'updated',
+      'em_rehan',
+      0,
+      5,
+      {
+        name: 'due_date',
+        old: null,
+        new: day(5),
+      },
+    ),
+    line(
+      'ws_qa',
+      'tk_copy',
+      'HR000000009',
+      'Write the onboarding copy',
+      'extension_requested',
+      'em_areeba',
+      1,
+      9,
+      {
+        name: 'due_date',
+        old: day(-1),
+        new: day(2),
+      },
+    ),
+  ]
+}
+
+/** Areeba Hameed asks for three more days on the onboarding copy; the admin has not answered. */
+export const seedExtensions = (): ExtensionRecord[] => [
+  {
+    id: 'ext_copy',
+    taskId: 'tk_copy',
+    requestedById: 'em_areeba',
+    oldDueDate: day(-1),
+    newDueDate: day(2),
+    reason: 'The product names are still being decided.',
+    status: 'pending',
+    decidedById: null,
+    decidedAt: null,
+    remarks: null,
+    createdAt: at(1),
+    rowVersion: nextRowVersion(),
+  },
+]
+
+const tasksWorkspace: Record<string, string> = { tk_audit: 'ws_qa' }
+
+/** Shelley Kannes' reminders: one coming up, one already sent. */
+export function seedReminders(): ReminderRecord[] {
+  const reminder = (
+    id: string,
+    taskId: string,
+    name: string,
+    remindAt: string,
+    notifiedAt: string | null,
+  ): ReminderRecord => ({
+    id,
+    workspaceId: tasksWorkspace[taskId] ?? 'ws_uxui',
+    entityType: 'task',
+    entityId: taskId,
+    entityName: name,
+    name,
+    ownerId: ME,
+    ownerName: 'Shelley Kannes',
+    assigneeId: null,
+    assigneeName: null,
+    remindAt,
+    notifyBeforeMinutes: null,
+    reminderKind: null,
+    notifiedAt,
+    createdAt: at(3),
+    rowVersion: nextRowVersion(),
+  })
+  const tomorrow = addDays(new Date(), 1)
+  tomorrow.setUTCHours(4, 0, 0, 0)
+  return [
+    reminder(
+      'rm_audit',
+      'tk_audit',
+      'Accessibility audit of the old portal',
+      tomorrow.toISOString().slice(0, 19),
+      null,
+    ),
+    reminder('rm_quali', 'tk_quali', 'User Qualitative Research', at(1, 4), at(1, 4)),
   ]
 }
 

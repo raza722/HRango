@@ -111,10 +111,10 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     await user.click(screen.getByRole('button', { name: 'Collapse Completed' }))
     expect(screen.queryByRole('table', { name: 'Completed' })).not.toBeInTheDocument()
 
-    // Only the List view is designed.
+    // The Board view draws the same tasks in status columns; back to the List view.
     await user.click(screen.getByRole('button', { name: 'Board' }))
-    expect(await screen.findByText('This view is not designed yet')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Open List view' }))
+    expect(await screen.findByRole('list', { name: 'Board' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'List' }))
     expect(await group('To Do')).toBeVisible()
   })
 
@@ -364,6 +364,8 @@ describe('Workspace page', { timeout: 60_000 }, () => {
     await waitFor(() => {
       expect(reminder()).toBeDefined()
     })
+    // Said as soon as it is saved (not after every list reloads).
+    expect(await screen.findByText('Reminder set')).toBeInTheDocument()
     const at = new Date(`${reminder()?.remindAt ?? ''}Z`)
     const tomorrow = new Date()
     tomorrow.setDate(tomorrow.getDate() + 1)

@@ -1,4 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
+import { format, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 
 import { pmApi, pmKeys } from '../../api/pm.api'
@@ -69,8 +70,9 @@ export function useTaskActions({
   const run = async <T>(steps: () => Promise<T>, success: (result: T) => string) => {
     try {
       const result = await steps()
-      await refresh()
+      // Said at once: the refresh reloads every Project Management list and can take a while.
       toast.success(success(result))
+      await refresh()
       return result
     } catch (error) {
       toast.error(message(error))
@@ -166,6 +168,30 @@ export function useTaskActions({
     /** Drag and drop: a new place among the siblings, and the status of the group dropped in. */
     reorder: (task: TaskRow, order: number, statusId: string) => {
       patch(task.id, statusId === task.statusId ? { order } : { order, statusId })
+    },
+
+    /**
+     * Calendar and Timeline: new start and due dates (`yyyy-MM-dd`, or null to clear). A start
+     * after the due date is refused here, before anything is sent.
+     */
+    setDates: (task: TaskRow, dates: { startDate: string | null; dueDate: string | null }) => {
+      if (dates.startDate === task.startDate && dates.dueDate === task.dueDate) return
+      if (dates.startDate && dates.dueDate && dates.startDate > dates.dueDate) {
+        toast.error('The start date cannot be after the due date')
+        return
+      }
+      patch(
+        task.id,
+        {
+          startDate: dates.startDate,
+          dueDate: dates.dueDate,
+          ...(dates.startDate ? {} : { startTime: null }),
+          ...(dates.dueDate ? {} : { dueTime: null }),
+        },
+        dates.dueDate
+          ? `${task.name} is due ${format(parseISO(dates.dueDate), 'd MMM yyyy')}`
+          : `${task.name} has no due date`,
+      )
     },
   }
 }

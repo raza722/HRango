@@ -1,4 +1,5 @@
 import type {
+  ActivityDto,
   CommentDto,
   CustomFieldDto,
   FeatureDto,
@@ -15,14 +16,17 @@ import type { FileRef } from '@/lib/files'
 
 import { createMockCollection } from '../collection'
 import {
+  seedActivities,
   seedAttachments,
   seedColumnPermissions,
   seedComments,
   seedCustomFields,
   seedDependencies,
+  seedExtensions,
   seedFavorites,
   seedFolders,
   seedLists,
+  seedReminders,
   seedTags,
   seedTasks,
   seedTimeEntries,
@@ -93,6 +97,8 @@ export interface TaskRecord {
   url: string | null
   recurrence: RecurrenceDto | null
   closedAt: string | null
+  /** The due date before an approved extension moved it. */
+  originalDueDate?: string | null
   sortOrder: number
   createdByUserId: string
   createdByName: string
@@ -102,6 +108,25 @@ export interface TaskRecord {
   tagIds: string[]
   fieldValues: { customFieldId: string; fieldValue: string | null }[]
   cover: FileRef | null
+  rowVersion: string
+}
+
+/** One line of a workspace's history (`pm.activity_log`), as `GET …/activity` sends it. */
+export type ActivityRecord = ActivityDto & { workspaceId: string }
+
+/** An extension request on a task (`pm.task_extension`); names are looked up when sent. */
+export interface ExtensionRecord {
+  id: string
+  taskId: string
+  requestedById: string
+  oldDueDate: string | null
+  newDueDate: string
+  reason: string
+  status: 'pending' | 'approved' | 'rejected'
+  decidedById: string | null
+  decidedAt: string | null
+  remarks: string | null
+  createdAt: string
   rowVersion: string
 }
 
@@ -193,7 +218,15 @@ export const timeEntries = createMockCollection<TimeEntryRecord>({
 })
 export const reminders = createMockCollection<ReminderRecord>({
   storageKey: key('reminders'),
-  seed: () => [],
+  seed: seedReminders,
+})
+export const extensions = createMockCollection<ExtensionRecord>({
+  storageKey: key('extensions'),
+  seed: seedExtensions,
+})
+export const activities = createMockCollection<ActivityRecord>({
+  storageKey: key('activity'),
+  seed: seedActivities,
 })
 export const shares = createMockCollection<ShareRecord>({
   storageKey: key('shares'),
@@ -219,6 +252,8 @@ export function resetProjectManagementDb(): void {
     attachments,
     timeEntries,
     reminders,
+    extensions,
+    activities,
     shares,
     favorites,
   ]) {
