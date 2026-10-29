@@ -181,7 +181,7 @@ export function CoverPopover({ workspace }: { workspace: Workspace }) {
             onClick={() => {
               pick(null)
             }}
-            className="self-start text-xs font-medium text-[#B7192C] hover:underline disabled:opacity-60"
+            className="self-start text-xs font-medium text-[#B7192C] hover:underline disabled:opacity-60 dark:text-[#FF9AA3]"
           >
             Remove cover
           </button>

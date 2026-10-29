@@ -13,8 +13,15 @@ import type {
 import type { ListSort, SortContext } from './list-utils'
 import type { TaskActions } from './use-task-actions'
 
-/** What the List view's groups, headers and rows share. */
+/**
+ * How the tasks are laid out: the List view's status groups, the Table view's one flat table
+ * (every column, set columns), or the Board view's status columns of cards.
+ */
+export type TaskLayout = 'list' | 'table' | 'board'
+
+/** What the List view's groups, headers and rows share (and the Table and Board views). */
 export interface ListViewContextValue {
+  layout: TaskLayout
   workspace: Workspace
   tree: WorkspaceTree
   /** What the caller may do here (company codes and workspace role). */

@@ -87,9 +87,9 @@ export function AssigneesCell({ task, workspace }: TaskCellProps) {
             type="button"
             onClick={openPicker}
             aria-label={`Open Add Assignee for ${task.name}`}
-            className="ml-auto flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-[#F8F5FF]"
+            className="ml-auto flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-[#F8F5FF] dark:hover:bg-[#7127EA]/15"
           >
-            <ChevronDownIcon className="h-[0.4rem] w-[0.75rem] text-[#7127EA]" />
+            <ChevronDownIcon className="h-[0.4rem] w-[0.75rem] text-[#7127EA] dark:text-[#C4ABFF]" />
           </button>
         </div>
       }
@@ -126,7 +126,7 @@ function MembersPopover({ open, onOpenChange, task, hidden, people }: MembersPop
       trigger={
         <button
           type="button"
-          aria-label={`${hidden.length} more assignees`}
+          aria-label={`${hidden.length} more ${hidden.length === 1 ? 'assignee' : 'assignees'}`}
           className="-ml-[0.45rem] flex size-[1.95rem] shrink-0 items-center justify-center rounded-full bg-[#7127EA] text-xs font-medium text-white ring-[1.6px] ring-white"
         >
           {hidden.length}+
@@ -260,7 +260,7 @@ function AddAssigneePopup({ task, workspace, onClose }: AddAssigneePopupProps) {
       <section aria-label="Select or Add Assignees" className="flex flex-col gap-2">
         <div className="flex items-center justify-between px-0.5">
           <h4 className={fieldStyles.sectionTitle}>Select or Add Assignees</h4>
-          <span className="text-[0.6875rem] font-medium tracking-[0.01em] text-[#3D3D3D]">
+          <span className="text-[0.6875rem] font-medium tracking-[0.01em] text-[#3D3D3D] dark:text-title">
             {employees.length} Employees
           </span>
         </div>

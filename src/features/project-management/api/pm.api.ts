@@ -5,15 +5,19 @@ import { uploadFile } from '@/lib/files'
 import type { ApiItem, Paginated } from '@/types/api'
 
 import type {
+  ActivityEntry,
+  ActivityFilters,
   Attachment,
   ColumnPermission,
   CommentInput,
   CommentPatch,
+  ExtensionRequest,
   PmDepartment,
   PmPerson,
   PmRole,
   PmTemplates,
   Reminder,
+  ReminderEntry,
   ShareEntity,
   ShareSettings,
   Tag,
@@ -35,6 +39,7 @@ import type {
   WorkspaceTree,
 } from '../types/pm.types'
 import type {
+  ActivityDto,
   AttachmentDto,
   ColumnPermissionsDto,
   CommentDto,
@@ -57,6 +62,7 @@ import type {
   WorkspaceUpdateDto,
 } from './pm.dto'
 import {
+  activityFromApi,
   attachmentFromApi,
   columnsToConfig,
   columnsView,
@@ -71,6 +77,7 @@ import {
   permissionToApi,
   personFromApi,
   recurrenceToApi,
+  reminderEntryFromApi,
   reminderFromApi,
   roleToApi,
   shareFromApi,
@@ -92,6 +99,8 @@ const path = (rest: string) => `/projects${rest}`
 
 /** The API's largest page; lists the screens show whole are read page by page. */
 const PAGE_SIZE = 100
+/** The Activity view reads its history 30 lines at a time ("Load more"). */
+export const ACTIVITY_PAGE_SIZE = 30
 
 async function getItem<T>(url: string, params?: object, signal?: AbortSignal): Promise<T> {
   const { data } = await apiClient.get<ApiItem<T>>(url, {
@@ -717,6 +726,78 @@ export const pmApi = {
     else await send('post', path('/reminders'), body)
   },
 
+  // --- activity -------------------------------------------------------------------------------------
+
+  /** One page of a workspace's history, newest first, with the Activity view's filters. */
+  activity: async (
+    workspaceId: string,
+    filters: ActivityFilters,
+    page: number,
+    signal?: AbortSignal,
+  ): Promise<Paginated<ActivityEntry>> => {
+    const { data } = await apiClient.get<Paginated<ActivityDto>>(
+      path(`/workspaces/${workspaceId}/activity`),
+      {
+        params: {
+          page,
+          pageSize: ACTIVITY_PAGE_SIZE,
+          ...(filters.q.trim() ? { q: filters.q.trim() } : {}),
+          ...(filters.action ? { action: filters.action } : {}),
+          ...(filters.from ? { fromDate: filters.from } : {}),
+          ...(filters.to ? { toDate: filters.to } : {}),
+        },
+        ...(signal ? { signal } : {}),
+      },
+    )
+    return { ...data, data: data.data.map(activityFromApi) }
+  },
+
+  /** The caller's reminders, soonest first; `includeDone` adds the ones already sent or past. */
+  reminders: async (includeDone: boolean, signal?: AbortSignal): Promise<ReminderEntry[]> =>
+    (await getAll<ReminderDto>(path('/reminders'), { includeDone }, signal))
+      .map(reminderEntryFromApi)
+      .toSorted((a, b) => a.remindAt.localeCompare(b.remindAt)),
+
+  /** Moves one of the caller's reminders (the Reminders page's Change time). */
+  moveReminder: async (reminder: ReminderEntry, at: Date): Promise<void> => {
+    await send('put', path(`/reminders/${reminder.id}`), {
+      entityType: reminder.entityType,
+      entityId: toApiId(reminder.entityId),
+      name: reminder.name,
+      remindAt: at.toISOString(),
+      notifyBeforeMinutes: reminder.notifyBeforeMinutes,
+      rowVersion: reminder.rowVersion,
+    })
+  },
+
+  deleteReminder: async (id: string): Promise<void> => {
+    await remove(path(`/reminders/${id}`))
+  },
+
+  // --- extension requests ---------------------------------------------------------------------------
+
+  /** Asks for a later due date (an assignee; one request per task). Returns the task. */
+  requestExtension: async (
+    taskId: string,
+    input: { newDueDate: string; reason: string },
+  ): Promise<TaskDetail> =>
+    taskDetailFromApi(
+      await send<TaskDto>('post', path(`/tasks/${taskId}/extension-requests`), input),
+    ),
+
+  /** A manager's answer: approving moves the due date to the one asked for. Returns the task. */
+  decideExtension: async (
+    extension: Pick<ExtensionRequest, 'id' | 'rowVersion'>,
+    decision: 'approve' | 'reject',
+    remarks: string | null,
+  ): Promise<TaskDetail> =>
+    taskDetailFromApi(
+      await send<TaskDto>('patch', path(`/extension-requests/${extension.id}/${decision}`), {
+        remarks,
+        rowVersion: extension.rowVersion,
+      }),
+    ),
+
   // --- tags and labels ---------------------------------------------------------------------------------
 
   /** The workspace's tags, and the options of its Labels field as labels. */
@@ -833,6 +914,9 @@ export const pmKeys = {
   attachments: (taskId: string) => [...pmKeys.all, 'attachments', taskId] as const,
   timeEntries: (taskId: string) => [...pmKeys.all, 'time-entries', taskId] as const,
   reminder: (taskId: string) => [...pmKeys.all, 'reminder', taskId] as const,
+  reminders: (includeDone: boolean) => [...pmKeys.all, 'reminders', includeDone] as const,
+  activity: (workspaceId: string, filters: ActivityFilters) =>
+    [...pmKeys.all, 'activity', workspaceId, filters] as const,
   tags: (workspaceId: string) => [...pmKeys.all, 'tags', workspaceId] as const,
   share: (entityType: ShareEntity, entityId: string) =>
     [...pmKeys.all, 'share', entityType, entityId] as const,

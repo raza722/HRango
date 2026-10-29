@@ -17,7 +17,7 @@ export function StatusChip({
   return (
     <span
       className={cn(
-        'inline-flex h-[1.9rem] max-w-full min-w-0 shrink-0 items-center gap-2 rounded-md bg-[#F6F4FF] pr-2.5 pl-1.5 text-[0.8125rem] font-medium text-[#626262]',
+        'inline-flex h-[1.9rem] max-w-full min-w-0 shrink-0 items-center gap-2 rounded-md bg-[#F6F4FF] pr-2.5 pl-1.5 text-[0.8125rem] font-medium text-[#626262] dark:bg-[#7127EA]/10 dark:text-title',
         className,
       )}
     >
@@ -32,7 +32,7 @@ export function StatusIconBox({ color, className }: { color: string; className?:
   return (
     <span
       className={cn(
-        'flex size-[1.05rem] shrink-0 items-center justify-center rounded-[0.23rem] bg-white',
+        'flex size-[1.05rem] shrink-0 items-center justify-center rounded-[0.23rem] bg-white dark:bg-card',
         className,
       )}
     >

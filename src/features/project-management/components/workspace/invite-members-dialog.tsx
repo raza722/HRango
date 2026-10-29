@@ -93,10 +93,10 @@ function InviteForm({
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <DialogTitle className="font-sans text-xl font-medium text-[#303030] sm:text-xl">
+          <DialogTitle className="font-sans text-xl font-medium text-[#303030] sm:text-xl dark:text-title">
             Invite Members
           </DialogTitle>
-          <DialogDescription className="mt-1 text-xs text-[#707070]">
+          <DialogDescription className="mt-1 text-xs text-[#707070] dark:text-grey">
             People you invite can see and work in {workspace.name}.
           </DialogDescription>
         </div>
@@ -105,7 +105,7 @@ function InviteForm({
         </DialogClose>
       </div>
 
-      <label className="flex h-11 items-center gap-2 rounded-full bg-white px-4 shadow-[0_0_12.95px_rgba(0,0,0,0.12)]">
+      <label className="flex h-11 items-center gap-2 rounded-full bg-white px-4 shadow-[0_0_12.95px_rgba(0,0,0,0.12)] dark:bg-card">
         <SearchIcon className="size-5 shrink-0 text-[#A181FF]" />
         <span className="sr-only">Search employee</span>
         <input
@@ -115,7 +115,7 @@ function InviteForm({
             setQuery(event.target.value)
           }}
           placeholder="Search employee here..."
-          className="min-w-0 flex-1 bg-transparent text-sm text-[#303030] outline-none placeholder:text-[#909090]"
+          className="min-w-0 flex-1 bg-transparent text-sm text-[#303030] outline-none placeholder:text-[#909090] dark:text-title"
         />
       </label>
 
@@ -136,20 +136,20 @@ function InviteForm({
               <label
                 htmlFor={id}
                 className={cn(
-                  'flex cursor-pointer items-center gap-3 rounded-full bg-[#F4F4F4] py-1.5 pr-4 pl-1.5',
-                  checked && 'bg-[#F0E9FD]',
+                  'flex cursor-pointer items-center gap-3 rounded-full bg-[#F4F4F4] py-1.5 pr-4 pl-1.5 dark:bg-white/5',
+                  checked && 'bg-[#F0E9FD] dark:bg-[#7127EA]/20',
                 )}
               >
                 <EmployeeAvatar name={person.name} photoUrl={person.photoUrl} className="size-11" />
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
-                  <span className="truncate text-sm font-semibold text-[#5D5D5D]">
+                  <span className="truncate text-sm font-semibold text-[#5D5D5D] dark:text-title">
                     {person.name}
                   </span>
                   <span className="flex flex-wrap gap-1">
-                    <span className="rounded bg-[#FFF0D0] px-1.5 text-[0.6875rem] leading-[1.2rem] font-medium text-[#5D5D5D]">
+                    <span className="rounded bg-[#FFF0D0] px-1.5 text-[0.6875rem] leading-[1.2rem] font-medium text-[#5D5D5D] dark:bg-[#F79009]/20 dark:text-title">
                       Designation: {person.designation}
                     </span>
-                    <span className="rounded bg-[#FFD0D0] px-1.5 text-[0.6875rem] leading-[1.2rem] font-medium text-[#5D5D5D]">
+                    <span className="rounded bg-[#FFD0D0] px-1.5 text-[0.6875rem] leading-[1.2rem] font-medium text-[#5D5D5D] dark:bg-[#DC3545]/20 dark:text-title">
                       Department: {person.department}
                     </span>
                   </span>
@@ -170,7 +170,7 @@ function InviteForm({
       </ul>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="text-sm font-medium text-[#393636]">
+        <span className="text-sm font-medium text-[#393636] dark:text-title">
           Showing {candidates.length} Employees
         </span>
         <button

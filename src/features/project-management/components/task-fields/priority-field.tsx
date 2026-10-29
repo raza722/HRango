@@ -61,11 +61,11 @@ export function PriorityCell({ task }: TaskCellProps) {
                   void choose(priority)
                 }}
                 className={cn(
-                  'flex h-[2.125rem] w-full items-center gap-2.5 rounded-[0.5rem] bg-[#F7F7F7] px-1.5 text-[0.8125rem] text-[#626262] transition-colors hover:bg-[#EEE7FF]',
-                  selected && 'bg-[#EEE7FF] ring-1 ring-[#A181FF]',
+                  'flex h-[2.125rem] w-full items-center gap-2.5 rounded-[0.5rem] bg-[#F7F7F7] px-1.5 text-[0.8125rem] text-[#626262] transition-colors hover:bg-[#EEE7FF] dark:bg-white/5 dark:text-title dark:hover:bg-[#7127EA]/25',
+                  selected && 'bg-[#EEE7FF] ring-1 ring-[#A181FF] dark:bg-[#7127EA]/10',
                 )}
               >
-                <span className="flex size-[1.45rem] items-center justify-center rounded-[0.4rem] bg-[#F6F2FF]">
+                <span className="flex size-[1.45rem] items-center justify-center rounded-[0.4rem] bg-[#F6F2FF] dark:bg-[#7127EA]/10">
                   <FlagFilledIcon
                     className="h-[0.85rem] w-auto"
                     style={{ color: PRIORITY_FLAG_COLORS[priority] }}
@@ -85,7 +85,7 @@ export function PriorityCell({ task }: TaskCellProps) {
         }}
         className="flex h-[2.25rem] w-full items-center gap-2.5 rounded-[0.5rem] bg-[#7127EA] px-1.5 text-[0.8125rem] font-semibold text-white transition-colors hover:bg-[#5f1fd0]"
       >
-        <span className="flex size-[1.45rem] items-center justify-center rounded-[0.4rem] bg-white text-[#DC3545]">
+        <span className="flex size-[1.45rem] items-center justify-center rounded-[0.4rem] bg-white text-[#DC3545] dark:bg-card dark:text-[#FF8A94]">
           <ClearIcon className="size-[1rem]" />
         </span>
         Clear

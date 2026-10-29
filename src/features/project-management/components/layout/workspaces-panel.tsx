@@ -30,9 +30,9 @@ interface WorkspacesPanelProps {
 }
 
 /** Neutrals Color 1/700, Poppins Medium 13.6 (workspace) and 12.9 (folders and lists). */
-const rowText = 'truncate font-medium text-[#4F4F4F]'
+const rowText = 'truncate font-medium text-[#4F4F4F] dark:text-title'
 const squareButton =
-  'flex size-8 shrink-0 items-center justify-center rounded-lg bg-[rgba(132,78,255,0.1)] text-[#7127EA] transition-colors hover:bg-[rgba(132,78,255,0.18)]'
+  'flex size-8 shrink-0 items-center justify-center rounded-lg bg-[rgba(132,78,255,0.1)] text-[#7127EA] dark:text-[#C4ABFF] transition-colors hover:bg-[rgba(132,78,255,0.18)]'
 
 const NEW_ITEM_LABELS: Record<WorkspaceItemKind, string> = {
   folder: 'New Folder',
@@ -101,7 +101,7 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
             setCollapsed(false)
           }}
           aria-label="Show workspaces"
-          className="flex size-10 items-center justify-center rounded-lg bg-white text-[#5D5D5D] shadow-xs"
+          className="flex size-10 items-center justify-center rounded-lg bg-white text-[#5D5D5D] shadow-xs dark:bg-card dark:text-title"
         >
           <PanelLeft className="size-4" />
         </button>
@@ -112,24 +112,26 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
   return (
     <aside
       aria-label="Workspaces"
-      className="flex shrink-0 flex-col rounded-[1.625rem] bg-white p-2.5 shadow-xs lg:max-h-[calc(100dvh-8rem)] lg:w-[18.75rem]"
+      className="flex shrink-0 flex-col rounded-[1.625rem] bg-white p-2.5 shadow-xs lg:max-h-[calc(100dvh-8rem)] lg:w-[18.75rem] dark:bg-card"
     >
       <div className="flex items-center justify-between pt-2.5 pl-2.5">
-        <h2 className="text-base leading-6 font-medium text-[#4F4F4F]">Workspaces</h2>
+        <h2 className="text-base leading-6 font-medium text-[#4F4F4F] dark:text-title">
+          Workspaces
+        </h2>
         <button
           type="button"
           onClick={() => {
             setCollapsed(true)
           }}
           aria-label="Hide workspaces"
-          className="flex size-7 items-center justify-center rounded-[0.55rem] bg-[#F7F7F7] text-[#5D5D5D] hover:bg-[#ececec]"
+          className="flex size-7 items-center justify-center rounded-[0.55rem] bg-[#F7F7F7] text-[#5D5D5D] hover:bg-[#ececec] dark:bg-white/5 dark:text-title dark:hover:bg-white/10"
         >
           <PanelLeft className="size-4" />
         </button>
       </div>
 
       <div className="mt-3 flex items-center gap-2">
-        <label className="flex h-[1.875rem] min-w-0 flex-1 items-center gap-2 rounded-full bg-white px-2 shadow-[0_0_12.95px_rgba(0,0,0,0.12)]">
+        <label className="flex h-[1.875rem] min-w-0 flex-1 items-center gap-2 rounded-full bg-white px-2 shadow-[0_0_12.95px_rgba(0,0,0,0.12)] dark:bg-card">
           <PanelSearchIcon className="size-[0.85rem] shrink-0 text-[#A181FF]" />
           <span className="sr-only">Search workspaces</span>
           <input
@@ -138,7 +140,7 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
               setSearch(event.target.value)
             }}
             placeholder="Search here..."
-            className="min-w-0 flex-1 bg-transparent text-xs tracking-[0.014em] text-[#4F4F4F] outline-none placeholder:text-[#909090]"
+            className="min-w-0 flex-1 bg-transparent text-xs tracking-[0.014em] text-[#4F4F4F] outline-none placeholder:text-[#909090] dark:text-title"
           />
         </label>
         {access.createWorkspace && (
@@ -234,13 +236,13 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
                 setFavoritesOpen((open) => !open)
               }}
               aria-expanded={favoritesOpen}
-              className="flex w-full items-center gap-2.5 rounded-[0.72rem] px-2.5 py-2 text-left hover:bg-[#F7F2FF]"
+              className="flex w-full items-center gap-2.5 rounded-[0.72rem] px-2.5 py-2 text-left hover:bg-[#F7F2FF] dark:hover:bg-[#7127EA]/15"
             >
               <Star className="size-4 fill-[#F79009] text-[#F79009]" aria-hidden="true" />
               <span className={cn(rowText, 'flex-1 text-[0.85rem]')}>Favorites</span>
               <PanelCaretIcon
                 className={cn(
-                  'h-[0.45rem] w-3 text-[#7127EA] transition-transform',
+                  'h-[0.45rem] w-3 text-[#7127EA] transition-transform dark:text-[#C4ABFF]',
                   !favoritesOpen && '-rotate-90',
                 )}
               />
@@ -259,7 +261,7 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
 
         {isPending && <p className="px-3 py-2 text-xs text-[#909090]">Loading workspaces…</p>}
         {isError && (
-          <p role="alert" className="px-3 py-2 text-xs text-[#B7192C]">
+          <p role="alert" className="px-3 py-2 text-xs text-[#B7192C] dark:text-[#FF9AA3]">
             Could not load the workspaces.
           </p>
         )}
@@ -305,7 +307,7 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
         <button
           type="button"
           onClick={onCreate}
-          className="mt-3 flex h-[4.5rem] w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#A181FF] bg-[#F0E9FD] text-sm font-medium text-[#7127EA] hover:bg-[#e6dafc]"
+          className="mt-3 flex h-[4.5rem] w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#A181FF] bg-[#F0E9FD] text-sm font-medium text-[#7127EA] hover:bg-[#e6dafc] dark:bg-[#7127EA]/20 dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/30"
         >
           <span className="flex items-center gap-1.5">
             <PanelPlusIcon className="size-3" /> Create
@@ -334,7 +336,9 @@ function WorkspaceLink({
     <div
       className={cn(
         'flex items-center rounded-[0.72rem]',
-        current || expanded ? 'bg-[#EEE7FF]' : 'hover:bg-[#F7F2FF]',
+        current || expanded
+          ? 'bg-[#EEE7FF] dark:bg-[#7127EA]/10'
+          : 'hover:bg-[#F7F2FF] dark:hover:bg-[#7127EA]/15',
         className,
       )}
     >
@@ -344,7 +348,7 @@ function WorkspaceLink({
           onClick={onToggle}
           aria-label={expanded ? `Collapse ${workspace.name}` : `Expand ${workspace.name}`}
           aria-expanded={expanded}
-          className="flex size-10 shrink-0 items-center justify-center rounded-[0.72rem] text-[#7127EA]"
+          className="flex size-10 shrink-0 items-center justify-center rounded-[0.72rem] text-[#7127EA] dark:text-[#C4ABFF]"
         >
           <PanelCaretIcon
             className={cn('h-[0.45rem] w-3 transition-transform', !expanded && '-rotate-90')}
@@ -353,7 +357,7 @@ function WorkspaceLink({
       ) : (
         <span
           aria-hidden="true"
-          className="flex size-10 shrink-0 items-center justify-center text-[#7127EA]"
+          className="flex size-10 shrink-0 items-center justify-center text-[#7127EA] dark:text-[#C4ABFF]"
         >
           <PanelCaretIcon className="h-[0.45rem] w-3 -rotate-90" />
         </span>
@@ -388,7 +392,7 @@ function ItemTree({
   const level = items.filter((item) => item.parentId === parentId)
   if (level.length === 0) return null
   return (
-    <ul className="mt-1.5 ml-[1.15rem] flex flex-col gap-1.5 border-l-2 border-[#EEE7FF] pl-2">
+    <ul className="mt-1.5 ml-[1.15rem] flex flex-col gap-1.5 border-l-2 border-[#EEE7FF] pl-2 dark:border-border">
       {level.map((item) => {
         if (item.kind === 'folder') {
           const open = !closed.has(item.id)
@@ -400,9 +404,9 @@ function ItemTree({
                   onToggle(item.id)
                 }}
                 aria-expanded={open}
-                className="flex w-full items-center rounded-[0.72rem] bg-[#EEE7FF] pr-2.5 text-left"
+                className="flex w-full items-center rounded-[0.72rem] bg-[#EEE7FF] pr-2.5 text-left dark:bg-[#7127EA]/10"
               >
-                <span className="flex size-10 shrink-0 items-center justify-center text-[#7127EA]">
+                <span className="flex size-10 shrink-0 items-center justify-center text-[#7127EA] dark:text-[#C4ABFF]">
                   <PanelCaretIcon
                     className={cn('h-[0.45rem] w-3 transition-transform', !open && '-rotate-90')}
                   />
@@ -426,8 +430,8 @@ function ItemTree({
         }
         const current = item.id === listId
         const tile = (
-          <span className="flex size-[1.9rem] shrink-0 items-center justify-center rounded-[0.48rem] bg-white">
-            <PanelListIcon className="h-3 w-[1.3rem] text-[#2E64E2]" />
+          <span className="flex size-[1.9rem] shrink-0 items-center justify-center rounded-[0.48rem] bg-white dark:bg-card">
+            <PanelListIcon className="h-3 w-[1.3rem] text-[#2E64E2] dark:text-[#8FB0FF]" />
           </span>
         )
         return (
@@ -436,10 +440,13 @@ function ItemTree({
               to="/project-management/workspaces/$workspaceId"
               params={{ workspaceId }}
               search={{ list: item.id }}
+              activeOptions={{ exact: true }}
               aria-current={current ? 'page' : undefined}
               className={cn(
                 'flex items-center gap-2.5 rounded-[0.48rem] p-1.5',
-                current ? 'bg-[#EEE7FF]' : 'bg-[#F7F7F7] hover:bg-[#F0E9FD]',
+                current
+                  ? 'bg-[#EEE7FF] dark:bg-[#7127EA]/10'
+                  : 'bg-[#F7F7F7] hover:bg-[#F0E9FD] dark:bg-white/5 dark:hover:bg-[#7127EA]/25',
               )}
             >
               {tile}

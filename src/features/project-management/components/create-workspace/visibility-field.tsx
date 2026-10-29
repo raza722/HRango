@@ -19,7 +19,7 @@ const OPTIONS: { value: Visibility; title: string; text: string }[] = [
   {
     value: 'public',
     title: 'Public',
-    text: 'Anyone on the internet can see this workspace, only workspace members can edit.',
+    text: 'Everyone in your organisation who uses hRango can see this workspace; only its members can edit it.',
   },
   {
     value: 'workspace',

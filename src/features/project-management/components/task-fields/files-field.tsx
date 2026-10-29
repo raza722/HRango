@@ -23,6 +23,7 @@ import {
   fileKind,
   formatFileSize,
   MAX_FILE_BYTES,
+  MAX_FILE_LABEL,
 } from './field-utils'
 import { RemoveButton } from './remove-button'
 import type { TaskCellProps } from './task-cell-types'
@@ -49,7 +50,7 @@ function FileBadge({ name, className }: { name: string; className?: string }) {
   return (
     <span
       className={cn(
-        'flex size-[1.4rem] shrink-0 items-center justify-center rounded-full bg-white',
+        'flex size-[1.4rem] shrink-0 items-center justify-center rounded-full bg-white dark:bg-card',
         className,
       )}
       style={{ color: kind.color }}
@@ -89,13 +90,13 @@ export function FilesCell({ task, workspace }: TaskCellProps) {
           className={cn(fieldStyles.cell, 'pr-1.5')}
         >
           {count > 0 ? (
-            <span className="flex h-[1.8rem] min-w-0 flex-1 items-center gap-2 rounded-[0.25rem] bg-[#F6F2FF] pr-2 pl-1">
+            <span className="flex h-[1.8rem] min-w-0 flex-1 items-center gap-2 rounded-[0.25rem] bg-[#F6F2FF] pr-2 pl-1 dark:bg-[#7127EA]/10">
               <FileBadge name={first?.name ?? 'file'} />
               <span className="min-w-0 truncate">
                 {first?.name ?? `${count} ${count === 1 ? 'file' : 'files'}`}
               </span>
               {first && count > 1 && (
-                <span className="shrink-0 text-[0.6875rem] font-semibold text-[#7127EA]">
+                <span className="shrink-0 text-[0.6875rem] font-semibold text-[#7127EA] dark:text-[#C4ABFF]">
                   +{count - 1}
                 </span>
               )}
@@ -164,7 +165,7 @@ function FilesPanel({
       key: `${Date.now()}-${index}-${file.name}`,
       name: file.name,
       percent: 0,
-      error: file.size > MAX_FILE_BYTES ? 'Files must be 10 MB or smaller' : null,
+      error: file.size > MAX_FILE_BYTES ? `Files must be ${MAX_FILE_LABEL} or smaller` : null,
     }))
     setUploads((current) => [...current, ...started])
     await Promise.all(
@@ -209,12 +210,12 @@ function FilesPanel({
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          className="flex flex-col items-center justify-center gap-2 rounded-[0.5625rem] border border-dashed border-[#7127EA] bg-[#EEE7FF] px-[1.2rem] py-[1.6rem] text-center text-[0.8125rem] font-medium text-[#626262] transition-colors hover:bg-[#E4DAFF]"
+          className="flex flex-col items-center justify-center gap-2 rounded-[0.5625rem] border border-dashed border-[#7127EA] bg-[#EEE7FF] px-[1.2rem] py-[1.6rem] text-center text-[0.8125rem] font-medium text-[#626262] transition-colors hover:bg-[#E4DAFF] dark:bg-[#7127EA]/10 dark:text-title dark:hover:bg-[#7127EA]/30"
         >
-          <AttachIcon className="size-[0.9rem] text-[#7127EA]" />
+          <AttachIcon className="size-[0.9rem] text-[#7127EA] dark:text-[#C4ABFF]" />
           Upload File From This Device
           <span className="text-[0.6875rem] font-normal text-[#909090]">
-            PDF, DOCX, XLSX, PNG or JPG, up to 10 MB
+            PDF, DOCX, XLSX, PNG or JPG, up to {MAX_FILE_LABEL}
           </span>
         </button>
       )}
@@ -227,8 +228,16 @@ function FilesPanel({
               className="rounded-[0.5625rem] bg-[rgba(221,221,221,0.2)] px-2.5 py-2 text-xs"
             >
               <div className="flex justify-between gap-2">
-                <span className="truncate font-medium text-[#626262]">{entry.name}</span>
-                <span className={entry.error ? 'text-[#DC3545]' : 'font-semibold text-[#7127EA]'}>
+                <span className="truncate font-medium text-[#626262] dark:text-title">
+                  {entry.name}
+                </span>
+                <span
+                  className={
+                    entry.error
+                      ? 'text-[#DC3545] dark:text-[#FF8A94]'
+                      : 'font-semibold text-[#7127EA] dark:text-[#C4ABFF]'
+                  }
+                >
                   {entry.error ?? `${entry.percent}%`}
                 </span>
               </div>
@@ -239,7 +248,7 @@ function FilesPanel({
                   aria-valuenow={entry.percent}
                   aria-valuemin={0}
                   aria-valuemax={100}
-                  className="mt-1.5 h-1 overflow-hidden rounded-full bg-[#E7E7E7]"
+                  className="mt-1.5 h-1 overflow-hidden rounded-full bg-[#E7E7E7] dark:bg-white/10"
                 >
                   <div
                     className="h-full rounded-full bg-[#7127EA] transition-[width]"
@@ -258,7 +267,7 @@ function FilesPanel({
             <button
               type="button"
               disabled
-              className="flex h-[2.6rem] w-full cursor-not-allowed items-center gap-2.5 rounded-[0.5625rem] bg-[rgba(221,221,221,0.2)] px-1.5 text-left text-[0.8125rem] font-medium text-[#626262] opacity-60"
+              className="flex h-[2.6rem] w-full cursor-not-allowed items-center gap-2.5 rounded-[0.5625rem] bg-[rgba(221,221,221,0.2)] px-1.5 text-left text-[0.8125rem] font-medium text-[#626262] opacity-60 dark:text-title"
             >
               <span className={fieldStyles.cellIcon}>
                 <CloudSourceIcon />
@@ -280,7 +289,7 @@ function FilesPanel({
             {files.map((file) => (
               <li
                 key={file.id}
-                className="flex h-10 shrink-0 items-center gap-2 rounded-[0.25rem] bg-[#F6F2FF] pr-1.5 pl-1"
+                className="flex h-10 shrink-0 items-center gap-2 rounded-[0.25rem] bg-[#F6F2FF] pr-1.5 pl-1 dark:bg-[#7127EA]/10"
               >
                 <FileBadge name={file.name} />
                 <a
@@ -288,7 +297,7 @@ function FilesPanel({
                   target="_blank"
                   rel="noreferrer"
                   title={file.uploadedByName ? `Attached by ${file.uploadedByName}` : undefined}
-                  className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium text-[#626262] hover:text-[#7127EA] hover:underline"
+                  className="min-w-0 flex-1 truncate text-[0.8125rem] font-medium text-[#626262] hover:text-[#7127EA] hover:underline dark:text-title dark:hover:text-[#C4ABFF]"
                 >
                   {file.name}
                 </a>

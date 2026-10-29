@@ -39,14 +39,14 @@ export function ShareDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showClose={false}
-        className="max-w-[40rem] gap-0 rounded-[1.125rem] bg-white p-0 text-[#4A4A4A]"
+        className="max-w-[40rem] gap-0 rounded-[1.125rem] bg-white p-0 text-[#4A4A4A] dark:bg-card dark:text-title"
       >
         <header className="flex items-start justify-between gap-4 px-6 pt-5 pb-3">
           <div className="min-w-0">
-            <DialogTitle className="text-lg font-semibold text-[#393636]">
+            <DialogTitle className="text-lg font-semibold text-[#393636] dark:text-title">
               Sharing & Permissions
             </DialogTitle>
-            <DialogDescription className="truncate text-sm text-[#626262]">
+            <DialogDescription className="truncate text-sm text-[#626262] dark:text-title">
               {targetName}
             </DialogDescription>
           </div>
@@ -61,9 +61,11 @@ export function ShareDialog({
             <CloseIcon className="size-3.5" />
           </button>
         </header>
-        {share.isPending && <p className="px-6 pb-6 text-sm text-[#626262]">Loading sharing…</p>}
+        {share.isPending && (
+          <p className="px-6 pb-6 text-sm text-[#626262] dark:text-title">Loading sharing…</p>
+        )}
         {share.isError && (
-          <p role="alert" className="px-6 pb-6 text-sm text-[#B7192C]">
+          <p role="alert" className="px-6 pb-6 text-sm text-[#B7192C] dark:text-[#FF9AA3]">
             Could not load the sharing settings. {share.error.message}
           </p>
         )}
@@ -83,7 +85,7 @@ export function ShareDialog({
 }
 
 const email = z.email()
-const sectionTitle = 'text-sm font-semibold text-[#4A4A4A]'
+const sectionTitle = 'text-sm font-semibold text-[#4A4A4A] dark:text-title'
 
 function ShareForm({
   initial,
@@ -169,8 +171,8 @@ function ShareForm({
                 className={cn(
                   'flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm',
                   draft.scope === value
-                    ? 'border-[#7127EA] bg-[#F0E9FD] text-[#7127EA]'
-                    : 'border-[#E9E9E9] text-[#4A4A4A]',
+                    ? 'border-[#7127EA] bg-[#F0E9FD] text-[#7127EA] dark:bg-[#7127EA]/20 dark:text-[#C4ABFF]'
+                    : 'border-[#E9E9E9] text-[#4A4A4A] dark:border-border dark:text-title',
                 )}
               >
                 <input
@@ -211,7 +213,7 @@ function ShareForm({
               placeholder="Enter email address"
               aria-invalid={inviteError !== null}
               aria-describedby={inviteError ? 'share-invite-error' : undefined}
-              className="h-10 min-w-0 flex-1 rounded-xl border border-[#E9E9E9] px-3 text-sm outline-none focus:border-[#7127EA]"
+              className="h-10 min-w-0 flex-1 rounded-xl border border-[#E9E9E9] px-3 text-sm outline-none focus:border-[#7127EA] dark:border-border"
             />
             <button
               type="button"
@@ -222,7 +224,11 @@ function ShareForm({
             </button>
           </div>
           {inviteError && (
-            <p id="share-invite-error" role="alert" className="text-xs text-[#DC3545]">
+            <p
+              id="share-invite-error"
+              role="alert"
+              className="text-xs text-[#DC3545] dark:text-[#FF8A94]"
+            >
               {inviteError}
             </p>
           )}
@@ -231,7 +237,7 @@ function ShareForm({
               {draft.invitedEmails.map((address) => (
                 <li
                   key={address}
-                  className="flex items-center gap-2 rounded-full bg-[#EEE7FF] py-1 pr-1 pl-3 text-xs text-[#4A4A4A]"
+                  className="flex items-center gap-2 rounded-full bg-[#EEE7FF] py-1 pr-1 pl-3 text-xs text-[#4A4A4A] dark:bg-[#7127EA]/10 dark:text-title"
                 >
                   {address}
                   <button
@@ -242,7 +248,7 @@ function ShareForm({
                         invitedEmails: draft.invitedEmails.filter((entry) => entry !== address),
                       })
                     }}
-                    className="flex size-5 items-center justify-center rounded-full text-[#DC3545] hover:bg-white"
+                    className="flex size-5 items-center justify-center rounded-full text-[#DC3545] hover:bg-white dark:text-[#FF8A94] dark:hover:bg-white/5"
                   >
                     <CloseIcon className="size-2.5" />
                   </button>
@@ -264,7 +270,7 @@ function ShareForm({
             className="h-10 rounded-full px-4 text-xs shadow-[0_0_12.95px_rgba(0,0,0,0.12)] outline-none"
           />
           {candidates.length > 0 && (
-            <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto rounded-xl border border-[#E9E9E9] p-1">
+            <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto rounded-xl border border-[#E9E9E9] p-1 dark:border-border">
               {candidates.map((person) => (
                 <li key={person.id}>
                   <button
@@ -275,7 +281,7 @@ function ShareForm({
                       })
                       setSearch('')
                     }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-[#F0E9FD]"
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-[#F0E9FD] dark:hover:bg-[#7127EA]/25"
                   >
                     <EmployeeAvatar
                       name={person.name}
@@ -300,7 +306,7 @@ function ShareForm({
               return (
                 <li
                   key={entry.employeeId}
-                  className="flex items-center gap-2 rounded-xl bg-[#F8F8F8] px-2 py-1.5"
+                  className="flex items-center gap-2 rounded-xl bg-[#F8F8F8] px-2 py-1.5 dark:bg-white/5"
                 >
                   <EmployeeAvatar
                     name={person?.name ?? 'Someone'}
@@ -324,7 +330,7 @@ function ShareForm({
                         ),
                       })
                     }}
-                    className="h-8 rounded-lg border border-[#E9E9E9] bg-white px-2 text-xs text-[#4A4A4A]"
+                    className="h-8 rounded-lg border border-[#E9E9E9] bg-white px-2 text-xs text-[#4A4A4A] dark:border-border dark:bg-card dark:text-title"
                   >
                     {Object.entries(SHARE_ACCESS_LABELS).map(([value, label]) => (
                       <option key={value} value={value}>
@@ -342,7 +348,7 @@ function ShareForm({
                         ),
                       })
                     }}
-                    className="flex size-7 items-center justify-center rounded-lg text-[#DC3545] hover:bg-[#FDECEE]"
+                    className="flex size-7 items-center justify-center rounded-lg text-[#DC3545] hover:bg-[#FDECEE] dark:text-[#FF8A94] dark:hover:bg-[#DC3545]/20"
                   >
                     <CloseIcon className="size-2.5" />
                   </button>
@@ -352,7 +358,7 @@ function ShareForm({
           </ul>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-xl border border-[#E9E9E9] p-4">
+        <div className="flex flex-col gap-3 rounded-xl border border-[#E9E9E9] p-4 dark:border-border">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className={sectionTitle}>Private link</h3>
@@ -386,10 +392,10 @@ function ShareForm({
           {draft.linkEnabled && (
             <div className="flex flex-col gap-3">
               <fieldset className="grid gap-3 sm:grid-cols-2">
-                <legend className="mb-1 text-xs font-semibold text-[#4A4A4A]">
+                <legend className="mb-1 text-xs font-semibold text-[#4A4A4A] dark:text-title">
                   Validity Period
                 </legend>
-                <label className="flex flex-col gap-1 text-xs text-[#626262]">
+                <label className="flex flex-col gap-1 text-xs text-[#626262] dark:text-title">
                   Begin at
                   <input
                     type="datetime-local"
@@ -397,10 +403,10 @@ function ShareForm({
                     onChange={(event) => {
                       set({ validFrom: event.target.value || null })
                     }}
-                    className="h-9 rounded-lg border border-[#E9E9E9] px-2 text-sm text-[#4A4A4A]"
+                    className="h-9 rounded-lg border border-[#E9E9E9] px-2 text-sm text-[#4A4A4A] dark:border-border dark:text-title"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs text-[#626262]">
+                <label className="flex flex-col gap-1 text-xs text-[#626262] dark:text-title">
                   Expire at
                   <input
                     type="datetime-local"
@@ -409,7 +415,7 @@ function ShareForm({
                     onChange={(event) => {
                       set({ validTo: event.target.value || null })
                     }}
-                    className="h-9 rounded-lg border border-[#E9E9E9] px-2 text-sm text-[#4A4A4A]"
+                    className="h-9 rounded-lg border border-[#E9E9E9] px-2 text-sm text-[#4A4A4A] dark:border-border dark:text-title"
                   />
                 </label>
               </fieldset>
@@ -425,7 +431,7 @@ function ShareForm({
                     const value = Number.parseInt(event.target.value, 10)
                     set({ maxAccess: Number.isFinite(value) && value > 0 ? value : null })
                   }}
-                  className="h-9 w-28 rounded-lg border border-[#E9E9E9] px-2 text-sm"
+                  className="h-9 w-28 rounded-lg border border-[#E9E9E9] px-2 text-sm dark:border-border"
                 />
               </label>
               <label className="flex items-center justify-between gap-3 text-sm">
@@ -443,7 +449,7 @@ function ShareForm({
 
         <fieldset className="flex flex-col gap-2">
           <legend className={sectionTitle}>Share Tasks Properties</legend>
-          <p className="text-xs text-[#626262]">What do you want to display?</p>
+          <p className="text-xs text-[#626262] dark:text-title">What do you want to display?</p>
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="flex items-center gap-2 text-sm">
               <Checkbox
@@ -481,12 +487,12 @@ function ShareForm({
           </div>
         </fieldset>
         {error && (
-          <p role="alert" className="text-sm text-[#DC3545]">
+          <p role="alert" className="text-sm text-[#DC3545] dark:text-[#FF8A94]">
             {error}
           </p>
         )}
       </div>
-      <footer className="flex justify-end gap-3 border-t border-[#E9E9E9] px-6 py-4">
+      <footer className="flex justify-end gap-3 border-t border-[#E9E9E9] px-6 py-4 dark:border-border">
         <button
           type="button"
           onClick={onDone}

@@ -25,7 +25,7 @@ const UNIT_LABELS: Record<RecurrenceUnit, string> = {
 }
 
 const box =
-  'h-10 rounded-[0.5625rem] border border-[#E9E9E9] bg-white text-[0.71875rem] font-medium tracking-[0.01em] outline-none focus:border-[#A181FF] focus-visible:border-[#A181FF]'
+  'h-10 rounded-[0.5625rem] border border-[#E9E9E9] dark:border-border bg-white dark:bg-card text-[0.71875rem] font-medium tracking-[0.01em] outline-none focus:border-[#A181FF] focus-visible:border-[#A181FF]'
 
 interface RecurrencePanelProps {
   value: Recurrence
@@ -59,7 +59,7 @@ export function RecurrencePanel({ value, onChange, onBack }: RecurrencePanelProp
         type="button"
         onClick={onBack}
         aria-label="Back to calendar"
-        className="flex size-[2.0625rem] items-center justify-center rounded-full border-[1.5px] border-[#7127EA] text-[#7127EA] hover:bg-[#F8F5FF]"
+        className="flex size-[2.0625rem] items-center justify-center rounded-full border-[1.5px] border-[#7127EA] text-[#7127EA] hover:bg-[#F8F5FF] dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/15"
       >
         <BackIcon className="size-5" />
       </button>
@@ -74,7 +74,10 @@ export function RecurrencePanel({ value, onChange, onBack }: RecurrencePanelProp
             onChange={(every) => {
               set({ every })
             }}
-            className={cn(box, 'w-[2.8rem] text-center text-[0.8125rem] text-[#3D3D3D]')}
+            className={cn(
+              box,
+              'w-[2.8rem] text-center text-[0.8125rem] text-[#3D3D3D] dark:text-title',
+            )}
           />
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -85,7 +88,7 @@ export function RecurrencePanel({ value, onChange, onBack }: RecurrencePanelProp
               )}
             >
               {UNIT_LABELS[value.unit]}
-              <ChevronDownIcon className="h-[0.4rem] w-[0.75rem] text-[#7127EA]" />
+              <ChevronDownIcon className="h-[0.4rem] w-[0.75rem] text-[#7127EA] dark:text-[#C4ABFF]" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[7.3rem]">
               <DropdownMenuRadioGroup
@@ -120,10 +123,10 @@ export function RecurrencePanel({ value, onChange, onBack }: RecurrencePanelProp
                     toggleWeekday(weekday)
                   }}
                   className={cn(
-                    'flex size-[2.0625rem] items-center justify-center rounded-full border-[1.4px] text-[0.6875rem] font-medium tracking-[0.01em] text-[#4A4A4A] transition-colors',
+                    'flex size-[2.0625rem] items-center justify-center rounded-full border-[1.4px] text-[0.6875rem] font-medium tracking-[0.01em] text-[#4A4A4A] transition-colors dark:text-title',
                     on
-                      ? 'border-[#7127EA] bg-[#DAD0FF]'
-                      : 'border-[#DAD0FF] bg-white hover:bg-[#F8F5FF]',
+                      ? 'border-[#7127EA] bg-[#DAD0FF] dark:bg-[#7127EA]/25'
+                      : 'border-[#DAD0FF] bg-white hover:bg-[#F8F5FF] dark:border-border dark:bg-card dark:hover:bg-[#7127EA]/15',
                   )}
                 >
                   {label}
@@ -169,7 +172,7 @@ export function RecurrencePanel({ value, onChange, onBack }: RecurrencePanelProp
                 )}
               >
                 {format(fromDay(endsOn), 'MMM d, yyyy')}
-                <ChevronDownIcon className="h-[0.4rem] w-[0.75rem] shrink-0 text-[#7127EA]" />
+                <ChevronDownIcon className="h-[0.4rem] w-[0.75rem] shrink-0 text-[#7127EA] dark:text-[#C4ABFF]" />
               </button>
             }
           >
@@ -193,7 +196,7 @@ export function RecurrencePanel({ value, onChange, onBack }: RecurrencePanelProp
               set({ ends: { kind: 'after', count: endsAfter } })
             }}
           />
-          <label className="flex items-center gap-2 text-[0.71875rem] font-medium tracking-[0.01em] text-[#4A4A4A]">
+          <label className="flex items-center gap-2 text-[0.71875rem] font-medium tracking-[0.01em] text-[#4A4A4A] dark:text-title">
             <NumberBox
               label="Occurrences"
               value={endsAfter}
@@ -201,7 +204,7 @@ export function RecurrencePanel({ value, onChange, onBack }: RecurrencePanelProp
               onChange={(count) => {
                 set({ ends: { kind: 'after', count } })
               }}
-              className={cn(box, 'h-8 w-[2.8rem] text-center text-[#3D3D3D]')}
+              className={cn(box, 'h-8 w-[2.8rem] text-center text-[#3D3D3D] dark:text-title')}
             />
             Occurrence
           </label>
@@ -259,7 +262,7 @@ function Radio({
   onSelect: () => void
 }) {
   return (
-    <label className="flex cursor-pointer items-center gap-2 text-[0.71875rem] font-medium tracking-[0.01em] text-[#4A4A4A]">
+    <label className="flex cursor-pointer items-center gap-2 text-[0.71875rem] font-medium tracking-[0.01em] text-[#4A4A4A] dark:text-title">
       <input
         type="radio"
         name={name}
@@ -271,7 +274,7 @@ function Radio({
         aria-hidden="true"
         className={cn(
           'flex size-[1.06rem] items-center justify-center rounded-full border peer-focus-visible:ring-2 peer-focus-visible:ring-[#A181FF]',
-          checked ? 'border-[#A181FF]' : 'border-[#979797]',
+          checked ? 'border-[#A181FF]' : 'border-[#979797] dark:border-border',
         )}
       >
         <span

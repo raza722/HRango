@@ -59,6 +59,15 @@ in `pm-search.ts` are unchanged too). Backend: `backend/app/routers/projects*.py
 | Convert to List                                                                           | `POST /tasks/{id}/convert-to-list {rowVersion}`                                                                                                                                                                                                                                                   | `projects.lists.create` and manager or above                                      |
 | Delete (row, bulk)                                                                        | `DELETE /tasks/{id}?rowVersion=`                                                                                                                                                                                                                                                                  | `projects.tasks.delete`                                                           |
 | Remind Me                                                                                 | `GET /reminders?entityType=task&entityId=`, `POST /reminders`, `PUT /reminders/{id}`, `DELETE /reminders/{id}`                                                                                                                                                                                    | `projects.reminders.create`                                                       |
+| Board view (`?view=board`)                                                                | the List view's rows; a move: `PATCH /tasks/{id}/status` with the column's status and `POST /tasks/{id}/move {sortOrder}` (the List view's reorder); Add Task: `POST /tasks {statusId}`                                                                                                           | move: `projects.tasks.edit`; Add Task: team leader or above                       |
+| Calendar and Timeline views (`?view=calendar`, `?view=timeline`)                          | the List view's rows; a move or resize: `PUT /tasks/{id}` with `startDate` / `dueDate` (the List view's task update, times kept); the task popup uses the List view's date cells                                                                                                                  | moving: `projects.tasks.edit` and the date columns editable                       |
+| Table view (`?view=table`)                                                                | the List view's rows and cell calls; Export CSV is built in the browser from the rows shown (no task export route)                                                                                                                                                                                | as the List view                                                                  |
+| Activity view (`?view=activity`)                                                          | `GET /workspaces/{id}/activity?page&pageSize=30&q&action&fromDate&toDate` (`ActivityOut`), a page per "Load more"; Export CSV is built in the browser from the lines loaded                                                                                                                       | reading the workspace                                                             |
+| Team view (`?view=team`)                                                                  | the List view's rows only (no workload route): open tasks per assignee and status, `isOverdue`, `dueDate`, `closedAt`, story points, `timeEstimateMinutes`                                                                                                                                        | reading the workspace                                                             |
+| Overdue tab (`?overdue=true`)                                                             | the List view's rows (`GET /workspaces/{id}/tasks`, `includeClosed` defaults to true): `isOverdue` → Overdue, `isClosedLate` → Closed late, `originalDueDate` beside the due date; each row's `GET /tasks/{id}` for its `extensions`                                                              | –                                                                                 |
+| Request Extension (row menu, Overdue tab)                                                 | `POST /tasks/{id}/extension-requests {newDueDate, reason}` → `TaskOut`; offered to the task's assignees on an open task with a due date                                                                                                                                                           | `projects.tasks.edit`, contributor or above                                       |
+| Approve / Reject an extension                                                             | `PATCH /extension-requests/{id}/approve \| reject {remarks, rowVersion}` → `TaskOut` (remarks required to reject)                                                                                                                                                                                 | `projects.tasks.edit`, manager or above, not the requester                        |
+| Reminders page (`/project-management/reminders`)                                          | `GET /reminders?includeDone=` (all pages), Change time `PUT /reminders/{id} {entityType, entityId, name, remindAt, notifyBeforeMinutes, rowVersion}`, `DELETE /reminders/{id}`                                                                                                                    | `projects.reminders.create`                                                       |
 | Sharing & Permissions                                                                     | `GET /shares?entityType=task&entityId=`, `PUT /shares`                                                                                                                                                                                                                                            | open: `projects.sharing.view`; Save: `projects.sharing.edit` and manager or above |
 | Comments panel                                                                            | `GET /tasks/{id}/comments`, `POST /tasks/{id}/comments {body, parentId, mentions}`, `PUT /comments/{id} {body, mentions, rowVersion}`, `PATCH /comments/{id}/assign`, `PATCH /comments/{id}/resolve`, `PUT /comments/{id}/reaction {reaction: like \| null}`, `DELETE /comments/{id}?rowVersion=` | –                                                                                 |
 | Files                                                                                     | `GET /tasks/{id}/attachments` (when the popup opens), `POST /files` (module `projects`, with progress) then `POST /tasks/{id}/attachments {fileId}`, `DELETE /attachments/{id}`; names link to the signed `url`                                                                                   | upload / remove: `projects.tasks.edit`                                            |
@@ -136,6 +145,16 @@ commenter` (Full Edit, Limited, Commenter); `invitedEmails` go as members `{emai
 - Drag and drop: the API keeps whole sort orders; when no whole number fits between two rows the siblings are
   renumbered (10, 20, 30 …).
 - Members popover: each person's workspace role (Owner, Managers, …).
+- Overdue handling (27 Oct 2026; not drawn, from the BRD): an **Overdue** tab after the views in the view bar, with
+  the count of open overdue tasks, lists Overdue (open, past due: days late) and Closed late (closed after the due
+  date), each with assignees, the due date and the first one when an extension moved it, and the task's latest
+  extension request (Asked for … / Extended to … / Extension rejected). Assignees **Request Extension** (row menu or
+  the tab; again after a rejection); managers and above **Approve** or **Reject** (with remarks) a request they did
+  not make. A task name opens it in the List view. The List view says "overdue" on a past due date (red) and puts a
+  **Closed late** chip after a late task's name. No story-point penalty is shown until it is defined (T5).
+- **Reminders** (side menu → Project Management → Reminders; not drawn): the caller's reminders, soonest first, with
+  "Show sent and past reminders"; Upcoming / Sent / Past; a task's name opens it; Change time reuses the Remind Me
+  calendar; Delete asks first. Delivery as notifications waits for the server (T4).
 
 ## Mocks
 
@@ -144,7 +163,11 @@ commenter` (Full Edit, Limited, Commenter); `invitedEmails` go as members `{emai
 `db/seeds/0150_pm_templates.sql`), people, views, folders, lists, column permissions (with `myLevels` and blanked
 private columns), custom fields, tags, favourites, tasks (status move, assignees, tags, field values, move,
 convert to list, dependencies), comments (assign, resolve, reactions), attachments, time entries and the timer,
-reminders and shares. Workspace roles are enforced loosely (what the screens hide). Storage keys are new
+reminders (`includeDone`; two seeded for Shelley, one sent) and shares, and extension requests (assignee asks
+with a date after the due date; manager or above, not the requester, answers; approving keeps the first due date
+as `originalDueDate`). Tasks carry `isClosedLate` (closed on a later day than due) and `originalDueDate`. The
+QA Testing Phase workspace has the overdue examples: two open tasks past due (one Shelley's, one with Areeba
+Hameed's waiting request) and one closed late. Workspace roles are enforced loosely (what the screens hide). Storage keys are new
 (`hrms-mock-pm-v2-*`) so old session data is ignored. It also serves `GET /organisation/lookups/departments` from
 the directory's departments.
 
@@ -173,7 +196,21 @@ Backend (route: what is wrong or missing):
 
 Frontend (API available, not drawn or not wired):
 
-- Checklist, extension requests, task and workspace history, custom fields other than Labels, list settings
+- Extension requests: who may ask and answer, and whether a second request may follow a rejection, are not in the
+  spec; the screens and the mock assume assignees ask, managers and above (not the requester) answer, and one
+  request at a time (a rejected one may be followed by another). `TaskRowOut` has no extension status, so the
+  Overdue tab reads each task's detail; a `latestExtension` on the row would save those calls.
+- `GET /reminders` without `entityType` is read as "all of the caller's reminders"; `includeDone` as sent or past.
+- Workspace history (Activity view): `actionName` and `fieldName` values are not documented. The screen and the
+  mock assume `created`, `updated` (one line per changed field: `name`, `description` (no values), `status`,
+  `priority`, `start_date`, `due_date`, `assignees`, `task_list`), `deleted`, `commented`, `extension_requested`,
+  `extension_approved` (with `due_date` old and new) and `extension_rejected`; values as people read them
+  (status and list names, assignee names joined with ", ", dates `yyyy-MM-dd`, priority keys). Any other action or
+  field is shown with its name made readable (`due_date` and `dueDate` both read "Due date"). `q` is assumed to
+  look in the item's name and code and the person's name; `fromDate` / `toDate` are sent as `yyyy-MM-dd` and read
+  as inclusive (the mock compares the UTC date). `performedByUserId` is a user id, so the avatar is matched to the
+  directory by `performedByName`; an employee id on `ActivityOut` would make that exact.
+- Checklist, task history (`GET /tasks/{id}/activity`), custom fields other than Labels, list settings
   (privacy, dates, members), folder / list rename and delete, workspace delete, statuses and features after
   creation (`PUT …/statuses`, `PUT …/features`), task cover, member role change and removal
   (`pmApi.changeMemberRole` / `removeMember` exist, no screen), the List view's server-side filters, grouping and

@@ -67,10 +67,10 @@ export function NewTaskRow({
         style={{ width: COLUMN_WIDTHS.name }}
       >
         <span className="w-[6.65rem] shrink-0" aria-hidden="true" />
-        <div className="flex h-[3.6875rem] min-w-0 flex-1 items-center gap-2 rounded-xl border border-[#7127EA] bg-white pr-2 ring-4 ring-[#7127EA]/20">
+        <div className="flex h-[3.6875rem] min-w-0 flex-1 items-center gap-2 rounded-xl border border-[#7127EA] bg-white pr-2 ring-4 ring-[#7127EA]/20 dark:bg-card">
           <span
             aria-hidden="true"
-            className="ml-[0.594rem] flex size-[2.4rem] shrink-0 items-center justify-center rounded-[0.52rem] bg-[#F8F8F8]"
+            className="ml-[0.594rem] flex size-[2.4rem] shrink-0 items-center justify-center rounded-[0.52rem] bg-[#F8F8F8] dark:bg-white/5"
             style={{ color: status.color }}
           >
             {type === 'milestone' ? (
@@ -97,7 +97,7 @@ export function NewTaskRow({
                 onClose()
               }
             }}
-            className="h-9 min-w-0 flex-1 bg-transparent text-[1.1858rem] font-medium text-[#626262] outline-none placeholder:text-[#A4A4A4]"
+            className="h-9 min-w-0 flex-1 bg-transparent text-[1.1858rem] font-medium text-[#626262] outline-none placeholder:text-[#A4A4A4] dark:text-title"
           />
           <button
             type="button"
@@ -117,7 +117,7 @@ export function NewTaskRow({
       </div>
       <div className={cn(listStyles.middle, 'px-5')}>
         {error && (
-          <span id={errorId} role="alert" className="text-sm text-[#DC3545]">
+          <span id={errorId} role="alert" className="text-sm text-[#DC3545] dark:text-[#FF8A94]">
             {error}
           </span>
         )}

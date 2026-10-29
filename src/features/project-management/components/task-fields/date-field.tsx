@@ -31,6 +31,8 @@ function DateCell({ task, end }: TaskCellProps & { end: DateEnd }) {
   const day = end === 'start' ? task.startDate : task.dueDate
   const time = end === 'start' ? task.startTime : task.dueTime
   const label = end === 'start' ? 'Start Date' : 'Due Date'
+  // Past due and still open: the date in red (and said, not only shown).
+  const overdue = end === 'due' && task.isOverdue
 
   return (
     <FieldPopover
@@ -43,8 +45,13 @@ function DateCell({ task, end }: TaskCellProps & { end: DateEnd }) {
           type="button"
           aria-label={
             day
-              ? `${label}: ${formatCellDate(day)}${time ? ` ${formatTime12(time)}` : ''}`
+              ? `${label}: ${formatCellDate(day)}${time ? ` ${formatTime12(time)}` : ''}${overdue ? ', overdue' : ''}`
               : `Add ${label} to ${task.name}`
+          }
+          title={
+            end === 'due' && task.originalDueDate && task.originalDueDate !== day
+              ? `Extended; first due ${formatCellDate(task.originalDueDate)}`
+              : undefined
           }
           className={fieldStyles.cell}
         >
@@ -52,7 +59,12 @@ function DateCell({ task, end }: TaskCellProps & { end: DateEnd }) {
             <CalendarIcon />
           </span>
           {day ? (
-            <span className="min-w-0 truncate">
+            <span
+              className={cn(
+                'min-w-0 truncate',
+                overdue && 'font-medium text-[#DC3545] dark:text-[#FF8A94]',
+              )}
+            >
               {cellDate(day)}
               {time && (
                 <span className="ml-1.5 text-[0.6875rem] text-[#909090]">{formatTime12(time)}</span>
@@ -109,7 +121,7 @@ function describeRecurrence(recurrence: Recurrence): string {
 }
 
 const fieldBox =
-  'flex h-10 w-full items-center gap-2.5 rounded-[0.5625rem] border border-[#E9E9E9] bg-white pr-2.5 pl-1.5 text-left text-xs tracking-[0.01em]'
+  'flex h-10 w-full items-center gap-2.5 rounded-[0.5625rem] border border-[#E9E9E9] dark:border-border bg-white dark:bg-card pr-2.5 pl-1.5 text-left text-xs tracking-[0.01em]'
 
 interface CalendarPopupProps {
   task: TaskRow
@@ -185,7 +197,7 @@ function CalendarPopup({ task, initialEnd, onClose }: CalendarPopupProps) {
               <CalendarIcon />
             </span>
             {day ? (
-              <span className="truncate font-medium text-[#676565]">
+              <span className="truncate font-medium text-[#676565] dark:text-grey">
                 {format(fromDay(day), 'MMM d, yyyy')}
               </span>
             ) : (
@@ -234,11 +246,13 @@ function CalendarPopup({ task, initialEnd, onClose }: CalendarPopupProps) {
                 <ClockIcon />
               </span>
               {time ? (
-                <span className="font-medium text-[#676565]">{formatTime12(time)}</span>
+                <span className="font-medium text-[#676565] dark:text-grey">
+                  {formatTime12(time)}
+                </span>
               ) : (
                 <span className="text-[#909090]">Add Time</span>
               )}
-              <ChevronDownIcon className="ml-auto h-[0.4rem] w-[0.8rem] shrink-0 text-[#7127EA]" />
+              <ChevronDownIcon className="ml-auto h-[0.4rem] w-[0.8rem] shrink-0 text-[#7127EA] dark:text-[#C4ABFF]" />
             </button>
           }
         />
@@ -272,7 +286,7 @@ function CalendarPopup({ task, initialEnd, onClose }: CalendarPopupProps) {
                     className={cn(
                       fieldStyles.softRow,
                       'px-2.5',
-                      selected === pick.date && 'bg-[#EEE7FF]',
+                      selected === pick.date && 'bg-[#EEE7FF] dark:bg-[#7127EA]/10',
                     )}
                   >
                     <span>{pick.label}</span>
@@ -307,7 +321,7 @@ function CalendarPopup({ task, initialEnd, onClose }: CalendarPopupProps) {
               />
               <div className="flex flex-col gap-2">
                 <h4 className={fieldStyles.groupTitle}>Custom Recurrence</h4>
-                <div className="flex h-10 items-center rounded-[0.5625rem] border border-[#E9E9E9] bg-white">
+                <div className="flex h-10 items-center rounded-[0.5625rem] border border-[#E9E9E9] bg-white dark:border-border dark:bg-card">
                   <button
                     type="button"
                     onClick={() => {
@@ -320,13 +334,13 @@ function CalendarPopup({ task, initialEnd, onClose }: CalendarPopupProps) {
                     className="flex h-full min-w-0 flex-1 items-center justify-between gap-2 px-3 text-left text-[0.71875rem] font-medium tracking-[0.01em]"
                   >
                     {draft.recurrence ? (
-                      <span className="truncate text-[#4A4A4A]">
+                      <span className="truncate text-[#4A4A4A] dark:text-title">
                         {describeRecurrence(draft.recurrence)}
                       </span>
                     ) : (
                       <span className="text-[#909090]">Set Recurrence</span>
                     )}
-                    <ChevronDownIcon className="h-[0.4rem] w-[0.8rem] shrink-0 -rotate-90 text-[#7127EA]" />
+                    <ChevronDownIcon className="h-[0.4rem] w-[0.8rem] shrink-0 -rotate-90 text-[#7127EA] dark:text-[#C4ABFF]" />
                   </button>
                   {draft.recurrence && (
                     <button

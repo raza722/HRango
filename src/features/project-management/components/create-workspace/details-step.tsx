@@ -59,8 +59,8 @@ export function DetailsStep({ employees, people, focusHeading }: DetailsStepProp
         Create Workspace
       </h2>
       <p className={cn(wz.intro, 'mt-3 max-w-[51.0625rem]')}>
-        A workspace represents teams, departments, or group of different projects. Each workspace
-        with its own task lists, workflow and customize templates.
+        A workspace stands for a team, a department or a group of projects. Each workspace has its
+        own task lists, workflow and templates.
       </p>
 
       <div className="mt-6 grid gap-5 sm:grid-cols-2 sm:gap-x-[2.6875rem]">
