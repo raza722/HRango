@@ -55,8 +55,11 @@ const MACHINES_BY_BRANCH: Record<string, [number, number]> = {
   br_dxb: [11, 12],
 }
 
-export const machineCode = (number: number) =>
-  `MCH-${String(number).padStart(number > 9 ? 6 : 5, '0')}`
+/** "MCH-00001" … "MCH-00013": five digits for every machine. */
+export const machineCode = (number: number) => `MCH-${String(number).padStart(5, '0')}`
+
+/** "Machine 1": the machine's name; its code is shown beside it. */
+export const machineName = (machineId: string) => `Machine ${String(Number(machineId.slice(4)))}`
 
 export const MACHINE_IDS = Array.from({ length: 13 }, (_, index) => machineCode(index + 1))
 
@@ -368,7 +371,8 @@ export const restDayRules = createMockCollection<RestDayRule>({
   seed: seedRestDayRules,
 })
 export const machineSync = createMockCollection<MachineSync>({
-  storageKey: 'hrms-mock-machine-sync',
+  // v2: the codes are all five digits now (MCH-00010, not MCH-000010).
+  storageKey: 'hrms-mock-machine-sync-v2',
   seed: seedMachineSync,
 })
 

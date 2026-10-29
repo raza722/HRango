@@ -26,7 +26,8 @@ import {
   readPageParams,
   requireAuth,
 } from '../utils'
-import { leaveEncashments, leaveLedger, leaveRequests, leaveTypeStore } from './db'
+import { leaveEncashments, leaveLedger, leaveTypeStore } from './db'
+import { type LeaveRequestRow, leaveRequestRow, leaveRequestRows } from './requests'
 import {
   applicationOut,
   balanceOf,
@@ -36,12 +37,11 @@ import {
   runAllotment,
 } from './rules'
 import {
-  MOCK_DEPARTMENTS,
-  MOCK_PEOPLE,
   MOCK_SELF_ID,
+  mockDepartments,
+  mockPeople,
   nextRowVersion,
   type StoredEncashment,
-  type StoredLeaveRequest,
   type StoredLedgerEntry,
   thisYear,
 } from './seed'
@@ -50,7 +50,9 @@ import {
  * My Leaves / Leave Applications (`/api/leaves/applications`), balances and the ledger, the
  * allotment and carry forward runs, leave encashment, and fallbacks for the two look-ups the
  * Leaves pickers use (`/employees/lookup`, `/organisation/lookups/departments`; the
- * employees and organisation mocks answer first when they define them).
+ * employees and organisation mocks answer first when they define them). The applications are
+ * the Requests module's leave requests (`./requests.ts`): Apply, Cancel and Approve/Reject go
+ * to `/requests/leave…` and `/requests/approvals…`, and show up here at once.
  */
 
 const invalid = (
@@ -63,14 +65,13 @@ const notFound = (what: string) => errorResponse(404, `${what} not found.`, { co
 const id = z.union([z.string(), z.number()]).transform(String)
 
 /** `?tab=my|subordinates|all` and the filters of the list and the counts. */
-function filtered(url: URL): StoredLeaveRequest[] {
+function filtered(url: URL): LeaveRequestRow[] {
   const get = (key: string) => url.searchParams.get(key) ?? undefined
   const tab = get('tab') ?? 'all'
   const q = get('q')?.trim().toLowerCase()
   const fromDate = get('fromDate')
   const toDate = get('toDate')
-  return leaveRequests
-    .all()
+  return leaveRequestRows()
     .filter((row) =>
       tab === 'my'
         ? row.employeeId === MOCK_SELF_ID
@@ -117,6 +118,39 @@ function ledgerOut(row: StoredLedgerEntry): LedgerEntry {
     warningId: null,
     createdAt: row.createdAt,
   }
+}
+
+/**
+ * The days approved requests take, as the ledger's `availed` rows (the backend posts one when a
+ * request is approved and removes it when the cancellation is). Worked out from the requests,
+ * so the balances never count them twice.
+ */
+function availedEntries(): LedgerEntry[] {
+  return leaveRequestRows()
+    .filter((row) => row.status === 'approved' || row.status === 'cancelling')
+    .map((row) => {
+      const person = personOf(row.employeeId)
+      const type = leaveTypeStore.find(row.leaveTypeId)
+      return {
+        id: `ll_${row.id}`,
+        employeeId: row.employeeId,
+        employeeCode: person?.code ?? '',
+        employeeName: person?.name ?? '—',
+        leaveTypeId: row.leaveTypeId,
+        leaveTypeTitle: type?.title ?? '—',
+        shortCode: type?.shortCode ?? null,
+        fiscalYear: Number(row.fromDate.slice(0, 4)),
+        entryDate: row.fromDate,
+        days: -row.days,
+        reason: 'availed',
+        remarks: null,
+        requestId: row.id,
+        requestCode: row.code,
+        leaveEncashmentId: null,
+        warningId: null,
+        createdAt: row.decidedAt ?? row.createdAt,
+      }
+    })
 }
 
 function encashmentOut(row: StoredEncashment): EncashmentDetail {
@@ -182,7 +216,7 @@ export const leaveApplicationHandlers: HttpHandler[] = [
     await latency()
     const denied = requireAuth(request)
     if (denied) return denied
-    const row = leaveRequests.find(String(params.id))
+    const row = leaveRequestRow(String(params.id))
     if (!row) return notFound('Leave application')
     const detail: LeaveApplicationDetail = {
       ...applicationOut(row),
@@ -219,8 +253,7 @@ export const leaveApplicationHandlers: HttpHandler[] = [
     const employeeId = url.searchParams.get('employeeId') ?? MOCK_SELF_ID
     const leaveTypeId = url.searchParams.get('leaveTypeId')
     const q = url.searchParams.get('q')?.trim().toLowerCase()
-    const rows = balanceRows(year)
-      .filter((row) => row.employeeId === employeeId)
+    const rows = balanceRows(year, employeeId)
       .filter((row) => !leaveTypeId || row.leaveTypeId === leaveTypeId)
       .filter((row) => !q || `${row.employeeName} ${row.employeeCode}`.toLowerCase().includes(q))
     return HttpResponse.json<Paginated<LeaveBalanceRow>>(paginate(rows, page, pageSize))
@@ -233,13 +266,12 @@ export const leaveApplicationHandlers: HttpHandler[] = [
     const url = new URL(request.url)
     const { page, pageSize } = readPageParams(url)
     const get = (key: string) => url.searchParams.get(key)
-    const rows = leaveLedger
-      .all()
+    const rows = [...leaveLedger.all().map(ledgerOut), ...availedEntries()]
       .filter((row) => !get('employeeId') || row.employeeId === get('employeeId'))
       .filter((row) => !get('leaveTypeId') || row.leaveTypeId === get('leaveTypeId'))
       .filter((row) => !get('fiscalYear') || String(row.fiscalYear) === get('fiscalYear'))
       .filter((row) => !get('reason') || row.reason === get('reason'))
-      .map(ledgerOut)
+      .sort((a, b) => b.entryDate.localeCompare(a.entryDate))
     return HttpResponse.json<Paginated<LedgerEntry>>(paginate(rows, page, pageSize))
   }),
 
@@ -309,7 +341,7 @@ export const leaveApplicationHandlers: HttpHandler[] = [
     let days = 0
     for (const type of leaveTypeStore.all()) {
       if (!type.carryForward || (leaveTypeId && type.id !== leaveTypeId)) continue
-      for (const person of MOCK_PEOPLE) {
+      for (const person of mockPeople()) {
         if (employeeId && person.id !== employeeId) continue
         const done = leaveLedger
           .all()
@@ -401,7 +433,11 @@ export const leaveApplicationHandlers: HttpHandler[] = [
     const type = leaveTypeStore.find(input.leaveTypeId)
     if (!type) return invalid({ leaveTypeId: 'Leave type not found.' })
     if (!type.allowEncashment) return invalid({ leaveTypeId: 'This leave type is not encashable.' })
-    const people = input.appliesToAll ? MOCK_PEOPLE.map((person) => person.id) : input.employeeIds
+    const people = input.appliesToAll
+      ? mockPeople()
+          .filter((person) => person.status === 'active')
+          .map((person) => person.id)
+      : input.employeeIds
     const encashmentId = createId('le')
     const lines = people.flatMap((employeeId) => {
       const available = balanceOf(employeeId, type.id, input.fiscalYear).available
@@ -503,7 +539,7 @@ export const leaveApplicationHandlers: HttpHandler[] = [
     await latency()
     const denied = requireAuth(request)
     if (denied) return denied
-    const rows: EmployeeLookup[] = MOCK_PEOPLE.map((person) => ({
+    const rows: EmployeeLookup[] = mockPeople().map((person) => ({
       id: person.id,
       code: person.code,
       name: person.name,
@@ -523,7 +559,7 @@ export const leaveApplicationHandlers: HttpHandler[] = [
     await latency()
     const denied = requireAuth(request)
     if (denied) return denied
-    const rows: DepartmentLookup[] = MOCK_DEPARTMENTS.map((department) => ({
+    const rows: DepartmentLookup[] = mockDepartments().map((department) => ({
       id: department.id,
       name: department.name,
       code: null,

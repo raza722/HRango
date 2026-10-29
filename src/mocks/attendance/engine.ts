@@ -18,6 +18,7 @@ import {
 } from '@/features/scheduling'
 
 import { DIRECTORY } from '../employees/seed'
+import { approvedOvertimeOn } from '../requests/standard/kinds/overtime'
 import { rosterGroups } from '../roster/handlers'
 import { scheduleEntries } from '../scheduling/handlers'
 import { CURRENT_EMPLOYEE_ID } from '../scheduling/seed'
@@ -423,7 +424,10 @@ export function computeDay(snap: Snapshot, employeeId: string, date: string): Co
     breakMinutes,
     shiftWorkedMinutes,
     overtimeMinutes: worked && extra >= OVERTIME_THRESHOLD_MINUTES ? extra : 0,
-    approvedOvertimeMinutes: edit?.approvedOvertimeMinutes ?? null,
+    // What Overtime approved: written on the day when an approver approves; the seeded
+    // approvals (never approved through the screen) are read from the requests themselves.
+    approvedOvertimeMinutes:
+      edit?.approvedOvertimeMinutes ?? (approvedOvertimeOn(employeeId, date) || null),
     warning: null,
     status,
     manuallyUpdated: edit !== undefined || stored.some((punch) => punch.manuallyUpdated),

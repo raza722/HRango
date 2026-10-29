@@ -4,6 +4,7 @@ import { z } from 'zod'
 
 import {
   type BoardEmployee,
+  type BoardHoliday,
   type BoardPage,
   type BoardRestDay,
   type BoardRow,
@@ -26,6 +27,8 @@ import {
 } from '@/features/scheduling'
 import type { ApiItem } from '@/types/api'
 
+import { holidayFor } from '../attendance/audience'
+import { holidays } from '../attendance/settings-db'
 import { createMockCollection } from '../collection'
 import { DIRECTORY, type DirectoryEmployee, findEmployee } from '../employees/seed'
 import { enrollments, rosterGroups } from '../roster/handlers'
@@ -63,7 +66,8 @@ export const scheduleEntries = createMockCollection<ScheduleEntry>({
   seed: seedEntries,
 })
 export const geoFences = createMockCollection<GeoFence>({
-  storageKey: 'hrms-mock-geo-fences',
+  // v2: the seeded names no longer carry an old code ("Islamabad Blue Area", code GF-00001).
+  storageKey: 'hrms-mock-geo-fences-v2',
   seed: seedGeoFences,
 })
 
@@ -368,8 +372,20 @@ function insertShift(record: Omit<ScheduleEntry, 'id' | 'createdAt' | 'updatedAt
 // --- the board ---------------------------------------------------------------------------------
 
 /** The usual slot of a mock person (`hr.employee.default_time_slot_id`). */
-const defaultSlotOf = (employee: DirectoryEmployee) =>
-  timeSlots.find(profileOf(employee).defaultSlot === 'Night Shift' ? 'rg_swing' : 'rg_morning')
+/**
+ * The person's time slot when nothing else names one: the roster they are enrolled in now (its
+ * slot shares the roster's id), else the day or night shift of their profile. The board's chip
+ * shows it, so it matches the times in their cells.
+ */
+const defaultSlotOf = (employee: DirectoryEmployee) => {
+  const enrolled = enrollments
+    .all()
+    .find((item) => item.employeeId === employee.id && item.status === 'active')
+  return (
+    (enrolled ? timeSlots.find(enrolled.rosterGroupId) : undefined) ??
+    timeSlots.find(profileOf(employee).defaultSlot === 'Night Shift' ? 'rg_swing' : 'rg_morning')
+  )
+}
 
 const enrolmentOn = (employeeId: string, date: string) =>
   enrollments
@@ -456,10 +472,40 @@ function rangeOf(url: URL) {
   return { from, to }
 }
 
+/**
+ * The person's attendance-exempt holidays between two dates (Attendance → Settings →
+ * Holidays), as the board lists them beside the shifts.
+ */
+function holidaysOf(employeeId: string, from: string, to: string): BoardHoliday[] {
+  const list = holidays.all().filter((item) => item.startDate <= to && item.endDate >= from)
+  if (list.length === 0) return []
+  const out: BoardHoliday[] = []
+  for (let date = from; date <= to; date = format(addDays(parseISO(date), 1), 'yyyy-MM-dd')) {
+    const holiday = holidayFor(list, employeeId, date)
+    if (!holiday) continue
+    out.push({
+      holidayDate: date,
+      holidayId: holiday.id,
+      holidayName: holiday.name,
+      holidayType: holiday.holidayType,
+      attendanceExempt: holiday.attendanceExempt,
+    })
+  }
+  return out
+}
+
+/**
+ * The schedule entries between two dates, by person. A shift on the person's holiday is left
+ * out: the holiday is the day's entry (the board draws it; it plans no hours).
+ */
 function entriesIn(from: string, to: string) {
   const byEmployee = new Map<string, ScheduleEntry[]>()
+  const off = holidays.all().filter((item) => item.startDate <= to && item.endDate >= from)
   for (const entry of scheduleEntries.all()) {
     if (entry.date < from || entry.date > to) continue
+    if (entry.kind === 'shift' && off.length > 0 && holidayFor(off, entry.employeeId, entry.date)) {
+      continue
+    }
     byEmployee.set(entry.employeeId, [...(byEmployee.get(entry.employeeId) ?? []), entry])
   }
   return byEmployee
@@ -699,7 +745,7 @@ export const schedulingHandlers = [
         employee: boardEmployee(employee, shifts),
         shifts: shifts.map(toBoardShift),
         restDays: entries.filter((entry) => entry.kind === 'rest').map(toRestDay),
-        holidays: [],
+        holidays: holidaysOf(employee.id, from, to),
       }
     })
 
