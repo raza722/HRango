@@ -50,7 +50,7 @@ type Dialog =
 
 /**
  * Delegations (`/requests/settings/delegations`): whose approvals pass to
- * whom, per request type. Tick rows to make several Active or In Active at
+ * whom, per request type. Tick rows to make several Active or Inactive at
  * once (PATCHed one by one). There are no start / end dates.
  */
 export function DelegationsPage() {
@@ -234,7 +234,7 @@ export function DelegationsPage() {
                   }}
                   className={cn(toolbarButton, MAROON_BUTTON, 'min-w-20 text-sm')}
                 >
-                  In Active
+                  Inactive
                 </Button>
               </>
             )}
@@ -337,9 +337,17 @@ export function DelegationsPage() {
               : dialog?.type === 'toggle' && !dialog.row.isActive
           )
             ? 'Make the delegations active'
-            : 'Make the delegations in active'
+            : 'Make the delegations inactive'
         }
-        message="Are you sure you want to Perform this action?"
+        message={
+          (
+            dialog?.type === 'bulk'
+              ? dialog.active
+              : dialog?.type === 'toggle' && !dialog.row.isActive
+          )
+            ? 'Make the delegations active? Their approvals pass to the delegatee again.'
+            : 'Make the delegations inactive? Their approvals stop passing to the delegatee.'
+        }
         onConfirm={() => {
           if (dialog?.type === 'bulk') {
             change(

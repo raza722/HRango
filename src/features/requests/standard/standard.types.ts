@@ -7,6 +7,13 @@ import type { ApprovalDetails } from '../api/backend'
 import type { EngineRequest } from '../api/engine.api'
 import type { PersonOption } from '../api/lookups.api'
 import type { NamedRef, PersonRef, RequestStatus } from '../types/requests.types'
+import type { StandardSearch } from './standard-search'
+
+/** A Settings tab's props: the page's URL state (its sub page is `section`) and its update. */
+export interface StandardSettingsProps {
+  search: StandardSearch
+  onSearch: (patch: Partial<StandardSearch>) => void
+}
 
 /**
  * The request types built on the shared "standard" pages (the design's newer
@@ -55,9 +62,16 @@ export type StandardRequest<P = Record<string, unknown>> = EngineRequest<Standar
 /** The Filters dialog's values, sent as query parameters. */
 export type StandardFilters = Record<string, string | undefined>
 
+/**
+ * The Requests tab's lists (the API's `view`): yours, everyone's, or the people who report to
+ * you. Columns, filters and forms read Subordinates like All.
+ */
+export const STANDARD_LIST_VIEWS = ['my', 'all', 'subordinates'] as const
+export type StandardListView = (typeof STANDARD_LIST_VIEWS)[number]
+
 export interface StandardListParams {
-  /** My Requests / All Requests (the API's `view`). */
-  scope: 'my' | 'all'
+  /** My Requests / All Requests, or Subordinates where the type has it (the API's `view`). */
+  scope: StandardListView
   status?: RequestStatus | undefined
   page: number
   pageSize: number
@@ -143,8 +157,11 @@ export interface StandardKindConfig<P = Record<string, unknown>> {
   requestsTitle: string
   /** Approvals tab heading ("Rest Days Approvals"). */
   approvalsTitle: string
-  /** The My / All pill's words; leave out for a type with one list only. */
-  scopeLabels?: { my: string; all: string }
+  /**
+   * The My / All pill's words; leave out for a type with one list only. `subordinates` adds a
+   * third list, the people who report to you, where the frames draw it (Work From Home).
+   */
+  scopeLabels?: { my: string; all: string; subordinates?: string }
   /** The Approvals pill, in the design's order. */
   approvalViews: readonly StandardApprovalView[]
   /** "All (8) Pending (2) …" over the list, where the frames draw it. */
@@ -153,8 +170,11 @@ export interface StandardKindConfig<P = Record<string, unknown>> {
   bulk: boolean
   /** A status' word where the type differs ("Completed" on Work From Home). */
   statusLabels?: Partial<Record<RequestStatus, string>>
-  /** A third page tab, e.g. Loan & Advances → Settings. */
-  settingsTab?: { label: string; Page: ComponentType }
+  /**
+   * A third page tab, e.g. Loan & Advances → Settings. It gets the page's URL state, so it
+   * works wherever the page is shown (Requests, or Payroll Settings → Loans).
+   */
+  settingsTab?: { label: string; Page: ComponentType<StandardSettingsProps> }
   requestColumns: (scope: 'my' | 'all') => readonly DataTableColumn<StandardRequest<P>>[]
   approvalColumns: (view: StandardApprovalView) => readonly DataTableColumn<StandardRequest<P>>[]
   filterFields: (context: StandardFilterContext) => readonly FilterField[]
@@ -164,6 +184,14 @@ export interface StandardKindConfig<P = Record<string, unknown>> {
   DetailRows: ComponentType<{ request: StandardRequest<P> }>
   /** Inputs the approver fills in (Loan & Advances). */
   DecisionFields?: ComponentType<StandardDecisionFieldsProps<P>>
+  /**
+   * What is wrong with those inputs, checked before "Are you sure?" (field → message, empty
+   * when fine); the problems go to `DecisionFields` as its `errors`.
+   */
+  validateDecision?: (
+    request: StandardRequest<P>,
+    value: Record<string, unknown>,
+  ) => Record<string, string>
   /** Approving needs a reason ("Reason for Approval *", Relaxation). */
   approveNeedsRemarks?: boolean
   /** Something above the list on the Requests tab (Leave's balance card). */

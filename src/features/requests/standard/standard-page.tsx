@@ -4,13 +4,16 @@ import { toast } from 'sonner'
 import { DataTable, Pagination, RowActionsMenu, rowMenuItemClass } from '@/components/layout'
 import { activeCount, ConfirmAction, FiltersDialog, useFilters } from '@/features/payroll'
 import { useCan } from '@/lib/permissions'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { typePermission } from '../api/backend'
 import { ACTION_LABELS, REQUEST_PAGE_SIZE } from '../constants'
 import { REQUEST_STATUSES, type RequestAction, type RequestPage } from '../types/requests.types'
+import { isOwnUndecidable, SELF_BLOCKED_ACTIONS } from './self-decision'
 import type {
   StandardApprovalView,
   StandardKindConfig,
+  StandardListView,
   StandardRequest,
   StandardTab,
 } from './standard.types'
@@ -127,6 +130,7 @@ export function StandardRequestsPage<P>({
   onSearch: (patch: Partial<StandardSearch>) => void
 }) {
   const { kind } = config
+  const myEmployeeId = useAuthStore((state) => state.user?.employeeId ?? null)
   const lookups = useStandardLookups<Record<string, unknown>>(kind)
   const bulk = useBulkStandard()
   const can = usePermissions(kind)
@@ -139,7 +143,14 @@ export function StandardRequestsPage<P>({
     search.tab === 'settings' && !config.settingsTab ? 'request' : search.tab
   const tab: StandardTab = wanted === 'approvals' && !can.approvals ? 'request' : wanted
   const isRequest = tab === 'request'
-  const scope = config.scopeLabels ? search.scope : 'all'
+  // The list the API reads; Subordinates only where the type draws it.
+  const listView: StandardListView = !config.scopeLabels
+    ? 'all'
+    : search.scope === 'subordinates' && !config.scopeLabels.subordinates
+      ? 'my'
+      : search.scope
+  // Columns, filters and forms read Subordinates like All (other people's requests).
+  const scope = listView === 'my' ? 'my' : 'all'
   const view: StandardApprovalView = config.approvalViews.includes(search.view)
     ? search.view
     : (config.approvalViews[0] ?? 'requested')
@@ -150,7 +161,7 @@ export function StandardRequestsPage<P>({
   }
 
   const requests = useStandardList<P>(kind, {
-    scope,
+    scope: listView,
     status,
     page: search.page,
     pageSize: REQUEST_PAGE_SIZE,
@@ -169,7 +180,13 @@ export function StandardRequestsPage<P>({
   const filters = isRequest ? requestFilters : approvalFilters
   const setFilters = isRequest ? setRequestFilters : setApprovalFilters
 
-  const decidable = rows.filter((row) => selected.has(row.id) && row.actions.includes('decide'))
+  // Never the requester's own Promotion or Resignation (see self-decision.ts).
+  const ownUndecidable = (row: StandardRequest<P>) => isOwnUndecidable(kind, row, myEmployeeId)
+  const canDecide = (row: StandardRequest<P>) =>
+    row.actions.includes('decide') && !ownUndecidable(row)
+  const decidable = rows.filter((row) => selected.has(row.id) && canDecide(row))
+  /** Whether anything on this page can be ticked for Approved / Unapproved. */
+  const anyDecidable = rows.some(canDecide)
   const askBulk = (type: 'approve' | 'unapprove') => {
     if (decidable.length === 0) {
       toast.error('Tick the requests waiting for your decision first.')
@@ -229,7 +246,7 @@ export function StandardRequestsPage<P>({
         }}
       />
       {tab === 'settings' && SettingsPage ? (
-        <SettingsPage />
+        <SettingsPage search={search} onSearch={onSearch} />
       ) : (
         <div className="grid gap-4 px-4 pt-6 pb-5 sm:px-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -260,8 +277,11 @@ export function StandardRequestsPage<P>({
                   items={[
                     { value: 'my' as const, label: config.scopeLabels.my },
                     { value: 'all' as const, label: config.scopeLabels.all },
+                    ...(config.scopeLabels.subordinates
+                      ? [{ value: 'subordinates' as const, label: config.scopeLabels.subordinates }]
+                      : []),
                   ]}
-                  value={scope}
+                  value={listView}
                   onChange={(next) => {
                     update({ scope: next, page: 1 })
                   }}
@@ -279,9 +299,10 @@ export function StandardRequestsPage<P>({
                 }}
               />
             )}
-            {config.bulk && (can.approve || can.reject) && (
+            {/* Not on My Requests: nobody decides their own, so nothing there can be ticked. */}
+            {config.bulk && (can.approve || can.reject) && !(isRequest && scope === 'my') && (
               <StandardBulkButtons
-                disabled={bulk.isPending}
+                disabled={bulk.isPending || !anyDecidable}
                 onApprove={() => {
                   askBulk('approve')
                 }}
@@ -306,7 +327,7 @@ export function StandardRequestsPage<P>({
             />
           )}
           <DataTable
-            columns={[selectColumn(rows, selected, setSelected), ...columns]}
+            columns={[selectColumn(rows, selected, setSelected, ownUndecidable), ...columns]}
             data={rows}
             getRowId={(row) => row.id}
             caption={isRequest ? config.requestsTitle : config.approvalsTitle}
@@ -320,10 +341,12 @@ export function StandardRequestsPage<P>({
               </p>
             }
             rowActions={(row) => {
+              const own = ownUndecidable(row)
               const actions = allowed.filter(
                 (action) =>
                   row.actions.includes(action) &&
                   permits(action, can) &&
+                  !(own && SELF_BLOCKED_ACTIONS.some((blocked) => blocked === action)) &&
                   !(action === 'history' && isRequest && row.status === 'pending'),
               )
               return (

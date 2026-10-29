@@ -97,13 +97,13 @@ export const FLOW_SCOPE_LABELS: Record<FlowScope, string> = {
   employee: 'Employee',
 }
 
-/** Delegations' Active chip, as drawn: green Active, red In Active. */
+/** Delegations' Active chip, as drawn: green Active, red Inactive. */
 export const DELEGATION_STATUS_META = {
   active: { label: 'Active', className: 'bg-[#E3F8E8] text-[#2CBD4D]' },
-  inactive: { label: 'In Active', className: 'bg-[#FFE1E7] text-[#E50141]' },
+  inactive: { label: 'Inactive', className: 'bg-[#FFE1E7] text-[#E50141]' },
 } as const
 
-/** The maroon of the design's "In Active" / "Unapproved" buttons. */
+/** The maroon of the design's "Inactive" / "Unapproved" buttons. */
 export const MAROON_BUTTON = 'bg-[#7B254A] text-white hover:bg-[#7B254A]/90'
 
 export const SETTINGS_PAGE_SIZE = 10

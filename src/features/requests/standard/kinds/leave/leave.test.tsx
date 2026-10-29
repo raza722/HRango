@@ -1,10 +1,18 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
-import { addDays, differenceInCalendarMonths, format, nextMonday, nextWednesday } from 'date-fns'
+import {
+  addDays,
+  addWeeks,
+  differenceInCalendarMonths,
+  format,
+  nextMonday,
+  nextWednesday,
+} from 'date-fns'
 import { describe, expect, it } from 'vitest'
 
+import { holidays } from '@/mocks/attendance/settings-db'
+import { balanceOf } from '@/mocks/leaves/rules'
 import { standardRequests } from '@/mocks/requests/standard'
-import { balanceOf } from '@/mocks/requests/standard/kinds/leave'
 import { renderApp } from '@/test/test-utils'
 
 async function choose(user: UserEvent, label: RegExp, option: string | RegExp) {
@@ -40,8 +48,22 @@ const shelleysLeave = () =>
     .all()
     .filter((record) => record.kind === 'leave' && record.employeeId === 'em_shelley')
 
-/** A weekday a week or more ahead, clear of the seeded requests. */
-const aMonday = () => nextMonday(addDays(new Date(), 6))
+const isHoliday = (date: Date) => {
+  const day = format(date, 'yyyy-MM-dd')
+  return holidays.all().some((holiday) => holiday.startDate <= day && holiday.endDate >= day)
+}
+
+/**
+ * A Monday a week or more ahead, clear of the seeded requests, in a week without a holiday
+ * (a holiday is not a working day, so a leave does not count it).
+ */
+function aMonday(): Date {
+  let monday = nextMonday(addDays(new Date(), 6))
+  while ([0, 1, 2, 3, 4].some((offset) => isHoliday(addDays(monday, offset)))) {
+    monday = addWeeks(monday, 1)
+  }
+  return monday
+}
 
 describe('Leave (the shared standard request pages, on /requests/leave)', () => {
   it('shows the balance card over my requests, and everyone’s on All Requests', async () => {
@@ -100,7 +122,7 @@ describe('Leave (the shared standard request pages, on /requests/leave)', () => 
     await choose(user, /^Leave Type/, /^Casual Leaves/)
     await user.click(within(dialog).getByRole('checkbox', { name: 'Short' }))
     await choose(user, /^Short Leave Type/, 'Half Day')
-    const date = nextWednesday(addDays(new Date(), 6))
+    const date = nextWednesday(aMonday())
     await pickDate(user, /^Request Date/, date)
 
     // The strip shows the day's shift; the times start with it and last half of it.
@@ -147,8 +169,9 @@ describe('Leave (the shared standard request pages, on /requests/leave)', () => 
     expect((await screen.findAllByText('Request approved')).length).toBeGreaterThan(0)
 
     expect(standardRequests.find('lv_0001')?.status).toBe('completed')
-    expect(balanceOf('em_sadia', 'lt_casual', standardRequests.all())).toMatchObject({
-      availed: 2,
+    // The one balance both modules read (the Leaves ledger less these requests).
+    expect(balanceOf('em_sadia', 'lt_casual', new Date().getFullYear())).toMatchObject({
+      used: 2,
       pending: 0,
     })
   })

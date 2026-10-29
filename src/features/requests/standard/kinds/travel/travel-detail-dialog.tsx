@@ -101,6 +101,10 @@ function makeSchema(ticketedModes: readonly string[]) {
         context.addIssue({ code: 'custom', path, message })
       }
       const { fromDate, toDate } = values
+      const place = (text: string) => text.trim().replace(/\s+/g, ' ').toLowerCase()
+      if (values.departureFrom.trim() && place(values.departureFrom) === place(values.arrivalAt)) {
+        issue(['arrivalAt'], 'Arrive somewhere other than where you leave from')
+      }
       if (fromDate && toDate && values.fromTime && values.toTime) {
         if (`${toDate}T${values.toTime}` <= `${fromDate}T${values.fromTime}`) {
           issue(['toTime'], 'Choose a time after the departure')
@@ -208,6 +212,7 @@ function BookingTable({
   onAdd,
   error,
   empty,
+  required: needed = true,
   children,
 }: {
   title: string
@@ -216,12 +221,14 @@ function BookingTable({
   onAdd: () => void
   error: string | undefined
   empty: boolean
+  /** The section's star: only when a booking is needed (tickets: for a ticketed mode). */
+  required?: boolean
   children: ReactNode
 }) {
   return (
     <TravelSection
       title={title}
-      required
+      required={needed}
       {...(readOnly ? {} : { addLabel: `Add ${title.replace(/s$/, '').toLowerCase()}`, onAdd })}
       error={error}
     >
@@ -466,10 +473,23 @@ export function TravelDetailDialog({
   const errors = formState.errors
   const hotels = useFieldArray({ control, name: 'hotels' })
   const tickets = useFieldArray({ control, name: 'tickets' })
-  const [fromDate, toDate, stayRequired, departureFrom, arrivalAt, hotelDates] = useWatch({
-    control,
-    name: ['fromDate', 'toDate', 'stayRequired', 'departureFrom', 'arrivalAt', 'hotels'],
-  })
+  const [fromDate, toDate, stayRequired, departureFrom, arrivalAt, hotelDates, travelMode] =
+    useWatch({
+      control,
+      name: [
+        'fromDate',
+        'toDate',
+        'stayRequired',
+        'departureFrom',
+        'arrivalAt',
+        'hotels',
+        'travelMode',
+      ],
+    })
+  // A ticket is needed only for a ticketed travel mode (flight, train …).
+  const ticketNeeded = (lookups?.travelModes ?? []).some(
+    (item) => item.ticketed && item.value === travelMode,
+  )
   const tripStart = fromDate ? day(fromDate) : undefined
   const tripEnd = toDate ? day(toDate) : undefined
   const options = (list: readonly { value: string; label: string }[] | undefined) =>
@@ -629,12 +649,7 @@ export function TravelDetailDialog({
             name="stayRequired"
             tone="navy"
             disabled={readOnly}
-            label={
-              <span>
-                Stay Required
-                {required}
-              </span>
-            }
+            label={<span>Stay Required</span>}
             onCheckedChange={(checked) => {
               if (checked && hotels.fields.length === 0) addHotel()
             }}
@@ -755,6 +770,7 @@ export function TravelDetailDialog({
 
         <BookingTable
           title="Ticket Bookings"
+          required={ticketNeeded}
           readOnly={readOnly}
           onAdd={addTicket}
           error={arrayError(errors.tickets)}

@@ -156,6 +156,13 @@ function FlowsTab({
   const { requestType, purpose } = splitFlowType(type)
   const list = useRequestFlows({ page, pageSize: SETTINGS_PAGE_SIZE, requestType, purpose })
   const flows = list.data?.data ?? []
+  // Every flow of the type (not just this page): the scopes a new flow cannot take.
+  const every = useRequestFlows({ page: 1, pageSize: 100, requestType, purpose })
+  const taken = (every.data?.data ?? []).map((flow) => ({
+    flowId: flow.id,
+    scopeType: flow.scopeType,
+    scopeId: flow.scopeId,
+  }))
   // The chosen flow, else the company's, else the first.
   const selected =
     flows.find((flow) => flow.id === flowId) ??
@@ -284,13 +291,20 @@ function FlowsTab({
       </PayrollCard>
 
       {dialog?.type === 'create' && (
-        <FlowEditDialog requestType={requestType} purpose={purpose} flowId={null} onClose={close} />
+        <FlowEditDialog
+          requestType={requestType}
+          purpose={purpose}
+          flowId={null}
+          taken={taken}
+          onClose={close}
+        />
       )}
       {dialog?.type === 'edit' && (
         <FlowEditDialog
           requestType={requestType}
           purpose={purpose}
           flowId={dialog.flow.id}
+          taken={taken}
           onSaved={(saved) => {
             // A saved flow is a new version with a new id.
             onFlow(saved)

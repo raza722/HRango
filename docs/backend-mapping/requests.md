@@ -122,6 +122,9 @@ withEmployeeId}`; out adds `fromTimeSlotName`, `timeSlotName`, `withEmployeeName
 
 - `fromDate`/`toDate` are the chosen range and `details {dates}` the ticked days (the API now keeps the range);
   `{days:[{requestDate, scheduleId}]}` out; Reason now required.
+- Requests tab: My Requests / All Requests / **Subordinates** (`view=subordinates`, the people who report to
+  you; drawn on one frame), `?scope=subordinates` in the URL. Columns, filters and Create read it like All. Only
+  WFH has the third list (`scopeLabels.subordinates` in its config); other types fall back to My.
 
 ### Rest Days (`/requests/rest-days` → `/requests/rest-day`)
 
@@ -265,7 +268,9 @@ Missing endpoints / permissions for request forms:
 
 In the documents / frontend but not built: "Missing Punch", "Completed" for WFH, Escalation, fulfilment
 tracking for requisitions, ticket-required rule for air/train/bus travel (frontend only), the AI-generated
-application (text is stored as sent), overtime under Requests (lives in Attendance).
+application (text is stored as sent), an Overtime page under Requests: overtime (`/requests/overtime`, approvals with
+`details.approvedMinutes`) is filed and approved from Attendance → Overtime, and its mock is a standard kind here
+(`src/mocks/requests/standard/kinds/overtime.ts`); see [attendance-overtime.md](./attendance-overtime.md).
 
 ## Needs from shared files (not edited)
 

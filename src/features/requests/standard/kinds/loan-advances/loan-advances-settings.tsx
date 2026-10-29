@@ -1,7 +1,5 @@
-import { getRouteApi } from '@tanstack/react-router'
-
+import type { StandardSettingsProps } from '../../standard.types'
 import { StandardPill } from '../../standard-parts'
-import type { StandardSearch } from '../../standard-search'
 import { SETTINGS_SECTIONS } from './loan-advances.constants'
 import type { LoanSettingsSection } from './loan-advances.types'
 import {
@@ -10,23 +8,17 @@ import {
   LoanTypesSection,
 } from './loan-advances-settings-lists'
 
-const route = getRouteApi('/_app/requests/$type')
-
 const sectionOf = (value: string | undefined): LoanSettingsSection =>
   SETTINGS_SECTIONS.find((item) => item.value === value)?.value ?? 'types'
 
 /**
  * Loan & Advances → Settings: Types, Categories and Repayment in the pill, as
  * drawn (frames 4190:100688, 4195:106914, 4195:108102). The sub page is the
- * URL's `section` (Types is the default and is left out).
+ * URL's `section` (Types is the default and is left out); the route showing the
+ * page (Requests, or Payroll Settings → Loans) owns the URL.
  */
-export function LoanAdvancesSettings() {
-  const search = route.useSearch()
-  const navigate = route.useNavigate()
+export function LoanAdvancesSettings({ search, onSearch: go }: StandardSettingsProps) {
   const section = sectionOf(search.section)
-  const go = (patch: Partial<StandardSearch>) => {
-    void navigate({ search: (previous) => ({ ...previous, ...patch }) })
-  }
   const pill = (
     <StandardPill
       label="Settings"

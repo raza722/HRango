@@ -43,6 +43,12 @@ export function ExpenseDecisionFields({
 
   if (readOnly) return null
   const current = linesOf(value)
+  const overOf = (line: { id: string; amount: number | string }) => {
+    const approved = current.find((item) => item.id === line.id)?.approvedAmount
+    return approved !== undefined && approved > (toAmount(line.amount) ?? 0)
+  }
+  // The API's message for the lines shows only when no box already says what is wrong.
+  const anyOver = payload.lines.some(overOf)
   const set = (id: string, text: string) => {
     const amount = parseAmount(text)
     onChange({
@@ -54,19 +60,20 @@ export function ExpenseDecisionFields({
   return (
     <section aria-label="Approved amounts" className="grid gap-4">
       <h3 className="font-inter text-base font-semibold text-heading">Approved Amounts</h3>
-      {errors.lines && (
+      {errors.lines && !anyOver && (
         <p role="alert" className="text-xs text-destructive">
           {errors.lines}
         </p>
       )}
       {payload.lines.map((line) => {
         const approved = current.find((item) => item.id === line.id)?.approvedAmount
-        const over = approved !== undefined && approved > (toAmount(line.amount) ?? 0)
         return (
           <FormField
             key={line.id}
             label={`${line.title} (${money(line.amount, payload.currency)})`}
-            error={over ? 'Not more than the claim' : undefined}
+            error={
+              overOf(line) ? (errors[`lines.${line.id}`] ?? 'Not more than the claim') : undefined
+            }
           >
             {(a11y) => (
               <RsInput

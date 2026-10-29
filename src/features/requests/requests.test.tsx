@@ -132,14 +132,14 @@ describe('Punch requests', () => {
     const { user } = renderApp('/requests/punch')
 
     await openAction(user, 'RQ-PCH-0002', 'Cancel')
-    const dialog = await screen.findByRole('dialog', { name: 'Punch Request Cancel' })
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Cancel approved request' })
+    await user.click(within(dialog).getByRole('button', { name: 'Send for approval' }))
     expect(await within(dialog).findByText('Give a reason for cancellation')).toBeVisible()
     await user.type(
       within(dialog).getByRole('textbox', { name: /Reason for Cancellation/ }),
       'Wrong day',
     )
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Send for approval' }))
     expect(await screen.findByText('Cancellation requested')).toBeInTheDocument()
     const row = (await screen.findByRole('cell', { name: 'RQ-PCH-0002' })).closest('tr')
     if (!row) throw new Error('Row RQ-PCH-0002 missing')
@@ -147,13 +147,13 @@ describe('Punch requests', () => {
 
     // A pending request is withdrawn at once.
     await openAction(user, 'RQ-PCH-0001', 'Withdraw')
-    const withdraw = await screen.findByRole('dialog', { name: 'Punch Request Cancel' })
+    const withdraw = await screen.findByRole('dialog', { name: 'Withdraw request' })
     expect(within(withdraw).getByText(/withdrawn at once/)).toBeVisible()
     await user.type(
-      within(withdraw).getByRole('textbox', { name: /Reason for Cancellation/ }),
+      within(withdraw).getByRole('textbox', { name: /Reason for Withdrawing/ }),
       'Not needed',
     )
-    await user.click(within(withdraw).getByRole('button', { name: 'Save' }))
+    await user.click(within(withdraw).getByRole('button', { name: 'Withdraw' }))
     await waitFor(() => {
       expect(punchRequests.find('prq_1')?.status).toBe('cancelled')
     })
@@ -166,6 +166,19 @@ describe('Punch requests', () => {
     expect(await screen.findByRole('cell', { name: 'RQ-PCH-0006' })).toBeVisible()
 
     await user.click(screen.getByRole('tab', { name: 'Cancellations' }))
+    expect(await screen.findByRole('cell', { name: 'RQ-PCH-0010' })).toBeVisible()
+    // One cancellation waiting for me: counted once, under Pending, and the counts add up.
+    const tabs = screen.getByRole('list', { name: 'Requests by status' })
+    await waitFor(() => {
+      expect(within(tabs).getByRole('button', { name: 'All (1)' })).toBeVisible()
+    })
+    expect(within(tabs).getByRole('button', { name: 'Pending (1)' })).toBeVisible()
+    expect(within(tabs).getByRole('button', { name: 'Cancelling (0)' })).toBeVisible()
+    await user.click(within(tabs).getByRole('button', { name: 'Cancelling (0)' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('cell', { name: 'RQ-PCH-0010' })).not.toBeInTheDocument()
+    })
+    await user.click(within(tabs).getByRole('button', { name: 'Pending (1)' }))
     await openAction(user, 'RQ-PCH-0010', 'Approve/Reject Cancellation')
     const dialog = await screen.findByRole('dialog', { name: 'Punch Request Approve/Reject' })
     expect(await within(dialog).findByText(/asks to cancel this approved request/)).toBeVisible()

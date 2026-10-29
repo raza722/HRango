@@ -72,7 +72,7 @@ export interface RestrictionFilters {
 export interface DelegationFilters {
   delegatorId?: string | undefined
   delegateeId?: string | undefined
-  /** `true` / `false` (the Status filter's Active / In Active). */
+  /** `true` / `false` (the Status filter's Active / Inactive). */
   isActive?: string | undefined
   requestType?: string | undefined
   q?: string | undefined

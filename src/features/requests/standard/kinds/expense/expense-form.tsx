@@ -18,7 +18,14 @@ import { detailFileRef } from '../../../utils/request-files'
 import type { StandardFormProps } from '../../standard.types'
 import { standardButton, standardReadOnlyClass } from '../../standard-styles'
 import { useCreateStandard, useStandardLookups, useUpdateStandard } from '../../use-standard'
-import { money, parseAmount, requestBody, toAmount, todayIso } from './claims.utils'
+import {
+  MAX_CLAIM_AMOUNT,
+  money,
+  parseAmount,
+  requestBody,
+  toAmount,
+  todayIso,
+} from './claims.utils'
 import type {
   ExpenseDetailsInput,
   ExpenseLineInput,
@@ -39,7 +46,10 @@ const lineSchema = z.object({
     .refine((value) => Boolean(value), { message: 'Choose the category' }),
   amount: z
     .string()
-    .refine((value) => (parseAmount(value) ?? 0) > 0, { message: 'Enter an amount above 0' }),
+    .refine((value) => (parseAmount(value) ?? 0) > 0, { message: 'Enter an amount above 0' })
+    .refine((value) => (parseAmount(value) ?? 0) <= MAX_CLAIM_AMOUNT, {
+      message: `Claim at most PKR ${MAX_CLAIM_AMOUNT.toLocaleString('en-US')}`,
+    }),
   description: z.string().trim().min(1, 'Describe the expense').max(4000),
   receipt: fileRef,
 })

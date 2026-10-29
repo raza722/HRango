@@ -4,6 +4,8 @@ import { addDays, differenceInCalendarMonths, format } from 'date-fns'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { ApiError } from '@/lib/api-error'
+import { apiClient } from '@/lib/axios'
 import { server } from '@/mocks/node'
 import { employeeTransfers, mockDepartments, transferRequests } from '@/mocks/requests/db'
 import { apiPath } from '@/mocks/utils'
@@ -43,7 +45,62 @@ beforeEach(() => {
   )
 })
 
-describe('Transfer requests', () => {
+describe('Transfer requests', { timeout: 60_000 }, () => {
+  it('narrows Branch to the location and refuses a move to where the person already works', async () => {
+    const { user } = renderApp('/requests/transfer')
+
+    await user.click(await screen.findByRole('button', { name: 'Create' }, { timeout: 15_000 }))
+    const dialog = await screen.findByRole('dialog', { name: 'Transfer Request Create' })
+    await choose(user, /^Employee Name/, /^Sara Khan/)
+    await choose(user, /^Location/, 'Karachi')
+    // Only Karachi's branches.
+    await user.click(within(dialog).getByRole('combobox', { name: /^Branch/ }))
+    expect(await screen.findByRole('option', { name: 'Karachi Sales Office' })).toBeVisible()
+    expect(screen.queryByRole('option', { name: 'Lahore Head Office' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Islamabad Office' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'Karachi Sales Office' }))
+    await choose(user, /^Department/, 'Sales')
+    await choose(user, /^Line Manager/, /^Daniel Brooks/)
+    await choose(user, /^Final Authority/, /^Shelley Kannes/)
+    await pickDate(user, /^Effective Date/, addDays(new Date(), 10))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    // Sara Khan already works in Sales at Karachi Sales Office: the form says so first.
+    expect(
+      await within(dialog).findByText(
+        'The employee already works in this branch and department. Choose another.',
+      ),
+    ).toBeVisible()
+    expect(transferRequests.all().some((record) => record.employeeId === 'em_sara')).toBe(false)
+  })
+
+  it('refuses a move to the current place in the API too', async () => {
+    renderApp('/requests/transfer')
+    await screen.findByRole('cell', { name: 'RQ-TRF-0003' }, { timeout: 15_000 })
+    const error = await apiClient
+      .post('/requests/transfer', {
+        employeeId: 'em_sara',
+        fromDate: format(addDays(new Date(), 10), 'yyyy-MM-dd'),
+        toDate: format(addDays(new Date(), 10), 'yyyy-MM-dd'),
+        details: {
+          locationId: 'lc_khi',
+          branchId: 'br_khi',
+          departmentId: mockDepartments().find((item) => item.name === 'Sales')?.id,
+          lineManagerId: 'em_daniel',
+          finalAuthorityId: 'em_shelley',
+          effectiveDate: format(addDays(new Date(), 10), 'yyyy-MM-dd'),
+        },
+      })
+      .then(
+        () => null,
+        (failure: unknown) => failure,
+      )
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(422)
+    expect((error as ApiError).fieldErrors.branchId).toMatch(
+      /Sara Khan already works in Sales at Karachi Sales Office/,
+    )
+  })
+
   it('checks the form, writes the application with Regenerate and submits the request', async () => {
     const { user } = renderApp('/requests/transfer')
 

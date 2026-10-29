@@ -1,6 +1,8 @@
-import { useId } from 'react'
-import { Controller, useForm } from 'react-hook-form'
+import { useEffect, useId } from 'react'
+import { Controller, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
+import { format } from 'date-fns'
 import { z } from 'zod'
 
 import { FormField, TextareaField } from '@/components/form'
@@ -9,7 +11,10 @@ import { Label } from '@/components/ui/label'
 import {
   DateField,
   formatAmount,
+  formatRs,
+  payrollApi,
   PayrollDialog,
+  payrollKeys,
   RsField,
   SearchSelectField,
   TwoWaySwitch,
@@ -35,27 +40,49 @@ const chosen = (message: string) =>
     .nullable()
     .refine((value) => Boolean(value), { message })
 
-const schema = z.object({
-  employeeId: chosen('Choose the employee'),
-  demotion: z.enum(['no', 'yes']),
-  gradeId: chosen('Choose the grade'),
-  jobLevelId: z.string().nullable(),
-  designationId: chosen('Choose the designation'),
-  jobTitleId: chosen('Choose the job title'),
-  salary: z
-    .string()
-    .trim()
-    .refine(
-      (value) => {
-        const plain = value.replace(/,/g, '')
-        return /^\d+(\.\d{1,2})?$/.test(plain) && Number(plain) > 0 && Number(plain) <= 10_000_000
-      },
-      { message: 'Give the salary' },
-    ),
-  benefits: z.array(z.string()),
-  effectiveDate: z.string().min(1, 'Choose the effective date'),
-  description: z.string().trim().max(500, 'Keep it under 500 characters'),
-})
+const schema = z
+  .object({
+    employeeId: chosen('Choose the employee'),
+    demotion: z.enum(['no', 'yes']),
+    gradeId: chosen('Choose the grade'),
+    jobLevelId: z.string().nullable(),
+    designationId: chosen('Choose the designation'),
+    jobTitleId: chosen('Choose the job title'),
+    salary: z
+      .string()
+      .trim()
+      .refine(
+        (value) => {
+          const plain = value.replace(/,/g, '')
+          return /^\d+(\.\d{1,2})?$/.test(plain) && Number(plain) > 0 && Number(plain) <= 10_000_000
+        },
+        { message: 'Give the salary' },
+      ),
+    benefits: z.array(z.string()),
+    effectiveDate: z.string().min(1, 'Choose the effective date'),
+    description: z.string().trim().max(500, 'Keep it under 500 characters'),
+    /** The person's salary now (read from payroll, not typed), once it is known. */
+    previousSalary: z.number().nullable(),
+  })
+  .superRefine((values, ctx) => {
+    const salary = Number(values.salary.replace(/,/g, ''))
+    if (values.previousSalary === null || !Number.isFinite(salary) || salary <= 0) return
+    // As the API refuses: a promotion never lowers the salary, a demotion never raises it.
+    if (values.demotion === 'no' && salary < values.previousSalary) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['salary'],
+        message: `A promotion cannot lower the salary (now ${formatRs(values.previousSalary)})`,
+      })
+    }
+    if (values.demotion === 'yes' && salary > values.previousSalary) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['salary'],
+        message: `A demotion cannot raise the salary (now ${formatRs(values.previousSalary)})`,
+      })
+    }
+  })
 type Values = z.infer<typeof schema>
 
 /** The API's field names → the form's. */
@@ -93,7 +120,7 @@ const NO_YES = [
  * Promotion Create / Edit / View (frames 4195:109652 … 4195:116283,
  * 4195:118089, 4199:118694): Employee, Type (Demotion No / Yes), Grade, Level
  * (optional: the API's `jobLevelId`), Designation, Job Title, Previous Salary
- * (RS) (payroll's, filled in by the API when saved), Salary, Benefits (the
+ * (RS) (payroll's: read once the person is picked, kept by the API when saved), Salary, Benefits (the
  * benefit pay items), Effective Date, Attachment, Description. Promotion is
  * admin only: always for another employee.
  */
@@ -120,11 +147,30 @@ export function PromotionForm({ mode, request, onClose }: StandardFormProps<Prom
       benefits: payload?.benefits.map((item) => item.payItemId) ?? [],
       effectiveDate: payload?.effectiveDate ?? '',
       description: request?.description ?? '',
+      previousSalary: payload?.previousSalary ?? null,
     },
   })
   const { control } = form
-  // The API reads the previous salary from payroll when the request is saved.
-  const previousSalary = payload?.previousSalary ?? null
+  // A saved request shows the salary the API read when it was saved; on Create, the person's
+  // salary today from payroll once they are picked (left blank when payroll cannot be read).
+  const employeeId = useWatch({ control, name: 'employeeId' })
+  const day = format(new Date(), 'yyyy-MM-dd')
+  const current = useQuery({
+    queryKey: [...payrollKeys.detail('current-salary', employeeId ?? ''), day],
+    queryFn: ({ signal }) => payrollApi.currentSalary(employeeId ?? '', day, signal),
+    enabled: mode === 'create' && Boolean(employeeId),
+    retry: false,
+  })
+  const previousSalary =
+    mode === 'create'
+      ? employeeId
+        ? (current.data?.salary ?? null)
+        : null
+      : (payload?.previousSalary ?? null)
+  // The schema checks the new salary against it (a promotion cannot lower it).
+  useEffect(() => {
+    form.setValue('previousSalary', previousSalary)
+  }, [form, previousSalary])
 
   // A saved request's choices stay listed even when a picker cannot be read.
   const list = (items: readonly NamedRef[] | undefined, saved?: NamedRef | null) => {
@@ -279,7 +325,11 @@ export function PromotionForm({ mode, request, onClose }: StandardFormProps<Prom
               aria-live="polite"
               className="flex h-10 items-center rounded-md bg-[#D9D9D9]/60 px-4 font-inter text-sm text-field-value dark:bg-muted"
             >
-              {previousSalary === null ? '—' : formatAmount(previousSalary)}
+              {previousSalary !== null
+                ? formatAmount(previousSalary)
+                : mode === 'create' && employeeId && current.isFetching
+                  ? 'Reading the salary…'
+                  : '—'}
             </span>
           )}
         </FormField>

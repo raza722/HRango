@@ -15,21 +15,9 @@ async function choose(user: UserEvent, label: string | RegExp, option: string | 
   await user.click(await within(list).findByRole('option', { name: option }))
 }
 
-/** Opens a date field's calendar and picks the day, moving months if needed. */
-async function pickDate(user: UserEvent, label: string | RegExp, date: Date) {
-  await user.click(screen.getByRole('button', { name: label }))
-  const months = differenceInCalendarMonths(date, new Date())
-  for (let step = 0; step < Math.abs(months); step += 1) {
-    await user.click(
-      screen.getByRole('button', { name: months > 0 ? /next month/i : /previous month/i }),
-    )
-  }
-  await user.click(screen.getByRole('button', { name: new RegExp(format(date, 'MMMM do, yyyy')) }))
-}
-
 const iso = (date: Date) => format(date, 'yyyy-MM-dd')
 
-describe('Request Restriction', () => {
+describe('Request Restriction', { timeout: 60_000 }, () => {
   it('creates a restriction and deletes the ticked ones', async () => {
     const { user } = renderApp('/requests/settings')
 
@@ -47,16 +35,32 @@ describe('Request Restriction', () => {
     expect(await within(dialog).findByText('Choose the start date')).toBeVisible()
     expect(within(dialog).getByText('Choose the request type')).toBeVisible()
 
-    // The start date must be in the future (the API says so on the field).
-    await pickDate(user, /^Start Date/, new Date())
-    await pickDate(user, /^End Date/, new Date())
-    await choose(user, /^Request Types/, 'Punch Request')
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-    expect(await within(dialog).findByText('Start date must be in the future.')).toBeVisible()
-
+    // The start must be in the future: today cannot be picked (the API refuses it too).
+    // The calendar opens on tomorrow, the first day it offers.
+    const tomorrow = addDays(new Date(), 1)
+    await user.click(within(dialog).getByRole('button', { name: /^Start Date/ }))
+    if (tomorrow.getDate() > 1) {
+      expect(
+        screen.getByRole('button', { name: new RegExp(format(new Date(), 'MMMM do, yyyy')) }),
+      ).toBeDisabled()
+    }
     const day = addDays(new Date(), 7)
-    await pickDate(user, /^Start Date/, day)
-    await pickDate(user, /^End Date/, day)
+    const months = differenceInCalendarMonths(day, tomorrow)
+    for (let step = 0; step < months; step += 1) {
+      await user.click(screen.getByRole('button', { name: /next month/i }))
+    }
+    await user.click(screen.getByRole('button', { name: new RegExp(format(day, 'MMMM do, yyyy')) }))
+    // The end cannot be before the start (its calendar opens on the start's month).
+    await user.click(within(dialog).getByRole('button', { name: /^End Date/ }))
+    if (day.getDate() > 1) {
+      expect(
+        screen.getByRole('button', {
+          name: new RegExp(format(addDays(day, -1), 'MMMM do, yyyy')),
+        }),
+      ).toBeDisabled()
+    }
+    await user.click(screen.getByRole('button', { name: new RegExp(format(day, 'MMMM do, yyyy')) }))
+    await choose(user, /^Request Types/, 'Punch Request')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(await screen.findByText('Request restriction created')).toBeInTheDocument()
     expect(restrictionFor('punch', iso(day))).toMatch(/^Punch requests are closed from /)
@@ -68,7 +72,11 @@ describe('Request Restriction', () => {
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('checkbox', { name: 'Select all restrictions on this page' }))
     await user.click(screen.getByRole('button', { name: 'Delete' }))
-    await user.click(await screen.findByRole('button', { name: 'Yes' }))
+    const confirm = await screen.findByRole('alertdialog')
+    expect(
+      within(confirm).getByText('Are you sure you want to delete the 3 ticked restrictions?'),
+    ).toBeVisible()
+    await user.click(within(confirm).getByRole('button', { name: 'Yes' }))
     expect(await screen.findByText('3 restrictions deleted')).toBeInTheDocument()
     expect(await screen.findByText('No Record Found')).toBeVisible()
     expect(restrictionFor('punch', iso(day))).toBeNull()
@@ -107,12 +115,12 @@ describe('Delegation', () => {
     )
     await user.click(await screen.findByRole('menuitem', { name: 'Disable' }))
     await user.click(await screen.findByRole('button', { name: 'Yes' }))
-    expect(await screen.findByText('1 delegation made in active')).toBeInTheDocument()
+    expect(await screen.findByText('1 delegation made inactive')).toBeInTheDocument()
     // Bilal's punch approvals are no longer passed on; his shift approvals still are.
     expect(delegatorsOf('em_shelley', 'punch')).toEqual([])
     expect(delegatorsOf('em_shelley', 'shift_swap')).toEqual(['em_bilal'])
 
-    // Ticking rows swaps Create / Filters for the bulk Active / In Active; only the
+    // Ticking rows swaps Create / Filters for the bulk Active / Inactive; only the
     // in-active ones change.
     await user.click(screen.getByRole('checkbox', { name: 'Select all delegations on this page' }))
     expect(screen.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument()
@@ -125,7 +133,13 @@ describe('Delegation', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Request Delegations Create' })
     await choose(user, /^Delegator/, /^Bilal Ahmed/)
     await choose(user, /^Types/, 'Punch Request')
-    await choose(user, /^Delegatee/, /^Omar Siddiqui/)
+    // Nobody delegates to themselves: the delegator is not offered as delegatee.
+    await user.click(within(dialog).getByRole('combobox', { name: /^Delegatee/ }))
+    const omar = await within(await screen.findByRole('listbox')).findByRole('option', {
+      name: /^Omar Siddiqui/,
+    })
+    expect(screen.queryByRole('option', { name: /^Bilal Ahmed/ })).not.toBeInTheDocument()
+    await user.click(omar)
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     expect(
       await within(dialog).findByText(

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import { REQUEST_STATUSES } from '../types/requests.types'
-import { STANDARD_APPROVAL_VIEWS } from './standard.types'
+import { STANDARD_APPROVAL_VIEWS, STANDARD_LIST_VIEWS } from './standard.types'
 
 /** Defaults left out of the URL. */
 export const STANDARD_SEARCH_DEFAULTS = {
@@ -17,7 +17,7 @@ export const STANDARD_SEARCH_DEFAULTS = {
  */
 export const standardSearchSchema = z.object({
   tab: z.enum(['request', 'approvals', 'settings']).default('request').catch('request'),
-  scope: z.enum(['my', 'all']).default('my').catch('my'),
+  scope: z.enum(STANDARD_LIST_VIEWS).default('my').catch('my'),
   view: z.enum(STANDARD_APPROVAL_VIEWS).default('requested').catch('requested'),
   status: z.enum(REQUEST_STATUSES).optional().catch(undefined),
   page: z.number().int().min(1).default(1).catch(1),

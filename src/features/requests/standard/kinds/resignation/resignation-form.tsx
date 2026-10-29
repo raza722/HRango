@@ -18,6 +18,7 @@ import type { StandardFormProps } from '../../standard.types'
 import { standardReadOnlyClass } from '../../standard-styles'
 import { useCreateStandard, useStandardLookups, useUpdateStandard } from '../../use-standard'
 import { useRequestAttachment } from '../loan-advances/use-request-attachment'
+import { RESIGNATION_TYPE_LABELS } from './resignation.lookups'
 import {
   RESIGNATION_TYPES,
   type ResignationDetailsIn,
@@ -213,7 +214,21 @@ export function ResignationForm({
           required
           placeholder="Select"
           disabled={readOnly}
-          options={(lookups.data?.extra.types ?? []).map((item) => ({
+          options={[
+            ...(lookups.data?.extra.types ?? []),
+            // A saved request keeps its type, even one the list no longer offers.
+            ...(request &&
+            !(lookups.data?.extra.types ?? []).some(
+              (item) => item.value === request.payload.resignationType,
+            )
+              ? [
+                  {
+                    value: request.payload.resignationType,
+                    label: RESIGNATION_TYPE_LABELS[request.payload.resignationType],
+                  },
+                ]
+              : []),
+          ].map((item) => ({
             value: item.value,
             label: item.label,
           }))}
