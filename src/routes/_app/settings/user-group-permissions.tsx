@@ -1,9 +1,6 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Outlet } from '@tanstack/react-router'
 
-import { SettingsPlaceholder } from '@/features/settings'
-import { pageTitle } from '@/lib/constants'
-
+/** Settings → User Group Permissions: the roles (index) and one role (`$roleId`). */
 export const Route = createFileRoute('/_app/settings/user-group-permissions')({
-  head: () => ({ meta: [{ title: pageTitle('User Group Permissions') }] }),
-  component: () => <SettingsPlaceholder section="userGroupPermissions" standalone />,
+  component: Outlet,
 })

@@ -1,9 +1,6 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Outlet } from '@tanstack/react-router'
 
-import { SettingsPlaceholder } from '@/features/settings'
-import { pageTitle } from '@/lib/constants'
-
+/** Settings → System Users: the list (index) and one account (`$userId`). */
 export const Route = createFileRoute('/_app/settings/system-users')({
-  head: () => ({ meta: [{ title: pageTitle('System User') }] }),
-  component: () => <SettingsPlaceholder section="systemUsers" standalone />,
+  component: Outlet,
 })

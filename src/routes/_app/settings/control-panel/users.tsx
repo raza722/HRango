@@ -1,9 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
-import { SettingsPlaceholder } from '@/features/settings'
-import { pageTitle } from '@/lib/constants'
-
+/** Control Panel → Users is Settings → System Users. */
 export const Route = createFileRoute('/_app/settings/control-panel/users')({
-  head: () => ({ meta: [{ title: pageTitle('Users') }] }),
-  component: () => <SettingsPlaceholder section="users" />,
+  beforeLoad: () => {
+    throw redirect({ to: '/settings/system-users', replace: true })
+  },
 })
