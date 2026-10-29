@@ -16,6 +16,7 @@ interface SidebarProps {
   items: readonly NavItem[]
   user: AuthUser | null
   onSignOut: () => void
+  onChangePassword?: (() => void) | undefined
 }
 
 interface SidebarPanelProps extends SidebarProps {
@@ -23,7 +24,14 @@ interface SidebarPanelProps extends SidebarProps {
   onNavigate?: () => void
 }
 
-function SidebarPanel({ items, user, onSignOut, collapsed, onNavigate }: SidebarPanelProps) {
+function SidebarPanel({
+  items,
+  user,
+  onSignOut,
+  onChangePassword,
+  collapsed,
+  onNavigate,
+}: SidebarPanelProps) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-16 shrink-0 items-center justify-center border-b border-sidebar-border px-4 lg:h-[4.625rem]">
@@ -37,7 +45,12 @@ function SidebarPanel({ items, user, onSignOut, collapsed, onNavigate }: Sidebar
         </Link>
       </div>
 
-      <SidebarUserCard user={user} collapsed={collapsed} onSignOut={onSignOut} />
+      <SidebarUserCard
+        user={user}
+        collapsed={collapsed}
+        onSignOut={onSignOut}
+        onChangePassword={onChangePassword}
+      />
 
       <nav
         aria-label="Main"

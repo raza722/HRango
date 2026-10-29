@@ -27,7 +27,8 @@ export function Topbar({ actions }: TopbarProps) {
       <Button
         variant="secondary"
         size="icon-lg"
-        aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+        // Desktop folds the sidebar to its icon rail; phones and tablets open it as a drawer.
+        aria-label={isDesktop ? (expanded ? 'Collapse sidebar' : 'Expand sidebar') : 'Open menu'}
         aria-expanded={expanded}
         onClick={() => {
           if (isDesktop) toggleCollapsed()

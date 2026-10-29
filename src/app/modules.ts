@@ -2,10 +2,7 @@ import type { ComponentType, SVGProps } from 'react'
 
 import {
   ConfigurationIcon,
-  CustomFormIcon,
   PayrollIcon,
-  PerformanceIcon,
-  RecruitmentIcon,
   SeparationManagementIcon,
   SettingsIcon,
   TalentManagementIcon,
@@ -24,12 +21,6 @@ export interface ModuleDefinition {
 
 /** Copy for the scaffolded (not yet built) modules. */
 export const MODULES = {
-  recruitment: {
-    title: 'Recruitment',
-    description: 'Job openings, candidates and hiring pipelines.',
-    icon: RecruitmentIcon,
-    plannedScreens: ['Job Openings', 'Candidates', 'Interviews', 'Offer Letters'],
-  },
   talentManagement: {
     title: 'Talent Management',
     description: 'Employee records, transfers and salary revisions.',
@@ -62,23 +53,11 @@ export const MODULES = {
       'Leave Encashment',
     ],
   },
-  performance: {
-    title: 'Performance',
-    description: 'Goals, reviews and appraisal cycles.',
-    icon: PerformanceIcon,
-    plannedScreens: ['Goals', 'Reviews', 'Appraisal Cycles'],
-  },
   configuration: {
     title: 'Configuration',
     description: 'Company assets, request types and setup checklists.',
     icon: ConfigurationIcon,
     plannedScreens: ['Assets', 'Asset Types', 'Request', 'Request Settings', 'Setting Checklist'],
-  },
-  customForm: {
-    title: 'Custom Form',
-    description: 'Build forms for HR processes without code.',
-    icon: CustomFormIcon,
-    plannedScreens: ['Form Builder', 'Responses'],
   },
   settings: {
     title: 'Settings',

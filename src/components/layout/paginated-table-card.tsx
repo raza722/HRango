@@ -124,7 +124,11 @@ export function PaginatedTableCard<T>({
           <div className="flex flex-col-reverse items-center justify-between gap-4 pt-5 @lg:flex-row @lg:pt-6">
             <div className="flex flex-wrap items-center justify-center gap-3 text-sm text-muted-foreground">
               <span aria-live="polite">
-                {total > 0 ? `Showing ${firstRow}–${lastRow} of ${total}` : 'No records'}
+                {result.isPending
+                  ? ''
+                  : total > 0
+                    ? `Showing ${firstRow}–${lastRow} of ${total}`
+                    : 'No records'}
               </span>
               <Select
                 value={String(pageSize)}

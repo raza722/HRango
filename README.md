@@ -21,9 +21,12 @@ npm install
 npm run dev:api
 ```
 
-`npm run dev:api` (mode `backend`, `.env.backend`) talks to the API: start it first
-(`..\backend\run.bat`, port 8000); Vite proxies `/api` to it. Open <http://localhost:5190> and sign in
-with an account of the API's database. The local development database has a demo administrator:
+`npm run dev:api` (mode `backend`, `.env.backend`) talks to the HRango API (health check
+`/api/health`, interactive docs `/docs`, OpenAPI `/openapi.json`); Vite proxies `/api` to it
+(`VITE_DEV_API_TARGET`), so the browser talks to one origin. The committed default is a copy of
+the API on this machine (`..\backend\run.bat`, port 8000); to use the team's dev server, put
+`VITE_DEV_API_TARGET=http://<dev-server>:8000` in `.env.backend.local` (git-ignored). Open <http://localhost:5190> and
+sign in with an account of the API's database. The development database has a demo administrator:
 
 | Email                         | Password    |
 | ----------------------------- | ----------- |
@@ -109,12 +112,16 @@ src/
     _app/attendance/overview.tsx       /attendance/overview?scope=all|subordinates&month=yyyy-MM&page=&q=&status=&employeeId=&department=
     _app/attendance/time-sheet.tsx     /attendance/time-sheet?scope=my|all&employeeId=&status=&from=&to=&page=&pageSize=&q=
     _app/attendance/logs.tsx           /attendance/logs?from=&to=&employeeId=&type=&source=&page=
+    _app/attendance/insights.tsx       /attendance/insights (the overview's search params, beside the sub menu)
+    _app/attendance/scheduling.tsx     /attendance/scheduling (Scheduling's search params, beside the sub menu)
+    _app/attendance/official-visits.tsx /attendance/official-visits (a request type's search params, beside the sub menu)
     _app/attendance/settings.tsx       /attendance/settings?tab=basic|scheduling|rest-days|break-types|ip-restrictions|geo-fencing|holidays
-    _app/attendance/$section.tsx       /attendance/overtime, /attendance/missing-punch (placeholders)
+    _app/attendance/overtime.tsx       /attendance/overtime?tab=my|applications|bulk-applications|bulk-overtime|policy|settings&page=&status=&box=&period=&q=&from=&to=&employeeId=
+    _app/attendance/$section.tsx       /attendance/missing-punch (placeholder)
     _app/requests.tsx                  layout: Requests sub menu + <Outlet/> (/requests → /requests/punch)
     _app/requests/punch.tsx            /requests/punch?tab=request|approvals&scope=my|all&view=requested|delegates|consents&status=&page=
     _app/requests/shift.tsx            /requests/shift (same search params)
-    _app/requests/$type.tsx            /requests/expense, leave, … (placeholders for the types not built yet)
+    _app/requests/$type.tsx            /requests/expense, leave, … (the standard types in requests/standard/registry.ts)
     _app/payroll.tsx                   layout (<Outlet/>); /payroll → /payroll/dashboard
     _app/payroll/                      dashboard, settings/{general,tax,rewards,pay-components,account-type,
                                        disbursement-banks}?view=&page=, payrolls/{monthly,daily-wages}?page=,
@@ -323,6 +330,79 @@ How it is put together:
   stripped from the URL. Optional columns hide by the card's width (container queries), so the
   table fits beside the menu.
 
+## System Users and User Group Permissions
+
+Settings → System User and User Group Permissions, built 29 Oct 2026 in `src/features/access`
+(routes under `src/routes/_app/settings/system-users` and `…/user-group-permissions`, mock in
+`src/mocks/access`) against `/api/access/…`. No frame draws them (the older "User roles" frame
+could not be read): they take the Talent Management / Performance look. Control Panel → Users
+redirects to System Users, and the account menu has **Change Password** (`POST
+/access/me/password`).
+
+| Screen                 | Route                                                           | What it does                                                                                                                                                                 |
+| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| System Users           | `/settings/system-users?q=&status=&roleId=&employee=left\|none` | Accounts with linked employee, roles, last login, status; Add / Edit (initial password with rules; System admin asks again), Set Password, Disable / Enable                  |
+| Account                | `/settings/system-users/$userId?tab=`                           | Roles (all at once), Permissions (by module, with their sources and denials), Overrides (a grant with a scope, or a denial, with a reason), Sessions (End, End All), History |
+| User Group Permissions | `/settings/user-group-permissions?q=&retired=true`              | Roles with users, permissions, System / Retired chips; Add, Edit, Copy, Retire / Restore, Delete                                                                             |
+| Role                   | `/settings/user-group-permissions/$roleId?tab=&q=&ticked=`      | The permission editor, the people who hold the role, History                                                                                                                 |
+
+How it works:
+
+- The editor groups `GET /access/permissions` by module → screen; each action is a tick with a
+  scope (Own, Team, Department, Branch, Selected units with branches / departments / locations,
+  Company). Select all per screen and module (a dash when partly ticked), search, "Ticked only",
+  sensitive ticks marked with their hint. Save sends every tick at once (`PUT …/permissions` with
+  the rowVersion); the bar counts the changes and leaving with unsaved ticks asks first.
+- Effective permissions are roles plus grants minus denials, and each row names its sources. A
+  retired role grants nothing until it is restored.
+- Queries sit under `['access']` and refresh after every change; forms put 422 / 409
+  `fieldErrors` on their fields, all at once; ids go out as numbers.
+
+Decisions: accounts are never deleted (Disable ends their sessions). System roles keep their
+name and are never retired or deleted; one that holds every permission (Company Administrator)
+is read-only: copy it. A role people hold can't be deleted: retire it. You can't disable
+yourself, or remove your own last role that assigns roles. "Employee has left" has no API
+parameter, so the list reads every account and the inactive employees and filters in the
+browser (an `employeeStatus` parameter would help). The mock's catalogue (455 ticks in 19
+modules) is built from the permission codes the screens check, so it shows what the app really
+uses. In mock mode the demo user keeps every permission whatever its roles say. Permission codes
+(assumed): `access.users.view|create|edit|disable|password|roles|overrides|sessions`,
+`access.roles.view|create|edit|delete|permissions`.
+
+## Biometric Devices
+
+Settings → Biometric Devices (`/settings/biometric-devices`), built 29 Oct 2026 in
+`src/features/attendance/components/devices` on `/api/attendance/settings/devices` (mock in
+`src/mocks/devices`). No frame draws it; it takes the Attendance look: one card, a grey filter
+band, compact tables.
+
+| Screen         | How to open it                                           | What it does                                                                                                                                                  |
+| -------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Devices        | `/settings/biometric-devices?q=&branchId=&status=&page=` | Search, Branch, Active / Inactive; code, name, model, serial no, IP:port, branch, status, last synced ("Not synced for N days" after 2 days), enrolled people |
+| Add / Edit     | + Create, or Edit (`?edit=new\|<id>`)                    | Name, Model, Serial No (unique), IP Address (IPv4), Port (1–65535, 4370 by default), Branch, Address, Status                                                  |
+| Delete         | ⋮ → Delete, or Delete on a device                        | Named confirm; a device with people or punches is refused and offers Set Inactive                                                                             |
+| Device         | a name, or `?device=<id>`                                | Facts and last sync, then the Enrolments and Import Punches tabs (`?tab=`)                                                                                    |
+| Enrolments     | the Enrolments tab                                       | Add people (employee lookup), give each a device user no (digits, unique on the device), remove, Save all at once                                             |
+| Import Punches | the Import Punches tab                                   | CSV upload or pasted lines (Device User No, Punched At, Punch Type), sample file, preview, then created / skipped / failed per line                           |
+
+How it works:
+
+- **One save for everyone**: `PUT …/{id}/enrolments` with the device's rowVersion; a stale version
+  answers 409 and the tab offers Reload. Leaving with unsaved changes (page, list, tab, browser
+  tab) asks first.
+- **Punches become machine punches**: imported lines are stored as machine punches of the
+  device's code (`addMachinePunch` in `src/mocks/attendance/db.ts`), so they show in Attendance
+  Logs ("Import from Machine") and count in the time sheet. A punch already there in the same
+  minute is skipped; an unknown user no or a date that is not real fails with its line number; a
+  blank punch type is a check-in for the day's first punch, else a check-out.
+- **Codes agree with Attendance**: the mock seeds the 13 MCH machines Attendance punches on (two
+  per branch and a spare); the Logs page's Machine cell opens the device.
+- **Decisions**: a device in use is never deleted (Set Inactive keeps its history); lines with
+  blank or too-long cells are kept back as "not sent" so the rest can go; numeric ids go out as
+  numbers. Permissions (assumed): `attendance.settings.devices.view|create|edit|delete|enrol|import`.
+- **Not done**: the Logs page has no machine filter yet; a renamed device still reads "Machine N"
+  in Logs; enrolments are not paged.
+
 ## Roster
 
 A roster group is a named weekly shift pattern (clock in / clock out per day, some days off) that
@@ -457,7 +537,15 @@ How it works:
 
 Both pages sit beside the design's Attendance sub menu (Scheduling, Overtime, Official Visits,
 Missing Punch, Attendance Logs, Attendance Insights, Settings), which folds into a dropdown on
-narrow screens.
+narrow screens. Every entry opens its page beside the menu. Scheduling (`/attendance/scheduling`), Official
+Visits (`/attendance/official-visits`) and Attendance Insights (`/attendance/insights`) have no
+frame there, so they follow the Attendance Logs look: one white card with the title and its
+buttons, a grey filter band, then the list. Scheduling shows the same board and actions as the
+sidebar's Scheduling, Official Visits the request type's Requests / Approvals pages, and
+Insights the month per person from the overview's data (Show, Employee search, Employee Status,
+Department, Month and Year apply at once; the day states are chips that highlight a state; a day
+opens its time sheet; Download exports the month). The sidebar's Scheduling, Requests → Official
+Visits and Attendance Overview keep their drawn layouts.
 
 | Screen          | How to open it                      | What it does                                                                                                                                                            |
 | --------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -493,18 +581,76 @@ How the settings reach the rest of the app:
   "Imported File". Machine and dashboard punches are read-only; manual and imported ones can be
   edited or deleted, and the time sheet recalculates.
 
+### Overtime
+
+Built from the Figma section "Attendance-Overtime" (exports, notes and the API extracts in
+`HRango2/Design/Attendance overtime`). It sits beside the same Attendance sub menu; the card's
+inner tabs are links (`?tab=`), so a tab can be bookmarked. In the API overtime is a request
+type (`/requests/overtime`, decided through `/requests/approvals`), and policies and settings
+are Attendance settings; the mock answers the same endpoints (`docs/backend-mapping/attendance-overtime.md`).
+
+| Screen             | How to open it            | What it does                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------ | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| My Overtime        | `/attendance/overtime`    | The signed-in person's requests: Date (From / To), Applied and Approved overtime minutes, Reason, Status; Filter; Export (CSV, with the filters); Edit and Delete while pending and untouched; Cancel with a reason (a pending request is withdrawn, an approved one asks for cancellation); View adds images to your own pending or approved request and takes them off while pending |
+| Apply for Overtime | + Apply Overtime          | Department, Location, Branch, Date, Start / End Time, Overtime Hours, Reason, Add Images (uploaded through `/files`); the end after the start, the hours within the span. Edit reuses it as "Edit Overtime Request"                                                                                                                                                                    |
+| Applications       | the Applications tab      | The approvals inbox for overtime: Requested (default), Delegates, Consents or Cancellations in the Filter panel, Approved / Unapproved, Search, Employee and dates; Approve takes the approved minutes, Reject remarks; Forward passes the step to another employee; Consent (Agree / Disagree with remarks) in the Consents box; tick rows waiting for you for Reject Selected        |
+| Bulk Applications  | the Bulk Applications tab | Every overtime request (Reg No# is the request code), with Status; Export; + Create opens the bulk popup                                                                                                                                                                                                                                                                               |
+| Bulk Overtime      | the Bulk Overtime tab     | Create Bulk Overtime Request files one request per chosen person; the sheet lists pending requests filed for others, Applied and Approved minutes are edited in place, and Bulk Save saves and approves them                                                                                                                                                                           |
+| Overtime Policy    | the Overtime Policy tab   | Daily and Monthly policies with Slabs (Minimum / Maximum Minutes, Full Day or a leave type as the encashment); Slab Create / Edit / View popups; an Active switch                                                                                                                                                                                                                      |
+| Settings           | the Settings tab          | The six overtime switches (check-in, checkout, approval required, no auto-created requests, holidays, after duty duration) and Shift Hours for Overtime Encashment                                                                                                                                                                                                                     |
+
+How it reaches the rest of the app: approving writes the approved minutes into the day's time
+sheet (the Approved Overtime column). Approved minutes start at the applied minutes and are
+capped at the active daily policy's top slab, with a hint for the slab they fall in.
+
+Departures from the design:
+
+- **Settings tab**: the frames' tab row draws "Settings" but no frame draws its page; it is built
+  like Attendance Settings → Basic (switch rows, a number field, Save Changes) with the wording
+  of the requirements document, because the API has these settings.
+- **Placeholders replaced**: rows "Saud Ahmed R2-97907" use directory people and codes; the date
+  placeholder "May 5, 2024 08:23 PM" reads "Select Date"; Overtime Hours shows "Enter hours, e.g.
+  1.5"; the policy Name placeholder "Employee Name" reads "Policy name"; the editable "50mins"
+  is a number box; "Casual Leaves" in Slab View is the leave type's own name.
+- **Pay figures not built**: the bulk popup frame's table shows From / To Date, Amount/hr and Total
+  Amount of Overtime; Attendance has no pay rate, so the sheet follows the Bulk Overtime frame.
+- **Columns follow the API**: the API keeps no Mandatory / Voluntary type and does not mark
+  requests filed in bulk, so Bulk Applications shows every overtime request with Status instead
+  of Type, and the sheet's Type column is "Waits For" (the next approver).
+- **Added**: the Period column (Daily / Monthly) and an Inactive chip on the policy list, the
+  Active switch and Save / Cancel on the policy popup (cut off in the frame, styled like the slab
+  popup's), a single Cancel at the bottom left of Slab View, and Cancelling / Cancelled chips.
+- **Slabs**: ticking Full Day encashes a full day; otherwise Encashment Type lists the leave types
+  (the API's `full_day` or `leave` with a leave type).
+- **Not drawn, added on the API's endpoints (27 Oct 2026)**: Edit, Delete, Export, adding images
+  after filing, Forward, Consents and Reject Selected follow the Requests module's rules and the
+  Overtime popups' look. Edit follows the create permission and Delete the cancel one; the popups
+  read the request first and stay closed to changes once an approver has acted. Bulk approving
+  stays on the Bulk Overtime sheet, which checks approved minutes against the daily policy.
+  Export's file format is not in the spec (saved as CSV; Backend Dependencies R4).
+- **Approved / Unapproved** are both drawn filled; they work as a toggle that dims the side not
+  chosen. Unapproved means "waiting for your decision".
+- **Department is required** in Create Bulk Overtime Request, because the API requires it.
+
 ## Requests
 
 **Requests** in the sidebar (after Attendance and Leaves) opens the Requests sub menu: Punch,
 Expense, Leave, Shift Requests, Loan & Advances, Work From Home, Official Visits, Promotion,
-Relaxation, Rest Days, Travel, Transfer, Resignation and Settings, with the Figma icons.
-Every type with screens in the design is built: **Punch**, **Shift Requests**, **Transfer**,
-**Settings** (Request Restriction, Delegation, Request Flows) and, on the shared standard pages
-below, **Leave**, **Loan & Advances**, **Work From Home**, **Promotion**, **Relaxation**, **Rest
-Days**, **Travel** and **Resignation** (Figma sections `Request` `2622:1071`, `Approval`
-`2706:62063`, `Shift Request+ Approval` `2706:65722`, `Transfer`, `Request Settings` and
-`Requests` `2697:5532`). Expense and Official Visits have no screens in the design and open a
-placeholder. The sidebar's Requests opens into the same list as a tree.
+Relaxation, Rest Days, Travel, Air Tickets, Transfer, Resignation, Requisition and Settings, with
+the Figma icons. Every type is built: **Punch**, **Shift Requests**, **Transfer**, **Settings**
+(Request Restriction, Delegation, Request Flows) and, on the shared standard pages below,
+**Expense**, **Leave**, **Loan & Advances**, **Work From Home**, **Official Visits**,
+**Promotion**, **Relaxation**, **Rest Days**, **Travel**, **Air Tickets**, **Resignation** and
+**Requisition** (Figma sections `Request` `2622:1071`, `Approval` `2706:62063`, `Shift Request+
+Approval` `2706:65722`, `Transfer`, `Request Settings` and `Requests` `2697:5532`). Expense,
+Official Visits, Air Tickets and Requisition have no web frames and follow the standard pages'
+layout. The sidebar's Requests opens into the same list as a tree (without Air Tickets and
+Requisition, which the drawn tree leaves out).
+
+A requester never gets Approve/Reject or Forward on their own **Promotion** or **Resignation**,
+even if a flow names them as an approver: the row menu drops both, the row cannot be ticked for
+the bulk Approved / Unapproved buttons, and the Approve/Reject popup shows a note instead of the
+buttons (`requests/standard/self-decision.ts`). The API should refuse it as well.
 
 | Screen                 | How to open it              | What it does                                                                                                                                                   |
 | ---------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -623,14 +769,17 @@ remaining types on one layout, so they share one page, one set of popups and one
   Categories: create, edit, view, inactivate; one in use cannot be deleted. Codes LA-0001…
 - **Leave** (My `4189:54603`, All `4191:64478`, Approvals `4194:70604`, Delegates
   `4194:79769`): "My Request | All Requests", the Balance card (Leave Type, Balance, Availed,
-  Available, Pending) and a "Request" heading over the status tabs. Entitlements are seeded per
-  person and leave type (Shelley: Casual 8, Sick 15); Availed counts approved days, Pending
-  pending days, Available = total − availed − pending, this year. Only shift days count; saving
-  refuses more than Available and overlaps. Short leave: Half Day (0.5) or Quarter Day (0.25) of
+  Available, Pending) and a "Request" heading over the status tabs. The entitlement is the Leaves
+  ledger's allotment from the person's leave policy (Shelley: Casual 8, Sick 15), less the
+  requests: Availed counts approved days, Pending pending days, Available = total − availed −
+  pending, this year. Leaves and Requests → Leave share one store of requests (28 Oct 2026). Only
+  working days count (shift days that are not holidays); saving refuses more than Available and
+  overlaps. Short leave: Half Day (0.5) or Quarter Day (0.25) of
   one shift day, the times inside the shift, Start / End Time filled in from it. The Approve
   popup adds Total, Available and Availed Leaves; approval leaves the schedule as it is. Codes
   LV-0001…
-- **Work From Home**: "My Requests | All Requests", "Completed" for an approved request; Create
+- **Work From Home**: "My Requests | All Requests | Subordinates" (the third, drawn on one frame,
+  lists the people who report to you: `view=subordinates`), "Completed" for an approved request; Create
   has Start / End Date and a week strip of the person's shifts ("Rest Day" / "Day off") to tick
   ("Please select at least one shift."); days already from home cannot be asked again.
   Approval sets the schedule entries to work from home; an approved cancellation restores
@@ -691,14 +840,13 @@ Code: `src/features/leaves` (types, constants, API, hooks, schemas; `components/
 sub menu, `applications`, `settings`), mocks in `src/mocks/leaves` (`rules.ts` holds the balance
 and eligibility rules), routes under `src/routes/_app/leaves`.
 
-| Screen             | How to open it                                          | What it does                                                                                                                                                                                                                                                                        |
-| ------------------ | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| My Leaves          | Sidebar → Leaves (`/leaves/my-leaves?status=&page=`)    | "All Requests (n)" dropdown with the counts per status, Filter, + Apply Leave, the table (Sr#., Category, Type, Leave Date, Applied On, Reason, Days, Rosters, Status, Actions: view, cancel)                                                                                       |
-| Leave Applications | Sub menu (`/leaves/applications`)                       | Everyone's leaves with the Employees column; Approve / Reject (with remarks) on pending ones                                                                                                                                                                                        |
-| General Settings   | Sub menu → Settings (`/leaves/settings/general`)        | Leave Final Approval By, Approve Leave on Status, Post Leave Application Deadline, Save Changes                                                                                                                                                                                     |
-| Leave Types        | Settings → Leave Types (`/leaves/settings/leave-types`) | Sr#., Type, No. of Leaves, Leave Encashment and Status switches, the pencil; "+ Add New" in the Settings title row opens the "Add Leave Types" popup (`?dialog=add`): the checkboxes with their dependent fields, Pre Condition, Balance Settings, Experience and Short Leave Slabs |
-| Leave Policies     | Settings → Leave Policies (`/leaves/settings/policies`) | Sr#., Leave Policy, Enroll Employee (count, or the button on an employee-level policy), Policy Level, the Leave Policy (in force) and Status switches, the pencil; "+ Add New" opens Add Policy (Policy, Title, policy level, Allow half day / short day leave)                     |
-| Leave Encashment   | Sub menu                                                | A link to Payroll → Leave Encashment, as the notes list it                                                                                                                                                                                                                          |
+| Screen             | How to open it                                          | What it does                                                                                                                                                                                                                                                                      |
+| ------------------ | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| My Leaves          | Sidebar → Leaves (`/leaves/my-leaves?status=&page=`)    | "All Requests (n)" dropdown with the counts per status, Filter, + Apply Leave, the table (Sr#, Category, Type, Leave Date, Applied On, Reason, Days, Rosters, Status, Actions: view, cancel)                                                                                      |
+| Leave Applications | Sub menu (`/leaves/applications`)                       | Everyone's leaves with the Employees column; Approve / Reject (with remarks) on pending ones                                                                                                                                                                                      |
+| General Settings   | Sub menu → Settings (`/leaves/settings/general`)        | Leave Final Approval By, Approve Leave on Status, Post Leave Application Deadline, Save Changes                                                                                                                                                                                   |
+| Leave Types        | Settings → Leave Types (`/leaves/settings/leave-types`) | Sr#, Type, No. of Leaves, Leave Encashment and Status switches, the pencil; "+ Add New" in the Settings title row opens the "Add Leave Type" popup (`?dialog=add`): the checkboxes with their dependent fields, Pre Condition, Balance Settings, Experience and Short Leave Slabs |
+| Leave Policies     | Settings → Leave Policies (`/leaves/settings/policies`) | Sr#, Leave Policy, Enroll Employee (count, or the button on an employee-level policy), Policy Level, the Leave Policy (in force) and Status switches, the pencil; "+ Add New" opens Add Policy (Policy, Title, policy level, Allow half day / short day leave)                    |
 
 How it works:
 
@@ -710,9 +858,12 @@ How it works:
 - **One set of leave types.** The types under Settings → Leave Types are the ones Requests →
   Leave offers (`src/mocks/requests/standard/kinds/leave.ts` reads them), filtered on Apply by Is
   Active, probation, gender and marital status; a type in use cannot be deleted.
-- **Balances** (`src/mocks/leaves/rules.ts`): the entitlement Requests → Leave seeds (so Casual /
-  Sick match that module exactly), else the type's own number or its experience slab; Pro Rated
-  and Earned Balance adjust it. Both modules show the same balance.
+- **Balances** (`src/mocks/leaves/rules.ts`, `balanceOf`): the ledger's allotment for each
+  person in the shared directory (the type's own number or its experience slab; Pro Rated and
+  Earned Balance adjust it), less every leave request in the one store that Requests → Leave
+  writes; `/leaves/ledger` also lists an `availed` row per approved request. Both modules show
+  the same balance. Apply Leave names the holidays and days off in the chosen dates and leaves
+  them out; Leave Applications offers Approve / Reject only on requests waiting for you.
 - **Policies** are the two kinds the Add Policy select offers: a **Leave Distribution Policy** in
   force covers its people (company level: everyone; employee level: the enrolled), and only
   covered people may apply; a **Half leave & Short leave** policy says whether half-day and short
@@ -720,6 +871,8 @@ How it works:
 
 ### Leaves: departures from the design
 
+- **Leave Encashment** (listed in the sub menu by the notes) is not linked from the Leaves
+  tabs; it stays under Payroll → Leave Encashment.
 - **Typos fixed**: "Martial Status" → Marital Status, "Probition" → Probation, "Short Remaining
   leaves in Pay Slip" → Show Remaining Leaves in Payslip (the second Experience frame itself
   writes it that way).
@@ -765,29 +918,30 @@ Sheet + Pay Slips `3321:18975`, Daily Wages `3477:20364`, Vouchers `3427:19622`,
 `3867:23111`, Balances + Final Settlement `3431:20265`, Salary Revision `3523:19615`, Leave
 Encashment `3552:23120`, Payslip edit `3502:23220`, Payroll Settings `3000:13263`.
 
-| Screen                     | How to open it                                    | What it does                                                                                                                                                                                        |
-| -------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dashboard                  | `/payroll/dashboard`                              | Payroll Comparison Yearly (last year and this year, net pay per month), Expenses Month Wise, Expense Report for a month, Month Wise Loan & Advance, Employee Month Wise Earning for a chosen person |
-| Settings → General         | `/payroll/settings/general`                       | Payroll Configuration (the 22 settings: switches, selects and boxes) and Leave Configuration                                                                                                        |
-| Settings → Tax             | `/payroll/settings/tax`                           | Tax Rebate (rows with an attachment) and Tax Structure (slabs with a fixed amount and a rate, surcharge rule)                                                                                       |
-| Settings → Rewards         | `/payroll/settings/rewards`                       | Benefits (individual or group, with members) and Incentives                                                                                                                                         |
-| Settings → Pay Components  | `/payroll/settings/pay-components`                | Pay Items (type, calculation, expression over `{variables}`, taxable, tax distribution), Formulas and Rules; an expression that does not work out is refused                                        |
-| Account Type, Banks        | the Account Type and Disbursement Banks tabs      | The accounts balances are kept in (Medical, PF, EOBI, Loan …) and the company's paying banks                                                                                                        |
-| Payrolls Monthly           | `/payroll/payrolls/monthly`                       | Code, Name, Tax Structure, Month, Last Running, Status, Last Closing and the action icons each status allows; + Create, bulk On Hold                                                                |
-| Create / Edit / View       | + Create, Edit, View                              | Name, Currency, Tax Structure, Tax Applicable, Payroll Processing, Processing Date, Applicable Days, No of Fixed Days, Company Bank, Description, the Pay Items table; View adds History            |
-| Run / Stop / Error         | the row icons                                     | Run works out every person's pay slip; Stop closes the payroll ("cannot be reverted"); Error lists who could not be paid and why; Employments adds people                                           |
-| Payrolls Daily Wages       | `/payroll/payrolls/daily-wages`                   | Create in two steps (time slot, name and dates, then each person's hours and amounts), View / Edit / Download, and Voucher to pay it out                                                            |
-| Salary Sheet               | Salary Sheet icon, or `/payroll/salary-sheet`     | One line per person for a payroll and month: each pay item, earnings, deductions, net payable and a Total line                                                                                      |
-| Pay Slips (My / All)       | `/payroll/pay-slips/my`, `/payroll/pay-slips/all` | My: the Employee Accounts summary and your slips. All: filters, select and hold, Pay, Recalculate, Edit lines (marked Manually Updated, with History), and the pay slip document with Print         |
-| Vouchers                   | `/payroll/vouchers`                               | Every voucher line (payroll, daily wages, employee vouchers) with View and Delete                                                                                                                   |
-| Employee Voucher           | `/payroll/vouchers/employee`                      | The voucher form as drawn: employee, Voucher Details, Attachment, Approval Web Flow, Verification; Edit, View, Delete                                                                               |
-| Final Settlement           | `/payroll/final-settlement`                       | Leavers with their settlement; View shows the separation details and the settlement slip; Close FS completes it                                                                                     |
-| Opening Balance            | `/payroll/balances/opening-balance`               | Each person's opening balance per account; Add, Adjust, Import (with Sample Import)                                                                                                                 |
-| Employee Accounts          | `/payroll/balances/employee-accounts`             | Employee, Account, Month, Credit, Debit; Create (Credit+ / Debit-), Import File (Opening Balance, Provident Fund), Filters, and the ⋮ menu (Edit, View)                                             |
-| Employee Account Statement | `/payroll/balances/account-statement`             | One person's entries per account and month with credit, debit and processed                                                                                                                         |
-| Salary Revision            | `/payroll/salary-revision`                        | Create (Flat or Percentage on the current salary, effective date), Edit, View, Delete, Import                                                                                                       |
-| Leave Encashment           | `/payroll/leave-encashment`                       | Leave, Employee, Year, Amount per leave, one line per person; Create / Edit / View (Leave Type, All Employees or Employees, Year, Payroll or Manually, Amount Per Leave), Delete, Filters           |
-| Reports                    | `/payroll/reports/employee-accounts`              | Provident fund, tax rebate and tax paid per person                                                                                                                                                  |
+| Screen                     | How to open it                                    | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Dashboard                  | `/payroll/dashboard`                              | As drawn: Payroll Comparison Yearly (net pay per month, this year and last), Expenses Month Wise (gross pay per month), Expense Report (a month's pay item totals), Month Wise Loan & Advance (instalments due and repaid per month), Employee Month Wise Earning (a chosen person's payslips)                                                                                                                                                                                                                                                         |
+| Settings → General         | `/payroll/settings/general`                       | Payroll Configuration (the 22 settings: switches, selects and boxes) and Leave Configuration                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Settings → Tax             | `/payroll/settings/tax`                           | Tax Rebate (rows with an attachment) and Tax Structure (slabs with a fixed amount and a rate, surcharge rule)                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Settings → Rewards         | `/payroll/settings/rewards`                       | Benefits (individual or group, with members) and Incentives                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Settings → Pay Components  | `/payroll/settings/pay-components`                | Pay Items (type, calculation, expression over `{variables}`, taxable, tax distribution), Formulas and Rules; an expression that does not work out is refused                                                                                                                                                                                                                                                                                                                                                                                           |
+| Account Type, Banks        | the Account Type and Disbursement Banks tabs      | The accounts balances are kept in (Medical, PF, EOBI, Loan …) and the company's paying banks                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Settings menu entries      | the Payroll Settings card's own menu              | Every entry opens beside the menu, as in Attendance, with the open entry highlighted (a dropdown on narrow screens): Pay Runs `/payroll/settings/pay-runs` (the Monthly list with all its actions), Payroll History `/payroll/settings/history` (closed payrolls only), Compensation \ Deductions and Benefits (the Pay Components and Rewards tabs), Appraisal `/payroll/settings/appraisal` (Performance → Appraisals), Loans `/payroll/settings/loans` (Requests → Loan & Advances, tabs in the URL). The sidebar's Payrolls → Monthly is unchanged |
+| Payrolls Monthly           | `/payroll/payrolls/monthly`                       | Code, Name, Tax Structure, Month, Last Running, Status, Last Closing and the action icons each status allows; + Create                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Create / Edit / View       | + Create, Edit, View                              | Name, Currency, Tax Structure, Tax Applicable, Payroll Processing, Processing Date, Applicable Days, No of Fixed Days, Company Bank, Description, the Pay Items table; View adds History                                                                                                                                                                                                                                                                                                                                                               |
+| Run / Stop / Error         | the row icons                                     | Run works out every person's pay slip; Stop closes the payroll ("cannot be reverted"); Error lists who could not be paid and why; Employments adds people                                                                                                                                                                                                                                                                                                                                                                                              |
+| Payrolls Daily Wages       | `/payroll/payrolls/daily-wages`                   | Create in two steps (time slot, name and dates, then each person's hours and amounts), View / Edit / Download, and Voucher to pay it out                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Salary Sheet               | Salary Sheet icon, or `/payroll/salary-sheet`     | One line per person for a payroll and month: each pay item, earnings, deductions, net payable and a Total line                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Pay Slips (My / All)       | `/payroll/pay-slips/my`, `/payroll/pay-slips/all` | My: the Employee Accounts summary and your slips. All: filters, select and hold, Pay, Recalculate, Edit lines (marked Manually Updated, with History), and the pay slip document with Print                                                                                                                                                                                                                                                                                                                                                            |
+| Vouchers                   | `/payroll/vouchers`                               | Every voucher line (payroll, daily wages, employee vouchers) with View and Delete                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Employee Voucher           | `/payroll/vouchers/employee`                      | The voucher form as drawn: employee, Voucher Details, Attachment, Approval Web Flow, Verification; Edit, View, Delete                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Final Settlement           | `/payroll/final-settlement`                       | Leavers with their settlement; View shows the separation details and the settlement slip; Close FS completes it                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Opening Balance            | `/payroll/balances/opening-balance`               | Each person's opening balance per account; Add, Adjust, Import (with Sample Import)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Employee Accounts          | `/payroll/balances/employee-accounts`             | Employee, Account, Month, Credit, Debit; Create (Credit+ / Debit-), Import File (Opening Balance, Provident Fund), Filters, and the ⋮ menu (Edit, View)                                                                                                                                                                                                                                                                                                                                                                                                |
+| Employee Account Statement | `/payroll/balances/account-statement`             | One person's entries per account and month with credit, debit and processed                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Salary Revision            | `/payroll/salary-revision`                        | Create (Flat or Percentage on the current salary, effective date), Edit, View, Delete, Import                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Leave Encashment           | `/payroll/leave-encashment`                       | Leave, Employee, Year, Amount per leave, one line per person; Create / Edit / View (Leave Type, All Employees or Employees, Year, Payroll or Manually, Amount Per Leave), Delete, Filters                                                                                                                                                                                                                                                                                                                                                              |
+| Reports                    | `/payroll/reports/employee-accounts`              | Provident fund, tax rebate and tax paid per person                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 How it works (`src/mocks/payroll/`):
 
@@ -799,12 +953,15 @@ How it works (`src/mocks/payroll/`):
   twelfth of it. A value someone edited by hand is kept on recalculation.
 - **Statuses**: a payroll is Pending until it is run, then Run, Closed or On Hold. Pay slips are
   Ready to Release, Released, On Hold or Released With FS. Closing a payroll releases its ready
-  slips; running a closed payroll moves it to the next month, up to the current one.
+  slips; a closed payroll is not run again (a new month is a new payroll). One person is on one
+  monthly payroll a month: Employments leaves out people already on another, and Errors flags a
+  clash.
 - **Links between screens**: employee vouchers and the Daily Wages Voucher button add voucher
   lines; a final settlement makes its own pay slip, released when the settlement is closed;
   employee account entries and opening balances feed the statement and the report.
-- **Sample data**: three payrolls as drawn (Head Office running this month, Software closed last
-  month, Abdul on hold with an error for one person), worked out on first use.
+- **Sample data**: the three payrolls as drawn (Head Office running this month, Software closed
+  last month, Abdul on hold with an error for one person), plus Head Office last month (closed, so
+  My Pay Slips has released slips), worked out on first use.
 - **Lists** keep their filters in a saved preset (Save Preset) per list; the URL holds the page.
 - **Checked** page by page at 375 and 769 px (no sideways page scroll, dialogs inside the screen)
   and in dark mode on Monthly and the Dashboard; wider screens were not re-checked for Payroll.
@@ -814,10 +971,16 @@ How it works (`src/mocks/payroll/`):
 Unused leave days paid out (`src/mocks/payroll/encashment-handlers.ts`). The design names the
 fields but not the sums, so these are the defaults:
 
-- **Leave types** are the Leave Quotas account types (Sick Leave, Casual Leaves). A person's
-  **days** are that account's credits less its debits within the leave year (Payroll Settings →
-  Leave Configuration: calendar or fiscal year). People with no days left are skipped; if nobody
-  has any, Save says so.
+- **Leave types** come from Leave Settings → Leave Types (`GET /leaves/types`). A person's
+  **days** are what is left of the type in the leave year (the mock: a fixed quota per type, less
+  earlier encashments). People with no days left are skipped; if nobody has any, Save says so.
+- **Limits**: under Leave Type the form shows the type's Encashment Min / Max Limit (days per
+  person). Anyone with fewer days left than the minimum is left out, and anyone with more than the
+  maximum is paid for the maximum; when that leaves nobody, Save shows why under Employees. A type
+  whose Encashment is turned off is refused before anything is sent. The API works out the days,
+  so the form cannot list them before saving (no preview endpoint: Backend Dependencies P4). The
+  mock seed turns Encashment on for Casual Leaves (2–10 days), Sick Leave (1–8) and Annual Leave
+  (1–10).
 - **Amount per leave**: with Type **Payroll**, a day's gross salary (the salary ÷ 30). With
   **Manually**, the Amount Per Leave basis: Earned Salary = a day's salary; Per Hour Rate = the
   hourly rate (a day ÷ 8) × the person's roster shift hours; Overtime = the same at 1.5×;
@@ -825,10 +988,9 @@ fields but not the sums, so these are the defaults:
   the end of the leave year, or today while the year runs. The sample "Hybrid Work" roster has
   1–2 hour shifts (as in its design), so the hourly bases come out low for its 22 people.
 - **Paying it**: the days are debited from the leave quota in the month the encashment is made, so
-  they cannot be paid twice. Payroll encashments go into that month's **Leave Encashment** pay
-  item (the `{leave_encashment}` variable; the line is added even when the payroll does not list
-  the pay item) and open pay slips are worked out again. Manual ones add a voucher line per person
-  on Vouchers.
+  they cannot be paid twice. Payroll encashments are meant for that month's **Leave Encashment** pay
+  item (the `{leave_encashment}` variable), but the mock does not add that line yet. Manual ones
+  add an approved voucher line per person on Vouchers.
 - **Edit, View, Delete** act on the whole encashment a line belongs to; deleting one for several
   people says how many. Once a payroll encashment is in a released pay slip it can no longer be
   edited or deleted.
@@ -852,14 +1014,14 @@ mocks in `src/mocks/assets` and `src/mocks/offboarding`. Both reuse Payroll's re
 | Company Assets                      | `/assets/company-assets`                                | Code, Name, Identification Number, Status; ⋮ Edit, View, Delete, History, Deactivate (Activate when unavailable); Create, Import File ⌄ (Assets CSV, Sample File), Filters                                     |
 | Asset Create / Edit / View          | Create, Edit, View                                      | Name, Asset Type, Identification Number, Taxable and Condition (Old / New) on one row, Manufacturer, Model, Attachment, Current Value (RS), Acquired date, Description; View: History                          |
 | Asset History                       | History (row menu or View)                              | Employee, Action, Performed At; each line opens to Field, Old Value, New Value                                                                                                                                 |
-| Asset Types                         | `/assets/types`                                         | Code, Name, Description, Status; Create / Edit / View (Name, Active, Description), Delete, Filters (Status, Name)                                                                                              |
+| Asset Types                         | `/assets/types`                                         | Code, Name, Description, Status; Create / Edit / View (Name, Active, Description), Deactivate / Activate, Delete (only when no asset uses the type), Filters (Status, Name)                                    |
 | Asset Allocations                   | `/assets/allocations`                                   | Company, Employee, Asset, Identification Number, Allocation Date, Deallocation Date, Status; ⋮ View, Deallocate; Allocate; Filters (Employees, Asset Type, Is Allocated, Assets, From, To)                     |
 | Allocate / View / Deallocate        | Allocate, View, Deallocate                              | "Asset": Employee, Asset Type, Asset (available ones of that type), Allocation Date, Attachment, Description; Deallocate asks the date                                                                         |
 | Asset Clearance Form                | `/assets/clearance-form`                                | Row and select-all boxes, Employee ID, Name, Department, Clearance Date, Status; bulk Approved / Unapproved with a confirmation; Create, Filters                                                               |
 | Clearance Form Create / Edit / View | Create, Edit, View (or after an End of Employment save) | Employee Name (ID and Department filled in), Clearance Date; Asset Details per asset held (Asset Name, Asset ID, Date Allocated, Condition, Reason, Return Status, Comments); Verification & Approval          |
-| End of Employment                   | `/end-of-employment/all`, `/completed`, `/pending`      | Employee, Branch, Location, Department, Designation, Date, Creation Date, Completion Date, Status; ⋮ Edit, View, Delete (pending) or View, Rehire (completed); Create, Import File, Filters                    |
+| End of Employment                   | `/end-of-employment/all`, `/completed`, `/pending`      | Employee, Branch, Location, Department, Designation, Last Working Date, Creation Date, Completion Date, Status; ⋮ Edit, View, Delete (pending) or View, Rehire (completed); Create, Import File, Filters       |
 | End of Employment dialog            | Create, Edit, View                                      | The person's card (Age, Email, Phone, Experience); Information tab (Employee, Reason, Notice Period → Last Working Date, Final Settlement, Asset Clearance, Attachment, Description, Delegatee); Checklist tab |
-| Rehire                              | Rehire (completed records)                              | Employee, Last Working Date, Joining Date, then "Are you sure you want to Perform this action?"                                                                                                                |
+| Rehire                              | Rehire (completed records)                              | Employee, Last Working Date, Joining Date (checked to be after it before the confirm), then "Rehire <name>, joining on <date>?"                                                                                |
 | Off Boarding Checklist              | Settings → Off Boarding Settings                        | The Off Boarding menu (Control Panel, Off Boarding Settings, Off Boarding Checklist); Code, Name; ⋮ Edit, View; Create, Filters (Name, Code)                                                                   |
 | Checklist / Additional Information  | Create, Edit, View; the table's icons                   | Name, Status (Deactive / Active), Description, Additional Information table; a field: Name, Type (Number, String, Date, Boolean), Required, Min / Max or Min / Max Length                                      |
 
@@ -888,12 +1050,31 @@ How it works:
   records a joining date after the last working date.
 - **Checklist tab**: the fields of the active Off Boarding Checklists (Number with min / max,
   String with length limits, Date, Boolean), checked on Save.
-- **Employee card**: Age, Email and Phone are sample values worked out from the person (the mock
-  directory has none); Experience runs from the joining date to the last working date.
+- **Employee card**: filled as soon as a person is picked, from their Talent Management record
+  (Age, Email and Phone are sample values there); Experience runs from the joining date to the
+  last working date. Notice Period Days fills in the Last Working Date.
 - **Sample data**: six asset types (Printer inactive), nine assets, six allocations; Payroll's two
   leavers: Talha Aziz (pending: his clearance for a laptop and phone is with HR, his settlement is
   open) and Nida Hassan (completed); the "Off Boarding Checklist" (ECL-00001) with Asset Clear
   (date, required), Exit Interview Done, Notice Days Served and Handover Notes.
+
+## Separation Management and Configuration
+
+Both sidebar entries open a landing page (`components/layout/module-hub.tsx`) that links to
+screens built in other modules, as cards in sections. There is no Figma frame for either, so they
+use the app's white card, headings and icons. A card shows only when the user may view a screen
+under its permission prefix, as the sidebar decides; a section with no card left is dropped, and
+a user with none sees a short note.
+
+| Page                  | Route                    | Cards                                                                                                                                                                                                               |
+| --------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Separation Management | `/separation-management` | Exit process: Resignation Requests (pending), End of Employment (pending), Asset Clearance Form (in progress), Final Settlement (open); Former employees: Rehire (completed records); Setup: Off Boarding Checklist |
+| Configuration         | `/configuration`         | Assets: Company Assets, Asset Types; Requests: Request Restriction, Delegation, Request Flows; Checklists: Off Boarding Checklist; Module settings: Attendance, Leave and Payroll Settings, Control Panel           |
+
+The figures in brackets are live counts: the list's own endpoint with `pageSize=1` and the status
+that waits on someone, read from `meta.total` (`separation-management/hooks/use-hub-count.ts`).
+A count is fetched only when its card shows, and sits under the list's query key, so the list's
+changes refresh it. The bulk approval of clearances stays on the Asset Clearance Form page.
 
 ## Project Management
 
@@ -916,7 +1097,7 @@ colours, sizes and radii come from the CSS exports; the icons and the Create Wor
 illustration are the design's own vectors.
 
 Code: `src/features/project-management` (types, constants, API, hooks; `components/layout` for
-the panel, landing and dashboards; `create-workspace`, `workspace`, `task-fields`, `comments`),
+the panel and landing; `dashboards`, `create-workspace`, `workspace`, `task-fields`, `comments`),
 mocks in `src/mocks/project-management`, routes under `src/routes/_app/project-management`.
 
 | Screen                  | How to open it                                                                         | What it does                                                                                                                                                                                                                |
@@ -928,7 +1109,7 @@ mocks in `src/mocks/project-management`, routes under `src/routes/_app/project-m
 | Task fields             | The List view's cells                                                                  | Assignees, dates and recurrence, priority, tags and labels, dependencies, status and task type, story points, time estimate and tracking, files, and the read-only columns                                                  |
 | Comments                | A task's comment controls                                                              | Threads with Mark as Resolve, assignment, replies, @mentions of people and tasks, likes, emoji, edit, copy link, delete                                                                                                     |
 | Sharing & Permissions   | Task row menu → Sharing & Permissions                                                  | Share as a list view or a page, invite by email, people with Full Edit / Edit All / View, private link, link for anyone with a validity period and access limit, the task properties shown                                  |
-| Dashboards              | Sidebar → Home / Workspace / Project / Task Dashboard                                  | Not designed in either file: a placeholder says so                                                                                                                                                                          |
+| Dashboards              | Sidebar → Home / Workspace / Project / Task Dashboard                                  | Not designed in either file; built in the module's look (see "Dashboards" below)                                                                                                                                            |
 
 How it works:
 
@@ -938,14 +1119,98 @@ How it works:
   its owner and members only.
 - **Sample data**: "UX/UI Design Team Work Space" (favourite) with the folders UX Design Process
   and User Research & Planning from the Workspace Navigation frame, seven tasks (two subtasks),
-  tags, labels and a comment thread; "User Research & Planning" and "QA Testing Phase" (both
-  empty).
+  tags, labels and a comment thread; "User Research & Planning" (empty); "QA Testing Phase"
+  with the overdue examples: two open tasks past due (one assigned to Shelley, one with Areeba
+  Hameed's extension request waiting) and one closed late. Shelley has two reminders, one sent.
+- **Board and Table views** (not drawn; layouts approved 27 Oct 2026): `?view=board` and
+  `?view=table`, from "+ View" or a workspace that has them. Both read the List view's tasks and
+  follow its search, Filters and permissions. **Board**: a column per status with the top-level
+  tasks as cards (code, priority, due date in red when overdue, Closed late, people, subtasks,
+  comments, the row menu); drag a card onto another to take its place and status, onto a
+  column's free space or with its **Move** menu to go last there; **Add Task** at a column's foot
+  (the view bar's Add Task opens the first column's). Columns scroll sideways on narrow screens.
+  **Table**: every column (hidden or deleted ones in the List view too) in one table, not
+  grouped by status, with the List view's cells, popups, row menus, ticking and bulk delete; the
+  header stays in view while the rows scroll; headers sort but do not hide, delete or move
+  columns (that stays in the List view); dragging reorders rows without changing their status;
+  **Export CSV** saves the tasks shown, subtasks included (built in the browser: the API has no
+  task export).
+- **Calendar and Timeline views** (not drawn; layouts approved 27 Oct 2026): `?view=calendar`
+  and `?view=timeline`, over the same tasks, search and Filters. Their settings stay in the
+  address (`on` the day shown, `calendar=week`, `scale`, `group`), not saved for everyone.
+  **Calendar**: a month (weeks from Sunday, as the List view's date picker) or a week, each task
+  on its due date (three a day in a month, then "+n more", which opens that week); drag a task
+  to another day to move its due date (a start date keeps its distance), or onto a day from
+  **Unscheduled** (open tasks with no due date) to give it one; a chip opens the task with its
+  Start and Due Date cells and "Open in List view". On a phone it is a list of the days with
+  tasks. **Timeline**: a bar from start to due date (one day when there is only one), grouped by
+  list, assignee or status, over two weeks, a month or a quarter, with a red line for today;
+  drag a bar to move both dates or an end to change one; the arrow keys move it a day (Shift:
+  the due date only); a bar opens the task like a chip does. Tasks with no dates are listed
+  under Unscheduled, and those outside the range are counted.
+- **Activity and Team views** (not drawn; layouts approved 27 Oct 2026): `?view=activity` and
+  `?view=team`. **Activity**: the workspace's history (`GET …/workspaces/{id}/activity`) newest
+  first, grouped by day (Today, Yesterday, then the date), one sentence a line ("Haroon Jalani
+  changed Status of Iteration List from To Do to In-Progress") with the person's avatar and the
+  time; a filter bar with search (task, code or person), Action, From and To, and **Export CSV**
+  of the lines loaded; 30 lines at a time with **Load more**. A task's name opens it in the List
+  view (a deleted task's name is plain text). The view has its own filters: the banner search
+  and Filters are about tasks. **Team**: a row per member (busiest first), then **Unassigned**:
+  avatar, name and role, the open tasks as a bar stacked by status (the workspace's status
+  colours, with a legend; the busiest person's bar is the full track; hover a part for its
+  count), and Open, Overdue (red when above 0), Due this week, Done in the last 30 days, story
+  points and the estimate of the open tasks. A row opens the List view filtered to that person
+  (Unassigned: to the new **No assignee** filter). A task shared by two people counts for both;
+  the banner search and Filters narrow what is counted. When the view is narrower than 56rem (a phone, or a laptop with the Workspaces panel open) each row stacks, with the numbers labelled. Both are built in the browser except the history: Team reads the List
+  view's tasks (there is no workload route).
+- **Overdue handling** (not drawn; from the BRD): the view bar's **Overdue** tab (after the views,
+  with the count of open overdue tasks) lists Overdue and Closed late tasks with both due dates
+  and each one's extension request. Assignees **Request Extension** (there or in the row menu: a
+  new due date and a reason, one at a time); managers and above **Approve** (the due date moves)
+  or **Reject** (with remarks) a request they did not make. The List view marks a past due date
+  "overdue" in red and puts a **Closed late** chip after a late task's name. No story-point
+  penalty is shown: its size is not defined (Backend Dependencies T5).
+- **Reminders** (side menu → Project Management → Reminders; not drawn): your reminders, soonest
+  first, with the sent and past ones on request; Change time (the Remind Me calendar) and
+  Delete. They are not delivered as notifications until the server sends them (T4).
 
 - **Templates** (Define Workflow): each template starts with the views, statuses and organizer
   features its Customize Template summary lists. Project Management, for example, has List,
   Board, Calendar, Gantt and Team, and To Do > Planning > In-Progress > At Risk > Update Required
   > Completed. The status templates (Custom, Content, Kanban, Marketing, Scrum) carry the lists
   > of their status pages.
+
+### Dashboards
+
+No Figma frame exists for the four dashboards in the Project Management menu; they were designed
+in the module's look (BRD row 19) and built in `components/dashboards`. Every figure is computed
+from calls the module already makes (the workspace list, then each workspace and its task list,
+plus comments and attachments where a widget needs them); there is no cross-workspace endpoint
+yet (Backend Dependencies T7), and each dashboard's header says which workspaces it covers. The
+mapping is in `docs/backend-mapping/pm-dashboards.md`.
+
+| Screen              | Route                                                      | Holds                                                                                                                                                                                                                      |
+| ------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Home Dashboard      | `/project-management/home`                                 | Key figures, Recents, My Work (by due date), Agenda (a 7-day strip with tasks and reminders), Activity KPI (Mine / Team, due vs completed per day, table view), Assigned Comments (Resolve), Assigned to Me, Personal List |
+| Workspace Dashboard | `/project-management/workspace-dashboard?workspace=`       | Key figures, Workload by Status, Folders (each a project), Lists (progress per list), Recents, Docs, Bookmarks (favourites), Resources and files (task attachments by type)                                                |
+| Project Dashboard   | `/project-management/project-dashboard?workspace=&folder=` | A project is a folder: the Workspace Dashboard's widgets for its lists and tasks, plus Tasks by Assignee and the workspace's other projects                                                                                |
+| Task Dashboard      | `/project-management/task-dashboard?workspace=&show=`      | Unassigned, In Progress, Completed, Completed this week (each tile opens its tasks), Due This Week or Overdue, Workload by Status (by status group across workspaces), Totals and Open by Assignee, Latest Activity        |
+
+Decisions:
+
+- A project is a folder. Bookmarks are the caller's favourites. Latest Activity is derived from
+  each task's created and closed dates and latest comment (the workspace history endpoint, which
+  the Activity view reads, is per workspace and paged, so the dashboards do not use it).
+- Weeks start on Sunday, as in the Calendar view. A task is done in a Done or Closed status.
+- Charts are inline SVG in the Payroll dashboard's manner, with colours checked by the dataviz
+  palette script: status groups amber / blue / aqua / purple, open vs done in two purple steps,
+  completed in purple over grey due columns. Every chart has its figures as text or a table view.
+- **Recents, Docs and the Personal List have no backend** (T7, T1, T11): against the real API
+  they show "Not available yet"; in mock mode the development mock answers and the widget is
+  marked "Sample data". Recents will only show real visits once the workspace page and task screen
+  record them (`POST /projects/recents`).
+- Every dashboard has loading, empty, error and no-access states (`projects.workspaces.view`; a
+  workspace that answers 403 / 404).
 
 ### Project Management: departures from the design
 
@@ -957,7 +1222,7 @@ Panel, landing, comments, sharing and dashboards:
   collapses the tree and "+" adds a folder, list or doc to the open workspace. Docs have no
   screen, so a doc row is not a link.
 - **Dashboards**: Home, Workspace, Project and Task Dashboard are in the menu but drawn in neither
-  file; each opens a placeholder that says so.
+  file; they are built in the module's look from the BRD (see "Dashboards" above).
 - **Comments**: a comment's emoji button opens a reply with the chosen emoji (there is no
   reaction model behind the drawn button); the mention menu's Locations tab is disabled (the app
   has no locations); a mention is written into the text as `@Name` or a task's ID and drawn blue
@@ -1030,9 +1295,9 @@ Task fields:
 
 Workspace page and List view:
 
-- **Only the List view is drawn.** Board, Calendar, Timeline, Activity and the other views open
-  a "This view is not designed yet" state with a way back to List; "+ View" adds a view the
-  workspace does not have yet.
+- **Only the List view is drawn.** Board, Table, Calendar, Timeline, Activity and Team are built
+  from approved layouts (above); Gantt, Workload and Mind Map open a "This view is not designed
+  yet" state with a way back to List; "+ View" adds a view the workspace does not have yet.
 - **Banner**: the four round buttons get their labels (Workspace Settings, Add Description,
   Change Cover, Quick Action Menu) from the design's hidden layers. Workspace Settings holds
   Rename, Add to Favorite and Copy link; Quick Action Menu links to the four dashboards. Change
@@ -1118,7 +1383,8 @@ How it works:
 ### Manpower Planning: departures from the design
 
 - **Copy fixed**: Postion → Position, Divison → Division, Coast Center → Cost Center,
-  IsCurrentBdugetDurationPeriod → IsCurrentBudgetDurationPeriod. The two "Details" headings of the
+  IsCurrentBdugetDurationPeriod → "Current budget duration" (column "Current"). Amounts show with
+  separators and counts without leading zeros. The two "Details" headings of the
   existing-positions table (a pasted duplicate) are Department and Station.
 - **Controls that could not work as drawn**: Total Monthly Amount is a read-only computed total
   (drawn as a dropdown). In the Employee Position popup, Station and Sub Department are selects
@@ -1208,6 +1474,188 @@ Code: `src/features/benefits` (types, constants, `categories.ts`, API, hooks wit
   the frames' own colours.
 - **Not drawn**: the Enrollment Windows, Employees and Files tabs and the Update Information
   dialog, built minimally in the design's table style.
+
+## Talent Management
+
+**Talent Management** in the sidebar opens the employee directory (`src/features/talent-management`,
+routes under `src/routes/_app/talent-management`). It talks to the backend's `/api/employees…`
+endpoints, and the mock answers the same endpoints (`docs/backend-mapping/talent-management.md`;
+the API extract, exports and notes are in `HRango2/Design/talent-management`).
+
+No frame draws this module in the current web style. The **Employee Record** list follows the
+older web frame `1091:2428`, the profile's layout the older **Profile Dashboard** `765:234`, and
+the profile's tabs, fields and popups the **mobile app** frames `2423:17024 – 2423:19155`. All of
+it is drawn in the app's current look (navy shell, the Leaves / Benefits cards, tables and
+dialogs, Poppins).
+
+| Screen          | How to open it                                | What it does                                                                                                                                                                                   |
+| --------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Employee Record | `/talent-management` (→ `/employees`)         | Tiles Total Employees, Male, Female, On Probation; the Employees table (Sr. #, Staff, Reg. #, Department, Designation, Action) with Search, a Filter panel and paging; a row opens the profile |
+| Add / Edit      | + Add New, or Edit in a row's menu            | The employee record in four groups (personal, contact, organisation, employment) with the organisation lookups and line manager; server field errors on the fields                             |
+| Profile         | a row, or `/talent-management/employees/<id>` | Photo card (photo upload, Update Profile, ⋮ Edit Employee / Deactivate), Personal Information and Related links beside the tabs                                                                |
+| Personal        | the Personal tab                              | Full Name, Date of Birth, Hire Date, CNIC (hidden without the right), Reg. #, Tenure, Emergency Contact #, Phone No, Marital Status, then the rest; emergency contacts                         |
+| Work            | the Work tab                                  | Payroll History (pay slips), Loan Summary (Loan & Advances requests), Performance Details (View More opens the person's goals), Attendance this month, Bank Accounts                           |
+| Documents       | the Documents tab                             | Academics, Contracts, documents (Resume…) and Experience, with Add Academic, Upload Document, Add Professional Experience and Add Contract; edit and delete on each card                       |
+| Dependents      | the Dependents tab                            | Dependant cards with Add Dependents (Male / Female, Relation, First and Last Name, Occupation), edit and delete                                                                                |
+| Benefits        | the Benefits tab                              | Employee Benefits (empty: the Benefits API has no contributions per person) and the person's Payroll benefit accounts                                                                          |
+| Leave           | the Leave tab                                 | Leave Overview This Month per leave type and the person's leave applications                                                                                                                   |
+| Skills          | the Skills tab                                | Skill chips with their level; Add Skills, edit by clicking a chip, × removes                                                                                                                   |
+
+The sub menu holds Employees only: Transfer, Salary Revision and Employee Accounts stay under
+Requests and Payroll (the profile's Related card links them for the person). Work, Benefits and
+Leave read the Payroll, Requests, Attendance and Leaves APIs the app already uses.
+
+### Talent Management: departures from the design
+
+- **Look**: the older frames' charcoal / purple shells, SF Pro and Lexend become the current navy
+  look in Poppins; the mobile chrome (status bar, purple header, bottom tabs, floating buttons) is
+  dropped, and the floating add buttons are buttons ("Add Dependents", "Add Skills", an "Add" menu
+  on Documents).
+- **Employee Record**: "On Probabtion" reads "On Probation"; the tiles count the real data;
+  the title is 20px (drawn 18) and the person cell 11 / 9px (drawn 9 / 7) for readability; Search
+  is a box with a Search button; the Filter panel (status, branch, department, designation,
+  inactive people), the pager and a status chip beside anyone not active are added. Male and
+  Female are counted in the browser, because the list has no gender filter.
+- **Add / Edit Employee** has no frame; it is laid out like the other modules' forms. CNIC changes
+  only through Update Profile (the API's identity endpoint).
+- **Profile Dashboard parts not built**: the Attendance Analytics chart, Recent Activities, the
+  Leave Balance donut and its own Employee Details tabs (the mobile tabs cover them). On a page
+  under 56rem wide the side column stacks above the tabs.
+- **Update Profile** has Cancel / Update Profile as its layer copy says; the stray "Change
+  Password" layer of the popups is dropped.
+- **Documents**: an Upload Document popup is added (the add menu names it, no frame draws it); a
+  file in Add Work Experience is kept as an experience-letter document, since the API's experience
+  has no file; the contract's Status switch means "In Process" (no end date), since the API works
+  the status out from the dates; Contract Duration offers 3 / 6 / 12 / 24 / 36 months or Custom.
+- **Dependents**: Male / Female narrows the Relation list; the card's icon follows the relation.
+- **Benefits**: "Company Contibutions" reads "Company Contributions".
+- **Leave**: statuses use the Leaves module's labels ("Pending", not "Processing"); View Calendar
+  opens Leave Applications filtered to the person, as there is no leave calendar.
+- **Placeholders**: the frames' John Michael / Hamza Ashraf content becomes each person's own data.
+- **Icons not in the exports**: the four tile icons, the mail / phone / info buttons and small
+  controls use lucide icons; the profile's section icons are cut from the mobile frames.
+
+## Recruitment
+
+A sidebar tree (Dashboard, Job Openings, Candidates, Applications, Interviews, Offers, Settings),
+built 28 Oct 2026 in `src/features/recruitment` (routes under `src/routes/_app/recruitment`,
+mock in `src/mocks/recruitment`) against `/api/recruitment/…` (OpenAPI of 26 Oct 2026). No
+current-style frame exists (only the older Recruitment Dashboard, whose tiles and charts the
+dashboard follows), so it is drawn in the back-office look: Payroll's record-page kit, white cards
+on the lavender page, navy buttons, status chips that always carry their text.
+
+| Screen       | How to open it                                                  | What it does                                                                                                                                                                                                        |
+| ------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dashboard    | Recruitment → Dashboard (`/recruitment/dashboard?year=&month=`) | Tiles (openings, applications, interviews, offers accepted, hired, rejected), Job Statistics per month (legend, tooltips, table view), Pipeline by Stage, Upcoming Interviews, Recent Applications, Recent Activity |
+| Job Openings | Recruitment → Job Openings                                      | Status chips and filters; New / Edit (drafts); detail with counts per stage; Publish, Hold, Close, Reopen, Delete by status                                                                                         |
+| Candidates   | Recruitment → Candidates                                        | Search, source and city filters; Add / Edit with a CV upload; detail with their applications; Delete when unused                                                                                                    |
+| Applications | Recruitment → Applications (`?mode=board\|list`)                | The pipeline board (⋮ "Move to …" or drag and drop) or a list; filters; Move, Reject (with a reason), Withdraw, Hire, Schedule Interview, Make Offer; detail tabs Overview / Timeline / Interviews / Offers         |
+| Interviews   | Recruitment → Interviews                                        | Grouped by day, Upcoming (the default) / All dates, All / Mine, status chips, filters; Schedule / Edit, Complete (held or no-show), Cancel (with a reason), Evaluate (stars and a recommendation)                   |
+| Offers       | Recruitment → Offers                                            | Status chips; New / Edit (drafts) with the offer letter; Send, Record Response, Withdraw, Delete; an accepted offer leads to Hire                                                                                   |
+| Settings     | Recruitment → Settings                                          | Rejection reasons: add, edit, order, switch on / off, delete when unused                                                                                                                                            |
+
+How it works:
+
+- `api/recruitment.dto.ts` mirrors the schemas; the mappers narrow statuses, read instants as UTC
+  and send numeric ids as numbers; the queries sit under `['recruitment']` and refresh after every
+  change. Search, filters, page, the open record (`view`), the form (`dialog`, `edit`) and tabs
+  live in the URL.
+- Forms put 422 / 409 `fieldErrors` on their fields; actions toast the API's message; edits,
+  deletes and steps send `rowVersion`.
+- The board reads one `stage=` page per column (20 cards, then Show more); the dashboard's
+  Pipeline by Stage is one `pageSize=1` read per stage (the dashboard route has no per-stage
+  counts).
+- Hire (`POST …/hire`) creates the employee and the application then links to their Talent
+  Management profile; in the mock it adds them to the Talent Management employees (not to the
+  static directory the pickers read, and without a salary).
+
+Assumptions to confirm with the backend: the OpenAPI lists no status values for openings
+(assumed draft, open, on_hold, closed), interviews (scheduled, completed, no_show, cancelled) or
+offers (draft, sent, accepted, declined, withdrawn, expired); application stages are `StageIn`'s
+five plus hired, rejected and withdrawn. Permission codes are `recruitment.<screen>.<action>`
+(for example `recruitment.openings.publish`, `recruitment.applications.hire`), assumed.
+Departures: Reject asks for a reason and Cancel Interview for remarks (both optional in the
+API); Employment Type shows only when its lookup has entries; City is a country picker plus that
+country's cities.
+
+## Performance
+
+A sidebar tree (Overview, Goals, KPIs, Review Cycles, Appraisals, Reviews), built 28 Oct 2026 in
+`src/features/performance` (routes under `src/routes/_app/performance`, mock in
+`src/mocks/performance`) against `/api/performance/…`. No frame draws it (the older
+"Performance (Task)" frame could not be read): the screens take the Talent Management / Leaves
+look. Payroll Settings' Appraisal entry shows the same Appraisals beside its menu
+(`AppraisalsView`, props-driven).
+
+| Screen        | How to open it                                          | What it does                                                                                                                                                                              |
+| ------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overview      | `/performance` (→ `/overview?employeeId=`)              | Goal tiles and weighted progress, the current appraisal's stages, Goals by Status and Ratings by Cycle (each with a table view), upcoming goals; "View for" picks another person          |
+| Goals         | `/performance/goals?tab=my\|team\|all`                  | Goals with weight, due date, KPI, progress bar and Overdue / Locked chips; search and Filters; Add / Edit, detail with the check-in history, Check In, Delete                             |
+| KPIs          | `/performance/kpis`                                     | The KPI library with filters; Add / Edit / Delete (a KPI in use is refused: make it inactive)                                                                                             |
+| Review Cycles | `/performance/cycles`                                   | Cycles with form, period, due dates and progress; Add / Edit; detail with stage counts, Add Participants (people or a department), Remove, Launch (draft), Close (active), Delete (draft) |
+| Appraisals    | `/performance/appraisals`, Payroll Settings → Appraisal | My / Team / All with self, manager and final scores; one appraisal in place: stages, scores, both reviews side by side, notes, goals; Finalise                                            |
+| Reviews       | `/performance/reviews?tab=my\|team\|all`                | The caller's self reviews and the manager reviews they write, waiting ones first; a level and a comment per criterion, overall comments, Save Draft / Submit                              |
+
+How it works:
+
+- DTOs mirror the schemas, mappers build the feature's types (ids go out as numbers through
+  `toApiId`); every mutation refetches the `performance` queries, also after a failure, so a 409
+  brings the new `rowVersion`. Forms put 422 `fieldErrors` on their fields (`ratings.0.rating`
+  too).
+- Status rules (enforced by the mock, mirrored in the buttons shown): a closed cycle cannot
+  change; Launch needs a draft with participants; Close needs an active cycle; reviews only while
+  the cycle runs, self review first, each by its owner; Finalise once both are in; goals of a
+  closed cycle or a finalised appraisal are locked.
+- Scores (mock): a review is its ratings weighted by criterion; the goals score is the weighted
+  progress placed on the scale; the suggested final score is the form's goals weight of the goals
+  score plus the rest from the manager score. Finalise pre-fills the suggestion.
+
+Assumptions and gaps: permission codes are `performance.<screen>.<action>` (`PERF_CODES`),
+assumed; the API has no remove-participant call, so a participant is removed by deleting their
+appraisal; a cycle's type and rating scale come from its appraisal form; the overview guesses
+whether an appraisal has a self review from its due date and assumes a 0–5 scale for the ratings
+chart. Not built: the letter upload on Finalise, and screens for increments, appraisal forms and
+rating scales.
+
+## Custom Form
+
+A sidebar tree (Forms, My Forms, Responses), built 28 Oct 2026 in `src/features/custom-forms`
+(routes under `src/routes/_app/custom-form`, mock in `src/mocks/custom-forms`): build forms for HR
+processes, send them to people and collect the answers. Settings → Custom Forms opens the same
+Forms list. No frame draws it, and **the backend has no endpoints for it yet** (Backend
+Dependencies "Custom Form"): every call is a typed pending function answered by the development
+mock. In mock mode a "Sample data" badge sits beside each title; against the real API each page
+says "Waiting for the server".
+
+| Screen    | How to open it                                                      | What it does                                                                                                                                                                                                                    |
+| --------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Forms     | `/custom-form` (→ `/custom-form/forms`), or Settings → Custom Forms | Every form with its status (Draft / Published / Closed), audience, questions, responses and closing date; status chips and search; ⋮ Edit, Publish / Reopen, Close, Duplicate, Delete                                           |
+| Builder   | + New Form, a form's title, or `?edit=new\|<id>`                    | Details, Audience (everyone, departments, branches, people), One response per person, Anonymous; questions and sections with up / down / drag, Duplicate, Delete; a live preview beside them (Build / Preview tabs when narrow) |
+| My Forms  | `/custom-form/my-forms`                                             | Assigned to me (To do / Submitted / Closed, Fill in) and My submissions (View)                                                                                                                                                  |
+| Responses | `/custom-form/responses?formId=`                                    | Pick a form: its overview, the counts of each choice question as bars with numbers, the answers with one column per question, View one, Export CSV                                                                              |
+
+How it works:
+
+- Questions: short text, long text, number, date, single choice, multiple choice, dropdown,
+  checkbox, file upload and rating, each with a label, help text, Required, options and min / max
+  where they mean something (length, value, picks, a rating's 3–10 scale).
+- One fill form (`FillForm`) renders a form from its definition and builds its zod schema from
+  the questions; the builder's preview and My Forms both use it. Server errors on
+  `answers.<fieldId>` land on the questions. Files go to `POST /files` (module `core` until the
+  API has a `forms` module) and the answer sends the upload's id.
+- Editing a form that has responses is limited, with a warning: rewording, reordering, new
+  questions and options, Required, settings and audience are allowed; a question with answers
+  keeps its type and its options and cannot be deleted, and anonymity is fixed. Delete: drafts,
+  forms without responses, and closed forms (with their responses, after a confirm). A passed
+  closing date reads as closed; Reopen publishes a closed form again.
+- Anonymous hides the author from HR; the server still keeps it for one response per person and
+  for the author's own My submissions. CSV is built in the browser from every page of responses.
+- Permission codes (proposed): `forms.forms.view|create|edit|publish|delete`,
+  `forms.responses.view|export`, `forms.my_forms.view|submit`.
+
+Not built: reordering options, min / max for dates, conditional logic, editing a submitted
+response, notifying the audience on publish, and touch drag (the up / down buttons cover touch
+and keyboard).
 
 ## Responsive behaviour
 
@@ -1313,9 +1761,11 @@ Defined and validated in `src/lib/env.ts` (Zod); typed in `src/vite-env.d.ts`; d
 | `VITE_MOCK_LATENCY_MS` | `400`                        | Simulated latency (0 in tests)                   |
 | `VITE_ENABLE_DEVTOOLS` | `false`                      | TanStack Query/Router devtools (dev builds only) |
 
-`.env.production` keeps mocks on because there is no backend yet. With a real API, set
-`VITE_ENABLE_MOCKS=false` and `VITE_API_BASE_URL`; MSW is a lazily imported chunk and is then never
-downloaded.
+`.env.production` turns the mocks off and uses `VITE_API_BASE_URL=/api`; put the API's full URL
+in `.env.production.local` (git-ignored; the API allows any origin) and `npm run build` gives a
+bundle that works from any machine on the network; MSW is a lazily imported chunk and is then never
+downloaded. Change that URL when the API moves. `.env.backend` (`npm run dev:api`) keeps `/api`
+and proxies it instead, so development never depends on CORS.
 
 ## Design tokens and assets
 
@@ -1418,47 +1868,63 @@ Rules where a frame could not be followed:
 
 `npm run test:run` — one test per layer, all against the same MSW handlers the browser uses:
 
-| Layer                  | File                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Store                  | `src/stores/ui-store.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Lib                    | `src/lib/api-error.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Schema                 | `src/features/warning/schemas/policy-form.schema.test.ts`                                                                                                                                                                                                                                                                                                                                                                        |
-| Mutation hook          | `src/features/warning/hooks/use-warning-policy-mutations.test.tsx` (optimistic delete + rollback)                                                                                                                                                                                                                                                                                                                                |
-| Component              | `src/components/layout/pagination.test.tsx`                                                                                                                                                                                                                                                                                                                                                                                      |
-| Routing / end-to-end   | `src/app/router.test.tsx` (auth redirect, 404, create flow, validation)                                                                                                                                                                                                                                                                                                                                                          |
-| Penalty schema         | `src/features/warning/schemas/penalty-form.schema.test.ts`                                                                                                                                                                                                                                                                                                                                                                       |
-| History grouping       | `src/features/warning/utils/history-grouping.test.ts`                                                                                                                                                                                                                                                                                                                                                                            |
-| Warning overview       | `src/features/warning/components/overview/warning-overview.test.tsx` (History, Column Preferences, create penalty)                                                                                                                                                                                                                                                                                                               |
-| Settings schemas       | `src/features/settings/schemas/org-forms.schema.test.ts` (required fields, coordinates, head count, mappers)                                                                                                                                                                                                                                                                                                                     |
-| Settings flows         | `src/features/settings/settings.test.tsx` (sidebar group, create branch, unsaved-changes prompt, duplicate name, refused delete)                                                                                                                                                                                                                                                                                                 |
-| Shift maths            | `src/features/roster/utils/shift-time.test.ts` (minutes, overnight shifts)                                                                                                                                                                                                                                                                                                                                                       |
-| Roster schema          | `src/features/roster/schemas/roster-group-form.schema.test.ts` (working days, Apply For All, mapper)                                                                                                                                                                                                                                                                                                                             |
-| Roster flows           | `src/features/roster/roster.test.tsx` (list, refused delete, add with Apply For All, View, enroll, sort, discontinue)                                                                                                                                                                                                                                                                                                            |
-| Schedule dates         | `src/features/scheduling/utils/schedule-dates.test.ts` (periods, week bands, repeat and step, hours, CSV import)                                                                                                                                                                                                                                                                                                                 |
-| Scheduling flows       | `src/features/scheduling/scheduling.test.tsx` (My / All, view and delete, multiselect, swap, create, default shift, range delete)                                                                                                                                                                                                                                                                                                |
-| Attendance engine      | `src/mocks/attendance/engine.test.ts` (late, relaxation, overtime and breaks, holiday, weekend, sandwich, warnings, short day, machine reads)                                                                                                                                                                                                                                                                                    |
-| Attendance utils       | `src/features/attendance/utils/attendance-utils.test.ts` (formats, row actions, edit form rules, log CSV read and write)                                                                                                                                                                                                                                                                                                         |
-| Attendance flows       | `src/features/attendance/attendance.test.tsx` (overview grid, subordinates, my sheet, clock in, history, edit, absence, comment)                                                                                                                                                                                                                                                                                                 |
-| Settings and Logs      | `src/features/attendance/attendance-settings.test.tsx` (dashboard punch off, break type and duplicate, holiday rule, manual punch, machine and file import)                                                                                                                                                                                                                                                                      |
-| Request flow rules     | `src/mocks/requests/flow.test.ts` (line manager then HR, delegates, rejection, cancellation)                                                                                                                                                                                                                                                                                                                                     |
-| Request flows          | `src/features/requests/requests.test.tsx` (create, approve into Attendance, reject reason, cancel, delegates, swap, consent, roster)                                                                                                                                                                                                                                                                                             |
-| Request Settings       | `src/features/requests/request-settings.test.tsx` (create and bulk-delete restrictions, closed date stops a punch, delegations, a person's chain, looping flow, conditions)                                                                                                                                                                                                                                                      |
-| Transfer               | `src/features/requests/transfer.test.tsx` (form errors, Regenerate letter, submit, approve into the transfer log, Delegates bulk approve, History)                                                                                                                                                                                                                                                                               |
-| Standard request types | `src/features/requests/standard/kinds/*/*.test.tsx`: Rest Days (scopes, create, approve into the schedule, cancellation, bulk), Leave (balance, short leave), Loan & Advances (guarantors, approver fields, repayments, Settings), Work From Home (week strip, schedule), Travel (details, hotel, ticket), Promotion (salary revision), Resignation (End of Employment), Relaxation (shift times, attendance)                    |
-| Project Management     | `src/features/project-management/*.test.tsx`: the panel, landing, dashboards, sharing, comments and moving a task across workspaces (`pm-shell`); the whole Create Workspace wizard with its views, statuses and organizer pages (`create-workspace`); the List view, its column and row menus and role permissions (`workspace`); every task field popup (`task-fields`)                                                        |
-| Manpower Planning      | `src/features/manpower-planning/manpower-planning.test.tsx` (plans and filters, Delete Plan Year, Add Planning with new and existing positions, imports, details / approvals and the edit lock, approving a budget into open positions, rejecting and re-editing one, budget deletes, a load error with retry, JD download and open-position edit / close, budget duration, position titles, employee position and sheet upload) |
-| Leaves                 | `src/features/leaves/leaves.test.tsx` (sub menu and tabs, My Leaves and Apply Leave with validation, Leave Applications approve / reject into the shared balance, General Settings save, Leave Types with dependent fields and a refused delete, Leave Policies create and enroll)                                                                                                                                               |
-| Benefits               | `src/features/benefits/benefits.test.tsx` (plan years under the stats row, New Plan Year, the Edit Plan Year steps, delete with confirm, the two-step enrollment window and a Qualifying Life Event, missing information to Employees, Plans with a refused delete, the Add New Plan menu and form validation)                                                                                                                   |
-| Pay engine             | `src/mocks/payroll/engine.test.ts` (expressions, the design's "Unsupported Operand Types" error, tax slabs, every seeded run)                                                                                                                                                                                                                                                                                                    |
-| Payroll Settings       | `src/features/payroll/payroll-settings.test.tsx` (menu and sub-tabs, configuration, fiscal year, pay item expression, tax slab, group benefit, bank)                                                                                                                                                                                                                                                                             |
-| Monthly, Dashboard     | `src/features/payroll/payroll-monthly.test.tsx` (icons by status, create → employments → run → close, errors and history, yearly chart table view)                                                                                                                                                                                                                                                                               |
-| Pay Slips              | `src/features/payroll/payroll-payslips.test.tsx` (My accounts, hold / pay / recalculate, manual edit with History, slip document, salary sheet, FS close)                                                                                                                                                                                                                                                                        |
-| Payroll records        | `src/features/payroll/payroll-records.test.tsx` (daily wages and vouchers, employee voucher, opening balance, account debit, % revision, report)                                                                                                                                                                                                                                                                                 |
-| Leave Encashment       | `src/features/payroll/payroll-leave-encashment.test.tsx` (list, all employees through payroll, manual by voucher, nobody left, view, delete, paid lock)                                                                                                                                                                                                                                                                          |
-| Assets                 | `src/features/assets/assets.test.tsx` (status chips, create with validation and History, deactivate refused while allocated, asset types, allocate and deallocate)                                                                                                                                                                                                                                                               |
-| Clearance forms        | `src/features/assets/clearance.test.tsx` (list, bulk approve frees the assets, unapprove gives them back, approved delete refused, prefilled create)                                                                                                                                                                                                                                                                             |
-| End of Employment      | `src/features/offboarding/end-of-employment.test.tsx` (scopes, notice period and Final Settlement, Asset Clearance opens the form, checklist error, rehire, completed locked)                                                                                                                                                                                                                                                    |
-| Off Boarding Checklist | `src/features/offboarding/checklist.test.tsx` (list and menu, create with Number and Date fields and Min / Max check, edit and delete a field, read-only View)                                                                                                                                                                                                                                                                   |
+| Layer                  | File                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Store                  | `src/stores/ui-store.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Lib                    | `src/lib/api-error.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Schema                 | `src/features/warning/schemas/policy-form.schema.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Mutation hook          | `src/features/warning/hooks/use-warning-policy-mutations.test.tsx` (optimistic delete + rollback)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Component              | `src/components/layout/pagination.test.tsx`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Routing / end-to-end   | `src/app/router.test.tsx` (auth redirect, 404, create flow, validation)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Penalty schema         | `src/features/warning/schemas/penalty-form.schema.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| History grouping       | `src/features/warning/utils/history-grouping.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Warning overview       | `src/features/warning/components/overview/warning-overview.test.tsx` (History, Column Preferences, create penalty)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Settings schemas       | `src/features/settings/schemas/org-forms.schema.test.ts` (required fields, coordinates, head count, mappers)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Settings flows         | `src/features/settings/settings.test.tsx` (sidebar group, create branch, unsaved-changes prompt, duplicate name, refused delete)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Shift maths            | `src/features/roster/utils/shift-time.test.ts` (minutes, overnight shifts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Roster schema          | `src/features/roster/schemas/roster-group-form.schema.test.ts` (working days, Apply For All, mapper)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Roster flows           | `src/features/roster/roster.test.tsx` (list, refused delete, add with Apply For All, View, enroll, sort, discontinue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Schedule dates         | `src/features/scheduling/utils/schedule-dates.test.ts` (periods, week bands, repeat and step, hours, CSV import)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Scheduling flows       | `src/features/scheduling/scheduling.test.tsx` (My / All, view and delete, multiselect, swap, create, default shift, range delete)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Attendance engine      | `src/mocks/attendance/engine.test.ts` (late, relaxation, overtime and breaks, holiday, weekend, sandwich, warnings, short day, machine reads)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Attendance utils       | `src/features/attendance/utils/attendance-utils.test.ts` (formats, row actions, edit form rules, log CSV read and write)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Attendance flows       | `src/features/attendance/attendance.test.tsx` (overview grid, subordinates, my sheet, clock in, history, edit, absence, comment)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Settings and Logs      | `src/features/attendance/attendance-settings.test.tsx` (dashboard punch off, break type and duplicate, holiday rule, manual punch, machine and file import)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Overtime               | `src/features/attendance/attendance-overtime.test.tsx` (tabs and sub menu, Apply through the requests API, approve within the daily policy and shown on the time sheet, reject with a reason, bulk filing and Bulk Save, policy with leave and full-day slabs, refused delete while in use, overtime settings)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Overtime actions       | `src/features/attendance/attendance-overtime-actions.test.tsx` (edit and delete a pending request, edit refused once acted on, images added and removed from View, export with filters as CSV, forward, consent with a required reason to disagree, Reject Selected)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Work From Home         | `src/features/requests/standard/kinds/work-from-home/work-from-home.test.tsx` (week strip and save, approval and cancellation on the schedule, the Subordinates list and its `view=subordinates`, no Subordinates on other types)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Attendance sub menu    | `src/features/attendance/attendance-sub-menu.test.tsx` (Attendance Insights, Scheduling and Official Visits open beside the sub menu under `/attendance`, marked current, and Official Visits' Approvals tab stays there)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Request flow rules     | `src/mocks/requests/flow.test.ts` (line manager then HR, delegates, rejection, cancellation)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Request flows          | `src/features/requests/requests.test.tsx` (create, approve into Attendance, reject reason, cancel, delegates, swap, consent, roster)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Request Settings       | `src/features/requests/request-settings.test.tsx` (create and bulk-delete restrictions, closed date stops a punch, delegations, a person's chain, looping flow, conditions)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Transfer               | `src/features/requests/transfer.test.tsx` (form errors, Regenerate letter, submit, approve into the transfer log, Delegates bulk approve, History)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Standard request types | `src/features/requests/standard/kinds/*/*.test.tsx`: Rest Days (scopes, create, approve into the schedule, cancellation, bulk), Leave (balance, short leave), Loan & Advances (guarantors, approver fields, repayments, Settings), Work From Home (week strip, schedule), Travel (details, hotel, ticket), Promotion (salary revision), Resignation (End of Employment), Relaxation (shift times, attendance)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Project Management     | `src/features/project-management/*.test.tsx`: the panel, landing, dashboards, sharing, comments and moving a task across workspaces (`pm-shell`); the four dashboards, the agenda, resolving a comment, the personal list, chart table views, pickers, tiles, loading / empty / error / no access, a pending endpoint missing and phone width (`dashboards`); the whole Create Workspace wizard with its views, statuses and organizer pages (`create-workspace`); the List view, its column and row menus and role permissions (`workspace`); every task field popup (`task-fields`); the Overdue tab, extension requests and their answers, and the Reminders page (`overdue`); the Board view's columns, Move menu, drag and drop and Add Task, and the Table view's columns, sorting, fixed header menu and Export CSV (`views`); the Calendar's days, dragging, "+n more", Unscheduled, task popup and phone list, and the Timeline's bars, keys, dragging, grouping, scales and Unscheduled (`dated-views`); the Activity view's day groups, sentences, filters, recording of edits, Load more and Export CSV, and the Team view's rows, counts, legend, phone layout and opening the List view for a person or the unassigned tasks (`activity-team`) |
+| System Users, Roles    | `src/features/access/*.test.tsx`: users list and filters, create with password rules, roles, disable / enable, overrides, effective permissions, sessions, set password; roles, the permission editor (ticks, scopes, units, select all, save, unsaved guard), copy, retire / restore, delete refusals; the Control Panel Users redirect; Request Flows roles; error state and phone width; `src/app/layouts/account-menu.test.tsx` (Change Password)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Biometric Devices      | `src/features/attendance/biometric-devices*.test.tsx`: list and filters, create / edit with IP, port and unique serial checks, stale 409, delete refusals and Set Inactive, enrolments (add, renumber, remove, unique numbers, unsaved guard), import preview and result with failed lines into Attendance Logs, error state and phone width                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Recruitment            | `src/features/recruitment/*.test.tsx`: openings (create, publish, statuses), candidates, the pipeline (move, reject with a reason, hire), interviews (schedule, complete, evaluate), offers (create, send, accept) and rejection reasons, the dashboard, a stale rowVersion, API errors and phone width                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Performance            | `src/features/performance/*.test.tsx`: goals and check-ins, KPIs, cycles with participants and launch, self and manager reviews into Finalise, `AppraisalsView` with props, an API error and phone width                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Custom Form            | `src/features/custom-forms/**/*.test.ts(x)`: building with several field types, reorder, preview and publish; filling with validation, one response per person, a server 422; responses, the summary and CSV export; the waiting state when the endpoints 404; permissions and phone width; the answer and builder schemas                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Manpower Planning      | `src/features/manpower-planning/manpower-planning.test.tsx` (plans and filters, Delete Plan Year, Add Planning with new and existing positions, imports, details / approvals and the edit lock, approving a budget into open positions, rejecting and re-editing one, budget deletes, a load error with retry, JD download and open-position edit / close, budget duration, position titles, employee position and sheet upload)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Leaves                 | `src/features/leaves/leaves.test.tsx` (sub menu and tabs, My Leaves and Apply Leave with validation, Leave Applications approve / reject into the shared balance, General Settings save, Leave Types with dependent fields and a refused delete, Leave Policies create and enroll)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Benefits               | `src/features/benefits/benefits.test.tsx` (plan years under the stats row, New Plan Year, the Edit Plan Year steps, delete with confirm, the two-step enrollment window and a Qualifying Life Event, missing information to Employees, Plans with a refused delete, the Add New Plan menu and form validation)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Talent Management      | `src/features/talent-management/talent-management.test.tsx` (Employee Record tiles and table, search / filter / paging in the URL, Add New with checks and a refused code, deactivate and reactivate, every profile tab, Update Profile with the CNIC through identity, dependents, skills with a refused duplicate, academics and contracts)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Pay engine             | `src/mocks/payroll/engine.test.ts` (expressions, the design's "Unsupported Operand Types" error, tax slabs, every seeded run)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Payroll Settings       | `src/features/payroll/payroll-settings.test.tsx` (menu and sub-tabs, configuration, fiscal year, pay item expression, tax slab, group benefit, bank)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Monthly                | `src/features/payroll/payroll-monthly.test.tsx` (icons by status, create → employments → run → close, errors and history)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Settings menu          | `src/features/payroll/payroll-settings-menu.test.tsx` (each menu entry opens beside the menu with its entry highlighted: Pay Runs, Payroll History with closed payrolls only, Appraisal, Loans, Compensation and Benefits; the narrow-screen dropdown)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Dashboard              | `src/features/payroll/payroll-dashboard.test.tsx` (the five drawn cards, the yearly comparison and its table view, a month's pay items and an empty month, loan instalments per month and a failed read, the earnings of the latest payslip's person)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Pay Slips              | `src/features/payroll/payroll-payslips.test.tsx` (My accounts, hold / pay / recalculate, manual edit with History, slip document, salary sheet, FS close)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Payroll records        | `src/features/payroll/payroll-records.test.tsx` (daily wages and vouchers, employee voucher, opening balance, account debit, % revision, report)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Leave Encashment       | `src/features/payroll/payroll-leave-encashment.test.tsx` (list, all employees through payroll, manual by voucher, nobody left, the type's limits shown and the maximum paid, a type with encashment off refused, the minimum refused by the API, view, delete, paid lock); `utils/encashment-limits.test.ts` (the limit wording)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Assets                 | `src/features/assets/assets.test.tsx` (status chips, create with validation and History, deactivate refused while allocated, asset types, allocate and deallocate)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Clearance forms        | `src/features/assets/clearance.test.tsx` (list, bulk approve frees the assets, unapprove gives them back, approved delete refused, prefilled create)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| End of Employment      | `src/features/offboarding/end-of-employment.test.tsx` (scopes, notice period and Final Settlement, Asset Clearance opens the form, checklist error, rehire, completed locked)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Off Boarding Checklist | `src/features/offboarding/checklist.test.tsx` (list and menu, create with Number and Date fields and Min / Max check, edit and delete a field, read-only View)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Separation Management  | `src/features/separation-management/separation-management.test.tsx` (sections and links, live counts and the status each asks for, cards and counts hidden by permission, the no-access note)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Configuration          | `src/features/configuration/configuration.test.tsx` (sections and links, a card opens its screen, cards hidden by permission)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Own requests           | `src/features/requests/standard/self-decision.test.tsx` (no Approve/Reject or Forward on your own Promotion or Resignation, its row cannot be ticked, an open popup turns read-only; others' rows unaffected)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Payroll upload         | `src/features/payroll/components/shared/upload-field.test.tsx` (the percentage while a file uploads, then the link)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 `src/test/test-utils.tsx` has `renderApp(path)` (whole app on memory history),
 `renderWithQueryClient()` and `createQueryWrapper()` for hooks. `src/test/setup.ts` swaps the
@@ -1551,14 +2017,15 @@ Attendance:
   (Short leave, WFH…); "pending" overtime before approval; an Edit button on View for All.
 - **Rules chosen** (the design does not state them): 5 minutes of grace, overtime from 15 minutes
   past the clock out, and five warnings a month make one penalty.
-- **Sub menu**: Overtime and Missing Punch open placeholders; Official Visits opens the Requests
-  type of that name, Scheduling opens Scheduling and Attendance Insights opens the overview. In
-  the sidebar the page is "Attendance Settings", so it is not confused with the app's Settings.
+- **Sub menu**: Missing Punch opens a placeholder. Scheduling, Official Visits and Attendance
+  Insights have no frame beside the sub menu; they are laid out like Attendance Logs (see
+  above). In the sidebar the page is "Attendance Settings", so
+  it is not confused with the app's Settings.
 - **Holidays** have a Year filter and an Attendance Exempt box (not drawn) to tell a day off from a
   day that is only marked. Rules are kept with the holiday and saved with Create.
 - **Criteria rows** (IP Restrictions, Geo Fencing) fold to a one-line summary on Save, so long
   lists stay readable; Edit opens them again.
-- **Attendance Logs**: the Machine column reads "Machine (MCH-00001)" as drawn; punches made from
+- **Attendance Logs**: the Machine column reads "Machine 1" over "(MCH-00001)"; punches made from
   the dashboard, by a punch request or by HR show "—" there. Edit and Delete are offered only on
   manual and imported punches, and Download takes one date as the frame shows.
 - **Not in the design, added**: the CSV template and line-by-line errors on Import, the per-machine
@@ -1634,13 +2101,19 @@ Payroll (built as drawn; only plain typos and controls that cannot work as drawn
   a payroll with nobody on it explains that employees must be added first. The design's
   "Select Employee" placeholder on Name reads "Enter name" here, since the field is the payroll's
   name.
-- **Dashboard colours**: the drawn amber and green for the two years could not be told apart with
-  colour blindness, so the years are amber and pink (the design's line is pink already), with a
-  legend, end labels and a table view (≡). Empty panels show the design's "No Record Found!".
+- **Dashboard** (28 Oct 2026, "exactly like" frame 3335:19650): the drawn cards and colours, amber
+  this year and green last year (they pass the colour-blind check; the pale amber is carried by
+  the legend, the tooltips and the table view behind ≡). The ApexCharts look is redrawn in SVG:
+  hollow markers, a pink band under zero and a line lying on zero turning pink, the tooltip
+  "Jul / 2023: (620000)". Months run January to December rather than the frame's sample order;
+  the curve never dips under a point. The earlier overview tiles are gone (not drawn). Expense
+  Report picks a month (the API reports by month), and the earnings chart opens on the person of
+  the latest payslip. Empty cards show the design's "No Record Found!".
 - **Settings**: the Custom Pay Item account type gets a Name field; Company Year Start is a month
   list; the Edit and View titles are not drawn and follow the Create titles; Is Custom is set for
-  the formulas and rules people add; the Appraisal and Loans menu entries link to Performance and
-  to Requests → Loan & Advances.
+  the formulas and rules people add; the menu's Pay Runs, Payroll History, Appraisal and Loans
+  open beside the menu (28 Oct 2026, as asked) instead of leaving for Payrolls, Performance →
+  Appraisals and Requests; Pay Runs keeps every Monthly action, and Payroll History is the closed payrolls.
 - **Pay slips**: the column reads "Net Payable" (the design has "Not Payable"); the contribution
   column is "Employee Contribution" and employer shares appear only in the second table; tax is
   under Deductions and Earnings includes reimbursements; a line under the title names the payroll
@@ -1723,6 +2196,16 @@ clean at every width and in both themes; what the pass found and changed:
   (`restartMockServiceWorker` in `src/mocks/browser.ts`) and retries the request
   (`setMockApiRecovery` in `src/lib/axios.ts`; `src/lib/axios.test.ts`).
 
+Found later (26 Oct 2026) and fixed:
+
+- **Select placeholders were centred.** Once the value became a block it inherited the button's
+  centred text; it now starts at the left edge, as every frame draws it.
+- **Overtime's first tab was always "current".** A tab link whose search equals the stripped
+  defaults carries no search, and the router's partial search match marked it active on every
+  tab (`aria-current="page"` and the active text style). The tab links now use
+  `activeOptions={{ exact: true }}`; the E-Budget Settings tabs, Payroll Settings sections,
+  Benefits tabs and Project Management lists, which pass search the same way, got it too.
+
 Seen and left as designed: the status chips (Pending, Approved, Active …) use the frames' own
 amber and green on their tinted fills, which sit at 1.9–2.5:1; the green Save / Import buttons
 are 2.5:1 white on `#2CBD4D`. Project Management keeps its own white panels and purple palette
@@ -1732,38 +2215,53 @@ page; the other modules follow the theme tokens. The production bundle's main ch
 
 ## Not done yet
 
-- No real backend, no refresh-token flow, no role-based permissions.
+What waits on the backend (endpoints the API does not have yet, each a typed pending function
+marked `TODO(backend)` and mocked in development only) is listed in
+[`docs/backend-dependencies.md`](docs/backend-dependencies.md).
+
+- No refresh-token flow: an expired session signs the user out.
 - No translations (i18n library not chosen).
 - Other modules are placeholders; their planned screens come from the folder names in
   `HRango2/Design`.
-- Settings: Users, Subscriptions, Help & Support, Custom Forms, System User, User Group Permissions
-  and Biometric Devices are placeholders (no designs yet).
-- Requests: Expense and Official Visits are placeholders (no screens in the design); the
-  Requisition entry of the drawn sidebar tree has no screens and is left out. Leaves is a
-  placeholder module, so Leave requests keep their own entitlements. Not built: the Consents tabs
-  of Loan, Travel and Promotion (drawn empty), Leave's AI "Application" panel, Work From Home's
-  Cancel times and Subordinates option, Approve/Reject on a requester's own Promotion or
-  Resignation row, Punch filters Count and Request Flow (their meaning is not drawn), and the
-  multi-shift note on Punch Create. Seeded approved requests did not run their approval effects. An approved transfer goes into a transfer log
-  and does not change the employee directory (no employee module yet). Transfer attachments keep
+- Settings: Subscriptions and Help & Support are placeholders (no design or API); Custom Forms
+  opens the Custom Form module and Control Panel → Users opens System Users.
+- Requests: not built are the Consents tabs of Loan, Travel and Promotion (drawn empty), Leave's
+  AI "Application" panel, Work From Home's Cancel times (their meaning is not defined; R2 in the
+  Backend Dependencies), Punch filters
+  Count and Request Flow (their meaning is not drawn), and the multi-shift note on Punch Create. Seeded approved requests did not run their approval effects. An approved transfer goes into a transfer log
+  and does not change the employee record (in the mocks, Talent Management keeps its own). Transfer attachments keep
   only the file name.
-- Attendance: Missing Punch and Overtime (in the sub menu) are placeholders. Take Picture For
+- Attendance: Missing Punch (in the sub menu) is a placeholder. Overtime: the API gaps are listed
+  in `docs/backend-mapping/attendance-overtime.md` (no bulk marker, untyped request details,
+  policies not linked to approvals, guessed permission codes, an export of unstated format). Take
+  Picture For
   Attendance and IP Restrictions are stored but not enforced on Clock In, since the mock has no
   camera or client IP.
-- Payroll: attachments (tax rebates, employee vouchers, final settlement) keep only the file name,
-  since the mock has no file store. Appraisal and Loans in the Payroll Settings menu open other
-  modules' pages (Performance is a placeholder). Bank transfer files are not generated.
-  Leave Encashment ignores a leave type's Encashment Min / Max Limit, since the Leaves module
-  (where leave types are set up) is not built; leave quotas are Employee Accounts entries.
-- Assets and off-boarding: End of Employment and Rehire do not change the employee directory's
-  active status (there is no employee module yet). Attachments keep only the file name. The
-  Separation Management and Configuration placeholder modules still list these screens among
-  their planned ones. Off Boarding Settings has no page of its own; it opens the checklist.
-- Project Management: the four dashboards and every view but List (Board, Calendar, Timeline, Activity, Table, Team, Gantt, Workload, Mind Map) have no design and are placeholders; docs have no editor; reminders are stored but never notify; invited emails and shared links send nothing (there is no email or public share page); third-party file sources (Google Drive, Dropbox, Box, OneDrive) cannot be connected; there are no real roles, so column permissions work them out from the directory.
+- Payroll: Appraisal and Loans in the Payroll Settings menu show Performance → Appraisals and
+  Requests → Loan & Advances beside the menu. Bank transfer files are not generated.
+  Leave Encashment shows a leave type's Encashment Min / Max Limit but cannot check each
+  person's days before saving: the API works them out, and has no preview (Backend Dependencies
+  P4); how it applies the limits is assumed.
+- Assets and off-boarding: End of Employment and Rehire do not change the person's status in
+  Talent Management (in the mocks the two keep separate records). Off Boarding Settings has no
+  page of its own; it opens the checklist.
+- Project Management: the views Gantt, Workload and Mind Map (skipped by the BRD) are placeholders; the four dashboards are built, but their Recents, Docs and Personal List widgets wait on the backend (sample data in mock mode); List, Board, Table, Calendar, Timeline, Activity and Team are built (the Activity action and field names are assumed, see the backend mapping); docs have no editor; reminders are listed (Reminders page) but never notify; the story-point penalty for late work is not shown (undefined); invited emails and shared links send nothing (there is no email or public share page); third-party file sources (Google Drive, Dropbox, Box, OneDrive) cannot be connected; there are no real roles, so column permissions work them out from the directory.
+- Recruitment: status values of openings, interviews and offers and the permission codes are
+  assumed (not in the OpenAPI); the mock's hires join Talent Management but not the employee
+  pickers.
+- Performance: no screens for increments, appraisal forms and rating scales; permission codes are
+  assumed; a participant is removed by deleting their appraisal.
+- Custom Form: no backend yet (Backend Dependencies "Custom Form"); no conditional logic, option
+  reordering or editing a submitted response.
 - Manpower Planning: Upload Excel reads CSV only (no .xlsx parser); mail on the page title opens
   an email link rather than sending anything.
-- Leaves: attachments keep only the file name. Enroll Employee and Apply Leave have no frame of
-  their own (built in the module's style).
+- Leaves: Enroll Employee and Apply Leave have no frame of their own (built in the module's
+  style).
+- Talent Management: no screens yet for employment periods, history / changes, salary and the
+  update-request inbox (the API has them); the filter panel offers five of the API's filters; the
+  address has no city picker; the permission codes (`employees.directory.*`) are assumptions. People
+  added or deactivated in the mock do not reach other modules' pickers, which read the shared
+  directory. No current-style web frame exists for this module.
 - Benefits: Add Plan's Coverage Options, Eligibility & Cost, Enrollment Details and Payroll
   deduction steps are not designed and are disabled; the Enrollment Windows, Employees and Files
   tabs are minimal (no design); plan attachments keep only the file name and cannot be opened.

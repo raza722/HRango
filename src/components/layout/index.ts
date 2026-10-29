@@ -8,6 +8,7 @@ export {
 } from './data-table'
 export { EmployeeAvatar } from './employee-avatar'
 export { LanguageSwitcher } from './language-switcher'
+export { type HubBadge, type HubLink, type HubSection, ModuleHub } from './module-hub'
 export { ModulePlaceholder } from './module-placeholder'
 export { PageContainer, PageHeader, splitPageClassName } from './page-header'
 export { type PaginatedResult, PaginatedTableCard } from './paginated-table-card'

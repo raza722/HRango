@@ -29,8 +29,9 @@ function SelectTrigger({
         'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/25',
         'disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/15',
         // A long value ends in an ellipsis (shadcn's line-clamp never applied: its `flex`
-        // display beat the clamp's `-webkit-box`, so text was cut mid-letter instead).
-        '*:data-[slot=select-value]:block *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:flex-1 *:data-[slot=select-value]:truncate',
+        // display beat the clamp's `-webkit-box`, so text was cut mid-letter instead). As a
+        // block it would inherit the button's centred text, so it starts at the left edge.
+        '*:data-[slot=select-value]:block *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:flex-1 *:data-[slot=select-value]:truncate *:data-[slot=select-value]:text-left',
         "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}

@@ -23,6 +23,17 @@ export function useCan(pattern: string): boolean {
   return can(user, pattern)
 }
 
+/**
+ * May the user view any screen under a code prefix? `'payroll'` matches
+ * `payroll.payslips.view` and `payroll.settings.tax.view`; `'attendance.overview'` matches
+ * `attendance.overview.view`. The sidebar and the module landing pages use it.
+ */
+export function canViewUnder(user: AuthUser | null, prefix: string): boolean {
+  return (
+    can(user, `${prefix}.view`) || can(user, `${prefix}.*.view`) || can(user, `${prefix}.*.*.view`)
+  )
+}
+
 function escapeRegExp(text: string): string {
   return text.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
 }

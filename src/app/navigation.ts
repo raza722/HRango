@@ -28,7 +28,7 @@ import { ProjectManagementIcon } from '@/components/icons/project-management-ico
 import { LeavesNavIcon, RequestsNavIcon } from '@/components/icons/request-icons'
 import { RosterIcon } from '@/components/icons/roster-icon'
 import { SchedulingIcon } from '@/components/icons/scheduling-icon'
-import { can } from '@/lib/permissions'
+import { canViewUnder } from '@/lib/permissions'
 import type { FileRouteTypes } from '@/routeTree.gen'
 import type { AuthUser } from '@/types/auth'
 
@@ -73,13 +73,6 @@ export interface NavItem {
  */
 export type NavPermission = string | readonly string[]
 
-/** May the user view a screen under this code prefix? */
-function canViewUnder(user: AuthUser | null, prefix: string): boolean {
-  return (
-    can(user, `${prefix}.view`) || can(user, `${prefix}.*.view`) || can(user, `${prefix}.*.*.view`)
-  )
-}
-
 function allowed(user: AuthUser | null, permission: NavPermission | undefined): boolean {
   if (permission === undefined) return true
   const prefixes: readonly string[] = typeof permission === 'string' ? [permission] : permission
@@ -117,7 +110,23 @@ export function filterNavItems(items: readonly NavItem[], user: AuthUser | null)
 /** Sidebar entries, in the order drawn in the Figma side menu. */
 export const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Dashboard', to: '/', icon: DashboardIcon, exact: true },
-  { label: 'Recruitment', to: '/recruitment', icon: RecruitmentIcon, permission: 'recruitment' },
+  {
+    label: 'Recruitment',
+    to: '/recruitment',
+    icon: RecruitmentIcon,
+    permission: 'recruitment',
+    // Not drawn (no current-style frame): the API's screens, in the order of the hiring flow.
+    tree: true,
+    children: [
+      { label: 'Dashboard', to: '/recruitment/dashboard' },
+      { label: 'Job Openings', to: '/recruitment/openings' },
+      { label: 'Candidates', to: '/recruitment/candidates' },
+      { label: 'Applications', to: '/recruitment/applications' },
+      { label: 'Interviews', to: '/recruitment/interviews' },
+      { label: 'Offers', to: '/recruitment/offers' },
+      { label: 'Settings', to: '/recruitment/settings' },
+    ],
+  },
   {
     label: 'Talent Management',
     to: '/talent-management',
@@ -338,6 +347,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
       { label: 'Project Dashboard', to: '/project-management/project-dashboard' },
       { label: 'Task Dashboard', to: '/project-management/task-dashboard' },
       { label: 'Create Workspace', to: '/project-management/workspaces' },
+      // Not drawn: the BRD's "own reminders", listed (they are set from a task's Remind Me).
+      { label: 'Reminders', to: '/project-management/reminders' },
     ],
   },
   {
@@ -345,6 +356,16 @@ export const NAV_ITEMS: readonly NavItem[] = [
     to: '/performance',
     icon: PerformanceIcon,
     permission: ['performance', 'training'],
+    // Not drawn: the API's screens (goals, KPIs, review cycles and their appraisals).
+    tree: true,
+    children: [
+      { label: 'Overview', to: '/performance/overview' },
+      { label: 'Goals', to: '/performance/goals' },
+      { label: 'KPIs', to: '/performance/kpis' },
+      { label: 'Review Cycles', to: '/performance/cycles' },
+      { label: 'Appraisals', to: '/performance/appraisals' },
+      { label: 'Reviews', to: '/performance/reviews' },
+    ],
   },
   // HRango Dashboard App Version, section Benefits: one item, right after Performance.
   { label: 'Benefits', to: '/benefits', icon: BenefitsIcon, permission: 'benefits' },
@@ -352,7 +373,18 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Warning', to: '/warning', icon: WarningIcon, permission: 'warning' },
   { label: 'Scheduling', to: '/scheduling', icon: SchedulingIcon, permission: 'scheduling' },
   { label: 'Configuration', to: '/configuration', icon: ConfigurationIcon },
-  { label: 'Custom Form', to: '/custom-form', icon: CustomFormIcon },
+  {
+    label: 'Custom Form',
+    to: '/custom-form',
+    icon: CustomFormIcon,
+    // Not drawn, and no API yet (Backend Dependencies): build, fill and read the answers.
+    tree: true,
+    children: [
+      { label: 'Forms', to: '/custom-form/forms' },
+      { label: 'My Forms', to: '/custom-form/my-forms' },
+      { label: 'Responses', to: '/custom-form/responses' },
+    ],
+  },
   {
     label: 'Manpower Planning',
     to: '/manpower-planning',

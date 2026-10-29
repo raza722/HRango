@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { ChevronDown, LogOut, Settings } from 'lucide-react'
+import { ChevronDown, KeyRound, LogOut, Settings } from 'lucide-react'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -17,9 +17,16 @@ interface SidebarUserCardProps {
   user: AuthUser | null
   collapsed: boolean
   onSignOut: () => void
+  /** Opens Change Password; without it the menu has no such item. */
+  onChangePassword?: (() => void) | undefined
 }
 
-export function SidebarUserCard({ user, collapsed, onSignOut }: SidebarUserCardProps) {
+export function SidebarUserCard({
+  user,
+  collapsed,
+  onSignOut,
+  onChangePassword,
+}: SidebarUserCardProps) {
   if (!user) return null
 
   return (
@@ -61,6 +68,11 @@ export function SidebarUserCard({ user, collapsed, onSignOut }: SidebarUserCardP
             <Settings /> Settings
           </Link>
         </DropdownMenuItem>
+        {onChangePassword && (
+          <DropdownMenuItem onSelect={onChangePassword}>
+            <KeyRound /> Change Password
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem variant="destructive" onSelect={onSignOut}>
           <LogOut /> Sign out
         </DropdownMenuItem>
