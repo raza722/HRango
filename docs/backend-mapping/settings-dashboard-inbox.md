@@ -93,7 +93,8 @@ timezone, currency, dateFormat, weekStartsOn, fiscalYearStartMonth, isActive, cr
 
 - `NavItem.permission` / `NavChild.permission` hold code prefixes; an entry shows when the user may **view** a
   screen under one of them (`<prefix>.view`, `<prefix>.*.view` or `<prefix>.*.*.view`, through `can()`).
-  `filterNavItems(items, user)` is applied in `Sidebar` and to the Dashboard "Modules" shortcuts. A user without a
+  `filterNavItems(items, user)` is applied in `Sidebar` (the Dashboard's old "Modules" shortcuts are gone: it shows
+  module cards by the modules' own codes instead). A user without a
   `permissions` list (mock API) sees everything.
 - Mapping: Recruitment `recruitment`; Talent Management `employees`; Separation Management `offboarding`;
   Attendance `attendance` or `scheduling.settings` (pages: `attendance.overview|time_sheet|logs`, Settings
@@ -109,20 +110,28 @@ timezone, currency, dateFormat, weekStartsOn, fiscalYearStartMonth, isActive, cr
 ## Dashboard (`/`)
 
 - The page reads one dashboard, by permission: `GET /dashboard/hr` (`dashboard.hr.view`), else `/dashboard/ceo`
-  (`dashboard.ceo.view`), else `/dashboard/me` (`dashboard.employee.view`); `dashboardKindFor(user)`. Optional
-  `?month=` / `?day=` are supported by `dashboardQueryOptions(kind, params)` (not exposed in the UI).
-- Tiles: Headcount = `workforce.headcount` (HR / CEO); Present today = `attendance.present`; On leave =
-  `attendance.onLeave`; Warning policies = total of the warning policy list (warning API, only with
-  `warning.settings.policies.view`).
-- Empty states ("—" with a reason) instead of numbers: **Open positions** (not on the dashboard API), Headcount on
-  the employee dashboard, every dashboard tile when the user holds no dashboard code, Warning policies without the
-  warning code (the Warning policies card is hidden too).
-- `dashboardSummaryQueryOptions()` (used by the `/` route loader) now selects the summary from the user's dashboard;
-  `DashboardSummary` fields are nullable and `activeWarningPolicies` was removed from it.
-- API data with no widget yet: workforce breakdowns (by department, employment type, gender, age band, turnover by
-  month, department by gender, women by job title, women %, hired / left / turnover %), attendance by month,
-  absenteeism %, today's attendance table, leave applications table, notice board, upcoming events, the CEO dashboard
-  as such. All typed in `features/dashboard/api/dashboard.api.ts` for the dashboard screens to come.
+  (`dashboard.ceo.view`), else `/dashboard/me` (`dashboard.employee.view`); `dashboardKindFor(user)`. The route's
+  `?month=yyyy-MM` (header month picker, up to this month) is sent as `month=yyyy-MM-01`
+  (`dashboardParamsFor`); the current month sends nothing, so the route loader and the page share one cache entry.
+  `?day=` is supported by `dashboardQueryOptions(kind, params)` but not exposed in the UI (attendance is today's).
+- Every field of the HR / CEO / me responses now has a widget: `workforce` (headcount, women %, hired / left /
+  turnover % with the change on the previous `turnoverByMonth` entry, by department and by department-gender,
+  employment type, gender, age bands, women by job title, 12 months of hires and leavers), `attendance` (today's
+  present / absent / on leave / not started / day off, absenteeism %, `byMonth`, today's rows), leave applications,
+  notice board, upcoming events. Present today's share is `present ÷ (present + absent + onLeave)`, as absenteeism.
+- Figures not on the dashboard API, read from the modules' own endpoints with their query keys
+  (`features/dashboard/api/module-queries.ts`): Open positions (`/recruitment/openings?status=open`), approvals
+  waiting for the caller (`/requests/approvals?box=requested|delegates|cancellations&status=pending`, up to 100 rows
+  each, the rest counted from `meta.total`), and the module cards: Payroll (`/payroll/dashboard`, the month's payroll
+  list), Recruitment (`/recruitment/dashboard?year&month`), Performance (cycles and reviews lists), Leaves (counts),
+  Separation (end of employment and final settlement counts), Benefits (`/benefits/summary`), Warning (policy list).
+- Permission codes per widget: `features/dashboard/hooks/use-dashboard-access.ts`. A widget the user may not read is
+  not rendered; a user with no dashboard code gets a note and the module cards they may read.
+- `dashboardSummaryQueryOptions()` / `toDashboardSummary` are still exported but the `/` route no longer uses them;
+  the loader prefetches `dashboardQueryOptions(kind, dashboardParamsFor(month))`.
+- Gaps for the backend: no all-types "my requests" endpoint (the employee dashboard shows pending leave requests
+  plus approvals waiting); the dashboard's leave days come from attendance, not approved leave requests, so "On
+  leave today" can differ from Leaves.
 
 ## Inbox (top bar)
 
@@ -149,7 +158,9 @@ createdAt`); the summary is no longer `{messages, notifications}`.
   so it cannot shadow other modules' samples; register it last in `src/mocks/handlers.ts` once the shared pickers
   are consolidated.
 - `src/mocks/employees/lookup.ts`: `toEmployeeLookup()` and `createEmployeeLookupHandler()` (API row shape).
-- `src/mocks/dashboard/`: `/dashboard/hr|ceo|me` with fixed figures. `src/mocks/inbox/`: notifications only.
+- `src/mocks/dashboard/`: `/dashboard/hr|ceo|me` worked out from the other mocks (workforce from Talent
+  Management's records as of the month's last day, attendance from the attendance engine, leave applications from
+  the shared leave store), so the figures agree with those modules. `src/mocks/inbox/`: notifications only.
 
 ## Gaps
 

@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { XIcon } from 'lucide-react'
 
 import { filterNavItems, type NavItem } from '@/app/navigation'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
@@ -22,6 +23,8 @@ interface SidebarProps {
 interface SidebarPanelProps extends SidebarProps {
   collapsed: boolean
   onNavigate?: () => void
+  /** The phone drawer's close button, beside the brand (so it never covers a long name). */
+  onClose?: () => void
 }
 
 function SidebarPanel({
@@ -31,18 +34,34 @@ function SidebarPanel({
   onChangePassword,
   collapsed,
   onNavigate,
+  onClose,
 }: SidebarPanelProps) {
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-16 shrink-0 items-center justify-center border-b border-sidebar-border px-4 lg:h-[4.625rem]">
+      <div
+        className={cn(
+          'flex h-16 shrink-0 items-center gap-2 border-b border-sidebar-border px-4 lg:h-[4.625rem]',
+          onClose ? 'justify-between' : 'justify-center',
+        )}
+      >
         <Link
           to="/"
           onClick={onNavigate}
-          className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-sidebar-muted/60"
+          className="min-w-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-sidebar-muted/60"
           aria-label={`${user?.companyName ?? 'Home'} - go to dashboard`}
         >
           <OrganisationBrand user={user} collapsed={collapsed} />
         </Link>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close menu"
+            className="flex size-9 shrink-0 items-center justify-center rounded-md text-sidebar-muted transition-colors outline-none hover:bg-sidebar-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-muted/60"
+          >
+            <XIcon aria-hidden="true" className="size-5" />
+          </button>
+        )}
       </div>
 
       <SidebarUserCard
@@ -98,12 +117,16 @@ export function Sidebar(props: SidebarProps) {
           side="left"
           className="w-72 max-w-[85vw] bg-sidebar text-sidebar-foreground"
           aria-describedby={undefined}
+          showClose={false}
         >
           <SheetTitle className="sr-only">Main navigation</SheetTitle>
           <SidebarPanel
             {...props}
             collapsed={false}
             onNavigate={() => {
+              setMobileOpen(false)
+            }}
+            onClose={() => {
               setMobileOpen(false)
             }}
           />

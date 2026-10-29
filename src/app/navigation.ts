@@ -167,8 +167,10 @@ export const NAV_ITEMS: readonly NavItem[] = [
     icon: RequestsNavIcon,
     permission: 'requests',
     // The Request Settings frames (3894:26499) draw the sidebar's Requests as this tree; its
-    // items follow the in-page sub menu (Travel and Transfer included, Requisition left out:
-    // it has no screens). "Relaxion" and "Deligation" are spelt correctly.
+    // items follow the in-page sub menu (Travel and Transfer included). Requisition is not in the
+    // drawn tree but is added after Resignation, as in the sub menu, so employees can ask for
+    // assets, equipment and supplies from the sidebar. "Relaxion" and "Deligation" are spelt
+    // correctly.
     tree: true,
     children: [
       { label: 'Punch', to: '/requests/punch', permission: 'requests.punch' },
@@ -233,6 +235,12 @@ export const NAV_ITEMS: readonly NavItem[] = [
         to: '/requests/$type',
         params: { type: 'resignation' },
         permission: 'requests.resignation',
+      },
+      {
+        label: 'Requisition',
+        to: '/requests/$type',
+        params: { type: 'requisition' },
+        permission: 'requests.requisition',
       },
       {
         label: 'Settings',
