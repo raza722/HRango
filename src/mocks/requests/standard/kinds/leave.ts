@@ -4,22 +4,16 @@ import { z } from 'zod'
 
 import { eachDay } from '@/features/scheduling'
 
-import { createMockCollection } from '../../../collection'
-import { DIRECTORY, findEmployee } from '../../../employees/seed'
+import { holidayFor } from '../../../attendance/audience'
+import { holidays } from '../../../attendance/settings-db'
+import { findEmployee } from '../../../employees/seed'
 import { leaveTypes } from '../../../leaves/db'
-import { entitlementFor, policyFor } from '../../../leaves/rules'
-import {
-  apiPath,
-  errorResponse,
-  latency,
-  paginate,
-  readPageParams,
-  requireAuth,
-} from '../../../utils'
+import { bindLeaveRequestSource } from '../../../leaves/requests'
+import { balanceOf, coveredTypes, policyFor } from '../../../leaves/rules'
+import { apiPath, errorResponse, latency, requireAuth } from '../../../utils'
 import type { RequestBodyIn } from '../../backend'
-import { fallbackGet } from '../../fallback'
 import { invalid } from '../../http'
-import { ME, mustFind, requestEmployee } from '../../people'
+import { ME, mustFind } from '../../people'
 import {
   defineStandardKind,
   type PayloadContext,
@@ -34,18 +28,22 @@ import { rosterOf, scheduleDay } from './work-from-home-days'
  * Leave: the person asks for days off of one leave type ("Leave Request
  * Create": Leave Type, Start Date, End Date, Attachment, Reason; "Short" turns
  * it into part of one day: Short Leave Type, Request Date, Start Time, End
- * Time). Only the days with a shift count. The balance card reads each
- * person's yearly entitlement (seeded below) against their requests: approved
- * days are Availed, pending days Pending, and the rest Available.
+ * Time). Only the working days count: days with a shift that are not the
+ * person's holiday (Attendance → Settings → Holidays).
+ *
+ * These are the only leave requests in the mock, as on the backend: Leaves →
+ * My Leaves / Leave Applications read them too (`src/mocks/leaves/requests.ts`),
+ * and every balance (`/leaves/balances`, `/leaves/ledger`, the options below) is
+ * the Leaves ledger's allotment less these requests (`src/mocks/leaves/rules.ts`):
+ * approved days are Availed, pending days Pending, and the rest Available.
  */
 
 /**
  * The leave types are the ones set up under Leaves → Settings → Leave Types
  * (`src/mocks/leaves`), so both modules offer and name the same types; the
- * Create form lists the active ones.
+ * Create form lists the ones the person's leave policy gives.
  */
 const leaveTypeOf = (id: string) => leaveTypes.find(id)
-const activeLeaveTypes = () => leaveTypes.all().filter((type) => type.active)
 
 export const SHORT_LEAVE_TYPES = [
   { value: 'half-day', label: 'Half Day', fraction: 0.5 },
@@ -53,35 +51,12 @@ export const SHORT_LEAVE_TYPES = [
 ] as const
 type ShortLeaveType = (typeof SHORT_LEAVE_TYPES)[number]['value']
 
-// --- entitlements ---------------------------------------------------------------------------------
+/** The person's holiday that day (Attendance → Settings → Holidays), if any. */
+const holidayOn = (employeeId: string, date: string) => holidayFor(holidays.all(), employeeId, date)
 
-interface LeaveEntitlement {
-  id: string
-  employeeId: string
-  leaveTypeId: string
-  /** Days a year. */
-  days: number
-}
-
-/** Shelley Kannes has the frame's 8 casual and 15 sick days; the others vary a little. */
-function seedEntitlements(): LeaveEntitlement[] {
-  return DIRECTORY.flatMap((employee, index) => {
-    const casual = employee.id === 'em_shelley' ? 8 : ([8, 10, 12][index % 3] ?? 8)
-    const sick = employee.id === 'em_shelley' ? 15 : ([15, 12, 10][index % 3] ?? 15)
-    return [
-      {
-        id: `le_${employee.id}_casual`,
-        employeeId: employee.id,
-        leaveTypeId: 'lt_casual',
-        days: casual,
-      },
-      { id: `le_${employee.id}_sick`, employeeId: employee.id, leaveTypeId: 'lt_sick', days: sick },
-    ]
-  })
-}
-
-/** Each person's yearly days per leave type (kept in memory; nothing edits them yet). */
-export const leaveEntitlements = createMockCollection<LeaveEntitlement>({ seed: seedEntitlements })
+/** A day the leave counts: a shift day that is not a holiday. */
+const isWorkingDay = (employeeId: string, date: string) =>
+  scheduleDay(employeeId, date).status === 'shift' && !holidayOn(employeeId, date)
 
 // --- the stored request ---------------------------------------------------------------------------
 
@@ -132,46 +107,6 @@ const at = (date: string, time: string) =>
 /** 8, 14.5, 0.25. */
 export const days = (value: number) => String(Math.round(value * 100) / 100)
 
-/** This type's stored requests; set when the handlers are built over the shared table. */
-let leaveRecords: () => readonly StoredStandardRequest[] = () => []
-
-export interface LeaveBalance {
-  total: number
-  availed: number
-  pending: number
-  available: number
-}
-
-/**
- * The person's balance of one leave type this year: approved days (and
- * approved ones being cancelled) are Availed, pending days Pending.
- */
-export function balanceOf(
-  employeeId: string,
-  leaveTypeId: string,
-  records: readonly StoredStandardRequest[],
-  ignoreId: string | null = null,
-): LeaveBalance {
-  const year = String(new Date().getFullYear())
-  // The Leaves module's rule: an employee-level policy, else the entitlement seeded below, else
-  // the company policy, else the type's own number; so both modules show the same balance.
-  const employee = DIRECTORY.find((item) => item.id === employeeId)
-  const type = leaveTypeOf(leaveTypeId)
-  const total = employee && type ? entitlementFor(employee, type) : 0
-  let availed = 0
-  let pending = 0
-  for (const record of records) {
-    const payload = stored(record)
-    if (record.kind !== 'leave' || record.id === ignoreId || record.employeeId !== employeeId) {
-      continue
-    }
-    if (payload.leaveTypeId !== leaveTypeId || !payload.from.startsWith(year)) continue
-    if (record.status === 'completed' || record.status === 'cancelling') availed += payload.count
-    if (record.status === 'pending') pending += payload.count
-  }
-  return { total, availed, pending, available: total - availed - pending }
-}
-
 const shortTypeOf = (value: string | null) => SHORT_LEAVE_TYPES.find((item) => item.value === value)
 
 /** The API's short leave values (`half_day`) ↔ the stored ones (`half-day`). */
@@ -200,61 +135,11 @@ function fromBody(body: RequestBodyIn): unknown {
   }
 }
 
-/** `GET /leaves/balances` rows of one person (`BalanceOut`). */
-function balanceRows(employeeId: string) {
-  const employee = findEmployee(employeeId)
-  if (!employee) return []
-  const person = requestEmployee(employee)
-  return activeLeaveTypes().map((type) => {
-    const balance = balanceOf(employeeId, type.id, leaveRecords())
-    return {
-      employeeId,
-      employeeCode: person.code,
-      employeeName: person.name,
-      departmentName: person.department,
-      leaveTypeId: type.id,
-      leaveTypeTitle: type.title,
-      shortCode: type.shortCode,
-      fiscalYear: new Date().getFullYear(),
-      entitled: balance.total,
-      used: balance.availed,
-      pending: balance.pending,
-      available: balance.available,
-    }
-  })
-}
-
 /**
- * The look-ups the Leave form reads from the Leaves module, answered only when
- * the Leaves mock does not: `GET /leaves/types`, `GET /leaves/balances`.
- */
-const leaveLookupHandlers = [
-  fallbackGet('/leaves/types', ({ request }) => {
-    const url = new URL(request.url)
-    const { page, pageSize } = readPageParams(url)
-    const rows = activeLeaveTypes().map((type) => ({
-      id: type.id,
-      title: type.title,
-      shortCode: type.shortCode,
-      isActive: type.isActive,
-      isShortLeave: type.isShortLeave,
-      isDeductible: type.isDeductible,
-      attachmentRequired: type.attachmentRequired,
-    }))
-    return HttpResponse.json(paginate(rows, page, pageSize))
-  }),
-  fallbackGet('/leaves/balances', ({ request }) => {
-    const url = new URL(request.url)
-    const { page, pageSize } = readPageParams(url)
-    const rows = balanceRows(url.searchParams.get('employeeId') ?? ME)
-    return HttpResponse.json(paginate(rows, page, pageSize))
-  }),
-]
-
-/**
- * `GET /requests/options/leave-types?employeeId=` (`LeaveTypeOptionOut`): the active types the
- * person (default the signed-in one) may apply for, with this year's balance and the form
- * rules; half / short leave follow the person's "Half & Short" policy as the API does.
+ * `GET /requests/options/leave-types?employeeId=&asOf=` (`LeaveTypeOptionOut`): the types the
+ * person's leave policy gives (default the signed-in person), with the balance of the leave
+ * year holding `asOf` (default today) and the form rules; half / short leave follow the
+ * person's "Half & Short" policy as the API does.
  */
 export const leaveTypeOptionsHandler = http.get(
   apiPath('/requests/options/leave-types'),
@@ -262,13 +147,16 @@ export const leaveTypeOptionsHandler = http.get(
     await latency()
     const denied = requireAuth(request)
     if (denied) return denied
-    const employeeId = new URL(request.url).searchParams.get('employeeId') ?? ME
+    const url = new URL(request.url)
+    const employeeId = url.searchParams.get('employeeId') ?? ME
     if (!findEmployee(employeeId)) {
       return errorResponse(404, 'Employee not found.', { code: 'NOT_FOUND' })
     }
+    const asOf = url.searchParams.get('asOf')
+    const year = /^\d{4}/.test(asOf ?? '') ? Number(asOf?.slice(0, 4)) : new Date().getFullYear()
     const policy = policyFor(employeeId, 'half_short')
-    const rows = activeLeaveTypes().map((type) => {
-      const balance = balanceOf(employeeId, type.id, leaveRecords())
+    const rows = coveredTypes(employeeId).map(({ type }) => {
+      const balance = balanceOf(employeeId, type.id, year)
       return {
         id: type.id,
         name: type.title,
@@ -282,10 +170,7 @@ export const leaveTypeOptionsHandler = http.get(
         allowBackDate: type.allowBackDate,
         backDateLimitDays: type.backDateLimitDays,
         futureLimitDays: type.hasFutureLimit ? type.futureLimitDays : null,
-        entitled: balance.total,
-        used: balance.availed,
-        pending: balance.pending,
-        available: balance.available,
+        ...balance,
       }
     })
     return HttpResponse.json({ data: rows })
@@ -301,6 +186,12 @@ function shortLeave(input: Input, employeeId: string, name: string) {
     })
   }
   if (input.to !== input.from) return invalid('A short leave is one day.')
+  const holiday = holidayOn(employeeId, input.from)
+  if (holiday) {
+    return invalid(`${longDay(input.from)} is a holiday (${holiday.name}).`, {
+      fromDate: `${holiday.name} is a holiday`,
+    })
+  }
   const shift = scheduleDay(employeeId, input.from)
   if (shift.status !== 'shift' || !shift.clockIn || !shift.clockOut) {
     return invalid(`${name} has no shift on ${longDay(input.from)}.`, {
@@ -343,6 +234,27 @@ function toPayload(input: Input, context: PayloadContext): Response | Record<str
   const employee = mustFind(context.employeeId)
   const type = leaveTypeOf(input.leaveTypeId)
   if (!type) return invalid('Choose the leave type.', { leaveTypeId: 'Choose the leave type' })
+  if (!coveredTypes(employee.id).some((item) => item.type.id === type.id)) {
+    return invalid(`No leave policy gives ${employee.name} ${type.title}.`, {
+      leaveTypeId: 'Not in this person’s leave policy',
+    })
+  }
+  if (input.short) {
+    // The person's "Half & Short" policy (Leaves → Settings → Leave Policies).
+    const policy = policyFor(employee.id, 'half_short')
+    const half = input.shortType === 'half-day'
+    if (!type.isShortLeave || (policy && !(half ? policy.allowHalfDay : policy.allowShortLeave))) {
+      const what = half ? 'Half-day' : 'Short'
+      return invalid(`${what} leave is not allowed for ${employee.name}.`, {
+        shortLeaveType: `${what} leave is not allowed`,
+      })
+    }
+  }
+  if (type.attachmentRequired && type.attachmentRule !== 'note' && !input.attachment) {
+    return invalid(`${type.title} needs an attachment.`, {
+      attachment: 'Attach the supporting document',
+    })
+  }
   if (input.to < input.from) {
     return invalid('End Date comes before Start Date.', {
       toDate: 'Choose the Start Date or later',
@@ -364,13 +276,16 @@ function toPayload(input: Input, context: PayloadContext): Response | Record<str
     if (result instanceof Response) return result
     ;({ dates, count } = result)
   } else {
-    dates = eachDay(input.from, input.to).filter(
-      (date) => scheduleDay(employee.id, date).status === 'shift',
-    )
+    // Holidays and days off are not counted; a leave of only those days asks for nothing.
+    dates = eachDay(input.from, input.to).filter((date) => isWorkingDay(employee.id, date))
     if (dates.length === 0) {
-      return invalid(`${employee.name} has no shift between these dates.`, {
-        fromDate: 'Choose dates with working days',
-      })
+      const holiday = input.from === input.to ? holidayOn(employee.id, input.from) : null
+      return invalid(
+        holiday
+          ? `${longDay(input.from)} is a holiday (${holiday.name}).`
+          : `${employee.name} has no working day between these dates.`,
+        { fromDate: holiday ? `${holiday.name} is a holiday` : 'Choose dates with working days' },
+      )
     }
     count = dates.length
   }
@@ -389,7 +304,8 @@ function toPayload(input: Input, context: PayloadContext): Response | Record<str
     })
   }
 
-  const balance = balanceOf(employee.id, type.id, context.records, context.ignoreId)
+  // The Leaves module's balance: the ledger's allotment less every leave request.
+  const balance = balanceOf(employee.id, type.id, Number(input.from.slice(0, 4)), context.ignoreId)
   // A non-deductible type (Leave Without Pay) has no balance to run out of, as in Leaves.
   if (type.deductible && count > balance.available) {
     return invalid(
@@ -452,15 +368,15 @@ const def: StandardKindServer<Input> = {
       days: value.count,
     }
   },
-  extraHandlers: [leaveTypeOptionsHandler, ...leaveLookupHandlers],
+  extraHandlers: [leaveTypeOptionsHandler],
   seed: () => {
     const ago = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString()
-    /** The first `count` shift days from `offset` days from today. */
+    /** The first `count` working days (shift days, not holidays) from `offset` days from today. */
     const workdays = (employeeId: string, offset: number, count: number) => {
       const found: string[] = []
       for (let step = 0; step < 40 && found.length < count; step += 1) {
         const date = iso(addDays(new Date(), offset + step))
-        if (scheduleDay(employeeId, date).status === 'shift') found.push(date)
+        if (isWorkingDay(employeeId, date)) found.push(date)
       }
       return found
     }
@@ -603,11 +519,14 @@ const def: StandardKindServer<Input> = {
 
 const leaveModule = defineStandardKind(def)
 
-/** The Leave server; it keeps a reader of its requests for the balances. */
+/**
+ * The Leave server. It hands the Leaves mock a reader of its requests, so My Leaves, Leave
+ * Applications and every balance read the same requests.
+ */
 export const leaveServer: StandardKindModule = {
   ...leaveModule,
   handlers: (collection) => {
-    leaveRecords = () => collection.all().filter((record) => record.kind === 'leave')
+    bindLeaveRequestSource(() => collection.all().filter((record) => record.kind === 'leave'))
     return leaveModule.handlers(collection)
   },
 }

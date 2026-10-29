@@ -133,6 +133,16 @@ function toPayload(input: Input, context: PayloadContext): Response | Record<str
       arriveAt: withSeconds(leg.arriveAt),
     }))
     .sort((a, b) => a.departAt.localeCompare(b.departAt))
+  // A leg goes somewhere: Lahore → Lahore is refused.
+  const place = (text: string | null | undefined) =>
+    (text ?? '').trim().replace(/\s+/g, ' ').toLowerCase()
+  if (
+    legs.some((leg) => place(leg.fromPlace) !== '' && place(leg.fromPlace) === place(leg.toPlace))
+  ) {
+    const message =
+      'A travel detail arrives where it leaves from. Change Departure From or Arrival at.'
+    return invalid(message, { legs: message })
+  }
   if (legs.some((leg) => leg.arriveAt <= leg.departAt)) {
     const message = 'Each travel detail needs a departure before its arrival.'
     return invalid(message, { legs: message })

@@ -210,9 +210,12 @@ function toPayload(
   // The type's terms: months of service, contract type, one waiting request, gap between requests.
   const months = monthsOfService(employee.id)
   if (months < type.minExperienceMonths) {
+    const needed = `${String(type.minExperienceMonths)} ${type.minExperienceMonths === 1 ? 'month' : 'months'}`
     return invalid(
-      `${type.name} needs ${String(type.minExperienceMonths)} months of service; ${employee.name} has ${String(months)}.`,
-      { loanTypeId: `Needs ${String(type.minExperienceMonths)} months of service` },
+      `${type.name} needs ${needed} of service; ${employee.name} has ${String(months)}.`,
+      {
+        loanTypeId: `Needs ${needed} of service`,
+      },
     )
   }
   if (!type.employmentTypeIds.includes(contractOf(employee.id))) {

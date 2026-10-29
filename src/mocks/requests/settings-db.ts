@@ -250,7 +250,7 @@ function seedFlows(): StoredFlow[] {
       null,
       'General Flow',
       generalFlowNodes('fl_punch'),
-      'Line Manager, then Final Authority. Added automatically; edit it under Request Settings.',
+      'Line Manager, then Final Authority. Added automatically; change it here with Edit.',
     ),
     // Two people whose leave goes through a set chain (the old Request Flow assignments).
     flow('fl_saad_leave', 'leave', 'employee', 'em_saad', 'Saad Hadier leave', [
