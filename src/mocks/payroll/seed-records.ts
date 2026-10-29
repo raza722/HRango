@@ -112,7 +112,43 @@ export function seedVouchers(): VoucherRow[] {
       verifiedByName: personFields('em_hina').employeeName,
       verifiedAt: `${day(4)}T12:00:00`,
     }),
+    // The manual leave encashments' lines, one per person (VCH-00004 on).
+    ...seedLeaveEncashments()
+      .filter((encashment) => encashment.mode === 'manual')
+      .flatMap((encashment) => encashment.employees.map((line) => ({ encashment, line })))
+      .map(({ encashment, line }, index) =>
+        encashmentVoucher(encashment, line, `VCH-${String(index + 4).padStart(5, '0')}`),
+      ),
   ]
+}
+
+/** Where a manual encashment's voucher line for one person is kept (one per line). */
+export const encashmentVoucherId = (encashmentId: string, employeeId: string) =>
+  `vc_${encashmentId}_${employeeId}`
+
+/** A manual leave encashment's voucher line: approved, paid out by Finance (Verify). */
+export function encashmentVoucher(
+  encashment: Pick<
+    LeaveEncashmentDetail,
+    'id' | 'leaveTypeName' | 'fiscalYear' | 'encashmentDate' | 'createdAt'
+  >,
+  line: Pick<LeaveEncashmentRow, 'employeeId' | 'days' | 'amount'>,
+  voucherNo: string,
+): VoucherRow {
+  const fields = personFields(line.employeeId)
+  return {
+    ...voucher(encashmentVoucherId(encashment.id, line.employeeId), voucherNo, line.employeeId, {
+      voucherType: 'leave_encashment',
+      amount: line.amount,
+      status: 'approved',
+      paymentMethod: 'bank_transfer',
+      purpose: `Leave encashment: ${String(line.days)} days of ${encashment.leaveTypeName}, ${String(encashment.fiscalYear)}`,
+    }),
+    departmentName: fields.departmentName,
+    voucherDate: encashment.encashmentDate,
+    createdAt: encashment.createdAt,
+    rowVersion: `v-${encashment.id}-${line.employeeId}-1`,
+  }
 }
 
 function entry(

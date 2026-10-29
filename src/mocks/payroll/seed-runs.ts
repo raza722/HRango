@@ -4,13 +4,15 @@ import type { RunLog } from '@/features/payroll'
 
 import { DIRECTORY } from '../employees/seed'
 import { rosterGroups } from '../roster/handlers'
+import { profileOf } from '../scheduling/seed'
 import type { StoredPayroll } from './db-runs'
 import { banks, payItems, taxStructures } from './db-settings'
 import { defaultPayItemRows } from './engine'
 import { isActive } from './people'
 
-// The seeded runs: three monthly payrolls (running this month, closed last month, on hold)
-// and two daily-wage runs. Their payslips are worked out on first use (run-handlers).
+// The seeded runs: four monthly payrolls (Head Office running this month and closed last
+// month, Software closed last month, Abdul on hold with one error) and two daily-wage runs.
+// Their payslips are worked out on first use (run-handlers).
 
 const monthStartOf = (date: Date) => format(date, 'yyyy-MM-01')
 const stamp = (back: number, time = '11:22:00') =>
@@ -139,6 +141,38 @@ export function seedPayrolls(): StoredPayroll[] {
     history: [log(`${id}_process`, 'process', back, employeeIds.length)],
     rows: [],
   })
+  // Abdul's last run could not pay Nida Hassan (she left in Islamabad): its one error.
+  const abdul = monthly(
+    'pr_8',
+    'PR-00008',
+    'Abdul (Pakistan-PKR)',
+    thisMonth,
+    'on_hold',
+    ['br_isb', 'br_khi'],
+    'Islamabad and Karachi offices.',
+  )
+  const nida = DIRECTORY.find((employee) => employee.id === 'em_nida')
+  const abdulRun = abdul.history[0]
+  const withError: StoredPayroll =
+    nida && abdulRun
+      ? {
+          ...abdul,
+          employeeIds: [...abdul.employeeIds, nida.id],
+          employeeCount: abdul.employeeIds.length + 1,
+          history: [{ ...abdulRun, errorCount: 1 }, ...abdul.history.slice(1)],
+          errors: [
+            {
+              id: `${abdulRun.id}_${nida.id}`,
+              payrollRunLogId: abdulRun.id,
+              employeeId: nida.id,
+              employeeCode: profileOf(nida).code,
+              employeeName: nida.name,
+              message: 'The employee is not active in the payroll month.',
+              startedAt: abdulRun.startedAt,
+            },
+          ],
+        }
+      : abdul
   return [
     monthly(
       'pr_6',
@@ -149,6 +183,16 @@ export function seedPayrolls(): StoredPayroll[] {
       ['br_lhr_ho'],
       'Head office staff in Lahore.',
     ),
+    // Last month's Head Office run, closed: the released slips My Pay Slips shows the demo user.
+    monthly(
+      'pr_5',
+      'PR-00005',
+      `Head Office ${format(subMonths(new Date(), 1), 'MMMM')} (Pakistan-PKR)`,
+      lastMonth,
+      'closed',
+      ['br_lhr_ho'],
+      'Head office staff in Lahore, last month.',
+    ),
     monthly(
       'pr_7',
       'PR-00007',
@@ -158,15 +202,7 @@ export function seedPayrolls(): StoredPayroll[] {
       ['br_lhr_jt', 'br_rwp'],
       'Johar Town and Rawalpindi software teams.',
     ),
-    monthly(
-      'pr_8',
-      'PR-00008',
-      'Abdul (Pakistan-PKR)',
-      thisMonth,
-      'on_hold',
-      ['br_isb', 'br_khi'],
-      'Islamabad and Karachi offices.',
-    ),
+    withError,
     daily('dw_1', 'PR-00009', 'Daily Wages', 5, 'closed', ['em_kashif', 'em_imran']),
     daily('dw_2', 'PR-00010', 'Event Helpers', 2, 'running', ['em_sadia']),
   ]

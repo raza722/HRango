@@ -3,6 +3,7 @@ import { z } from 'zod'
 
 import {
   ACCOUNT_CATEGORIES,
+  BANK_FORMATS,
   BENEFIT_TYPES,
   CALCULATION_TYPES,
   type ExpressionCheck,
@@ -47,6 +48,7 @@ import {
   page,
   readBody,
   rejected,
+  rejectedAll,
   searched,
 } from './http'
 import { payrollLookupHandlers } from './lookup-handlers'
@@ -500,12 +502,21 @@ const bankResource = crud({
   collection: banks,
   schema: z.object({
     accountHolder: required('account holder', 200),
-    accountNumber: required('account number', 50),
+    accountNumber: required('account number', 50).regex(
+      BANK_FORMATS.accountNumber.pattern,
+      BANK_FORMATS.accountNumber.message,
+    ),
     bankName: required('bank name', 200),
     branchName: optionalText(200),
-    branchCode: required('branch code', 30),
+    branchCode: required('branch code', 30).regex(
+      BANK_FORMATS.branchCode.pattern,
+      BANK_FORMATS.branchCode.message,
+    ),
     branchLocation: required('branch location', 200),
-    taxPayerId: required('tax payer ID', 30),
+    taxPayerId: required('tax payer ID', 30).regex(
+      BANK_FORMATS.taxPayerId.pattern,
+      BANK_FORMATS.taxPayerId.message,
+    ),
     effectiveDate: day.nullish().transform((value) => value ?? null),
     description: optionalText(2000),
     rowVersion,
@@ -814,16 +825,37 @@ const settingsSchema = z.object({
   revisionOnFixedDays: z.boolean(),
   revisionFixedDate: z
     .string()
-    .regex(/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Use MM-DD')
+    .regex(/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Use MM-DD, e.g. 07-01')
+    .refine(
+      (value) => {
+        const [month = 0, day = 0] = value.split('-').map(Number)
+        // 29 February is allowed: it comes round in leap years.
+        return day <= ([31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 0)
+      },
+      { message: 'That day is not in that month' },
+    )
     .nullable(),
   revisionOnShiftDays: z.boolean(),
-  revisionShiftDays: z.number().int().min(1).max(3650).nullable(),
+  revisionShiftDays: z
+    .number()
+    .int('Enter a whole number of days')
+    .min(1, 'Enter from 1 to 3650 days')
+    .max(3650, 'Enter from 1 to 3650 days')
+    .nullable(),
   disableRevisionEmail: z.boolean(),
   cutoffProration: z.boolean(),
-  cutoffDay: z.number().int().min(1).max(28).nullable(),
+  cutoffDay: z
+    .number()
+    .int('Enter a whole day')
+    .min(1, 'Enter a day from 1 to 28')
+    .max(28, 'Enter a day from 1 to 28')
+    .nullable(),
   hideAttendanceSummary: z.boolean(),
   showSalaryBreakdown: z.boolean(),
-  payslipColor: z.string().max(30).nullable(),
+  payslipColor: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/, 'Use a colour like #17263A')
+    .nullable(),
   taxRounding: rounding,
   taxPositiveOnly: z.boolean(),
   notesEnglishEnabled: z.boolean(),
@@ -837,7 +869,12 @@ const settingsSchema = z.object({
   useShiftHours: z.boolean(),
   showEmployeePayItems: z.boolean(),
   cplLeaveTypeId: z.coerce.string().nullable(),
-  maxEarnedCpl: z.number().min(0).nullable(),
+  maxEarnedCpl: z
+    .number()
+    .int('Enter whole days')
+    .min(0, 'Enter from 0 to 365 days')
+    .max(365, 'Enter from 0 to 365 days')
+    .nullable(),
   deductCasualLeaves: z.boolean(),
   deductSickLeaves: z.boolean(),
   leaveYearBasis: z.enum(['calendar', 'fiscal']),
@@ -858,7 +895,7 @@ const generalHandlers = [
     const unauthorized = requireAuth(request)
     if (unauthorized) return unauthorized
     const parsed = await readBody(request, settingsSchema)
-    if (!parsed.success) return rejected(parsed.error)
+    if (!parsed.success) return rejectedAll(parsed.error, 'Some settings are not valid.')
     const current = currentPayrollSettings()
     if (current.rowVersion !== null && parsed.data.rowVersion !== current.rowVersion) {
       return conflict('Someone else changed the payroll settings. Reload them and try again')
