@@ -4,13 +4,17 @@ import { addDays, format, parse } from 'date-fns'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { ApiError } from '@/lib/api-error'
 import { DEMO_USER } from '@/mocks/auth/handlers'
 import { enrollmentWindows, planFiles, plans, planYears, updateRequests } from '@/mocks/benefits/db'
-import { orgLookupHandlers, PEOPLE } from '@/mocks/manpower-planning/org-lookups'
+import { DIRECTORY } from '@/mocks/employees/seed'
+import { orgLookupHandlers } from '@/mocks/manpower-planning/org-lookups'
 import { server } from '@/mocks/node'
 import { apiPath, MOCK_TOKEN_PREFIX } from '@/mocks/utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { renderApp } from '@/test/test-utils'
+
+import { benefitsApi } from './api/benefits.api'
 
 // The people picker is the Employees module's endpoint: these tests put the sample company's in
 // front, whatever other mocks serve.
@@ -117,11 +121,14 @@ describe('Benefits: Plan Years', { timeout: 60_000 }, () => {
     })
     expect(stat('Plans')).toBe('7')
     expect(stat('Enrollment Windows')).toBe('2')
-    expect(stat('Employees')).toBe(String(PEOPLE.length))
+    // Everyone in the company directory (34), as the Employees module lists them.
+    expect(stat('Employees')).toBe(String(DIRECTORY.length))
 
     const tabs = within(screen.getByRole('navigation', { name: 'Benefits' }))
     expect(tabs.getByRole('link', { name: 'Plan Years' })).toHaveAttribute('aria-current', 'page')
-    expect(tabs.getByRole('link', { name: `Employees (${String(PEOPLE.length)})` })).toBeVisible()
+    expect(
+      tabs.getByRole('link', { name: `Employees (${String(DIRECTORY.length)})` }),
+    ).toBeVisible()
 
     const fiscal = await findRow('Fiscal year')
     expect(fiscal.getByText('5')).toBeVisible()
@@ -154,9 +161,20 @@ describe('Benefits: Plan Years', { timeout: 60_000 }, () => {
     expect(await screen.findByText('Enter the plan year name')).toBeVisible()
     expect(screen.getByText('Choose the start date')).toBeVisible()
 
-    // A name the server refuses comes back on the Details step at the end.
+    // A taken name, and dates that overlap this year's plan year, are caught on Details.
     await user.type(screen.getByRole('textbox', { name: 'Plan Year Name' }), 'Fiscal year')
-    const start = addDays(new Date(), 1)
+    const overlapping = addDays(new Date(), 1)
+    await pickDate(user, 'Plan Year Start', iso(overlapping))
+    await pickDate(user, 'Plan Year End', iso(addDays(overlapping, 20)))
+    await user.click(screen.getByRole('button', { name: 'Continue: Plans' }))
+    expect(await screen.findByText('A plan year with this name already exists.')).toBeVisible()
+    expect(screen.getByText(/These dates overlap Fiscal year \(/)).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Plans' })).not.toBeInTheDocument()
+
+    const name = screen.getByRole('textbox', { name: 'Plan Year Name' })
+    await user.clear(name)
+    await user.type(name, 'Benefits next year')
+    const start = new Date(year + 1, 0, 1)
     await pickDate(user, 'Plan Year Start', iso(start))
     await pickDate(user, 'Plan Year End', iso(addDays(start, 20)))
     await user.click(screen.getByRole('button', { name: 'Continue: Plans' }))
@@ -187,20 +205,11 @@ describe('Benefits: Plan Years', { timeout: 60_000 }, () => {
     )
     await user.click(screen.getByRole('button', { name: 'Create Plan Year' }))
 
-    // Back on Details with the server's message.
-    expect(await screen.findByText('A plan year with this name already exists.')).toBeVisible()
-    const name = screen.getByRole('textbox', { name: 'Plan Year Name' })
-    await user.clear(name)
-    await user.type(name, 'Benefits 2027')
-    await user.click(screen.getByRole('button', { name: 'Continue: Plans' }))
-    await user.click(await screen.findByRole('button', { name: 'Continue: New Hires' }))
-    await user.click(await screen.findByRole('button', { name: 'Create Plan Year' }))
-
     expect(await screen.findByText('Plan year created')).toBeInTheDocument()
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/benefits/plan-years')
     })
-    const created = planYears.all().find((item) => item.name === 'Benefits 2027')
+    const created = planYears.all().find((item) => item.name === 'Benefits next year')
     expect(created).toMatchObject({
       newHireStart: 'waiting_period',
       waitingPeriodDays: 30,
@@ -208,7 +217,7 @@ describe('Benefits: Plan Years', { timeout: 60_000 }, () => {
       electionUnit: 'month',
     })
     expect(created?.planIds).toHaveLength(7)
-    const row = await findRow('Benefits 2027')
+    const row = await findRow('Benefits next year')
     expect(row.getByText('7')).toBeVisible()
     expect(row.getByText('Upcoming')).toBeVisible()
   })
@@ -449,13 +458,14 @@ describe('Benefits: Plans', { timeout: 60_000 }, () => {
     expect(hdhp1.getByText('Active')).toBeVisible()
     expect(hdhp1.getByText('2 enrolled, 0 pending')).toBeVisible()
 
-    await user.click(hdhp1.getByRole('button', { name: 'Delete HDHP1' }))
-    const confirm = await screen.findByRole('alertdialog', { name: 'Delete Plan' })
-    expect(within(confirm).getByText('Are you sure you want to Delete “HDHP1” plan?')).toBeVisible()
-    await user.click(within(confirm).getByRole('button', { name: 'Delete Plan' }))
+    // Elected by two people: refused at once, before any "Are you sure?".
+    const remove = hdhp1.getByRole('button', { name: 'Delete HDHP1' })
+    expect(remove).toHaveAttribute('aria-disabled', 'true')
+    await user.click(remove)
     expect(
-      await screen.findByText('People have elected this plan; it cannot be deleted.'),
+      await screen.findByText('HDHP1 cannot be deleted: 2 people have elected it.'),
     ).toBeInTheDocument()
+    expect(screen.queryByRole('alertdialog', { name: 'Delete Plan' })).not.toBeInTheDocument()
     expect(plans.find('bp_hdhp1')).toBeDefined()
 
     // Duplicate, then delete the copy.
@@ -570,5 +580,89 @@ describe('Benefits: Files', { timeout: 60_000 }, () => {
     expect(await screen.findByText('File added')).toBeInTheDocument()
     expect(await screen.findByRole('cell', { name: 'Vision Plus' })).toBeVisible()
     expect(planFiles.all().some((file) => file.planId === 'bp_vision')).toBe(true)
+  })
+})
+
+describe('Benefits: the checks QA asked for', { timeout: 60_000 }, () => {
+  it('lists the shared company directory on Employees, with their codes', async () => {
+    renderApp('/benefits/employees')
+
+    const table = await screen.findByRole(
+      'table',
+      { name: 'Employees and their benefits' },
+      { timeout: 15_000 },
+    )
+    // The directory's people (34, two pages of 25), not a separate sample list.
+    expect(await within(table).findByText('Bilal Ahmed')).toBeVisible()
+    expect(within(table).getByText('Daniel Brooks')).toBeVisible()
+    expect(within(table).getByText('Ayesha Malik')).toBeVisible()
+    expect(within(table).queryByText('Hamza Ashraf')).not.toBeInTheDocument()
+    expect(within(table).queryByText(/^TE-000/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Page 2' })).toBeVisible()
+  })
+
+  it('refuses a plan year that overlaps another, in the API too', async () => {
+    renderApp('/benefits/plan-years')
+    await findRow('Fiscal year')
+    const error = await benefitsApi
+      .createPlanYear({
+        name: 'Old year',
+        startDate: `${String(year - 1)}-06-01`,
+        endDate: `${String(year)}-05-31`,
+        planIds: ['bp_hdhp1'],
+        newHireStart: 'immediately',
+        waitingPeriodDays: null,
+        electionPeriod: 30,
+        electionUnit: 'day',
+      })
+      .then(
+        () => null,
+        (failure: unknown) => failure,
+      )
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).fieldErrors.startDate).toMatch(/These dates overlap/)
+    expect(planYears.all().some((item) => item.name === 'Old year')).toBe(false)
+  })
+
+  it('offers no past day for a new enrollment window, and the API refuses one', async () => {
+    const { user } = renderApp('/benefits/plan-years')
+
+    await openRowMenu(user, 'Fiscal year', 'Open Enrollment')
+    const dialog = await screen.findByRole('dialog', { name: 'New Open Enrollment Window' })
+    await user.click(
+      within(dialog).getByRole('button', {
+        name: 'When will this plan within this window become effective?',
+      }),
+    )
+    const yesterday = addDays(new Date(), -1)
+    const past = screen.queryAllByRole('button', {
+      name: new RegExp(format(yesterday, 'MMMM do, yyyy')),
+    })[0]
+    // Yesterday is offered only when it is in the month shown (and then it is disabled).
+    if (past) expect(past).toBeDisabled()
+    expect(
+      screen.getByRole('button', { name: new RegExp(format(new Date(), 'MMMM do, yyyy')) }),
+    ).toBeEnabled()
+
+    const error = await benefitsApi
+      .createEnrollmentWindow({
+        planYearId: 'by_fiscal',
+        kind: 'open_enrollment',
+        name: 'Back-dated',
+        effectiveDate: `${String(year)}-01-02`,
+        closesOn: iso(addDays(new Date(), 5)),
+        description: null,
+        planIds: ['bp_hdhp1'],
+        employeeIds: [],
+      })
+      .then(
+        () => null,
+        (failure: unknown) => failure,
+      )
+    if (iso(new Date()) > `${String(year)}-01-02`) {
+      expect(error).toBeInstanceOf(ApiError)
+      expect((error as ApiError).fieldErrors.effectiveDate).toBe('Choose today or a later day.')
+    }
+    expect(enrollmentWindows.all().some((item) => item.name === 'Back-dated')).toBe(error === null)
   })
 })

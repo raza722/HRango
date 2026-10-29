@@ -58,6 +58,7 @@ export function EditPlanYearDialog({
   const wizard = usePlanYearWizard({
     initial: planYearValues(year),
     startStep,
+    others: (lookups.data?.planYears ?? []).filter((item) => item.id !== year.id),
     save: async (input) => {
       await save.mutateAsync({ id: year.id, input: { ...input, rowVersion: year.rowVersion } })
       onClose()

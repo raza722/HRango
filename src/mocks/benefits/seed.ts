@@ -4,10 +4,10 @@ import type { ElectionRec, FileRec, PlanRec, PlanYearRec, UpdateRequestRec, Wind
 
 // Sample data around the drawn rows: the "Fiscal year" plan year (this year, 5 plans, Active)
 // with HDHP1, HDHP2 and FSA-Eligible HMO as its medical plans, last year's plan year, two
-// enrollment windows and the sample company's elections (people in
-// `../manpower-planning/org-lookups.ts`). Dates follow today, so the statuses stay right.
+// enrollment windows and the elections of people in the shared company directory
+// (`../employees/seed.ts`). Dates follow today, so the statuses stay right.
 
-const BY = 'Hamza Ashraf'
+const BY = 'Shelley Kannes'
 const year = () => new Date().getFullYear()
 const on = (offset: number, month: number, dayOfMonth: number) =>
   format(new Date(year() + offset, month - 1, dayOfMonth), 'yyyy-MM-dd')

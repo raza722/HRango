@@ -1,3 +1,4 @@
+import { format } from 'date-fns'
 import { z } from 'zod'
 
 import { CATEGORY_VALUES } from '../categories'
@@ -12,7 +13,29 @@ function endsAfterStart(value: { startDate?: unknown; endDate?: unknown }): bool
   return !startDate || !endDate || endDate > startDate
 }
 
+/** Today as `yyyy-MM-dd`. */
+const todayIso = () => format(new Date(), 'yyyy-MM-dd')
+
 // --- Plan year (New Plan Year page, Edit Plan Year dialog) ---------------------------------------
+
+/** Another plan year, for the checks a new one is held to (its name and dates). */
+export interface ExistingPlanYear {
+  id: string
+  name: string
+  startDate: string
+  endDate: string
+}
+
+/** The plan year the dates run into, if any (plan years cannot overlap). */
+export function overlappingYear(
+  value: { startDate: string; endDate: string },
+  others: readonly ExistingPlanYear[],
+): ExistingPlanYear | undefined {
+  if (!value.startDate || !value.endDate || value.endDate <= value.startDate) return undefined
+  return others.find(
+    (other) => value.startDate <= other.endDate && value.endDate >= other.startDate,
+  )
+}
 
 export const planYearFormSchema = z
   .object({
@@ -56,6 +79,28 @@ export const planYearFormSchema = z
   )
 export type PlanYearFormValues = z.infer<typeof planYearFormSchema>
 
+/**
+ * The plan year form, checked against the other plan years: its name is new and its dates
+ * do not overlap theirs. Both are checked on the Details step, before Plans opens.
+ */
+export const planYearSchemaFor = (others: readonly ExistingPlanYear[]) =>
+  planYearFormSchema
+    .refine(
+      (value) =>
+        !others.some(
+          (other) => other.name.trim().toLowerCase() === value.name.trim().toLowerCase(),
+        ),
+      { message: 'A plan year with this name already exists.', path: ['name'], when: () => true },
+    )
+    .refine((value) => overlappingYear(value, others) === undefined, {
+      path: ['startDate'],
+      when: () => true,
+      error: (issue) => {
+        const other = overlappingYear(issue.input as { startDate: string; endDate: string }, others)
+        return `These dates overlap ${other?.name ?? 'another plan year'}${other ? ` (${other.startDate} to ${other.endDate})` : ''}. Plan years cannot overlap.`
+      },
+    })
+
 /** The fields each step checks before the next one opens. */
 export const PLAN_YEAR_STEP_FIELDS = {
   details: ['name', 'startDate', 'endDate'],
@@ -97,19 +142,31 @@ export type PlanFormValues = z.infer<typeof planFormSchema>
 
 // --- New Open Enrollment Window -----------------------------------------------------------------
 
-export const enrollmentWindowFormSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, 'Enter the enrollment name')
-    .max(80, 'Keep it under 80 characters'),
-  planYearId: z.string().min(1, 'Choose the plan year'),
-  effectiveDate: date('Choose when it becomes effective'),
-  closesOn: date('Choose the last day of enrollment'),
-  planIds: z.array(z.string()).min(1, 'Choose at least one plan'),
-  /** Nobody chosen: everyone may enrol. */
-  employeeIds: z.array(z.string()),
-})
+export const enrollmentWindowFormSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1, 'Enter the enrollment name')
+      .max(80, 'Keep it under 80 characters'),
+    planYearId: z.string().min(1, 'Choose the plan year'),
+    effectiveDate: date('Choose when it becomes effective'),
+    closesOn: date('Choose the last day of enrollment'),
+    planIds: z.array(z.string()).min(1, 'Choose at least one plan'),
+    /** Nobody chosen: everyone may enrol. */
+    employeeIds: z.array(z.string()),
+  })
+  // A new window starts today or later, and people can still enrol on its last day.
+  .refine((value) => !value.effectiveDate || value.effectiveDate >= todayIso(), {
+    message: 'Choose today or a later day',
+    path: ['effectiveDate'],
+    when: () => true,
+  })
+  .refine((value) => !value.closesOn || value.closesOn >= todayIso(), {
+    message: 'Choose today or a later day',
+    path: ['closesOn'],
+    when: () => true,
+  })
 export type EnrollmentWindowFormValues = z.infer<typeof enrollmentWindowFormSchema>
 
 export const ENROLLMENT_STEP_ONE_FIELDS = [
