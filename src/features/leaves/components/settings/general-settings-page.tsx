@@ -98,7 +98,7 @@ export function LeaveGeneralSettingsPage() {
           value,
           label: FINAL_APPROVAL_LABELS[value],
         }))}
-        description="Whose approval completes a leave application (stored; the request flows decide who approves for now)."
+        description="Whose approval completes a leave application. Who approves each step is set in Requests → Settings → Request Flows."
       />
       <SelectField
         control={form.control}
@@ -110,7 +110,7 @@ export function LeaveGeneralSettingsPage() {
           value,
           label: APPROVE_ON_STATUS_LABELS[value],
         }))}
-        description="The status at which an application counts as leave taken: Approved, or already while Pending (stored; balances count approved leave for now)."
+        description="When an application counts as leave taken: once it is approved, or as soon as it is applied for (pending)."
       />
       <div className="flex flex-wrap items-center gap-x-10 gap-y-2">
         <label htmlFor={switchId} className="text-sm text-title">

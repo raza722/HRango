@@ -133,7 +133,8 @@ describe('Time Sheet', () => {
     )
 
     expect(await screen.findByRole('columnheader', { name: 'Employee' })).toBeVisible()
-    await user.click(await screen.findByRole('button', { name: `Edit, ${label}` }))
+    // On All the row actions name whose day it is.
+    await user.click(await screen.findByRole('button', { name: `Edit, Omar Siddiqui, ${label}` }))
     const edit = await screen.findByRole('dialog', {
       name: /^Edit the time sheet of Omar Siddiqui/,
     })
@@ -151,7 +152,7 @@ describe('Time Sheet', () => {
 
     const row = await screen.findByRole('row', { name: new RegExp(label) })
     expect(await within(row).findAllByText('Absent')).not.toHaveLength(0)
-    await user.click(within(row).getByRole('button', { name: `View, ${label}` }))
+    await user.click(within(row).getByRole('button', { name: `View, Omar Siddiqui, ${label}` }))
     const view = await screen.findByRole('dialog', { name: /^Time sheet of Omar Siddiqui/ })
     expect(await within(view).findByText('Checked with the team lead')).toBeVisible()
     await user.click(within(view).getByRole('button', { name: 'History' }))
@@ -163,7 +164,14 @@ describe('Time Sheet', () => {
     const { user } = renderApp('/attendance/time-sheet?scope=all')
 
     await screen.findAllByRole('button', { name: /^Edit, / })
+    // Process asks first, saying what it does.
     await user.click(screen.getByRole('button', { name: 'Process' }))
+    const ask = await screen.findByRole('alertdialog', { name: 'Process the time sheet?' })
+    expect(
+      within(ask).getByText(/works out attendance again for everyone in this view/),
+    ).toBeVisible()
+    expect(within(ask).getByText(/Days changed by hand keep their changes/)).toBeVisible()
+    await user.click(within(ask).getByRole('button', { name: 'Process' }))
     expect(await screen.findByText(/^Processed \d+ days? for \d+ employees?$/)).toBeInTheDocument()
   })
 })

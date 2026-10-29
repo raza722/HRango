@@ -11,6 +11,7 @@ import {
   OVERVIEW_SCOPES,
   type OverviewScope,
 } from '../../types/attendance.types'
+import { AttendanceSectionsMenu } from '../layout/attendance-sub-layout'
 import { StatusIcon } from '../shared/status-badges'
 
 interface OverviewHeaderProps {
@@ -23,8 +24,9 @@ interface OverviewHeaderProps {
 }
 
 /**
- * The first card of Attendance Overview: title, search, All / Subordinates and
- * the legend of day states. A legend chip highlights that state in the grid.
+ * The first card of Attendance Overview: title, "More" (the Attendance sub menu's pages),
+ * search, All / Subordinates and the legend of day states. A legend chip highlights that
+ * state in the grid.
  */
 export function OverviewHeader({
   scope,
@@ -38,21 +40,24 @@ export function OverviewHeader({
     <header className="@container grid gap-5 rounded-xl bg-card px-4 py-5 shadow-xs sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-inter text-xl font-medium text-heading">Attendance Overview</h1>
-        <div className="relative w-full @lg:w-64">
-          <Search
-            aria-hidden="true"
-            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-label"
-          />
-          <Input
-            type="search"
-            aria-label="Search employees"
-            placeholder="Search"
-            value={searchText}
-            onChange={(event) => {
-              onSearchChange(event.target.value)
-            }}
-            className="pl-9 font-inter placeholder:text-grey sm:pl-9 sm:text-base"
-          />
+        <div className="flex w-full flex-wrap items-center gap-2 @lg:w-auto">
+          <AttendanceSectionsMenu className="h-10" />
+          <div className="relative min-w-0 flex-1 @lg:w-64 @lg:flex-none">
+            <Search
+              aria-hidden="true"
+              className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-label"
+            />
+            <Input
+              type="search"
+              aria-label="Search employees"
+              placeholder="Search"
+              value={searchText}
+              onChange={(event) => {
+                onSearchChange(event.target.value)
+              }}
+              className="pl-9 font-inter placeholder:text-grey sm:pl-9 sm:text-base"
+            />
+          </div>
         </div>
       </div>
 

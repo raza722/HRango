@@ -16,7 +16,7 @@ describe('schedule dates', () => {
     expect(periodRange('week', '2024-08-13')).toEqual({ from: '2024-08-11', to: '2024-08-17' })
     expect(periodRange('month', '2024-08-13')).toEqual({ from: '2024-08-01', to: '2024-08-31' })
     expect(periodRange('year', '2024-08-13')).toEqual({ from: '2024-01-01', to: '2024-12-31' })
-    expect(formatRange('2024-08-01', '2024-08-31')).toBe('Aug 1,24 - Aug 31,24')
+    expect(formatRange('2024-08-01', '2024-08-31')).toBe('Aug 1, 2024 - Aug 31, 2024')
   })
 
   it('labels week bands as drawn ("Aug- Week 3")', () => {
@@ -77,8 +77,8 @@ describe('shift hours', () => {
     expect(formatHours(0)).toBe('0m')
     expect(formatHours(420)).toBe('7h')
     expect(formatHours(5760)).toBe('96h')
-    expect(formatClock('17:00')).toBe('05:00 Pm')
-    expect(formatClock('10:00')).toBe('10:00 Am')
+    expect(formatClock('17:00')).toBe('05:00 PM')
+    expect(formatClock('10:00')).toBe('10:00 AM')
   })
 })
 

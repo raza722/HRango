@@ -188,13 +188,13 @@ describe('attendance engine', () => {
   })
 
   it('shows today’s machine punches only once the machine has been read', () => {
-    // No branch: the spare machine MCH-000013 takes this person's punches.
+    // No branch: the spare machine MCH-00013 takes this person's punches.
     const read = (date: string, at: string) =>
       computeDay(
         snapshot([], {
           today: date,
           now: `${date}T20:00`,
-          machineSync: new Map([['MCH-000013', `${date}T${at}`]]),
+          machineSync: new Map([['MCH-00013', `${date}T${at}`]]),
         }),
         PERSON,
         date,
@@ -206,7 +206,7 @@ describe('attendance engine', () => {
     if (!date) throw new Error('No working day generated for the test person')
     expect(read(date, '07:00').day.checkIn).toBeNull()
     expect(read(date, '19:00').logs[0]).toMatchObject({
-      machineId: 'MCH-000013',
+      machineId: 'MCH-00013',
       description: 'Checking In ...',
     })
   })

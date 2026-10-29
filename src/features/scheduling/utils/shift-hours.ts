@@ -54,13 +54,13 @@ export function formatHours(minutes: number): string {
   return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
 }
 
-/** "10:00" (or "10:00:00") → "10:00 Am", as the cells print times. */
+/** "10:00" (or "10:00:00") → "10:00 AM", as the cells print times. */
 export function formatClock(time: string | null): string {
   const minutes = toMinutes(time)
   if (minutes === null) return '--:--'
   const hours = Math.floor(minutes / 60)
   const hour12 = hours % 12 === 0 ? 12 : hours % 12
-  return `${String(hour12).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} ${hours < 12 ? 'Am' : 'Pm'}`
+  return `${String(hour12).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} ${hours < 12 ? 'AM' : 'PM'}`
 }
 
 /** "8 hrs, 30 min" style for the overtime and workable-hours fields. */

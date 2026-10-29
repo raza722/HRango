@@ -105,14 +105,19 @@ function WarningCell({ day }: { day: TimeSheetDay }) {
 function ActionButton({
   action,
   day,
+  withName,
   onAction,
 }: {
   action: TimeSheetAction
   day: TimeSheetDay
+  /** Subordinates and All list many people: the label names whose day it is. */
+  withName: boolean
   onAction: TimeSheetTableProps['onAction']
 }) {
   const meta = ACTION_META[action]
-  const label = `${meta.label}, ${formatSheetDate(day.workDate)}`
+  const label = withName
+    ? `${meta.label}, ${day.employeeName}, ${formatSheetDate(day.workDate)}`
+    : `${meta.label}, ${formatSheetDate(day.workDate)}`
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -195,7 +200,11 @@ export function TimeSheetTable({
                 </tr>
               ))
             : rows.map((day, index) => {
-                const zebra = index % 2 === 0 ? 'bg-[#F5F5F5] dark:bg-muted/40' : 'bg-card'
+                // Opaque in both themes: the sticky Emp Id / Name cells hide what scrolls under them.
+                const zebra =
+                  index % 2 === 0
+                    ? 'bg-[#F5F5F5] dark:bg-[color-mix(in_srgb,var(--color-muted)_40%,var(--color-card))]'
+                    : 'bg-card'
                 const actions = rowActions(day, scope, today, canEdit)
                 const extra = day.flags.filter((flag) => !CHIP_FLAGS.has(flag))
                 const worked = overtime(day)
@@ -306,6 +315,7 @@ export function TimeSheetTable({
                             key={action}
                             action={action}
                             day={day}
+                            withName={scope !== 'my'}
                             onAction={onAction}
                           />
                         ))}

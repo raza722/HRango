@@ -89,9 +89,9 @@ export function shiftAnchor(view: ScheduleView, anchor: string, direction: -1 | 
   return toDay(addMonths(date, direction))
 }
 
-/** "Aug 1,24 - Aug 31,24", as on the purple period header. */
+/** "Aug 1, 2024 - Aug 31, 2024", as on the purple period header. */
 export function formatRange(from: string, to: string): string {
-  const label = (day: string) => format(toDate(day), 'MMM d,yy')
+  const label = (day: string) => format(toDate(day), 'MMM d, yyyy')
   return `${label(from)} - ${label(to)}`
 }
 

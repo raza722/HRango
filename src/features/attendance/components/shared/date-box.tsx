@@ -10,7 +10,8 @@ import { cn } from '@/lib/utils'
 
 /**
  * "01-Aug-2024" date button with a calendar: the time sheet and logs From / To,
- * and (`variant="form"`) a date field in a dialog, labelled like the other fields.
+ * and (`variant="form"`) a date field in a dialog, labelled like the other fields, with its
+ * message under it (`error`).
  */
 export function DateBox({
   label,
@@ -21,6 +22,7 @@ export function DateBox({
   required,
   variant = 'filter',
   tone = 'poppins',
+  error,
   className,
 }: {
   label: string
@@ -32,9 +34,12 @@ export function DateBox({
   variant?: 'filter' | 'form'
   /** `inter`: the time sheet filters (older Inter frames), value Inter Regular 14 #475569. */
   tone?: 'poppins' | 'inter'
+  /** The field's message, shown under it and read with it. */
+  error?: string | undefined
   className?: string
 }) {
   const id = useId()
+  const errorId = `${id}-error`
   const [open, setOpen] = useState(false)
   const selected = parseDateValue(value)
   const disabled = [
@@ -71,6 +76,8 @@ export function DateBox({
             id={id}
             type="button"
             aria-label={selected ? `${label}: ${format(selected, 'd MMMM yyyy')}` : label}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
             className={cn(
               fieldControlClassName,
               'justify-start gap-2.5 bg-muted/60 text-left',
@@ -97,6 +104,11 @@ export function DateBox({
           />
         </PopoverContent>
       </Popover>
+      {error && (
+        <p id={errorId} className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   )
 }

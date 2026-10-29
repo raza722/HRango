@@ -47,7 +47,10 @@ describe('Attendance Logs', () => {
         name: 'Attendance Logs',
       }),
     ).toHaveAttribute('aria-current', 'page')
-    expect((await screen.findAllByText(/^Machine \(MCH-\d+\)$/)).length).toBeGreaterThan(0)
+    // The machine's name, then its code once: "Machine 1" over "(MCH-00001)".
+    expect((await screen.findAllByText(/^Machine \d+$/)).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/^\(MCH-\d{5}\)$/).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/MCH-\d+.*MCH-/)).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '+ Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Create Attendance Log' })

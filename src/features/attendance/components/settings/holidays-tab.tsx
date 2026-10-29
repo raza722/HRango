@@ -66,16 +66,22 @@ const HOLIDAY_TYPE_LABELS: Record<HolidayType, string> = { public: 'Public', loc
 
 const longDate = (date: string) => format(parse(date, 'yyyy-MM-dd', new Date()), 'MMMM d, yyyy')
 
+/** The id of a field's message, for the control's `aria-describedby`. */
+const errorIdOf = (id: string) => `${id}-error`
+
 function Field({
   label,
   required,
   children,
   id,
+  error,
 }: {
   label: string
   required?: boolean
   children: ReactNode
   id: string
+  /** Shown under the field until it changes. */
+  error?: string | undefined
 }) {
   return (
     <div className="grid min-w-0 gap-2">
@@ -88,9 +94,32 @@ function Field({
         )}
       </label>
       {children}
+      {error && (
+        <p id={errorIdOf(id)} className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   )
 }
+
+/** Every problem of a form at once, by field; a field's message goes when it changes. */
+function useFieldErrors<F extends string>() {
+  const [errors, setErrors] = useState<Partial<Record<F, string>>>({})
+  const clear = (...fields: F[]) => {
+    setErrors((current) => {
+      if (!fields.some((field) => current[field])) return current
+      return Object.fromEntries(
+        Object.entries(current).filter(([key]) => !(fields as string[]).includes(key)),
+      ) as Partial<Record<F, string>>
+    })
+  }
+  return { errors, setErrors, clear }
+}
+
+/** `aria-invalid` / `aria-describedby` of a control with a message. */
+const invalidProps = (id: string, error: string | undefined) =>
+  error ? { 'aria-invalid': true, 'aria-describedby': errorIdOf(id) } : {}
 
 function Choice({
   id,
@@ -98,16 +127,18 @@ function Choice({
   onChange,
   options,
   placeholder,
+  error,
 }: {
   id: string
   value: string | null
   onChange: (value: string) => void
   options: { value: string; label: string }[]
   placeholder: string
+  error?: string | undefined
 }) {
   return (
     <Select value={value ?? ''} onValueChange={onChange}>
-      <SelectTrigger id={id} className="w-full">
+      <SelectTrigger id={id} className="w-full" {...invalidProps(id, error)}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent className="max-h-72">
@@ -170,9 +201,15 @@ const toRuleInput = (rule: HolidayRule): HolidayRuleInput => ({
   religion: rule.religion,
 })
 
+/** The rule fields a message can stand under. */
+type RuleField =
+  'religion' | 'countryId' | 'stateId' | 'cityId' | 'locationId' | 'branchId' | 'employeeId'
+
+type HolidayField = 'name' | 'startDate' | 'endDate'
+
 /**
  * "Holiday Rule Create": the type and its fields. One rule names one employee, so choosing
- * several employees adds a rule for each.
+ * several employees adds a rule for each. Every missing field is marked at once.
  */
 function HolidayRuleDialog({
   rule,
@@ -188,10 +225,10 @@ function HolidayRuleDialog({
   const [employeeIds, setEmployeeIds] = useState<string[]>(
     rule?.employeeId ? [rule.employeeId] : [],
   )
-  const [error, setError] = useState<string | null>(null)
+  const { errors, setErrors, clear } = useFieldErrors<RuleField>()
   const set = (patch: Partial<HolidayRule>) => {
     setDraft((current) => ({ ...current, ...patch }))
-    setError(null)
+    clear(...(Object.keys(patch) as RuleField[]))
   }
   const isGeo = draft.ruleType === 'geo_location'
   const isOrg = draft.ruleType === 'org_structure'
@@ -207,18 +244,18 @@ function HolidayRuleDialog({
   )
 
   const submit = () => {
-    const missing =
-      draft.ruleType === 'religion' && !draft.religion
-        ? 'Choose a religion'
-        : isGeo && (!draft.countryId || !draft.stateId || !draft.cityId)
-          ? 'Choose the country, state and city'
-          : isOrg && (!draft.locationId || !draft.branchId)
-            ? 'Choose the location and branch'
-            : draft.ruleType === 'employee' && employeeIds.length === 0
-              ? 'Choose the employees'
-              : null
-    if (missing) {
-      setError(missing)
+    const missing: Partial<Record<RuleField, string>> = {}
+    if (draft.ruleType === 'religion' && !draft.religion) missing.religion = 'Choose a religion'
+    if (isGeo && !draft.countryId) missing.countryId = 'Choose the country'
+    if (isGeo && !draft.stateId) missing.stateId = 'Choose the state'
+    if (isGeo && !draft.cityId) missing.cityId = 'Choose the city'
+    if (isOrg && !draft.locationId) missing.locationId = 'Choose the location'
+    if (isOrg && !draft.branchId) missing.branchId = 'Choose the branch'
+    if (draft.ruleType === 'employee' && employeeIds.length === 0) {
+      missing.employeeId = 'Choose the employees'
+    }
+    if (Object.keys(missing).length > 0) {
+      setErrors(missing)
       return
     }
     if (draft.ruleType === 'employee') {
@@ -296,9 +333,10 @@ function HolidayRuleDialog({
         </Field>
         <h3 className="text-lg font-medium text-[#202020] dark:text-heading">Fields</h3>
         {draft.ruleType === 'religion' && (
-          <Field label="Religion" required id={ids.a}>
+          <Field label="Religion" required id={ids.a} error={errors.religion}>
             <Choice
               id={ids.a}
+              error={errors.religion}
               value={draft.religion}
               placeholder="Select Religion"
               options={RELIGIONS.map((value) => ({ value, label: value }))}
@@ -310,9 +348,10 @@ function HolidayRuleDialog({
         )}
         {isGeo && (
           <>
-            <Field label="Country" required id={ids.a}>
+            <Field label="Country" required id={ids.a} error={errors.countryId}>
               <Choice
                 id={ids.a}
+                error={errors.countryId}
                 value={draft.countryId}
                 placeholder="Select Country"
                 options={(countries.data ?? []).map((item) => ({
@@ -324,9 +363,10 @@ function HolidayRuleDialog({
                 }}
               />
             </Field>
-            <Field label="State" required id={ids.b}>
+            <Field label="State" required id={ids.b} error={errors.stateId}>
               <Choice
                 id={ids.b}
+                error={errors.stateId}
                 value={draft.stateId}
                 placeholder="Select State"
                 options={(states.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
@@ -335,9 +375,10 @@ function HolidayRuleDialog({
                 }}
               />
             </Field>
-            <Field label="City" required id={ids.c}>
+            <Field label="City" required id={ids.c} error={errors.cityId}>
               <Choice
                 id={ids.c}
+                error={errors.cityId}
                 value={draft.cityId}
                 placeholder="Select City"
                 options={(cities.data ?? []).map((item) => ({ value: item.id, label: item.name }))}
@@ -350,9 +391,10 @@ function HolidayRuleDialog({
         )}
         {isOrg && (
           <>
-            <Field label="Location" required id={ids.a}>
+            <Field label="Location" required id={ids.a} error={errors.locationId}>
               <Choice
                 id={ids.a}
+                error={errors.locationId}
                 value={draft.locationId}
                 placeholder="Select Location"
                 options={(locations.data ?? []).map((item) => ({
@@ -364,9 +406,10 @@ function HolidayRuleDialog({
                 }}
               />
             </Field>
-            <Field label="Branch" required id={ids.b}>
+            <Field label="Branch" required id={ids.b} error={errors.branchId}>
               <Choice
                 id={ids.b}
+                error={errors.branchId}
                 value={draft.branchId}
                 placeholder="Select Branch"
                 options={branchOptions.map((item) => ({ value: item.id, label: item.name }))}
@@ -383,7 +426,7 @@ function HolidayRuleDialog({
             value={employeeIds}
             onChange={(next) => {
               setEmployeeIds(next)
-              setError(null)
+              clear('employeeId')
             }}
             known={
               rule?.employeeId
@@ -392,10 +435,8 @@ function HolidayRuleDialog({
             }
           />
         )}
-        {error && (
-          <p role="alert" className="text-xs text-destructive">
-            {error}
-          </p>
+        {draft.ruleType === 'employee' && errors.employeeId && (
+          <p className="-mt-2 text-xs text-destructive">{errors.employeeId}</p>
         )}
       </div>
     </AppDialog>
@@ -415,18 +456,21 @@ function HolidayForm({ record, onClose }: { record: Holiday | null; onClose: () 
   const [description, setDescription] = useState(record?.description ?? '')
   const [rules, setRules] = useState<HolidayRule[]>(record?.rules ?? [])
   const [ruleDialog, setRuleDialog] = useState<{ rule: HolidayRule | null } | null>(null)
+  const { errors, setErrors, clear } = useFieldErrors<HolidayField>()
+  // What the server refused that no field shows.
   const [error, setError] = useState<string | null>(null)
 
   const submit = async () => {
-    const problem = !name.trim()
-      ? 'Enter the holiday name.'
-      : !startDate || !endDate
-        ? 'Choose the start and end dates.'
-        : endDate < startDate
-          ? 'End Date must be on or after Start Date.'
-          : null
-    if (problem) {
-      setError(problem)
+    const problems: Partial<Record<HolidayField, string>> = {}
+    if (!name.trim()) problems.name = 'Enter the holiday name'
+    if (!startDate) problems.startDate = 'Choose the start date'
+    if (!endDate) problems.endDate = 'Choose the end date'
+    else if (startDate && endDate < startDate) {
+      problems.endDate = 'Choose the start date or a later day'
+    }
+    setError(null)
+    if (Object.keys(problems).length > 0) {
+      setErrors(problems)
       return
     }
     try {
@@ -444,11 +488,17 @@ function HolidayForm({ record, onClose }: { record: Holiday | null; onClose: () 
         },
       })
     } catch (failure) {
-      setError(
-        failure instanceof ApiError
-          ? (Object.values(failure.fieldErrors)[0] ?? failure.message)
-          : 'Could not save.',
-      )
+      if (!(failure instanceof ApiError)) {
+        setError('Could not save.')
+        return
+      }
+      // The server's field messages go under their fields; the rest above the buttons.
+      const placed: Partial<Record<HolidayField, string>> = {}
+      for (const [key, message] of Object.entries(failure.fieldErrors)) {
+        if (key === 'name' || key === 'startDate' || key === 'endDate') placed[key] = message
+      }
+      setErrors(placed)
+      if (Object.keys(placed).length === 0) setError(failure.message)
       return
     }
     onClose()
@@ -500,15 +550,16 @@ function HolidayForm({ record, onClose }: { record: Holiday | null; onClose: () 
             Attendance Exempt
           </label>
           <div className="grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-4">
-            <Field label="Name" required id={ids.name}>
+            <Field label="Name" required id={ids.name} error={errors.name}>
               <Input
                 id={ids.name}
                 value={name}
                 maxLength={200}
                 placeholder="Enter name"
+                {...invalidProps(ids.name, errors.name)}
                 onChange={(event) => {
                   setName(event.target.value)
-                  setError(null)
+                  clear('name')
                 }}
               />
             </Field>
@@ -531,9 +582,14 @@ function HolidayForm({ record, onClose }: { record: Holiday | null; onClose: () 
               variant="form"
               required
               value={startDate}
+              error={errors.startDate}
               onChange={(value) => {
                 setStartDate(value)
-                if (!endDate || endDate < value) setEndDate(value)
+                clear('startDate')
+                if (!endDate || endDate < value) {
+                  setEndDate(value)
+                  clear('endDate')
+                }
               }}
             />
             <DateBox
@@ -541,8 +597,12 @@ function HolidayForm({ record, onClose }: { record: Holiday | null; onClose: () 
               variant="form"
               required
               value={endDate}
+              error={errors.endDate}
               minDate={startDate ? parse(startDate, 'yyyy-MM-dd', new Date()) : undefined}
-              onChange={setEndDate}
+              onChange={(value) => {
+                setEndDate(value)
+                clear('endDate')
+              }}
             />
           </div>
           <Field label="Description" id={ids.description}>

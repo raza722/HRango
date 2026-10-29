@@ -6,6 +6,7 @@ import { ErrorState } from '@/components/feedback/error-state'
 import { PageContainer, Pagination } from '@/components/layout'
 import { Card, CardContent } from '@/components/ui/card'
 import { useCan } from '@/lib/permissions'
+import { cn } from '@/lib/utils'
 
 import { BOARD_PAGE_SIZE, SCHEDULING_PERMISSIONS } from '../constants'
 import {
@@ -49,6 +50,7 @@ import { ViewEntryDialog, ViewRestDayDialog } from './dialogs/view-entry-dialog'
 import { ScheduleBoard } from './schedule-board'
 import { SchedulingFilters } from './scheduling-filters'
 import { SchedulingHeader } from './scheduling-header'
+import { SchedulingToolbar } from './scheduling-toolbar'
 import { schedulingType } from './type-styles'
 import { YearBoard } from './year-board'
 
@@ -92,16 +94,47 @@ function boardFilters(search: SchedulingSearch): BoardFilters {
   return filters
 }
 
+/** Applies a change to Scheduling's URL state (`replace` for typing in the search box). */
+export type SchedulingSearchUpdate = (
+  patch: Partial<SchedulingSearch>,
+  replace?: boolean,
+) => Promise<void>
+
+/** Scheduling on its own route (sidebar → Scheduling). */
+export function SchedulingPage() {
+  const search = routeApi.useSearch()
+  const navigate = routeApi.useNavigate()
+  return (
+    <SchedulingView
+      search={search}
+      onSearch={(patch, replace = false) =>
+        navigate({ search: (prev) => ({ ...prev, ...patch }), replace })
+      }
+    />
+  )
+}
+
 /**
  * Scheduling: who works which shift on which day (`/api/scheduling/schedules`). My / All /
  * Subordinates tabs, a week, month or year grid, and the actions from the designs the API
  * supports: Create Scheduling, Apply Default Shift, Delete, Export, Enable / Disable
  * Multiselect (Multi Edit, Multi Delete), and per shift Edit, View, Swap (drag a shift onto
- * another cell) and Delete. Buttons the user's permissions do not allow are left out.
+ * another cell) and Delete. Buttons the user's permissions do not allow are left out. The
+ * route that shows it owns the URL: the sidebar's Scheduling, and Scheduling inside the
+ * Attendance sub menu. `variant="sub-menu"` (Attendance, no frame there) puts the controls
+ * and the board in one white card laid out like Attendance Logs; `page` is the drawn page.
  */
-export function SchedulingPage() {
-  const search = routeApi.useSearch()
-  const navigate = routeApi.useNavigate()
+export function SchedulingView({
+  search,
+  onSearch,
+  variant = 'page',
+}: {
+  search: SchedulingSearch
+  onSearch: SchedulingSearchUpdate
+  variant?: 'page' | 'sub-menu'
+}) {
+  const subMenu = variant === 'sub-menu'
+  const Header = subMenu ? SchedulingToolbar : SchedulingHeader
   const [today] = useState(() => toDay(new Date()))
   const [multiselect, setMultiselect] = useState(false)
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
@@ -158,8 +191,7 @@ export function SchedulingPage() {
   const deleteRest = useDeleteRestDays()
   const exportCsv = useExportSchedule()
 
-  const update = (patch: Partial<SchedulingSearch>, replace = false) =>
-    navigate({ search: (prev) => ({ ...prev, ...patch }), replace })
+  const update = (patch: Partial<SchedulingSearch>, replace = false) => onSearch(patch, replace)
 
   // Search box: the URL (and the request) follow when typing pauses.
   const q = search.q ?? ''
@@ -226,8 +258,10 @@ export function SchedulingPage() {
   }
 
   return (
-    <PageContainer>
-      <SchedulingHeader
+    <PageContainer
+      className={subMenu ? 'rounded-xl bg-card px-4 py-5 shadow-xs sm:gap-4 sm:px-6' : undefined}
+    >
+      <Header
         scope={search.scope}
         onScopeChange={(scope) => {
           void update({ scope, page: 1 })
@@ -297,8 +331,14 @@ export function SchedulingPage() {
         }
       />
 
-      <Card className="font-inter">
-        <CardContent ref={boardRef} className="grid gap-4 px-3 pt-4 sm:px-4 sm:pt-5">
+      <Card className={cn('font-inter', subMenu && 'rounded-none bg-transparent shadow-none')}>
+        <CardContent
+          ref={boardRef}
+          className={cn(
+            'grid gap-4 px-3 pt-4 sm:px-4 sm:pt-5',
+            subMenu && 'px-0 pt-0 pb-0 sm:px-0 sm:pt-0 sm:pb-0',
+          )}
+        >
           {current.error && !current.data ? (
             <ErrorState
               message={current.error.message}

@@ -3,6 +3,7 @@ import { format, isWeekend, subDays } from 'date-fns'
 import { createMockCollection } from '../collection'
 import { findEmployee } from '../employees/seed'
 import { PROFILES } from '../scheduling/seed'
+import { createId } from '../utils'
 import type {
   AttendanceBreak,
   AttendanceComment,
@@ -159,6 +160,26 @@ export const attendanceHistory = createMockCollection<StoredHistory>({
   storageKey: 'hrms-mock-attendance-history',
   seed: seedHistory,
 })
+
+/**
+ * A punch a biometric device handed over (Settings → Biometric Devices → Import punches): kept
+ * as a machine punch of `machineId`, so Attendance Logs and the time sheet count it.
+ */
+export function addMachinePunch(
+  punch: Pick<StoredPunch, 'employeeId' | 'type' | 'at' | 'machineId'>,
+): StoredPunch {
+  return attendancePunches.insert({
+    ...punch,
+    id: createId('pl'),
+    date: punch.at.slice(0, 10),
+    description:
+      punch.type === 'check-in' || punch.type === 'break-in'
+        ? 'Checking In ...'
+        : 'Checking Out ...',
+    source: 'machine',
+    manuallyUpdated: false,
+  })
+}
 
 /** Punches HR set aside (`PATCH /attendance/logs/{id}/ignore`): listed, but not counted. */
 export const attendanceIgnored = createMockCollection<{ id: string }>({

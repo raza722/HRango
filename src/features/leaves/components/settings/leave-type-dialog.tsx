@@ -58,7 +58,7 @@ import { CancelCircleIcon } from '../leave-icons'
 export type LeaveTypeDialogMode = 'create' | 'edit'
 
 const TITLES: Record<LeaveTypeDialogMode, string> = {
-  create: 'Add Leave Types',
+  create: 'Add Leave Type',
   edit: 'Edit Leave Type',
 }
 
@@ -211,7 +211,7 @@ function RemoveSlabButton({ label, onClick }: { label: string; onClick: () => vo
 }
 
 /**
- * "Add Leave Types" (frames 4428:90632, 4428:90731, 4428:90852): a 1078px
+ * "Add Leave Type" (frames 4428:90632, 4428:90731, 4428:90852): a 1078px
  * Inter popup with the labels on the left. Title, Short Code and No of Leaves
  * Allowed; the checkboxes in the frames' order, each dependent field right
  * under its box (Back Date Leave Limit in Days, Future Date Limit in Days, Do
@@ -310,12 +310,19 @@ export function LeaveTypeDialog({
         onSubmit={(event) => void submit(event)}
         className={cn('grid gap-5', typeCheckboxesClass)}
       >
-        <TextField control={form.control} name="title" label="Title" maxLength={60} />
-        <TextField control={form.control} name="shortCode" label="Short Code" maxLength={10} />
+        <TextField control={form.control} name="title" label="Title" required maxLength={60} />
+        <TextField
+          control={form.control}
+          name="shortCode"
+          label="Short Code"
+          required
+          maxLength={10}
+        />
         <TextField
           control={form.control}
           name="allowance"
           label="No of Leaves Allowed"
+          required
           inputMode="decimal"
         />
 

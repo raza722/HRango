@@ -79,8 +79,8 @@ describe('Attendance Settings', () => {
       await user.click(screen.getByRole('button', { name: '+ Create' }))
       const dialog = await screen.findByRole('dialog', { name: 'Create New Break Type' })
       await user.type(within(dialog).getByRole('textbox', { name: /^Name/ }), name)
-      await user.type(within(dialog).getByRole('textbox', { name: /^Start Indicator/ }), start)
-      await user.type(within(dialog).getByRole('textbox', { name: /^End Indicator/ }), end)
+      await user.type(within(dialog).getByRole('textbox', { name: /^Start Identifier/ }), start)
+      await user.type(within(dialog).getByRole('textbox', { name: /^End Identifier/ }), end)
       await user.click(within(dialog).getByRole('button', { name: 'Create' }))
       return dialog
     }
@@ -167,5 +167,53 @@ describe('Attendance Settings', () => {
     expect(await within(view).findByText('Rabia Anwar')).toBeVisible()
     expect(within(view).getByText('Yes')).toBeVisible()
     expect(restDayRules.all()).toHaveLength(1)
+  })
+
+  it('marks every missing holiday field under it, and clears each as it is filled', async () => {
+    const { user } = renderApp('/attendance/settings?tab=holidays')
+
+    await user.click(await screen.findByRole('button', { name: '+ Create' }, { timeout: 15_000 }))
+    const dialog = await screen.findByRole('dialog', { name: 'Create Holiday' })
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }))
+    // All at once, each under its field.
+    expect(await within(dialog).findByText('Enter the holiday name')).toBeVisible()
+    expect(within(dialog).getByText('Choose the start date')).toBeVisible()
+    expect(within(dialog).getByText('Choose the end date')).toBeVisible()
+    const name = within(dialog).getByRole('textbox', { name: /^Name/ })
+    expect(name).toHaveAttribute('aria-invalid', 'true')
+    expect(name).toHaveAccessibleDescription('Enter the holiday name')
+
+    // Typing a name clears its message only; a start date fills the end date too.
+    await user.type(name, 'Founders Day')
+    expect(within(dialog).queryByText('Enter the holiday name')).not.toBeInTheDocument()
+    expect(within(dialog).getByText('Choose the start date')).toBeVisible()
+    await pickDate(user, 'Start Date', workingDay())
+    expect(within(dialog).queryByText('Choose the start date')).not.toBeInTheDocument()
+    expect(within(dialog).queryByText('Choose the end date')).not.toBeInTheDocument()
+
+    // The rule dialog marks its missing field the same way.
+    await user.click(within(dialog).getByRole('button', { name: 'Add' }))
+    const ruleDialog = await screen.findByRole('dialog', { name: 'Holiday Rule Create' })
+    await user.click(within(ruleDialog).getByRole('button', { name: 'Create' }))
+    expect(await within(ruleDialog).findByText('Choose a religion')).toBeVisible()
+    await choose(user, /^Religion/, 'Christianity')
+    expect(within(ruleDialog).queryByText('Choose a religion')).not.toBeInTheDocument()
+  })
+
+  it('marks the rest day form’s missing fields under them', async () => {
+    const { user } = renderApp('/attendance/settings?tab=rest-days')
+
+    await user.click(await screen.findByRole('button', { name: '+ Create' }, { timeout: 15_000 }))
+    const dialog = await screen.findByRole('dialog', { name: 'Create New Rest Day' })
+    // Saturday and Sunday are picked to start with: unpick them.
+    await user.click(within(dialog).getByRole('button', { name: 'sat' }))
+    await user.click(within(dialog).getByRole('button', { name: 'sun' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }))
+    expect(await within(dialog).findByText('Select at least one employee')).toBeVisible()
+    expect(within(dialog).getByText('Pick at least one day')).toBeVisible()
+
+    await user.click(within(dialog).getByRole('button', { name: 'mon' }))
+    expect(within(dialog).queryByText('Pick at least one day')).not.toBeInTheDocument()
+    expect(within(dialog).getByText('Select at least one employee')).toBeVisible()
   })
 })

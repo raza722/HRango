@@ -22,29 +22,42 @@ import {
  * Limits follow backend/app/schemas/leaves.py.
  */
 
-/** A whole number box: empty, or digits from `min` up to `max`. */
+/** A minus sign before a number ("-5", "- 2.5"). */
+const negative = (value: string) => /^-\s*\d/.test(value)
+
+/**
+ * A whole number box: empty, or digits from `min` up to `max`. Each mistake has its own
+ * message: below the least ("Enter 0 or more"), not a whole number, or above the most.
+ */
 const wholeText = (max: number, allowEmpty: boolean, min = 0) =>
   z
     .string()
     .trim()
     .refine((value) => allowEmpty || value !== '', 'Enter a number')
     .refine(
-      (value) =>
-        value === '' || (/^\d+$/.test(value) && Number(value) <= max && Number(value) >= min),
-      min > 0
-        ? `Enter a whole number from ${String(min)} to ${String(max)}`
-        : `Enter a whole number up to ${String(max)}`,
+      (value) => !negative(value) && !(/^\d+$/.test(value) && Number(value) < min),
+      `Enter ${String(min)} or more`,
     )
+    .refine(
+      (value) => value === '' || negative(value) || /^\d+$/.test(value),
+      'Enter a whole number',
+    )
+    .refine((value) => !/^\d+$/.test(value) || Number(value) <= max, `Enter ${String(max)} or less`)
 
-/** A days box: empty, or a number such as 0.5 up to `max`. */
+/** A days box: empty, or 0 or more (such as 0.5) up to `max`. */
 const daysText = (max: number, allowEmpty: boolean) =>
   z
     .string()
     .trim()
     .refine((value) => allowEmpty || value !== '', 'Enter the number of days')
+    .refine((value) => !negative(value), 'Enter 0 or more')
     .refine(
-      (value) => value === '' || (/^\d+(\.\d{1,2})?$/.test(value) && Number(value) <= max),
-      `Enter a number up to ${String(max)}`,
+      (value) => value === '' || negative(value) || /^\d+(\.\d{1,2})?$/.test(value),
+      'Enter a number such as 2 or 0.5',
+    )
+    .refine(
+      (value) => !/^\d+(\.\d{1,2})?$/.test(value) || Number(value) <= max,
+      `Enter ${String(max)} or less`,
     )
 
 const asNumber = (value: string) => (value === '' ? null : Number(value))

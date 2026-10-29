@@ -47,7 +47,7 @@ const LEVEL_HELP: Record<PolicyLevel, string> = {
 }
 
 /**
- * "Select Policy level?": Company Level Policy and Employee Level Policy as two
+ * "Policy Level": Company Level Policy and Employee Level Policy as two
  * switches of which one is on (the frame draws the chosen one navy, the other
  * grey), with the chosen level's sentence under them.
  */
@@ -58,7 +58,7 @@ function PolicyLevelField({ control }: { control: Control<LeavePolicyFormValues>
   return (
     <fieldset className="grid gap-3">
       <legend className="pb-3 text-base font-medium text-[#202020] dark:text-heading">
-        Select Policy level?
+        Policy Level
       </legend>
       <div className="grid gap-3 sm:grid-cols-2">
         {(['company', 'employee'] as const).map((level) => {
@@ -180,7 +180,7 @@ function PolicyTypeRow({
 
 /**
  * "Add Policy" (frame 4428:90498): a 667px Poppins popup with Policy * and
- * Title * side by side, "Select Policy level?", Allow half day leave, Allow
+ * Title * side by side, "Policy Level", Allow half day leave, Allow
  * short day leave, then Cancel and Add Policy on the left. Edit keeps the
  * layout with Save (and Delete).
  */

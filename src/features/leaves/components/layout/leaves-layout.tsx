@@ -7,13 +7,12 @@ import { cn } from '@/lib/utils'
  * The sub menu over every Leaves page (frames 4428:89943 …): My Leaves,
  * Leave Applications and Settings, Poppins Regular 13 #5C5C5C with the
  * current one Medium 14 #17263A under a 2.5px navy bar. Leave Encashment is
- * the Payroll page of that name, as the design notes list it here.
+ * not linked here: it stays under Payroll → Leave Encashment.
  */
 const ITEMS = [
   { to: '/leaves/my-leaves', label: 'My Leaves' },
   { to: '/leaves/applications', label: 'Leave Applications' },
   { to: '/leaves/settings', label: 'Settings' },
-  { to: '/payroll/leave-encashment', label: 'Leave Encashment' },
 ] as const
 
 export function LeavesLayout() {
