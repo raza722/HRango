@@ -290,7 +290,11 @@ const assetSchema = z.object({
   assetCondition: z.enum(ASSET_CONDITIONS, { error: 'Condition must be old, new or fair.' }),
   manufacturer: optionalText(100),
   model: optionalText(100),
-  currentValue: z.number().min(0, 'Current value cannot be negative.').nullish(),
+  currentValue: z
+    .number({ error: 'Enter a number.' })
+    .min(0, 'Current value cannot be negative.')
+    .max(999_999_999_999.99, 'Current value can be at most 999,999,999,999.99.')
+    .nullish(),
   acquiredDate: day.nullish(),
   description: optionalText(4000),
   fileId: fileIdSchema,
@@ -589,6 +593,10 @@ const allocationHandlers = [
     }
     if (asset.acquiredDate && input.allocatedOn < asset.acquiredDate) {
       const message = 'The allocation date is before the asset was acquired.'
+      return invalid(message, { allocatedOn: message })
+    }
+    if (input.allocatedOn > today()) {
+      const message = 'An allocation cannot start in the future.'
       return invalid(message, { allocatedOn: message })
     }
     const allocation: StoredAllocation = {

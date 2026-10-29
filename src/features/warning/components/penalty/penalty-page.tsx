@@ -9,8 +9,10 @@ import { Button } from '@/components/ui/button'
 import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
+import { warningPenaltyApi } from '../../api/warning-penalty.api'
 import { usePenaltyForm } from '../../hooks/use-penalty-form'
 import { PENALTY_FORM_ID } from '../../penalty-constants'
+import { usePolicyTablePrefs } from '../../store/policy-table-prefs.store'
 import { warningType } from '../type-styles'
 import { PenaltyDetailsCard, PenaltyRulesCard } from './penalty-form-cards'
 import { PenaltyTable } from './penalty-table'
@@ -29,7 +31,18 @@ export function PenaltyPage() {
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm>(null)
   const canSave = useCan('warning.settings.penalties.edit')
 
-  const penaltyForm = usePenaltyForm({ editingId: edit })
+  const penaltyForm = usePenaltyForm({
+    editingId: edit,
+    onSaved: async (mode) => {
+      // As with a new policy: show the Penalty list's page the new penalties landed on.
+      if (mode !== 'created' || !edit) return
+      const { pageSize } = usePolicyTablePrefs.getState()
+      const all = await warningPenaltyApi.list({ page: 1, pageSize: 100 }).catch(() => null)
+      const index = all?.data.findIndex((penalty) => penalty.warningPolicyId === edit) ?? -1
+      const target = index >= 0 ? Math.floor(index / pageSize) + 1 : page
+      if (target !== page) await navigate({ search: (prev) => ({ ...prev, page: target }) })
+    },
+  })
   const { form, rules } = penaltyForm
   const { isDirty } = form.formState
 

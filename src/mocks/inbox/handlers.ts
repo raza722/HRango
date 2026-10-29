@@ -46,6 +46,7 @@ function seedInbox(): StoredNotification[] {
       false,
       {
         notificationType: 'attendance.late_arrivals',
+        link: '/attendance/overview',
       },
     ),
     notification(
@@ -61,7 +62,17 @@ function seedInbox(): StoredNotification[] {
         entityId: '101',
       },
     ),
-    notification('ntf_3', 'Policy updated', '“Month End” grace policy was updated.', 60 * 30, true),
+    notification(
+      'ntf_3',
+      'Policy updated',
+      '“Month End” grace policy was updated.',
+      60 * 30,
+      true,
+      {
+        notificationType: 'warning.policy_updated',
+        link: '/warning/policy',
+      },
+    ),
   ]
 }
 

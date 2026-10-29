@@ -16,6 +16,7 @@ import type {
 import { monthsBetween } from '@/features/manpower-planning'
 import type { ApiErrorBody, ApiItem } from '@/types/api'
 
+import { DEMO_USER } from '../auth/handlers'
 import { mockFileUrl } from '../files/handlers'
 import {
   apiPath,
@@ -60,8 +61,10 @@ import {
 // positions released on approval), over the tables in db.ts.
 
 const base = (path: string) => apiPath(`/manpower${path}`)
-const ME = 'Administrator'
-const now = () => new Date().toISOString().slice(0, 19)
+/** The caller: the demo account (the mock has one user). */
+const ME = DEMO_USER.name
+/** A UTC stamp with its `Z`, so the page shows it in the viewer's time zone. */
+const now = () => new Date().toISOString()
 const today = () => new Date().toISOString().slice(0, 10)
 const nextVersion = (version: string) => String(Number.parseInt(version, 16) + 1).padStart(16, '0')
 
@@ -969,6 +972,16 @@ async function saveDuration(request: Request, durationId: string | null) {
   if (current && body.rowVersion !== current.rowVersion) return conflict()
   if (body.endDate < body.startDate) {
     return invalid('endDate', 'The end date cannot be before the start date.')
+  }
+  // Plan years do not overlap: a day belongs to one budget duration.
+  const clash = durations
+    .all()
+    .find(
+      (rec) =>
+        rec.id !== durationId && rec.startDate <= body.endDate && body.startDate <= rec.endDate,
+    )
+  if (clash) {
+    return invalid('startDate', `These dates overlap the ${clash.name} budget duration.`)
   }
   const name = body.name.trim()
   if (

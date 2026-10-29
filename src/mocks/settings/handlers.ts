@@ -285,6 +285,14 @@ const crudHandlers = [
       if (input.limitHeadCount && input.maxHeadCount === null) {
         return invalidField('maxHeadCount', 'Enter the maximum head count (1 or more).')
       }
+      // The maximum cannot sit below the people who hold the title now.
+      const held = existing ? toJobTitleOut(existing).headCount : 0
+      if (input.limitHeadCount && input.maxHeadCount !== null && input.maxHeadCount < held) {
+        return invalidField(
+          'maxHeadCount',
+          `${String(held)} employees hold this job title now: enter ${String(held)} or more.`,
+        )
+      }
       return duplicateName(jobTitles.all(), input.name, existing, 'job title')
     },
     beforeDelete: (record) =>

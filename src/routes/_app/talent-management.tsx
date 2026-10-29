@@ -1,12 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { MODULES } from '@/app/modules'
-import { ModulePlaceholder } from '@/components/layout'
-import { pageTitle } from '@/lib/constants'
+import { TalentManagementLayout } from '@/features/talent-management'
 
-const config = MODULES.talentManagement
-
+/** Talent Management: the sub menu (Employees, Transfer, Salary Revision, Employee Accounts). */
 export const Route = createFileRoute('/_app/talent-management')({
-  head: () => ({ meta: [{ title: pageTitle(config.title) }] }),
-  component: () => <ModulePlaceholder {...config} />,
+  component: TalentManagementLayout,
 })
