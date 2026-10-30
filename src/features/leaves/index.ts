@@ -9,6 +9,7 @@ export { LeaveSettingsLayout } from './components/settings/settings-layout'
 export {
   CATEGORY_LABELS,
   FINAL_APPROVAL_LABELS,
+  LEAVE_CODES,
   LEAVE_STATUS_META,
   LEAVE_TYPE_SWITCHES,
   LEAVES_PAGE_SIZE,

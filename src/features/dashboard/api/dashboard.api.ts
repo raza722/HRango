@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 
+import { type BackendRequestPage, requestKeys } from '@/features/requests'
 import { apiClient } from '@/lib/axios'
 import { can } from '@/lib/permissions'
 import { useAuthStore } from '@/stores/auth-store'
@@ -180,6 +181,14 @@ export const dashboardKeys = {
   summary: ['dashboard', 'summary'] as const,
 }
 
+/**
+ * The query for a chosen month (`yyyy-MM`, from `?month=`): its first day. The current month
+ * sends nothing, so the route loader and the page share one cache entry.
+ */
+export function dashboardParamsFor(month: string | undefined): DashboardParams {
+  return month ? { month: `${month}-01` } : {}
+}
+
 function compact(params: DashboardParams): Record<string, string> {
   const out: Record<string, string> = {}
   if (params.month) out.month = params.month
@@ -199,6 +208,69 @@ export function dashboardQueryOptions<K extends DashboardKind>(
         signal,
       })
       return data.data
+    },
+  })
+}
+
+// ---------------------------------------------------------------- requests waiting for the caller
+
+/** One request type's requests waiting for the caller's decision. */
+export interface WaitingType {
+  /** The API's type code (`leave`, `shift_swap`, `overtime` …). */
+  type: string
+  name: string
+  count: number
+}
+
+export interface WaitingApprovals {
+  total: number
+  /** Most first. */
+  byType: WaitingType[]
+}
+
+/** The approval boxes a decision can wait in (consents are agreements, not approvals). */
+const WAITING_BOXES = ['requested', 'delegates', 'cancellations'] as const
+const WAITING_PAGE = 100
+
+/**
+ * Requests of every type waiting for the caller: `GET /requests/approvals?box=&status=pending`
+ * for the requested, delegated and cancellation boxes (pending there means "waiting for you"),
+ * as Leaves reads its own. Kept under the requests module's key, so its changes refresh it.
+ */
+export function waitingApprovalsQueryOptions() {
+  return queryOptions({
+    queryKey: [...requestKeys.all, 'approvals', 'waiting-for-me'] as const,
+    queryFn: async ({ signal }): Promise<WaitingApprovals> => {
+      const pages = await Promise.all(
+        WAITING_BOXES.map(async (box) => {
+          const { data } = await apiClient.get<BackendRequestPage>('/requests/approvals', {
+            params: { box, status: 'pending', page: 1, pageSize: WAITING_PAGE },
+            signal,
+          })
+          return data
+        }),
+      )
+      const seen = new Map<string, { type: string; name: string }>()
+      let unread = 0
+      for (const page of pages) {
+        for (const row of page.data) {
+          seen.set(row.id, { type: row.requestType, name: row.requestTypeName })
+        }
+        // Past the first page the rows are not read: count them by the total.
+        unread += Math.max(0, page.meta.total - page.data.length)
+      }
+      const types = new Map<string, WaitingType>()
+      for (const { type, name } of seen.values()) {
+        const current = types.get(type)
+        if (current) current.count += 1
+        else types.set(type, { type, name, count: 1 })
+      }
+      return {
+        total: seen.size + unread,
+        byType: [...types.values()].sort(
+          (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+        ),
+      }
     },
   })
 }

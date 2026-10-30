@@ -179,13 +179,24 @@ describe('Leaves', { timeout: 60_000 }, () => {
       available: before.available - 1,
     })
 
-    // Leave Applications lists it…
+    // Leave Applications lists it… (My Leaves has the same row button and stays on screen until
+    // the new page is ready, so wait for Leave Applications itself before looking for the row.)
     await user.click(
       within(screen.getByRole('navigation', { name: 'Leaves' })).getByRole('link', {
         name: 'Leave Applications',
       }),
     )
-    expect(await screen.findByRole('button', { name: `Actions for ${code}` })).toBeVisible()
+    expect(
+      await screen.findByRole(
+        'heading',
+        { name: 'Leave Applications', level: 1 },
+        { timeout: 15_000 },
+      ),
+    ).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'My Leaves', level: 1 })).toBeNull()
+    expect(
+      await screen.findByRole('button', { name: `Actions for ${code}` }, { timeout: 15_000 }),
+    ).toBeVisible()
 
     // …and so does Requests → Leave.
     await router.navigate({ to: '/requests/$type', params: { type: 'leave' } })

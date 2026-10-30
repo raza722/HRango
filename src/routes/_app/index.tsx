@@ -1,16 +1,27 @@
 import { createFileRoute } from '@tanstack/react-router'
 
-import { NAV_ITEMS } from '@/app/navigation'
-import { DashboardPage, dashboardSummaryQueryOptions } from '@/features/dashboard'
+import {
+  dashboardKindFor,
+  DashboardPage,
+  dashboardParamsFor,
+  dashboardQueryOptions,
+  dashboardSearchSchema,
+} from '@/features/dashboard'
 import { pageTitle } from '@/lib/constants'
-
-const shortcuts = NAV_ITEMS.filter((item) => item.to !== '/')
+import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/_app/')({
-  // Start fetching during navigation, but render the page right away.
-  loader: ({ context: { queryClient } }) => {
-    queryClient.query(dashboardSummaryQueryOptions()).catch(() => undefined)
+  validateSearch: dashboardSearchSchema,
+  loaderDeps: ({ search }) => ({ month: search.month }),
+  // Start fetching the user's dashboard during navigation, but render the page right away.
+  loader: ({ context: { queryClient }, deps }) => {
+    const kind = dashboardKindFor(useAuthStore.getState().user)
+    if (kind) {
+      queryClient
+        .query(dashboardQueryOptions(kind, dashboardParamsFor(deps.month)))
+        .catch(() => undefined)
+    }
   },
   head: () => ({ meta: [{ title: pageTitle('Dashboard') }] }),
-  component: () => <DashboardPage shortcuts={shortcuts} />,
+  component: DashboardPage,
 })

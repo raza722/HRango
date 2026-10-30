@@ -4,6 +4,8 @@ import { Dialog as SheetPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
 
+import { useReturnFocus } from './return-focus'
+
 function Sheet(props: ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
 }
@@ -21,8 +23,11 @@ function SheetContent({
   side = 'left',
   showClose = true,
   overlay = true,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
   ...props
 }: SheetContentProps) {
+  const focus = useReturnFocus({ onOpenAutoFocus, onCloseAutoFocus })
   return (
     <SheetPrimitive.Portal>
       {overlay && (
@@ -42,6 +47,7 @@ function SheetContent({
           className,
         )}
         {...props}
+        {...focus}
       >
         {children}
         {showClose && (
