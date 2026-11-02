@@ -25,8 +25,8 @@ export const DEVICE_CODES = {
   create: 'attendance.settings.devices.create',
   edit: 'attendance.settings.devices.edit',
   delete: 'attendance.settings.devices.delete',
-  enrol: 'attendance.settings.devices.enrol',
-  import: 'attendance.settings.devices.import',
+  enrol: 'attendance.settings.devices.enroll',
+  import: 'attendance.logs.import',
 } as const
 
 /** One page of devices (`GET /attendance/settings/devices`). */

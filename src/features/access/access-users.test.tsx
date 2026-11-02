@@ -49,7 +49,6 @@ describe('Settings → System Users', { timeout: 60_000 }, () => {
     }
     expect(await within(table).findByRole('link', { name: 'Administrator' })).toBeVisible()
     const admin = within(table).getByRole('link', { name: 'Administrator' }).closest('tr')!
-    expect(admin).toHaveTextContent('System admin')
     expect(admin).toHaveTextContent('Company Administrator')
     expect(admin).toHaveTextContent('None')
     expect(screen.getByText('Showing 1–10 of 13')).toBeVisible()
@@ -155,14 +154,11 @@ describe('Settings → System Users', { timeout: 60_000 }, () => {
     ).toBe(true)
   })
 
-  it('asks before making someone a system admin', async () => {
-    const { user } = renderApp('/settings/system-users?edit=5')
+  it('offers no system admin: that belongs to hRango’s own staff, not to customers', async () => {
+    renderApp('/settings/system-users?edit=5')
     const dialog = await screen.findByRole('dialog', { name: 'Edit User' }, { timeout: 15_000 })
-    await user.click(await within(dialog).findByRole('switch', { name: /^System Admin/ }))
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
-    await confirm(user, 'Make Laiba Shah a system admin?', 'Make System Admin')
-    expect(await screen.findByText('Laiba Shah saved')).toBeInTheDocument()
-    expect(accessUsers.find('5')?.isSystemAdmin).toBe(true)
+    expect(await within(dialog).findByRole('switch', { name: /^Active/ })).toBeVisible()
+    expect(within(dialog).queryByRole('switch', { name: /System Admin/ })).not.toBeInTheDocument()
   })
 
   it('edits an account’s roles all at once', async () => {

@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useCan } from '@/lib/permissions'
+import { useCanOnEmployee } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import {
@@ -144,7 +144,7 @@ function RecordGroup<T>({
  * Add Professional Experience, Add Contract) on the upload button.
  */
 export function DocumentsTab({ employee }: { employee: Employee }) {
-  const canEdit = useCan(TM_CODES.records)
+  const canEdit = useCanOnEmployee(TM_CODES.documents, employee.id)
   const academics = useEmployeeChildren(employee.id, 'education')
   const contracts = useEmployeeChildren(employee.id, 'contracts')
   const documents = useEmployeeChildren(employee.id, 'documents')

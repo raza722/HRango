@@ -233,7 +233,7 @@ export function EmploymentsDialog({
                 >
                   <td className="px-5 py-3">
                     <span className="flex items-center gap-2.5">
-                      <EmployeeAvatar name={row.employeeName} photoUrl={null} className="size-7" />
+                      <EmployeeAvatar name={row.employeeName} employeeId={row.employeeId} className="size-7" />
                       <span>
                         {row.employeeName}
                         <span className="block text-xs font-normal text-muted-foreground">

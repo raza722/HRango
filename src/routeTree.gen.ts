@@ -19,6 +19,7 @@ import { Route as AppCustomFormRouteImport } from './routes/_app/custom-form'
 import { Route as AppEndOfEmploymentRouteImport } from './routes/_app/end-of-employment'
 import { Route as AppLeavesRouteImport } from './routes/_app/leaves'
 import { Route as AppManpowerPlanningRouteImport } from './routes/_app/manpower-planning'
+import { Route as AppMyProfileRouteImport } from './routes/_app/my-profile'
 import { Route as AppPayrollRouteImport } from './routes/_app/payroll'
 import { Route as AppPerformanceRouteImport } from './routes/_app/performance'
 import { Route as AppProjectManagementRouteImport } from './routes/_app/project-management'
@@ -37,6 +38,7 @@ import { Route as AppAttendanceIndexRouteImport } from './routes/_app/attendance
 import { Route as AppAttendanceSectionRouteImport } from './routes/_app/attendance/$section'
 import { Route as AppAttendanceInsightsRouteImport } from './routes/_app/attendance/insights'
 import { Route as AppAttendanceLogsRouteImport } from './routes/_app/attendance/logs'
+import { Route as AppAttendanceMyWarningsRouteImport } from './routes/_app/attendance/my-warnings'
 import { Route as AppAttendanceOfficialVisitsRouteImport } from './routes/_app/attendance/official-visits'
 import { Route as AppAttendanceOvertimeRouteImport } from './routes/_app/attendance/overtime'
 import { Route as AppAttendanceOverviewRouteImport } from './routes/_app/attendance/overview'
@@ -227,6 +229,11 @@ const AppManpowerPlanningRoute = AppManpowerPlanningRouteImport.update({
   path: '/manpower-planning',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMyProfileRoute = AppMyProfileRouteImport.update({
+  id: '/my-profile',
+  path: '/my-profile',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppPayrollRoute = AppPayrollRouteImport.update({
   id: '/payroll',
   path: '/payroll',
@@ -315,6 +322,11 @@ const AppAttendanceInsightsRoute = AppAttendanceInsightsRouteImport.update({
 const AppAttendanceLogsRoute = AppAttendanceLogsRouteImport.update({
   id: '/attendance/logs',
   path: '/attendance/logs',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAttendanceMyWarningsRoute = AppAttendanceMyWarningsRouteImport.update({
+  id: '/attendance/my-warnings',
+  path: '/attendance/my-warnings',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAttendanceOfficialVisitsRoute =
@@ -1109,6 +1121,7 @@ export interface FileRoutesByFullPath {
   '/end-of-employment': typeof AppEndOfEmploymentRouteWithChildren
   '/leaves': typeof AppLeavesRouteWithChildren
   '/manpower-planning': typeof AppManpowerPlanningRouteWithChildren
+  '/my-profile': typeof AppMyProfileRoute
   '/payroll': typeof AppPayrollRouteWithChildren
   '/performance': typeof AppPerformanceRouteWithChildren
   '/project-management': typeof AppProjectManagementRouteWithChildren
@@ -1125,6 +1138,7 @@ export interface FileRoutesByFullPath {
   '/attendance/$section': typeof AppAttendanceSectionRoute
   '/attendance/insights': typeof AppAttendanceInsightsRoute
   '/attendance/logs': typeof AppAttendanceLogsRoute
+  '/attendance/my-warnings': typeof AppAttendanceMyWarningsRoute
   '/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
   '/attendance/overtime': typeof AppAttendanceOvertimeRoute
   '/attendance/overview': typeof AppAttendanceOverviewRoute
@@ -1271,6 +1285,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/configuration': typeof AppConfigurationRoute
+  '/my-profile': typeof AppMyProfileRoute
   '/roster': typeof AppRosterRoute
   '/scheduling': typeof AppSchedulingRoute
   '/separation-management': typeof AppSeparationManagementRoute
@@ -1282,6 +1297,7 @@ export interface FileRoutesByTo {
   '/attendance/$section': typeof AppAttendanceSectionRoute
   '/attendance/insights': typeof AppAttendanceInsightsRoute
   '/attendance/logs': typeof AppAttendanceLogsRoute
+  '/attendance/my-warnings': typeof AppAttendanceMyWarningsRoute
   '/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
   '/attendance/overtime': typeof AppAttendanceOvertimeRoute
   '/attendance/overview': typeof AppAttendanceOverviewRoute
@@ -1430,6 +1446,7 @@ export interface FileRoutesById {
   '/_app/end-of-employment': typeof AppEndOfEmploymentRouteWithChildren
   '/_app/leaves': typeof AppLeavesRouteWithChildren
   '/_app/manpower-planning': typeof AppManpowerPlanningRouteWithChildren
+  '/_app/my-profile': typeof AppMyProfileRoute
   '/_app/payroll': typeof AppPayrollRouteWithChildren
   '/_app/performance': typeof AppPerformanceRouteWithChildren
   '/_app/project-management': typeof AppProjectManagementRouteWithChildren
@@ -1447,6 +1464,7 @@ export interface FileRoutesById {
   '/_app/attendance/$section': typeof AppAttendanceSectionRoute
   '/_app/attendance/insights': typeof AppAttendanceInsightsRoute
   '/_app/attendance/logs': typeof AppAttendanceLogsRoute
+  '/_app/attendance/my-warnings': typeof AppAttendanceMyWarningsRoute
   '/_app/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
   '/_app/attendance/overtime': typeof AppAttendanceOvertimeRoute
   '/_app/attendance/overview': typeof AppAttendanceOverviewRoute
@@ -1602,6 +1620,7 @@ export interface FileRouteTypes {
     | '/end-of-employment'
     | '/leaves'
     | '/manpower-planning'
+    | '/my-profile'
     | '/payroll'
     | '/performance'
     | '/project-management'
@@ -1618,6 +1637,7 @@ export interface FileRouteTypes {
     | '/attendance/$section'
     | '/attendance/insights'
     | '/attendance/logs'
+    | '/attendance/my-warnings'
     | '/attendance/official-visits'
     | '/attendance/overtime'
     | '/attendance/overview'
@@ -1764,6 +1784,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/configuration'
+    | '/my-profile'
     | '/roster'
     | '/scheduling'
     | '/separation-management'
@@ -1775,6 +1796,7 @@ export interface FileRouteTypes {
     | '/attendance/$section'
     | '/attendance/insights'
     | '/attendance/logs'
+    | '/attendance/my-warnings'
     | '/attendance/official-visits'
     | '/attendance/overtime'
     | '/attendance/overview'
@@ -1922,6 +1944,7 @@ export interface FileRouteTypes {
     | '/_app/end-of-employment'
     | '/_app/leaves'
     | '/_app/manpower-planning'
+    | '/_app/my-profile'
     | '/_app/payroll'
     | '/_app/performance'
     | '/_app/project-management'
@@ -1939,6 +1962,7 @@ export interface FileRouteTypes {
     | '/_app/attendance/$section'
     | '/_app/attendance/insights'
     | '/_app/attendance/logs'
+    | '/_app/attendance/my-warnings'
     | '/_app/attendance/official-visits'
     | '/_app/attendance/overtime'
     | '/_app/attendance/overview'
@@ -2160,6 +2184,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppManpowerPlanningRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/my-profile': {
+      id: '/_app/my-profile'
+      path: '/my-profile'
+      fullPath: '/my-profile'
+      preLoaderRoute: typeof AppMyProfileRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/payroll': {
       id: '/_app/payroll'
       path: '/payroll'
@@ -2284,6 +2315,13 @@ declare module '@tanstack/react-router' {
       path: '/attendance/logs'
       fullPath: '/attendance/logs'
       preLoaderRoute: typeof AppAttendanceLogsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/attendance/my-warnings': {
+      id: '/_app/attendance/my-warnings'
+      path: '/attendance/my-warnings'
+      fullPath: '/attendance/my-warnings'
+      preLoaderRoute: typeof AppAttendanceMyWarningsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/attendance/official-visits': {
@@ -3748,6 +3786,7 @@ interface AppRouteChildren {
   AppEndOfEmploymentRoute: typeof AppEndOfEmploymentRouteWithChildren
   AppLeavesRoute: typeof AppLeavesRouteWithChildren
   AppManpowerPlanningRoute: typeof AppManpowerPlanningRouteWithChildren
+  AppMyProfileRoute: typeof AppMyProfileRoute
   AppPayrollRoute: typeof AppPayrollRouteWithChildren
   AppPerformanceRoute: typeof AppPerformanceRouteWithChildren
   AppProjectManagementRoute: typeof AppProjectManagementRouteWithChildren
@@ -3761,6 +3800,7 @@ interface AppRouteChildren {
   AppAttendanceSectionRoute: typeof AppAttendanceSectionRoute
   AppAttendanceInsightsRoute: typeof AppAttendanceInsightsRoute
   AppAttendanceLogsRoute: typeof AppAttendanceLogsRoute
+  AppAttendanceMyWarningsRoute: typeof AppAttendanceMyWarningsRoute
   AppAttendanceOfficialVisitsRoute: typeof AppAttendanceOfficialVisitsRoute
   AppAttendanceOvertimeRoute: typeof AppAttendanceOvertimeRoute
   AppAttendanceOverviewRoute: typeof AppAttendanceOverviewRoute
@@ -3789,6 +3829,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppEndOfEmploymentRoute: AppEndOfEmploymentRouteWithChildren,
   AppLeavesRoute: AppLeavesRouteWithChildren,
   AppManpowerPlanningRoute: AppManpowerPlanningRouteWithChildren,
+  AppMyProfileRoute: AppMyProfileRoute,
   AppPayrollRoute: AppPayrollRouteWithChildren,
   AppPerformanceRoute: AppPerformanceRouteWithChildren,
   AppProjectManagementRoute: AppProjectManagementRouteWithChildren,
@@ -3802,6 +3843,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAttendanceSectionRoute: AppAttendanceSectionRoute,
   AppAttendanceInsightsRoute: AppAttendanceInsightsRoute,
   AppAttendanceLogsRoute: AppAttendanceLogsRoute,
+  AppAttendanceMyWarningsRoute: AppAttendanceMyWarningsRoute,
   AppAttendanceOfficialVisitsRoute: AppAttendanceOfficialVisitsRoute,
   AppAttendanceOvertimeRoute: AppAttendanceOvertimeRoute,
   AppAttendanceOverviewRoute: AppAttendanceOverviewRoute,

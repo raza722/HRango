@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { getRouteApi, Link } from '@tanstack/react-router'
-import { ShieldCheck, UserX } from 'lucide-react'
+import { UserX } from 'lucide-react'
 
 import { ErrorState } from '@/components/feedback/error-state'
 import { PageSpinner } from '@/components/feedback/spinner'
@@ -11,9 +11,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ApiError } from '@/lib/api-error'
 import { useCan } from '@/lib/permissions'
 import { cn, getInitials } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { ACCESS_CODES } from '../../constants'
-import { useFormerEmployees, useUser } from '../../hooks/use-access'
+import { useFormerEmployees, useTransferOwner, useUser } from '../../hooks/use-access'
 import { USER_TABS, type UserSearch, type UserTab } from '../../routing'
 import type { UserDetail } from '../../types/access.types'
 import { formatAgo, formatStamp } from '../../utils/format'
@@ -28,6 +29,7 @@ import {
   toolbarButtonClass,
 } from '../../utils/styles'
 import { AuditList } from '../shared/audit-list'
+import { ConfirmAction } from '../shared/dialogs'
 import { BackLink, Chip, Facts, MockModeNote } from '../shared/parts'
 import { useUserActions } from './use-user-actions'
 import { UserFormDialog } from './user-form-dialog'
@@ -60,6 +62,16 @@ function AccountHeader({
   onEdit: (() => void) | null
   actions: ReturnType<typeof useUserActions>
 }) {
+  const me = useAuthStore((state) => state.user)
+  const iAmOwner = me?.role === 'Account Owner'
+  const isAdministrator = user.roles.some((role) => role.code === 'company_admin')
+  // The server refuses these anyway: administrators answer to the Account Owner.
+  const isProtected =
+    Boolean(me?.permissions) && !isSelf && (user.isAccountOwner || (isAdministrator && !iAmOwner))
+  const canHandOver = iAmOwner && !isSelf && isAdministrator && user.isActive
+  const transfer = useTransferOwner()
+  const [handingOver, setHandingOver] = useState(false)
+
   const employee = user.employeeId ? (
     <span className="flex flex-wrap items-center gap-1.5">
       <Link
@@ -93,19 +105,23 @@ function AccountHeader({
             </h1>
             <span className="flex flex-wrap items-center gap-1.5">
               {user.isActive ? <Chip tone="green">Active</Chip> : <Chip tone="grey">Disabled</Chip>}
-              {user.isSystemAdmin && (
-                <Chip
-                  tone="violet"
-                  icon={<ShieldCheck aria-hidden="true" className="size-3" strokeWidth={2.2} />}
-                >
-                  System admin
-                </Chip>
-              )}
+              {user.isAccountOwner && <Chip tone="violet">Account Owner</Chip>}
             </span>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
-          {onEdit && (
+          {canHandOver && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setHandingOver(true)
+              }}
+              className={cn(toolbarButtonClass, outlineButtonClass)}
+            >
+              Make Account Owner
+            </Button>
+          )}
+          {onEdit && !isProtected && (
             <Button
               variant="outline"
               onClick={onEdit}
@@ -114,7 +130,7 @@ function AccountHeader({
               Edit
             </Button>
           )}
-          {(isSelf || actions.canPassword) && (
+          {(isSelf || (actions.canPassword && !isProtected)) && (
             <Button
               variant="outline"
               onClick={() => {
@@ -125,7 +141,7 @@ function AccountHeader({
               {isSelf ? 'Change Password' : 'Set Password'}
             </Button>
           )}
-          {actions.canDisable && !isSelf && (
+          {actions.canDisable && !isSelf && !isProtected && (
             <Button
               onClick={() => {
                 actions.openActive(user)
@@ -163,6 +179,20 @@ function AccountHeader({
         ]}
       />
       {isSelf && <MockModeNote />}
+      {handingOver && (
+        <ConfirmAction
+          title={`Make ${user.name} the Account Owner?`}
+          description="There is one Account Owner. You stay a Company Administrator, but after this only they can change your account."
+          confirmLabel="Make Account Owner"
+          onConfirm={() => {
+            transfer.mutate({ id: user.id, rowVersion: user.rowVersion, name: user.name })
+            setHandingOver(false)
+          }}
+          onClose={() => {
+            setHandingOver(false)
+          }}
+        />
+      )}
     </header>
   )
 }

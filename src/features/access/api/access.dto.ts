@@ -74,7 +74,7 @@ export interface UserOutDto {
   homeCompanyId: string
   homeCompanyName: string | null
   isActive: boolean
-  isSystemAdmin: boolean
+  isAccountOwner?: boolean
   lastLoginAt: string | null
   /** Comma-separated role names. */
   roleNames: string | null
@@ -153,7 +153,6 @@ export interface UserInDto {
   employeeId: IdIn | null
   password?: string
   isActive: boolean
-  isSystemAdmin: boolean
   companyIds: IdIn[]
   roleIds: IdIn[]
   rowVersion?: string

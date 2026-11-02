@@ -255,7 +255,7 @@ export function SalarySheetPage() {
                 <tr key={row.payslipId} className="border-b last:border-b-0">
                   <th scope="row" className="px-3 py-3 text-left font-normal">
                     <span className="flex items-center gap-2">
-                      <EmployeeAvatar name={row.employeeName} photoUrl={null} className="size-6" />
+                      <EmployeeAvatar name={row.employeeName} employeeId={row.employeeId} className="size-6" />
                       <span className={personNameText}>
                         {row.employeeName}
                         <span className="block text-[0.625rem] text-grey">{row.employeeCode}</span>

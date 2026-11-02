@@ -115,7 +115,6 @@ describe('Access schemas', () => {
     displayName: '',
     employeeId: null,
     isActive: true,
-    isSystemAdmin: false,
     companyIds: ['co_topedge'],
     roleIds: [],
     password: 'Strong#Pass1',

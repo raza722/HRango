@@ -22,7 +22,10 @@ const labels = (user: AuthUser | null) => filterNavItems(NAV_ITEMS, user).map((i
 
 describe('filterNavItems', () => {
   it('keeps every entry when the user has no permissions list (mock API)', () => {
-    expect(labels(person)).toEqual(NAV_ITEMS.map((item) => item.label))
+    // The mock's person runs the company: no personal copies of the modules.
+    expect(labels({ ...person, employeeId: 'em_shelley' })).toEqual(
+      NAV_ITEMS.filter((item) => !item.selfService).map((item) => item.label),
+    )
   })
 
   it('shows a module only when the user may view one of its screens', () => {
@@ -32,9 +35,9 @@ describe('filterNavItems', () => {
     expect(visible).toContain('Payroll')
     expect(visible).not.toContain('Recruitment')
     expect(visible).not.toContain('Warning')
-    // Entries with no API module yet stay.
     expect(visible).toContain('Dashboard')
-    expect(visible).toContain('Configuration')
+    // Setup pages stay with the people who set things up.
+    expect(visible).not.toContain('Configuration')
   })
 
   it('needs a view code: other actions alone do not show the entry', () => {
@@ -58,10 +61,7 @@ describe('filterNavItems', () => {
         .find((item) => item.label === 'Settings')
         ?.children?.map((child) => child.label)
 
-    expect(settings(holding('organisation.branches.view'))).toEqual([
-      'Custom Forms',
-      'Control Panel',
-    ])
-    expect(settings(holding('access.users.view'))).toEqual(['Custom Forms', 'System User'])
+    expect(settings(holding('organisation.branches.view'))).toEqual(['Control Panel'])
+    expect(settings(holding('access.users.view'))).toEqual(['System User'])
   })
 })

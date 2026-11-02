@@ -21,7 +21,7 @@ export type ReviewPart = 'self' | 'manager'
 /**
  * Which review the signed-in person may write now: the self review while it is theirs, the
  * manager review once the self review is in and they are the reviewer; null otherwise.
- * `rights` are the permissions to save each (`performance.reviews.self` / `.manager`).
+ * `rights` are the permissions to save each (`performance.reviews.submit` / `.evaluate`).
  */
 export function writablePart(
   appraisal: { employeeId: string; reviewerId: string | null; status: string; cycleStatus: string },

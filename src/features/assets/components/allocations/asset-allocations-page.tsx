@@ -48,7 +48,7 @@ const columns: DataTableColumn<Allocation>[] = [
     header: 'Employee',
     mobile: 'heading',
     cell: (row) => (
-      <PersonCell person={{ name: row.employeeName ?? row.employeeId, photoUrl: null }} />
+      <PersonCell person={{ name: row.employeeName ?? row.employeeId, photoUrl: null, employeeId: row.employeeId }} />
     ),
   },
   { id: 'asset', header: 'Asset', cell: (row) => row.assetName },
@@ -91,8 +91,8 @@ export function AssetAllocationsPage() {
   const canAssign = useCan('assets.allocations.assign')
   const [filters, setFilters] = useFilters('asset-allocations-v2')
   const [dialog, setDialog] = useState<Dialog>(null)
-  const types = useAssetTypeOptions()
-  const assets = useAssetOptions({})
+  const types = useAssetTypeOptions(useCan('assets.types.view'))
+  const assets = useAssetOptions({}, useCan('assets.company_assets.view'))
   const list = useAllocations({
     page,
     pageSize: ASSET_PAGE_SIZE,

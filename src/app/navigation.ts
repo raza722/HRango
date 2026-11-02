@@ -1,5 +1,6 @@
 import type { ComponentType, SVGProps } from 'react'
 
+import { canOpen } from '@/app/route-access'
 import { BenefitsIcon } from '@/components/icons/benefits-icon'
 import {
   AssetsIcon,
@@ -48,6 +49,8 @@ export interface NavChild {
   icon?: ComponentType<SVGProps<SVGSVGElement>>
   /** Who sees it: see {@link NavPermission}. Without one the item follows its parent. */
   permission?: NavPermission
+  /** A person's own view of a screen: gone for those who manage it from its module. */
+  selfService?: boolean
 }
 
 export interface NavItem {
@@ -63,13 +66,19 @@ export interface NavItem {
   tree?: boolean
   /** Who sees it: see {@link NavPermission}. Without one the item is always shown. */
   permission?: NavPermission
+  /** A person's own view of a screen: gone for those who manage it from its module. */
+  selfService?: boolean
+  /** Only for people with an employee record. */
+  needsEmployee?: boolean
 }
 
 /**
  * Screens a menu entry opens, as permission code prefixes (`app/catalogue/<module>.py` on the
  * API): the entry shows when the user may view any screen under one of them. `'payroll'`
  * matches `payroll.payslips.view` and `payroll.settings.tax.view`; `'attendance.overview'`
- * matches `attendance.overview.view`.
+ * matches `attendance.overview.view`. `'payroll@team'` asks for more than the person's own records:
+ * the HR modules are for those who manage people, and a person reaches their own records through
+ * the self-service entries.
  */
 export type NavPermission = string | readonly string[]
 
@@ -79,12 +88,20 @@ function allowed(user: AuthUser | null, permission: NavPermission | undefined): 
   return prefixes.some((prefix) => canViewUnder(user, prefix))
 }
 
+/** Self-service entries step aside for whoever reaches the same screen for other people. */
+function managesIt(user: AuthUser | null, item: NavChild | NavItem): boolean {
+  if (!item.selfService || !user?.permissions) return Boolean(item.selfService)
+  const prefixes = typeof item.permission === 'string' ? [item.permission] : (item.permission ?? [])
+  return prefixes.some((prefix) => canViewUnder(user, `${prefix}@team`))
+}
+
 function visibleChildren(
   children: readonly NavChild[],
   user: AuthUser | null,
 ): readonly NavChild[] {
   return children.flatMap((child): NavChild[] => {
-    if (!allowed(user, child.permission)) return []
+    if (!allowed(user, child.permission) || !canOpen(user, child.to)) return []
+    if (managesIt(user, child)) return []
     if (!child.children) return [child]
     const nested = visibleChildren(child.children, user)
     // A group whose pages are all hidden goes too; one with its own permission keeps its page.
@@ -100,7 +117,9 @@ function visibleChildren(
  */
 export function filterNavItems(items: readonly NavItem[], user: AuthUser | null): NavItem[] {
   return items.flatMap((item): NavItem[] => {
-    if (!allowed(user, item.permission)) return []
+    if (!allowed(user, item.permission) || !canOpen(user, item.to)) return []
+    if (managesIt(user, item)) return []
+    if (item.needsEmployee && !user?.employeeId) return []
     if (!item.children) return [item]
     const children = visibleChildren(item.children, user)
     return children.length === 0 ? [] : [{ ...item, children }]
@@ -110,6 +129,7 @@ export function filterNavItems(items: readonly NavItem[], user: AuthUser | null)
 /** Sidebar entries, in the order drawn in the Figma side menu. */
 export const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Dashboard', to: '/', icon: DashboardIcon, exact: true },
+  { label: 'My Profile', to: '/my-profile', icon: TalentManagementIcon, needsEmployee: true },
   {
     label: 'Recruitment',
     to: '/recruitment',
@@ -131,13 +151,13 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'Talent Management',
     to: '/talent-management',
     icon: TalentManagementIcon,
-    permission: 'employees',
+    permission: 'employees.directory@team',
   },
   {
     label: 'Separation Management',
     to: '/separation-management',
     icon: SeparationManagementIcon,
-    permission: 'offboarding',
+    permission: 'offboarding@team',
   },
   {
     label: 'Attendance',
@@ -157,6 +177,18 @@ export const NAV_ITEMS: readonly NavItem[] = [
         to: '/attendance/settings',
         // Scheduling's tabs (rest days, break types, holidays, time slots) live here too.
         permission: ['attendance.settings', 'scheduling.settings'],
+      },
+      {
+        label: 'My Schedule',
+        to: '/attendance/scheduling',
+        permission: 'scheduling.schedules',
+        selfService: true,
+      },
+      {
+        label: 'My Warnings',
+        to: '/attendance/my-warnings',
+        permission: 'warning.warnings',
+        selfService: true,
       },
     ],
   },
@@ -258,7 +290,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'Payroll',
     to: '/payroll',
     icon: PayrollIcon,
-    permission: 'payroll',
+    permission: 'payroll@team',
     tree: true,
     children: [
       { label: 'Dashboard', to: '/payroll/dashboard' },
@@ -287,6 +319,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
       {
         label: 'Pay Slips',
         to: '/payroll/pay-slips',
+        permission: 'payroll.payslips@team',
         children: [
           { label: 'My', to: '/payroll/pay-slips/my' },
           { label: 'All', to: '/payroll/pay-slips/all' },
@@ -297,10 +330,15 @@ export const NAV_ITEMS: readonly NavItem[] = [
         to: '/payroll/vouchers',
         children: [{ label: 'Employee Voucher Creation', to: '/payroll/vouchers/employee' }],
       },
-      { label: 'Final Settlement', to: '/payroll/final-settlement' },
+      {
+        label: 'Final Settlement',
+        to: '/payroll/final-settlement',
+        permission: 'payroll.final_settlement@team',
+      },
       {
         label: 'Balances',
         to: '/payroll/balances',
+        permission: ['payroll.opening_balances@team', 'payroll.employee_accounts@team'],
         children: [
           { label: 'Opening Balance', to: '/payroll/balances/opening-balance' },
           { label: 'Employee Accounts', to: '/payroll/balances/employee-accounts' },
@@ -317,23 +355,41 @@ export const NAV_ITEMS: readonly NavItem[] = [
     ],
   },
   {
+    label: 'My Pay Slips',
+    to: '/payroll/pay-slips/my',
+    icon: PayrollIcon,
+    permission: 'payroll.payslips',
+    selfService: true,
+  },
+  {
+    label: 'My Assets',
+    to: '/assets/allocations',
+    icon: AssetsIcon,
+    permission: 'assets.allocations',
+    selfService: true,
+  },
+  {
     label: 'Assets',
     to: '/assets',
     icon: AssetsIcon,
-    permission: 'assets',
+    permission: 'assets@team',
     tree: true,
     children: [
       { label: 'Company Assets', to: '/assets/company-assets' },
       { label: 'Asset Allocations', to: '/assets/allocations' },
       { label: 'Asset Types', to: '/assets/types' },
-      { label: 'Asset Clearance Form', to: '/assets/clearance-form' },
+      {
+        label: 'Asset Clearance Form',
+        to: '/assets/clearance-form',
+        permission: 'assets.clearance@team',
+      },
     ],
   },
   {
     label: 'End of Employment',
     to: '/end-of-employment',
     icon: EndOfEmploymentIcon,
-    permission: 'offboarding.end_of_employment',
+    permission: 'offboarding.end_of_employment@team',
     tree: true,
     children: [
       { label: 'All', to: '/end-of-employment/all' },
@@ -369,7 +425,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     children: [
       { label: 'Overview', to: '/performance/overview' },
       { label: 'Goals', to: '/performance/goals' },
-      { label: 'KPIs', to: '/performance/kpis' },
+      { label: 'KPIs', to: '/performance/kpis', permission: 'performance.kpis@team' },
       { label: 'Review Cycles', to: '/performance/cycles' },
       { label: 'Appraisals', to: '/performance/appraisals' },
       { label: 'Reviews', to: '/performance/reviews' },
@@ -377,20 +433,21 @@ export const NAV_ITEMS: readonly NavItem[] = [
   },
   // HRango Dashboard App Version, section Benefits: one item, right after Performance.
   { label: 'Benefits', to: '/benefits', icon: BenefitsIcon, permission: 'benefits' },
-  { label: 'Roster', to: '/roster', icon: RosterIcon, permission: 'roster' },
-  { label: 'Warning', to: '/warning', icon: WarningIcon, permission: 'warning' },
-  { label: 'Scheduling', to: '/scheduling', icon: SchedulingIcon, permission: 'scheduling' },
+  { label: 'Roster', to: '/roster', icon: RosterIcon, permission: 'roster@team' },
+  { label: 'Warning', to: '/warning', icon: WarningIcon, permission: 'warning.settings' },
+  { label: 'Scheduling', to: '/scheduling', icon: SchedulingIcon, permission: 'scheduling@team' },
   { label: 'Configuration', to: '/configuration', icon: ConfigurationIcon },
   {
     label: 'Custom Form',
     to: '/custom-form',
     icon: CustomFormIcon,
-    // Not drawn, and no API yet (Backend Dependencies): build, fill and read the answers.
+    permission: 'forms',
+    // Not drawn: build, fill and read the answers.
     tree: true,
     children: [
-      { label: 'Forms', to: '/custom-form/forms' },
-      { label: 'My Forms', to: '/custom-form/my-forms' },
-      { label: 'Responses', to: '/custom-form/responses' },
+      { label: 'Forms', to: '/custom-form/forms', permission: 'forms.forms' },
+      { label: 'My Forms', to: '/custom-form/my-forms', permission: 'forms.my_forms' },
+      { label: 'Responses', to: '/custom-form/responses', permission: 'forms.responses' },
     ],
   },
   {
@@ -425,8 +482,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     to: '/settings',
     icon: SettingsIcon,
     children: [
-      // No API module yet: shown to everyone (a placeholder page).
-      { label: 'Custom Forms', to: '/settings/custom-forms' },
+      { label: 'Custom Forms', to: '/settings/custom-forms', permission: 'forms.forms' },
       { label: 'Control Panel', to: '/settings/control-panel', permission: 'organisation' },
       {
         label: 'Off Boarding Settings',

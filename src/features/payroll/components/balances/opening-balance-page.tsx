@@ -40,7 +40,7 @@ const columns: DataTableColumn<OpeningBalanceRow>[] = [
     id: 'employee',
     header: 'Employee',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null }} />,
+    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null, employeeId: row.employeeId }} />,
   },
   { id: 'department', header: 'Department', cell: (row) => row.departmentName ?? '—' },
   { id: 'entries', header: 'Entries', cell: (row) => row.entryCount },

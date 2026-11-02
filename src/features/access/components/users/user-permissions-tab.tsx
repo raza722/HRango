@@ -1,4 +1,4 @@
-import { Ban, ShieldCheck } from 'lucide-react'
+import { Ban } from 'lucide-react'
 
 import { labelOf, SCOPE_LABELS } from '../../constants'
 import { useEffectivePermissions, useOverrides } from '../../hooks/use-access'
@@ -24,10 +24,7 @@ function SourceChips({ sources }: { sources: readonly string[] }) {
   return (
     <span className="flex flex-wrap gap-1">
       {sources.map((source) => (
-        <Chip
-          key={source}
-          tone={source === 'Grant' ? 'green' : source === 'System admin' ? 'violet' : 'navy'}
-        >
+        <Chip key={source} tone={source === 'Grant' ? 'green' : 'navy'}>
           {source === 'Grant' ? 'Grant (override)' : source}
         </Chip>
       ))}
@@ -106,13 +103,6 @@ export function UserPermissionsTab({
           onSearch={onSearch}
         />
       </div>
-      {user.isSystemAdmin && (
-        <p className="flex items-start gap-2 rounded-lg bg-[#EDE7FB] px-3 py-2 text-xs text-[#4B2A91] dark:bg-violet-500/10 dark:text-violet-200">
-          <ShieldCheck aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-          System admin: this account holds every permission across the company, whatever its roles;
-          only denials take something away.
-        </p>
-      )}
       {!user.isActive && (
         <p className="rounded-lg bg-muted px-3 py-2 text-xs text-field-foreground">
           The account is disabled: this is what it would hold once enabled.

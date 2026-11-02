@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router'
-import { ShieldCheck } from 'lucide-react'
 
 import { DataTable, type DataTableColumn, Pagination } from '@/components/layout'
 import { cn } from '@/lib/utils'
@@ -57,15 +56,7 @@ export function RoleUsersTab({
         const others = row.roleNames.filter((name) => name !== role.name)
         return (
           <span className="flex flex-wrap gap-1">
-            {row.isSystemAdmin && (
-              <Chip
-                tone="violet"
-                icon={<ShieldCheck aria-hidden="true" className="size-3" strokeWidth={2.2} />}
-              >
-                System admin
-              </Chip>
-            )}
-            {others.length === 0 && !row.isSystemAdmin
+            {others.length === 0
               ? '—'
               : others.map((name) => (
                   <Chip key={name} tone="navy">

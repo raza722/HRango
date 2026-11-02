@@ -5,7 +5,7 @@ import { Plus, X } from 'lucide-react'
 
 import { SelectField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
-import { useCan } from '@/lib/permissions'
+import { useCanOnEmployee } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { labelOf, SKILL_LEVEL_LABELS, TM_CODES } from '../../constants'
@@ -85,7 +85,7 @@ function SkillDialog({
  * its edit; its × removes it.
  */
 export function SkillsTab({ employee }: { employee: Employee }) {
-  const canEdit = useCan(TM_CODES.records)
+  const canEdit = useCanOnEmployee(TM_CODES.skills, employee.id)
   const skills = useEmployeeChildren(employee.id, 'skills')
   const remove = useDeleteChild('skills', 'Skill')
   const [editing, setEditing] = useState<Skill | 'new' | null>(null)

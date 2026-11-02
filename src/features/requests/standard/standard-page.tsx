@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { typePermission } from '../api/backend'
 import { ACTION_LABELS, REQUEST_PAGE_SIZE } from '../constants'
+import { useRequestScope } from '../hooks/use-request-scope'
 import { REQUEST_STATUSES, type RequestAction, type RequestPage } from '../types/requests.types'
 import { isOwnUndecidable, SELF_BLOCKED_ACTIONS } from './self-decision'
 import type {
@@ -144,13 +145,15 @@ export function StandardRequestsPage<P>({
   const tab: StandardTab = wanted === 'approvals' && !can.approvals ? 'request' : wanted
   const isRequest = tab === 'request'
   // The list the API reads; Subordinates only where the type draws it.
+  const chosenScope = useRequestScope(search.scope, typePermission(kind, 'view'))
   const listView: StandardListView = !config.scopeLabels
     ? 'all'
-    : search.scope === 'subordinates' && !config.scopeLabels.subordinates
+    : chosenScope === 'subordinates' && !config.scopeLabels.subordinates
       ? 'my'
-      : search.scope
+      : chosenScope
   // Columns, filters and forms read Subordinates like All (other people's requests).
   const scope = listView === 'my' ? 'my' : 'all'
+  const canSeeOthers = useCan(`${typePermission(kind, 'view')}@team`)
   const view: StandardApprovalView = config.approvalViews.includes(search.view)
     ? search.view
     : (config.approvalViews[0] ?? 'requested')
@@ -337,7 +340,11 @@ export function StandardRequestsPage<P>({
             rowActionsHeader="Actions"
             emptyState={
               <p className="py-10 text-center text-sm text-grey">
-                {status || activeCount(filters) > 0 ? 'No requests match.' : 'No requests yet.'}
+                {status || activeCount(filters) > 0
+                  ? 'No requests match.'
+                  : listView === 'my' && config.scopeLabels && canSeeOthers
+                    ? `You have no requests of your own. Choose ${config.scopeLabels.all} to see other people’s.`
+                    : 'No requests yet.'}
               </p>
             }
             rowActions={(row) => {

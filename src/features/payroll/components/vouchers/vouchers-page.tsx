@@ -42,7 +42,7 @@ const columns: DataTableColumn<VoucherRow>[] = [
     id: 'employee',
     header: 'Employee Name',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null }} />,
+    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null, employeeId: row.employeeId }} />,
   },
   { id: 'code', header: 'Code', align: 'center', cell: (row) => row.voucherNo },
   {

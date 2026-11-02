@@ -1,7 +1,8 @@
 import { type ReactNode, useState } from 'react'
-import { Outlet } from '@tanstack/react-router'
+import { Link, Outlet, useRouterState } from '@tanstack/react-router'
 
 import { NAV_ITEMS } from '@/app/navigation'
+import { canOpen } from '@/app/route-access'
 import { LanguageSwitcher, Sidebar, SIDEBAR_WIDTH, ThemeToggle, Topbar } from '@/components/layout'
 import { ChangePasswordDialog } from '@/features/access'
 import { useLogout, useSessionRefresh } from '@/features/auth'
@@ -12,6 +13,21 @@ import { useSidebarStore } from '@/stores/sidebar-store'
 
 import { InShellContext } from './in-shell-context'
 
+/** A page the user's role does not include (opened from a link or a typed address). */
+function NoAccess() {
+  return (
+    <div className="mx-auto flex max-w-md flex-col items-center gap-3 py-16 text-center">
+      <h1 className="text-xl font-semibold text-heading">You don’t have access to this page</h1>
+      <p className="text-sm text-muted-foreground">
+        Your role doesn’t include it. If you need it, ask your HR team or administrator.
+      </p>
+      <Link to="/" className="text-sm font-medium text-primary hover:underline">
+        Back to the dashboard
+      </Link>
+    </div>
+  )
+}
+
 /**
  * Shell for every signed-in page: navy sidebar, white top bar, grey content area. It shows the
  * matched route, or `children` when given (the 404 page for an unknown URL).
@@ -21,6 +37,7 @@ export function AuthenticatedLayout({ children }: { children?: ReactNode } = {})
   const collapsed = useSidebarStore((state) => state.collapsed)
   const isDesktop = useMediaQuery(BREAKPOINTS.desktop)
   const logout = useLogout()
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
   const [changingPassword, setChangingPassword] = useState(false)
   useSessionRefresh()
 
@@ -73,7 +90,9 @@ export function AuthenticatedLayout({ children }: { children?: ReactNode } = {})
           // Bottom padding clears the iPhone home indicator.
           className="min-w-0 flex-1 px-4 pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] outline-none sm:px-6 sm:pt-5 lg:px-8 lg:pt-6"
         >
-          <InShellContext value={true}>{children ?? <Outlet />}</InShellContext>
+          <InShellContext value={true}>
+            {children ?? (canOpen(user, pathname) ? <Outlet /> : <NoAccess />)}
+          </InShellContext>
         </main>
       </div>
     </div>

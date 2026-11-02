@@ -9,16 +9,16 @@ export const ACCESS_CODES = {
   usersView: 'access.users.view',
   usersCreate: 'access.users.create',
   usersEdit: 'access.users.edit',
-  usersDisable: 'access.users.disable',
-  usersPassword: 'access.users.password',
-  usersRoles: 'access.users.roles',
-  usersOverrides: 'access.users.overrides',
-  usersSessions: 'access.users.sessions',
+  usersDisable: 'access.users.delete',
+  usersPassword: 'access.users.edit',
+  usersRoles: 'access.roles.assign',
+  usersOverrides: 'access.overrides.edit',
+  usersSessions: 'access.sessions.end_session',
   rolesView: 'access.roles.view',
   rolesCreate: 'access.roles.create',
   rolesEdit: 'access.roles.edit',
   rolesDelete: 'access.roles.delete',
-  rolesPermissions: 'access.roles.permissions',
+  rolesPermissions: 'access.roles.edit',
 } as const
 
 /** Rows per page of the lists, and the choices. */

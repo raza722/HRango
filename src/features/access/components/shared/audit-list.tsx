@@ -13,7 +13,6 @@ const FIELD_LABELS: Record<string, string> = {
   email: 'Email',
   displayName: 'Display name',
   employee: 'Linked employee',
-  isSystemAdmin: 'System admin',
   isActive: 'Status',
   companies: 'Companies',
   roles: 'Roles',

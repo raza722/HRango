@@ -1,4 +1,5 @@
 import type { EmployeeLookupFilters } from '@/hooks/use-employee-lookup'
+import { useCan } from '@/lib/permissions'
 
 import { lookupApi } from '../api/payroll.api'
 import type { SearchOption } from '../components/shared/search-select'
@@ -24,8 +25,8 @@ export function usePayrollOptions(permission = 'payroll.payrolls.view') {
   const departments = useOrganisationLookup('departments')
   const designations = useOrganisationLookup('designations')
   const locations = useOrganisationLookup('locations')
-  const payItems = useResourceLookup('payItems')
-  const accountTypes = useResourceLookup('accountTypes')
+  const payItems = useResourceLookup('payItems', useCan('payroll.settings.pay_components.view'))
+  const accountTypes = useResourceLookup('accountTypes', useCan('payroll.settings.account_types.view'))
   const timeSlots = useTimeSlotLookup()
   /** Everyone the screen's code reaches, former staff too (filters, existing records). */
   const employeeFilters: EmployeeLookupFilters = { permission, includeInactive: true }

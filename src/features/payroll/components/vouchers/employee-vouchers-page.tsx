@@ -46,7 +46,7 @@ const columns: DataTableColumn<VoucherRow>[] = [
     id: 'name',
     header: 'Name',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null }} />,
+    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null, employeeId: row.employeeId }} />,
   },
   { id: 'department', header: 'Department', cell: (row) => row.departmentName ?? '—' },
   {

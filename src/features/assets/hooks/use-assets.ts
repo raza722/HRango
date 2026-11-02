@@ -29,8 +29,9 @@ export const useAssetTypes = (params: PageQuery<AssetTypeFilters>) =>
   useQuery(assetListQueryOptions('types', params, assetsApi.assetTypes))
 
 /** Every asset type (up to the page maximum), for pickers and filters. */
-export const useAssetTypeOptions = () =>
+export const useAssetTypeOptions = (enabled = true) =>
   useQuery({
+    enabled,
     ...assetListQueryOptions('types', PICKER_PAGE, assetsApi.assetTypes),
     staleTime: 30_000,
     select: (page) => page.data,
