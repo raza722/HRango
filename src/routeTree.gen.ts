@@ -29,6 +29,8 @@ import { Route as AppRosterRouteImport } from './routes/_app/roster'
 import { Route as AppSchedulingRouteImport } from './routes/_app/scheduling'
 import { Route as AppSeparationManagementRouteImport } from './routes/_app/separation-management'
 import { Route as AppTalentManagementRouteImport } from './routes/_app/talent-management'
+import { Route as PlatformIndexRouteImport } from './routes/platform/index'
+import { Route as PlatformLoginRouteImport } from './routes/platform/login'
 import { Route as AppAssetsIndexRouteImport } from './routes/_app/assets/index'
 import { Route as AppAssetsAllocationsRouteImport } from './routes/_app/assets/allocations'
 import { Route as AppAssetsClearanceFormRouteImport } from './routes/_app/assets/clearance-form'
@@ -278,6 +280,16 @@ const AppTalentManagementRoute = AppTalentManagementRouteImport.update({
   id: '/talent-management',
   path: '/talent-management',
   getParentRoute: () => AppRoute,
+} as any)
+const PlatformIndexRoute = PlatformIndexRouteImport.update({
+  id: '/platform/',
+  path: '/platform/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlatformLoginRoute = PlatformLoginRouteImport.update({
+  id: '/platform/login',
+  path: '/platform/login',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AppAssetsIndexRoute = AppAssetsIndexRouteImport.update({
   id: '/',
@@ -1131,6 +1143,8 @@ export interface FileRoutesByFullPath {
   '/scheduling': typeof AppSchedulingRoute
   '/separation-management': typeof AppSeparationManagementRoute
   '/talent-management': typeof AppTalentManagementRouteWithChildren
+  '/platform/login': typeof PlatformLoginRoute
+  '/platform/': typeof PlatformIndexRoute
   '/assets/allocations': typeof AppAssetsAllocationsRoute
   '/assets/clearance-form': typeof AppAssetsClearanceFormRoute
   '/assets/company-assets': typeof AppAssetsCompanyAssetsRoute
@@ -1289,7 +1303,9 @@ export interface FileRoutesByTo {
   '/roster': typeof AppRosterRoute
   '/scheduling': typeof AppSchedulingRoute
   '/separation-management': typeof AppSeparationManagementRoute
+  '/platform/login': typeof PlatformLoginRoute
   '/': typeof AppIndexRoute
+  '/platform': typeof PlatformIndexRoute
   '/assets/allocations': typeof AppAssetsAllocationsRoute
   '/assets/clearance-form': typeof AppAssetsClearanceFormRoute
   '/assets/company-assets': typeof AppAssetsCompanyAssetsRoute
@@ -1456,7 +1472,9 @@ export interface FileRoutesById {
   '/_app/scheduling': typeof AppSchedulingRoute
   '/_app/separation-management': typeof AppSeparationManagementRoute
   '/_app/talent-management': typeof AppTalentManagementRouteWithChildren
+  '/platform/login': typeof PlatformLoginRoute
   '/_app/': typeof AppIndexRoute
+  '/platform/': typeof PlatformIndexRoute
   '/_app/assets/allocations': typeof AppAssetsAllocationsRoute
   '/_app/assets/clearance-form': typeof AppAssetsClearanceFormRoute
   '/_app/assets/company-assets': typeof AppAssetsCompanyAssetsRoute
@@ -1630,6 +1648,8 @@ export interface FileRouteTypes {
     | '/scheduling'
     | '/separation-management'
     | '/talent-management'
+    | '/platform/login'
+    | '/platform/'
     | '/assets/allocations'
     | '/assets/clearance-form'
     | '/assets/company-assets'
@@ -1788,7 +1808,9 @@ export interface FileRouteTypes {
     | '/roster'
     | '/scheduling'
     | '/separation-management'
+    | '/platform/login'
     | '/'
+    | '/platform'
     | '/assets/allocations'
     | '/assets/clearance-form'
     | '/assets/company-assets'
@@ -1954,7 +1976,9 @@ export interface FileRouteTypes {
     | '/_app/scheduling'
     | '/_app/separation-management'
     | '/_app/talent-management'
+    | '/platform/login'
     | '/_app/'
+    | '/platform/'
     | '/_app/assets/allocations'
     | '/_app/assets/clearance-form'
     | '/_app/assets/company-assets'
@@ -2110,6 +2134,8 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  PlatformLoginRoute: typeof PlatformLoginRoute
+  PlatformIndexRoute: typeof PlatformIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -2253,6 +2279,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/talent-management'
       preLoaderRoute: typeof AppTalentManagementRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/platform/': {
+      id: '/platform/'
+      path: '/platform'
+      fullPath: '/platform/'
+      preLoaderRoute: typeof PlatformIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/platform/login': {
+      id: '/platform/login'
+      path: '/platform/login'
+      fullPath: '/platform/login'
+      preLoaderRoute: typeof PlatformLoginRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_app/assets/': {
       id: '/_app/assets/'
@@ -3870,6 +3910,8 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  PlatformLoginRoute: PlatformLoginRoute,
+  PlatformIndexRoute: PlatformIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

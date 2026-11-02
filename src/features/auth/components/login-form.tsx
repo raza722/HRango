@@ -15,11 +15,38 @@ import { type LoginInput, loginSchema } from '../schemas/login.schema'
 
 interface LoginFormProps {
   /** Runs after the session is stored. */
-  onSuccess: () => Promise<void> | void
+  onSuccess: () => unknown
+}
+
+interface CredentialsFormProps extends LoginFormProps {
+  signIn: (values: LoginInput) => Promise<unknown>
+  emailPlaceholder: string
+  /** Offers to fill in this account. */
+  demoNote?: string
 }
 
 export function LoginForm({ onSuccess }: LoginFormProps) {
   const login = useLogin()
+  return (
+    <CredentialsForm
+      signIn={login.mutateAsync}
+      onSuccess={onSuccess}
+      emailPlaceholder="name@topedge.tech"
+      // Development builds against the local API have the same demo account (backend dev database).
+      demoNote={
+        isMockApi || env.DEV ? (isMockApi ? 'Mock API is on.' : 'Development API.') : undefined
+      }
+    />
+  )
+}
+
+/** Email and password, with server errors inline. Customer and staff sign-in both use it. */
+export function CredentialsForm({
+  signIn,
+  onSuccess,
+  emailPlaceholder,
+  demoNote,
+}: CredentialsFormProps) {
   const [showPassword, setShowPassword] = useState(false)
   const form = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
@@ -31,7 +58,7 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
 
   const submit = form.handleSubmit(async (values) => {
     try {
-      await login.mutateAsync(values)
+      await signIn(values)
     } catch (error) {
       form.setError('root.server', {
         message: error instanceof ApiError ? error.message : 'Sign-in failed. Please try again.',
@@ -59,7 +86,7 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
         label="Email"
         type="email"
         autoComplete="username"
-        placeholder="name@topedge.tech"
+        placeholder={emailPlaceholder}
       />
 
       <FormField label="Password" error={password.fieldState.error?.message}>
@@ -96,11 +123,10 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
         Sign in
       </Button>
 
-      {/* Development builds against the local API have the same demo account (backend dev database). */}
-      {(isMockApi || env.DEV) && (
+      {demoNote && (
         <div className="rounded-md border border-dashed border-input px-4 py-3 text-sm text-muted-foreground">
           <p>
-            {isMockApi ? 'Mock API is on.' : 'Development API.'} Demo account:{' '}
+            {demoNote} Demo account:{' '}
             <span className="font-medium break-all text-field-foreground">
               {DEMO_ACCOUNT.email}
             </span>

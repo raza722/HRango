@@ -23,14 +23,42 @@ export function configureApiClient(next: ApiClientHooks): void {
   hooks = next
 }
 
-/** Shared axios instance. Feature `api/` modules call this, never `axios` directly. */
-export const apiClient = axios.create({
+const clientConfig = {
   baseURL: env.VITE_API_BASE_URL,
   timeout: env.VITE_API_TIMEOUT_MS,
   headers: {
     Accept: 'application/json',
     'Content-Type': 'application/json',
   },
+}
+
+/** Shared axios instance. Feature `api/` modules call this, never `axios` directly. */
+export const apiClient = axios.create(clientConfig)
+
+let platformHooks: ApiClientHooks = {
+  getAccessToken: () => null,
+  onUnauthorized: () => undefined,
+}
+
+/** Same as `configureApiClient`, for the session of hRango's own staff. */
+export function configurePlatformClient(next: ApiClientHooks): void {
+  platformHooks = next
+}
+
+/** hRango's own staff (`/platform/*`): their token, and a 401 here never signs a customer out. */
+export const platformClient = axios.create(clientConfig)
+
+platformClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  const token = platformHooks.getAccessToken()
+  if (token) config.headers.set('Authorization', `Bearer ${token}`)
+  return config
+})
+
+platformClient.interceptors.response.use(undefined, (error: AxiosError) => {
+  const apiError = normalizeError(error)
+  const isLoginRequest = error.config?.url?.endsWith('/auth/login') ?? false
+  if (apiError.isUnauthorized && !isLoginRequest) platformHooks.onUnauthorized()
+  return Promise.reject(apiError)
 })
 
 apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
