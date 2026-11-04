@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
-export type StaffRole = 'super_admin' | 'admin' | 'support' | 'billing'
+export type StaffRole = 'super_admin' | 'admin' | 'support' | 'billing' | 'sales'
 
 export interface StaffUser {
   id: string
