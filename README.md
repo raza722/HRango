@@ -60,9 +60,8 @@ calls then return the HTML page instead of JSON. Reload the tab to start it agai
 | `npm run test:coverage`   | Vitest with V8 coverage                                 |
 | `npm run routes:generate` | Regenerate `src/routeTree.gen.ts` without starting Vite |
 
-Git hooks (Husky): **pre-commit** runs lint-staged (ESLint + Prettier on staged files);
-**pre-push** runs the type check and the test suite. The folder was `git init`-ed so the hooks are
-installed; nothing has been committed.
+Git hooks (Husky): **pre-commit** and **pre-push** are switched off (too slow on every commit and push). Check by
+hand with `npx lint-staged`, `npm run typecheck` and `npm run test:run`.
 
 ## Tech stack
 

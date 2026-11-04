@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { toast } from 'sonner'
 
 import { useEmployeeLookupSearch } from '@/hooks/use-employee-lookup'
+import { useCan } from '@/lib/permissions'
 
 import {
   type AccountFilters,
@@ -95,6 +96,7 @@ export const usePayrollLookup = () =>
     queryKey: payrollKeys.payrolls({ page: 1, pageSize: 100, lookup: true }),
     queryFn: ({ signal }) => payrollApi.payrolls({ page: 1, pageSize: 100 }, signal),
     staleTime: 60_000,
+    enabled: useCan('payroll.payrolls.view'),
   })
 
 // --- queries ------------------------------------------------------------------------------------
@@ -495,9 +497,12 @@ export const usePayslipsBulk = () =>
     ({ ids, action }: { ids: string[]; action: PayslipAction }) =>
       payrollApi.payslipsBulk(ids, action),
     ({ action }, result) =>
-      result.changed === 0
-        ? 'Nothing changed'
-        : `${plural(result.changed, 'pay slip')} ${BULK_VERBS[action]}`,
+      [
+        result.changed === 0
+          ? 'Nothing changed'
+          : `${plural(result.changed, 'pay slip')} ${BULK_VERBS[action]}`,
+        ...result.errors,
+      ].join('. '),
   )
 /** Kept name: put several pay slips on hold. */
 export const useHoldPayslips = () => {

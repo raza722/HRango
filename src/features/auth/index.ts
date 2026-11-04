@@ -1,4 +1,5 @@
 export { authApi } from './api/auth.api'
+export { CredentialsForm } from './components/login-form'
 export { LoginPage } from './components/login-page'
 export { DEMO_ACCOUNT } from './constants'
 export { useLogin, useLogout, useSessionRefresh } from './hooks/use-auth'

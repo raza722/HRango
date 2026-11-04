@@ -170,6 +170,13 @@ export const accessApi = {
     )
   },
 
+  /** `PATCH /access/users/{id}/account-owner`: the Account Owner hands the role to another administrator. */
+  async transferOwner(id: string, rowVersion: string) {
+    return toUserDetail(
+      await send<UserDetailOutDto>('patch', at('users', id, '/account-owner'), { rowVersion }),
+    )
+  },
+
   /** `PUT /access/users/{id}/password`: signs the user out everywhere. */
   async setPassword(id: string, password: string) {
     await apiClient.put(at('users', id, '/password'), { password })

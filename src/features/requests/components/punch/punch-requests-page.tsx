@@ -19,6 +19,7 @@ import {
   REQUEST_PAGE_SIZE,
   STATUS_META,
 } from '../../constants'
+import { useRequestScope } from '../../hooks/use-request-scope'
 import {
   permits,
   useApprovalList,
@@ -88,6 +89,7 @@ export function PunchRequestsPage() {
   const [approvalFilters, setApprovalFilters] = useFilters('punch-approvals')
 
   const isRequest = search.tab === 'request' || !can.approvals
+  const scope = useRequestScope(search.scope, typePermission('punch', 'view'))
   const status = search.status
   const update = (patch: Partial<RequestSearch>) => {
     setSelected(new Set())
@@ -95,7 +97,7 @@ export function PunchRequestsPage() {
   }
 
   const requests = useRequestList('punch', {
-    scope: search.scope,
+    scope,
     page: search.page,
     pageSize: REQUEST_PAGE_SIZE,
     ...(status ? { status } : {}),
@@ -126,7 +128,7 @@ export function PunchRequestsPage() {
       { kind: 'date', key: 'from', label: 'From' },
       { kind: 'date', key: 'to', label: 'To' },
     ]
-    if (isRequest && search.scope === 'my') return own
+    if (isRequest && scope === 'my') return own
     const place: FilterField[] = [
       { kind: 'text', key: 'q', label: 'Search', placeholder: 'Code or employee' },
       employeeFilterField(typePermission('punch', 'create')),
@@ -252,9 +254,9 @@ export function PunchRequestsPage() {
                 { value: 'my' as const, label: 'My Punch Request' },
                 { value: 'all' as const, label: 'All Punch Requests' },
               ]}
-              value={search.scope}
-              onChange={(scope) => {
-                update({ scope, page: 1 })
+              value={scope}
+              onChange={(next) => {
+                update({ scope: next, page: 1 })
               }}
             />
           ) : (
@@ -342,7 +344,7 @@ export function PunchRequestsPage() {
       <RequestDialogHost
         kind="punch"
         dialog={dialog}
-        forOthers={search.scope === 'all'}
+        forOthers={scope === 'all'}
         fromApprovals={!isRequest}
         onClose={() => {
           setDialog(null)

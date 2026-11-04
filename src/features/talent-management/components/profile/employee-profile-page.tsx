@@ -7,8 +7,9 @@ import { ErrorState } from '@/components/feedback/error-state'
 import { PageSpinner } from '@/components/feedback/spinner'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 
-import { isInactiveStatus, PROFILE_TAB_LABELS } from '../../constants'
+import { isInactiveStatus, PROFILE_TAB_LABELS, TM_CODES } from '../../constants'
 import { useEmployee, useSetEmployeeActive } from '../../hooks/use-employees'
 import { type Employee, PROFILE_TABS, type ProfileTab } from '../../types/employees.types'
 import { formatDay } from '../../utils/format'
@@ -122,12 +123,13 @@ export function EmployeeProfilePage() {
   const navigate = routeApi.useNavigate()
   const record = useEmployee(employeeId)
   const setActive = useSetEmployeeActive()
+  const canList = useCan(TM_CODES.directory)
   const [dialog, setDialog] = useState<'profile' | 'edit' | 'active' | null>(null)
   const close = () => {
     setDialog(null)
   }
 
-  const back = (
+  const back = canList ? (
     <Link
       to="/talent-management/employees"
       className={`${sectionLinkClass} inline-flex w-fit items-center gap-1.5 text-sm`}
@@ -135,7 +137,7 @@ export function EmployeeProfilePage() {
       <ArrowLeft aria-hidden="true" className="size-4" />
       Employee Record
     </Link>
-  )
+  ) : null
 
   if (record.isPending) return <PageSpinner label="Loading the employee" />
   if (record.isError) {

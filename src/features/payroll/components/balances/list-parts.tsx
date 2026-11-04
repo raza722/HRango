@@ -16,10 +16,19 @@ import type { EmployeeRef } from '../../types/payroll.types'
 import { btn, fieldValueText, personNameText, toolbarButton } from '../../utils/styles'
 
 /** "Saud Ahmed" with a small round photo, as in every Payroll list. */
-export function PersonCell({ person }: { person: Pick<EmployeeRef, 'name' | 'photoUrl'> }) {
+export function PersonCell({
+  person,
+}: {
+  person: Pick<EmployeeRef, 'name' | 'photoUrl'> & { employeeId?: string | null }
+}) {
   return (
     <span className="flex min-w-0 items-center gap-2">
-      <EmployeeAvatar name={person.name} photoUrl={person.photoUrl} className="size-6 shrink-0" />
+      <EmployeeAvatar
+        name={person.name}
+        photoUrl={person.photoUrl}
+        employeeId={person.employeeId}
+        className="size-6 shrink-0"
+      />
       <span className={cn('truncate', personNameText)}>{person.name}</span>
     </span>
   )

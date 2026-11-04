@@ -1,2 +1,2 @@
-npm run typecheck
-npm run test:run
+# Switched off 2 Nov 2026 at the owner's request: too slow on every push.
+# Run `npm run typecheck` and `npm run test:run` by hand before a release.

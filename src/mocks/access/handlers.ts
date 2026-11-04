@@ -229,7 +229,6 @@ function userOut(user: StoredUser) {
     homeCompanyId: home,
     homeCompanyName: companyName(home),
     isActive: user.isActive,
-    isSystemAdmin: user.isSystemAdmin,
     lastLoginAt: user.lastLoginAt,
     roleNames:
       rolesOf(user)
@@ -309,7 +308,7 @@ const sessionsWord = (count: number) => `${String(count)} session${count === 1 ?
 const isAdminRole = (role: StoredRole) =>
   role.isActive &&
   (role.id === COMPANY_ADMIN_ROLE_ID ||
-    role.permissions.some((tick) => tick.code === 'access.users.roles'))
+    role.permissions.some((tick) => tick.code === 'access.roles.assign'))
 
 function effectivePermissions(user: StoredUser) {
   const held = new Map<string, { scopes: Set<string>; sources: string[] }>()
@@ -318,9 +317,6 @@ function effectivePermissions(user: StoredUser) {
     row.scopes.add(scope)
     if (!row.sources.includes(source)) row.sources.push(source)
     held.set(code, row)
-  }
-  if (user.isSystemAdmin) {
-    for (const entry of PERMISSION_CATALOGUE) hold(entry.code, 'company', 'System admin')
   }
   for (const role of rolesOf(user)) {
     // A retired role grants nothing until it is restored.
@@ -356,7 +352,6 @@ interface UserFields {
   employeeId: string | null
   password: string | null
   isActive: boolean
-  isSystemAdmin: boolean
   companyIds: string[]
   roleIds: string[]
 }
@@ -397,8 +392,6 @@ function readUser(
   }
 
   const isActive = typeof body.isActive === 'boolean' ? body.isActive : (current?.isActive ?? true)
-  const isSystemAdmin =
-    typeof body.isSystemAdmin === 'boolean' ? body.isSystemAdmin : (current?.isSystemAdmin ?? false)
 
   const companyIds = idList(body.companyIds) ?? current?.companyIds ?? [COMPANIES[0]?.id ?? '']
   if (companyIds.length === 0) invalid.companyIds = 'Choose at least one company.'
@@ -414,15 +407,12 @@ function readUser(
 
   if (current && current.id === selfAccount()?.id) {
     if (!isActive) invalid.isActive = 'You can’t disable your own account.'
-    const keepsAdmin =
-      isSystemAdmin ||
-      roleIds.some((id) => {
-        const role = accessRoles.find(id)
-        return role ? isAdminRole(role) : false
-      })
+    const keepsAdmin = roleIds.some((id) => {
+      const role = accessRoles.find(id)
+      return role ? isAdminRole(role) : false
+    })
     if (!keepsAdmin && !invalid.roleIds) {
-      invalid.isSystemAdmin =
-        'You can’t remove your own administrator access: keep a role that assigns roles, or stay a system admin.'
+      invalid.roleIds = 'You can’t remove your own administrator access: keep a role that assigns roles.'
     }
     const lastAdminRole = lostLastAdminRole(current, roleIds)
     if (lastAdminRole && !invalid.roleIds) invalid.roleIds = lastAdminRole
@@ -436,7 +426,6 @@ function readUser(
     employeeId,
     password,
     isActive,
-    isSystemAdmin,
     companyIds: [...new Set(companyIds)],
     roleIds: [...new Set(roleIds)],
   }
@@ -473,7 +462,6 @@ function recordUserChanges(before: StoredUser, after: StoredUser): void {
     before.employeeId ? (findEmployee(before.employeeId)?.name ?? before.employeeId) : null,
     after.employeeId ? (findEmployee(after.employeeId)?.name ?? after.employeeId) : null,
   )
-  changed('isSystemAdmin', before.isSystemAdmin ? 'Yes' : 'No', after.isSystemAdmin ? 'Yes' : 'No')
   changed(
     'companies',
     before.companyIds.map((id) => companyName(id) ?? id).join(', '),
@@ -538,7 +526,6 @@ const userHandlers: HttpHandler[] = [
       employeeId: read.employeeId,
       companyIds: read.companyIds,
       isActive: read.isActive,
-      isSystemAdmin: read.isSystemAdmin,
       lastLoginAt: null,
       roleIds: read.roleIds,
       password: read.password,
@@ -551,12 +538,6 @@ const userHandlers: HttpHandler[] = [
       field: 'roles',
       to: roleNamesOf(user.roleIds),
     })
-    if (user.isSystemAdmin) {
-      audit('user', user.id, nameOf(user), 'Made system admin', {
-        field: 'isSystemAdmin',
-        to: 'Yes',
-      })
-    }
     return item(userDetailOut(user), 201)
   }),
 
@@ -583,7 +564,6 @@ const userHandlers: HttpHandler[] = [
       employeeId: read.employeeId,
       companyIds: read.companyIds,
       isActive: read.isActive,
-      isSystemAdmin: read.isSystemAdmin,
       roleIds: read.roleIds,
       password: read.password ?? current.password,
       updatedAt: now(),

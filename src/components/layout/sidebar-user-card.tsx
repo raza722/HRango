@@ -19,6 +19,7 @@ interface SidebarUserCardProps {
   onSignOut: () => void
   /** Opens Change Password; without it the menu has no such item. */
   onChangePassword?: (() => void) | undefined
+  hasSettings?: boolean
 }
 
 export function SidebarUserCard({
@@ -26,6 +27,7 @@ export function SidebarUserCard({
   collapsed,
   onSignOut,
   onChangePassword,
+  hasSettings = true,
 }: SidebarUserCardProps) {
   if (!user) return null
 
@@ -63,11 +65,13 @@ export function SidebarUserCard({
           <span className="block truncate">{user.email}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link to="/settings">
-            <Settings /> Settings
-          </Link>
-        </DropdownMenuItem>
+        {hasSettings && (
+          <DropdownMenuItem asChild>
+            <Link to="/settings">
+              <Settings /> Settings
+            </Link>
+          </DropdownMenuItem>
+        )}
         {onChangePassword && (
           <DropdownMenuItem onSelect={onChangePassword}>
             <KeyRound /> Change Password

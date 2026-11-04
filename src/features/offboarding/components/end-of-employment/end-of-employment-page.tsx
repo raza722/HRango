@@ -72,7 +72,7 @@ const columns: DataTableColumn<EndOfEmploymentRow>[] = [
     id: 'employee',
     header: 'Employee',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={{ name: nameOf(row), photoUrl: null }} />,
+    cell: (row) => <PersonCell person={{ name: nameOf(row), photoUrl: null, employeeId: row.employeeId }} />,
   },
   { id: 'branch', header: 'Branch', cell: (row) => row.branchName ?? '—' },
   { id: 'location', header: 'Location', cell: (row) => row.locationName ?? '—' },

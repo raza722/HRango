@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
 
+import { typePermission } from '../../api/backend'
 import { REQUEST_PAGE_SIZE } from '../../constants'
+import { useRequestScope } from '../../hooks/use-request-scope'
 import { useApprovalList, useRequestList, useRequestPermissions } from '../../hooks/use-requests'
 import type { RequestSearch } from '../../routing'
 import { shiftApprovalColumns, shiftRequestColumns } from '../shared/request-columns'
@@ -26,8 +28,9 @@ export function ShiftRequestsPage() {
     navigate({ search: (prev) => ({ ...prev, ...patch }) })
 
   const isRequest = search.tab === 'request' || !can.approvals
+  const scope = useRequestScope(search.scope, typePermission('shift', 'view'))
   const requests = useRequestList('shift', {
-    scope: search.scope,
+    scope,
     page: search.page,
     pageSize: REQUEST_PAGE_SIZE,
     ...(status ? { status } : {}),
@@ -70,7 +73,7 @@ export function ShiftRequestsPage() {
           {can.create && (
             <div className="border-b px-4 py-5 sm:px-6">
               <h2 className="mb-5 text-xl font-medium text-title">Shift Request</h2>
-              <ShiftRequestForm forOthers={search.scope === 'all'} />
+              <ShiftRequestForm forOthers={scope === 'all'} />
             </div>
           )}
           <RequestTabPanel
@@ -79,9 +82,9 @@ export function ShiftRequestsPage() {
             isLoading={requests.isPending}
             isFetching={requests.isFetching}
             columns={shiftRequestColumns}
-            scope={search.scope}
-            onScopeChange={(scope) => {
-              void update({ scope, page: 1 })
+            scope={scope}
+            onScopeChange={(next) => {
+              void update({ scope: next, page: 1 })
             }}
             onAction={(action, request) => {
               setDialog({ action, request })
@@ -107,7 +110,7 @@ export function ShiftRequestsPage() {
       <RequestDialogHost
         kind="shift"
         dialog={dialog}
-        forOthers={search.scope === 'all'}
+        forOthers={scope === 'all'}
         fromApprovals={!isRequest}
         onClose={() => {
           setDialog(null)

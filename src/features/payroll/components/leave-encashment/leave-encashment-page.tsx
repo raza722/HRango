@@ -50,7 +50,7 @@ const columns: DataTableColumn<LeaveEncashmentRow>[] = [
     id: 'employee',
     header: 'Employee',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null }} />,
+    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null, employeeId: row.employeeId }} />,
   },
   { id: 'year', header: 'Year', cell: (row) => row.fiscalYear ?? '—' },
   { id: 'days', header: 'Days', cell: (row) => row.days },

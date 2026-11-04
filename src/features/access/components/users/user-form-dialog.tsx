@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
@@ -19,7 +18,7 @@ import {
 import type { UserDetail } from '../../types/access.types'
 import { showServerErrors } from '../../utils/form-errors'
 import { navySwitchClass } from '../../utils/styles'
-import { ConfirmAction, FormDialog } from '../shared/dialogs'
+import { FormDialog } from '../shared/dialogs'
 import { LoadError, LoadingRows } from '../shared/parts'
 import { PasswordField } from '../shared/password-field'
 
@@ -27,7 +26,7 @@ const FIELDS = Object.keys(userToForm(null, null))
 
 /**
  * Add User / Edit User (`UserIn`): email, display name, the linked employee, an initial password
- * (Add only), Active, System admin (asked again before it is given), companies and roles.
+ * (Add only), Active, companies and roles.
  * `id` loads the account to edit; `null` adds one.
  */
 export function UserFormDialog({
@@ -57,8 +56,6 @@ export function UserFormDialog({
         : undefined,
     resetOptions: { keepDirtyValues: true },
   })
-  const [confirming, setConfirming] = useState<UserFormValues | null>(null)
-
   const companyOptions = [
     ...(user?.companies ?? [])
       .filter((company) => !companies.data?.some((row) => row.id === company.id))
@@ -74,7 +71,7 @@ export function UserFormDialog({
       ...(role.description ? { hint: role.description } : {}),
     }))
 
-  const persist = async (values: UserFormValues) => {
+  const submit = form.handleSubmit(async (values) => {
     try {
       const saved = await save.mutateAsync({
         id: user?.id,
@@ -87,19 +84,7 @@ export function UserFormDialog({
     } catch (error) {
       showServerErrors(error, form.setError, FIELDS)
     }
-  }
-
-  // The schema checks everything first; only then is System admin asked about.
-  const submit = form.handleSubmit(async (values) => {
-    if (values.isSystemAdmin && !user?.isSystemAdmin) {
-      setConfirming(values)
-      return
-    }
-    await persist(values)
   })
-
-  const typedName = form.getValues('displayName').trim()
-  const who = typedName !== '' ? typedName : (user?.name ?? form.getValues('email').trim())
 
   return (
     <>
@@ -199,15 +184,6 @@ export function UserFormDialog({
               stateLabel={(on) => (on ? 'Active: can sign in' : 'Disabled: cannot sign in')}
               className={navySwitchClass}
             />
-            <SwitchField
-              control={form.control}
-              name="isSystemAdmin"
-              label="System Admin"
-              stateLabel={(on) =>
-                on ? 'Every screen and action, whatever the roles' : 'Only what the roles give'
-              }
-              className={navySwitchClass}
-            />
           </div>
         )}
         {!creating && (
@@ -216,17 +192,6 @@ export function UserFormDialog({
           </p>
         )}
       </FormDialog>
-      {confirming && (
-        <ConfirmAction
-          title={`Make ${who} a system admin?`}
-          description="A system admin can use every screen and action in every company of the account, whatever their roles say. Give it only to people who run the portal."
-          confirmLabel="Make System Admin"
-          onConfirm={() => void persist(confirming)}
-          onClose={() => {
-            setConfirming(null)
-          }}
-        />
-      )}
     </>
   )
 }

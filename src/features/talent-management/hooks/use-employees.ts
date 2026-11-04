@@ -73,6 +73,8 @@ function useEmployeeMutation<TVariables, TResult>(
     meta: { suppressErrorToast: !showErrors },
     onSuccess: async (_result, variables) => {
       toast.success(typeof successMessage === 'string' ? successMessage : successMessage(variables))
+      // The sidebar's name and photo come from /auth/me.
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
       await queryClient.invalidateQueries({ queryKey: employeeKeys.all })
     },
   })

@@ -164,7 +164,7 @@ const columns: DataTableColumn<TaxRebateRow>[] = [
     mobile: 'heading',
     cell: (row) => (
       <span className="flex items-center gap-2">
-        <EmployeeAvatar name={row.employeeName} photoUrl={null} className="size-6" />
+        <EmployeeAvatar name={row.employeeName} employeeId={row.employeeId} className="size-6" />
         <span className="min-w-0">
           <span className={cn('block truncate', personNameText)}>{row.employeeName}</span>
           <span className={cn('block', personCodeText)}>{row.employeeCode}</span>

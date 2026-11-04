@@ -86,7 +86,8 @@ export interface User {
   homeCompanyId: string
   homeCompanyName: string | null
   isActive: boolean
-  isSystemAdmin: boolean
+  /** The customer's owner: nobody else changes this account. */
+  isAccountOwner: boolean
   lastLoginAt: string | null
   roleNames: string[]
   createdAt: string
@@ -106,7 +107,7 @@ export interface EffectivePermission {
   label: string
   isSensitive: boolean
   scopes: Scope[]
-  /** Role names, "Grant", "System admin". */
+  /** Role names and "Grant". */
   sources: string[]
 }
 
@@ -162,7 +163,6 @@ export interface UserInput {
   /** Only on create. */
   password: string | null
   isActive: boolean
-  isSystemAdmin: boolean
   companyIds: string[]
   roleIds: string[]
 }

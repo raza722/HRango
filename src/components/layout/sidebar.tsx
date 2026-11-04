@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { XIcon } from 'lucide-react'
 
-import { filterNavItems, type NavItem } from '@/app/navigation'
+import { type AppPath, filterNavItems, type NavItem } from '@/app/navigation'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { BREAKPOINTS, useMediaQuery } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
@@ -18,6 +18,10 @@ interface SidebarProps {
   user: AuthUser | null
   onSignOut: () => void
   onChangePassword?: (() => void) | undefined
+  /** Where the logo goes. */
+  homeTo?: AppPath
+  /** hRango's own staff: `items` are already theirs, and they have no company settings. */
+  staffMenu?: boolean
 }
 
 interface SidebarPanelProps extends SidebarProps {
@@ -32,6 +36,8 @@ function SidebarPanel({
   user,
   onSignOut,
   onChangePassword,
+  homeTo = '/',
+  staffMenu = false,
   collapsed,
   onNavigate,
   onClose,
@@ -45,7 +51,7 @@ function SidebarPanel({
         )}
       >
         <Link
-          to="/"
+          to={homeTo}
           onClick={onNavigate}
           className="min-w-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-sidebar-muted/60"
           aria-label={`${user?.companyName ?? 'Home'} - go to dashboard`}
@@ -69,6 +75,7 @@ function SidebarPanel({
         collapsed={collapsed}
         onSignOut={onSignOut}
         onChangePassword={onChangePassword}
+        hasSettings={!staffMenu}
       />
 
       <nav
@@ -80,7 +87,7 @@ function SidebarPanel({
       >
         {/* Only the entries the user holds a view permission for (all of them in mock mode). */}
         <SidebarNav
-          items={filterNavItems(items, user)}
+          items={staffMenu ? items : filterNavItems(items, user)}
           collapsed={collapsed}
           onNavigate={onNavigate}
         />

@@ -5,7 +5,7 @@ import { Plus } from 'lucide-react'
 
 import { SelectField, SwitchField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
-import { useCan } from '@/lib/permissions'
+import { useCanOnEmployee } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import {
@@ -159,7 +159,7 @@ function EmergencyContactDialog({
 
 /** Emergency contacts: the Personal list's "Emergency Contact #" is the primary one. */
 function EmergencyContacts({ employee }: { employee: Employee }) {
-  const canEdit = useCan(TM_CODES.records)
+  const canEdit = useCanOnEmployee(TM_CODES.emergencyContacts, employee.id)
   const contacts = useEmployeeChildren(employee.id, 'emergency-contacts')
   const remove = useDeleteChild('emergency-contacts', 'Emergency contact')
   const [editing, setEditing] = useState<EmergencyContact | 'new' | null>(null)
@@ -266,23 +266,25 @@ function EmergencyContacts({ employee }: { employee: Employee }) {
  * organisation), and the emergency contacts.
  */
 export function PersonalTab({ employee }: { employee: Employee }) {
+  const hidden = employee.canSeePersonal === false
+  const personally = (value: string) => (hidden ? 'Hidden' : value)
   const personal: [string, string][] = [
     ['Full Name', employee.name],
-    ['Date of Birth', formatDay(employee.dateOfBirth)],
+    ['Date of Birth', personally(formatDay(employee.dateOfBirth))],
     ['Hire Date', formatDay(employee.joiningDate)],
     ['CNIC', employee.canSeeIdentity ? (employee.cnic ?? '') : 'Hidden'],
     ['Reg. #', employee.code],
     ['Tenure', tenureText(employee.tenureMonths, employee.joiningDate, employee.endDate)],
-    ['Emergency Contact #', employee.emergencyContactPhone ?? ''],
-    ['Phone No', employee.phone1 ?? ''],
-    ['Marital Status', labelOf(MARITAL_LABELS, employee.maritalStatus)],
+    ['Emergency Contact #', personally(employee.emergencyContactPhone ?? '')],
+    ['Phone No', personally(employee.phone1 ?? '')],
+    ['Marital Status', personally(labelOf(MARITAL_LABELS, employee.maritalStatus))],
     ['Gender', labelOf(GENDER_LABELS, employee.gender)],
-    ['Father / Husband Name', employee.parentName ?? ''],
+    ['Father / Husband Name', personally(employee.parentName ?? '')],
     ['Email Address', employee.email ?? ''],
-    ['Other Phone No', employee.phone2 ?? ''],
-    ['Address', employee.homeAddress ?? ''],
-    ['Religion', employee.religion ?? ''],
-    ['Nationality', employee.nationality ?? ''],
+    ['Other Phone No', personally(employee.phone2 ?? '')],
+    ['Address', personally(employee.homeAddress ?? '')],
+    ['Religion', personally(employee.religion ?? '')],
+    ['Nationality', personally(employee.nationality ?? '')],
   ]
   const organisation: [string, string][] = [
     ['Branch', employee.branchName],

@@ -20,12 +20,21 @@ import type {
  */
 export const TM_CODES = {
   view: 'employees.directory.view',
+  /** The directory: other people's records, not only your own. */
+  directory: 'employees.directory.view@team',
   create: 'employees.directory.create',
   edit: 'employees.directory.edit',
-  deactivate: 'employees.directory.deactivate',
+  deactivate: 'employees.directory.delete',
   identity: 'employees.identity.edit',
-  /** The child tables (dependents, skills, education, …) and the photo. */
-  records: 'employees.directory.edit',
+  photo: 'employees.photo.edit',
+  emergencyContacts: 'employees.emergency_contacts.edit',
+  dependents: 'employees.dependents.edit',
+  skills: 'employees.skills.edit',
+  documents: 'employees.documents.edit',
+  bankAccounts: 'employees.bank_accounts.edit',
+  /** Other people's pay: nobody sets their own. */
+  salaryView: 'employees.salary.view',
+  salaryEdit: 'employees.salary.edit@team',
 } as const
 
 /** Rows per page of the Employees table, and its choices. */

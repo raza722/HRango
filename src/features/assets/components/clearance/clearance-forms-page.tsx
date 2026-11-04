@@ -151,7 +151,7 @@ export function ClearanceFormsPage() {
               className="md:hidden"
             />
           )}
-          <PersonCell person={{ name: nameOf(row), photoUrl: null }} />
+          <PersonCell person={{ name: nameOf(row), photoUrl: null, employeeId: row.employeeId }} />
         </span>
       ),
     },

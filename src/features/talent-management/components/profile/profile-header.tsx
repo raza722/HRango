@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 
 import { EmployeeAvatar, RowActionsMenu, rowMenuItemClass } from '@/components/layout'
 import { Button } from '@/components/ui/button'
-import { useCan } from '@/lib/permissions'
+import { useCan, useCanOnEmployee } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { isInactiveStatus, PHOTO_ACCEPT, statusMeta, TM_CODES } from '../../constants'
@@ -34,6 +34,7 @@ export function ProfileHeader({
   onToggleActive: () => void
 }) {
   const canEdit = useCan(TM_CODES.edit)
+  const canChangePhoto = useCanOnEmployee(TM_CODES.photo, employee.id)
   const canDeactivate = useCan(TM_CODES.deactivate)
   const savePhoto = useSavePhoto()
   const input = useRef<HTMLInputElement>(null)
@@ -64,7 +65,7 @@ export function ProfileHeader({
           className="size-28 ring-4 ring-[#EBEFF8] dark:ring-border"
           fallbackClassName="text-3xl"
         />
-        {canEdit && (
+        {canChangePhoto && (
           <>
             <button
               type="button"

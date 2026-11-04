@@ -60,7 +60,7 @@ const columns: DataTableColumn<SalaryRevisionRow>[] = [
     id: 'employee',
     header: 'Employee',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null }} />,
+    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null, employeeId: row.employeeId }} />,
   },
   { id: 'effective', header: 'Effective Date', cell: (row) => formatLong(row.effectiveDate) },
   {

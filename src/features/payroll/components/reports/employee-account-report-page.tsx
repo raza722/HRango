@@ -56,7 +56,7 @@ const accountColumns: DataTableColumn<EmployeeAccountReportRow>[] = [
     mobile: 'heading',
     cell: (row) => (
       <span className="grid">
-        <PersonCell person={{ name: row.employeeName, photoUrl: null }} />
+        <PersonCell person={{ name: row.employeeName, photoUrl: null, employeeId: row.employeeId }} />
         <span className="text-[0.625rem] text-grey">
           {row.employeeCode}
           {row.departmentName ? ` · ${row.departmentName}` : ''}
@@ -102,7 +102,7 @@ const employeeWiseColumns: DataTableColumn<EmployeeWiseRow>[] = [
     mobile: 'heading',
     cell: (row) => (
       <span className="grid">
-        <PersonCell person={{ name: row.employeeName, photoUrl: null }} />
+        <PersonCell person={{ name: row.employeeName, photoUrl: null, employeeId: row.employeeId }} />
         <span className="text-[0.625rem] text-grey">{row.employeeCode}</span>
       </span>
     ),

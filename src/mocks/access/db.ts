@@ -41,7 +41,6 @@ export interface StoredUser {
   /** The first is the home company. */
   companyIds: string[]
   isActive: boolean
-  isSystemAdmin: boolean
   lastLoginAt: string | null
   roleIds: string[]
   /** The mock keeps the last password set, only to check "current password". */
@@ -158,9 +157,9 @@ function seedRoles(): StoredRole[] {
         'payroll.payslips.print',
         'performance.overview.view',
         'performance.goals.view',
-        'performance.goals.check_in',
+        'performance.goals.edit',
         'performance.reviews.view',
-        'performance.reviews.self',
+        'performance.reviews.submit',
         'performance.appraisals.view',
         'forms.my_forms.view',
         'forms.my_forms.submit',
@@ -204,10 +203,10 @@ function seedRoles(): StoredRole[] {
         'access.users.view',
         'access.users.create',
         'access.users.edit',
-        'access.users.disable',
-        'access.users.password',
-        'access.users.roles',
-        'access.users.sessions',
+        'access.users.delete',
+        'access.users.edit',
+        'access.roles.assign',
+        'access.sessions.end_session',
         'access.roles.view',
       ],
       'company',
@@ -253,12 +252,12 @@ function seedRoles(): StoredRole[] {
         'attendance.time_sheet.view',
         'leaves.applications.view',
         'leaves.balances.view',
-        'performance.overview.view_team',
-        'performance.goals.view_team',
+        'performance.overview.view@team',
+        'performance.goals.view@team',
         'performance.goals.create',
         'performance.goals.edit',
-        'performance.appraisals.view_team',
-        'performance.reviews.manager',
+        'performance.appraisals.view@team',
+        'performance.reviews.evaluate',
         'scheduling.schedules.view',
         'roster.groups.view',
       ],
@@ -394,7 +393,6 @@ function seedUsers(): StoredUser[] {
     options: {
       displayName?: string
       isActive?: boolean
-      isSystemAdmin?: boolean
       lastLoginMs?: number | null
       companyIds?: string[]
       createdDaysAgo?: number
@@ -406,7 +404,6 @@ function seedUsers(): StoredUser[] {
     employeeId,
     companyIds: options.companyIds ?? [MAIN],
     isActive: options.isActive ?? true,
-    isSystemAdmin: options.isSystemAdmin ?? false,
     lastLoginAt:
       options.lastLoginMs === null ? null : ago(options.lastLoginMs ?? 2 * DAY + Number(id) * HOUR),
     roleIds,
@@ -418,13 +415,11 @@ function seedUsers(): StoredUser[] {
   return [
     user('1', 'admin@topedge.tech', null, [COMPANY_ADMIN_ROLE_ID], {
       displayName: 'Administrator',
-      isSystemAdmin: true,
       lastLoginMs: 3 * DAY,
       companyIds: [MAIN, UAE],
       createdDaysAgo: 600,
     }),
     user('2', DEMO_ACCOUNT.email, 'em_shelley', ['6'], {
-      isSystemAdmin: true,
       lastLoginMs: 20 * 60_000,
       companyIds: [MAIN, UAE],
       createdDaysAgo: 580,

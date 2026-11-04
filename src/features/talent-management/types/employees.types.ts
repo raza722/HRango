@@ -34,6 +34,8 @@ export interface Employee {
   /** Null (masked) when `canSeeIdentity` is false. */
   cnic: string | null
   canSeeIdentity: boolean
+  /** False on a colleague's record without `employees.personal.view`: personal fields read null. */
+  canSeePersonal?: boolean
   email: string | null
   phone1: string | null
   phone2: string | null
@@ -407,6 +409,24 @@ export interface EmployeeChildTables {
   documents: { row: EmployeeDocument; input: DocumentInput }
   'emergency-contacts': { row: EmergencyContact; input: EmergencyContactInput }
   'bank-accounts': { row: BankAccount; input: BankAccountInput }
+  'pay-items': { row: EmployeePayItem; input: EmployeePayItemInput }
+}
+
+/** A fixed allowance or deduction of one person; every payroll run picks it up. */
+export interface EmployeePayItem {
+  id: string
+  payItemId: string
+  payItemName: string
+  amount: string | number
+  effectiveDate: string | null
+  rowVersion: string
+}
+
+export interface EmployeePayItemInput {
+  payItemId: number
+  amount: number
+  effectiveDate: string | null
+  rowVersion?: string
 }
 export type EmployeeChildKind = keyof EmployeeChildTables
 export type ChildRow<K extends EmployeeChildKind> = EmployeeChildTables[K]['row']

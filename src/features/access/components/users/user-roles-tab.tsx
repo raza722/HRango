@@ -81,11 +81,7 @@ export function UserRolesTab({ user }: { user: UserDetail }) {
     >
       {draft === null ? (
         user.roles.length === 0 ? (
-          <EmptyNote>
-            {user.isSystemAdmin
-              ? 'No roles: as a system admin this account still holds every permission.'
-              : 'No roles yet: this account can sign in but sees almost nothing.'}
-          </EmptyNote>
+          <EmptyNote>No roles yet: this account can sign in but sees almost nothing.</EmptyNote>
         ) : (
           <ul aria-label="Roles of this account" className="grid gap-2 @xl:grid-cols-2">
             {user.roles.map((role) => {

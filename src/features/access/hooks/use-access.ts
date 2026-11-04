@@ -194,6 +194,14 @@ export const useSetUserActive = () =>
     true,
   )
 
+export const useTransferOwner = () =>
+  useAccessMutation(
+    ({ id, rowVersion }: { id: string; rowVersion: string; name: string }) =>
+      accessApi.transferOwner(id, rowVersion),
+    ({ name }) => `${name} is now the Account Owner`,
+    true,
+  )
+
 export const useSetPassword = () =>
   useAccessMutation(
     ({ id, password }: { id: string; password: string; name: string }) =>

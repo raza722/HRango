@@ -35,7 +35,7 @@ const columns: DataTableColumn<AccountStatementRow>[] = [
     id: 'employee',
     header: 'Employee',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null }} />,
+    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null, employeeId: row.employeeId }} />,
   },
   { id: 'account', header: 'Account', cell: (row) => row.accountName },
   { id: 'month', header: 'Month', cell: (row) => formatMonthShort(row.entryMonth) },

@@ -5,7 +5,7 @@ import { Plus } from 'lucide-react'
 
 import { SelectField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
-import { useCan } from '@/lib/permissions'
+import { useCanOnEmployee } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import {
@@ -148,7 +148,7 @@ function DependentDialog({
  * the man / woman icon by relation, and the add button. Edit and Delete on each card.
  */
 export function DependentsTab({ employee }: { employee: Employee }) {
-  const canEdit = useCan(TM_CODES.records)
+  const canEdit = useCanOnEmployee(TM_CODES.dependents, employee.id)
   const dependents = useEmployeeChildren(employee.id, 'dependents')
   const remove = useDeleteChild('dependents', 'Dependent')
   const [editing, setEditing] = useState<Dependent | 'new' | null>(null)

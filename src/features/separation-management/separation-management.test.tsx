@@ -107,8 +107,9 @@ describe('Separation Management', () => {
       })
     })
 
+    // The page guard answers first: the module is for those who manage people.
     expect(
-      await screen.findByText(/You don’t have access to any of the screens in Separation/),
+      await screen.findByRole('heading', { name: 'You don’t have access to this page' }),
     ).toBeVisible()
     expect(screen.queryByRole('link', { name: /^Rehire/ })).not.toBeInTheDocument()
   })

@@ -1,7 +1,10 @@
 import { Link, Outlet } from '@tanstack/react-router'
 
 import { PageContainer } from '@/components/layout'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
+
+import { TM_CODES } from '../../constants'
 
 /**
  * Talent Management's sub menu over its pages: Employees. Transfer, Salary Revision and
@@ -12,6 +15,14 @@ import { cn } from '@/lib/utils'
 const ITEMS = [{ to: '/talent-management/employees', label: 'Employees' }] as const
 
 export function TalentManagementLayout() {
+  const canList = useCan(TM_CODES.directory)
+  if (!canList) {
+    return (
+      <PageContainer>
+        <Outlet />
+      </PageContainer>
+    )
+  }
   return (
     <PageContainer>
       <nav

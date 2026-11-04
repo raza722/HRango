@@ -381,7 +381,7 @@ export function PayslipsPage({ scope }: { scope: 'my' | 'all' }) {
       mobile: 'heading',
       cell: (row) => (
         <span className="flex items-center gap-2">
-          <EmployeeAvatar name={row.employeeName} photoUrl={null} className="size-6" />
+          <EmployeeAvatar name={row.employeeName} employeeId={row.employeeId} className="size-6" />
           <span className={personNameText}>
             {row.employeeName}
             <span className="block text-[0.5625rem] font-normal text-grey">{row.employeeCode}</span>

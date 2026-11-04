@@ -1,5 +1,5 @@
 import { getRouteApi, Link, useNavigate } from '@tanstack/react-router'
-import { ShieldCheck, UserX } from 'lucide-react'
+import { UserX } from 'lucide-react'
 
 import {
   type DataTableColumn,
@@ -135,15 +135,8 @@ export function SystemUsersPage() {
       className: 'min-w-44 whitespace-normal',
       cell: (row) => (
         <span className="flex flex-wrap gap-1">
-          {row.isSystemAdmin && (
-            <Chip
-              tone="violet"
-              icon={<ShieldCheck aria-hidden="true" className="size-3" strokeWidth={2.2} />}
-            >
-              System admin
-            </Chip>
-          )}
-          {row.roleNames.length === 0 && !row.isSystemAdmin ? (
+          {row.isAccountOwner && <Chip tone="violet">Account Owner</Chip>}
+          {row.roleNames.length === 0 ? (
             <span className="text-grey">No roles</span>
           ) : (
             row.roleNames.map((name) => (

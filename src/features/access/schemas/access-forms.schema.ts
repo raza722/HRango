@@ -29,7 +29,6 @@ const userFields = {
   displayName: z.string().trim().max(200, 'Keep it to 200 characters.'),
   employeeId: z.string().nullable(),
   isActive: z.boolean(),
-  isSystemAdmin: z.boolean(),
   companyIds: z.array(z.string()).min(1, 'Choose at least one company.'),
   roleIds: z.array(z.string()),
 }
@@ -66,7 +65,6 @@ export function userToForm(
     password: '',
     confirm: '',
     isActive: user?.isActive ?? true,
-    isSystemAdmin: user?.isSystemAdmin ?? false,
     companyIds: user
       ? user.companies.map((company) => company.id)
       : defaultCompanyId
@@ -83,7 +81,6 @@ export function userFormToInput(values: UserFormValues, creating: boolean): User
     employeeId: values.employeeId,
     password: creating ? values.password : null,
     isActive: values.isActive,
-    isSystemAdmin: values.isSystemAdmin,
     companyIds: values.companyIds,
     roleIds: values.roleIds,
   }

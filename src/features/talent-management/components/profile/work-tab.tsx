@@ -1,15 +1,19 @@
 import { type ComponentType, type SVGProps, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
+import { z } from 'zod'
 
-import { SwitchField, TextField } from '@/components/form'
+import { DatePickerField, SelectField, SwitchField, TextField } from '@/components/form'
 import { DataTable, type DataTableColumn } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { PAYSLIP_STATUS_META, type PayslipRow } from '@/features/payroll'
 import { type EngineRequest, STATUS_META } from '@/features/requests'
-import { useCan } from '@/lib/permissions'
+import { apiClient } from '@/lib/axios'
+import { isMockApi } from '@/lib/env'
+import { useCan, useCanOnEmployee } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { TM_CODES } from '../../constants'
@@ -28,7 +32,7 @@ import {
   bankAccountToInput,
   compactAccount,
 } from '../../schemas/employee-forms.schema'
-import type { BankAccount, Employee } from '../../types/employees.types'
+import type { BankAccount, Employee, EmployeePayItem } from '../../types/employees.types'
 import { showServerErrors } from '../../utils/form-errors'
 import { formatAmount, formatDay, formatMonth } from '../../utils/format'
 import {
@@ -399,7 +403,7 @@ function maskAccount(value: string): string {
  * each number masked (its last four); Edit opens the full number.
  */
 function BankAccounts({ employee }: { employee: Employee }) {
-  const canEdit = useCan(TM_CODES.records)
+  const canEdit = useCanOnEmployee(TM_CODES.bankAccounts, employee.id)
   const accounts = useEmployeeChildren(employee.id, 'bank-accounts')
   const remove = useDeleteChild('bank-accounts', 'Bank account')
   const [editing, setEditing] = useState<BankAccount | 'new' | null>(null)
@@ -508,6 +512,178 @@ function BankAccounts({ employee }: { employee: Employee }) {
  * Work (2423:17204, 2423:17407): Payroll History, Loan Summary, Performance Details and
  * Attendance, read from the Payroll, Requests and Attendance APIs, plus the bank accounts.
  */
+const payItemSchema = z.object({
+  payItemId: z.string().min(1, 'Choose a pay item.'),
+  amount: z.string().regex(/^\d+(\.\d{1,2})?$/, 'Enter an amount, like 5000.'),
+  effectiveDate: z.string(),
+})
+type PayItemValues = z.infer<typeof payItemSchema>
+
+function PayItemDialog({
+  employee,
+  row,
+  onClose,
+}: {
+  employee: Employee
+  row: EmployeePayItem | null
+  onClose: () => void
+}) {
+  const save = useSaveChild('pay-items', 'Pay item')
+  const options = useQuery({
+    queryKey: ['payroll', 'pay-item-options'],
+    queryFn: async ({ signal }) => {
+      const res = await apiClient.get<{ data: { id: string; name: string }[] }>(
+        '/payroll/pay-items',
+        { params: { page: 1, pageSize: 100 }, signal },
+      )
+      return res.data.data.map((item) => ({ value: item.id, label: item.name }))
+    },
+  })
+  const form = useForm<PayItemValues>({
+    resolver: zodResolver(payItemSchema),
+    defaultValues: {
+      payItemId: row?.payItemId ?? '',
+      amount: row ? String(row.amount) : '',
+      effectiveDate: row?.effectiveDate ?? '',
+    },
+  })
+  const submit = form.handleSubmit(async (values) => {
+    try {
+      await save.mutateAsync({
+        employeeId: employee.id,
+        rowId: row?.id,
+        input: {
+          payItemId: Number(values.payItemId),
+          amount: Number(values.amount),
+          effectiveDate: values.effectiveDate || null,
+          ...(row ? { rowVersion: row.rowVersion } : {}),
+        },
+      })
+    } catch (error) {
+      showServerErrors(error, form.setError, Object.keys(values))
+      return
+    }
+    onClose()
+  })
+  return (
+    <FormDialog
+      title={row ? 'Edit Pay Item' : 'Add Pay Item'}
+      onClose={onClose}
+      onSubmit={submit}
+      saving={save.isPending}
+      rootError={form.formState.errors.root?.message}
+      dirty={form.formState.isDirty}
+    >
+      <div className="grid gap-4 @md:grid-cols-2">
+        <SelectField
+          control={form.control}
+          name="payItemId"
+          label="Pay Item"
+          required
+          options={options.data ?? []}
+        />
+        <TextField control={form.control} name="amount" label="Amount" required placeholder="5000" />
+        <DatePickerField control={form.control} name="effectiveDate" label="Applies From" />
+      </div>
+    </FormDialog>
+  )
+}
+
+/**
+ * Fixed Pay Items (`/employees/{id}/pay-items`): a person's own allowances and deductions, which
+ * every payroll run picks up from their date. Pay is sensitive, and nobody edits their own.
+ */
+function FixedPayItems({ employee }: { employee: Employee }) {
+  const canView = useCanOnEmployee(TM_CODES.salaryView, employee.id) && !isMockApi
+  const canEdit = useCan(TM_CODES.salaryEdit)
+  const items = useEmployeeChildren(employee.id, 'pay-items', canView)
+  const remove = useDeleteChild('pay-items', 'Pay item')
+  const [editing, setEditing] = useState<EmployeePayItem | 'new' | null>(null)
+  const [deleting, setDeleting] = useState<EmployeePayItem | null>(null)
+  if (!canView) return null
+  const rows = items.data ?? []
+  return (
+    <SectionCard
+      title="Fixed Pay Items"
+      actions={
+        canEdit && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setEditing('new')
+            }}
+            className={cn(toolbarButtonClass, outlineButtonClass, 'gap-1.5 px-3 text-xs')}
+          >
+            <Plus aria-hidden="true" className="size-4" />
+            Add Pay Item
+          </Button>
+        )
+      }
+    >
+      {items.isPending ? (
+        <LoadingRows rows={1} label="pay items" />
+      ) : items.isError ? (
+        <EmptyNote>The pay items could not be loaded.</EmptyNote>
+      ) : rows.length === 0 ? (
+        <EmptyNote>No fixed pay items.</EmptyNote>
+      ) : (
+        <ul className="grid gap-2 @lg:grid-cols-2">
+          {rows.map((row) => (
+            <li
+              key={row.id}
+              className="flex items-start justify-between gap-3 rounded-[10px] border border-[#E0E0E0] p-3 dark:border-border"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-title">{row.payItemName}</p>
+                <p className="text-xs text-grey">
+                  {formatAmount(Number(row.amount))}
+                  {row.effectiveDate ? ` | from ${formatDay(row.effectiveDate)}` : ''}
+                </p>
+              </div>
+              {canEdit && (
+                <EditDeleteMenu
+                  label={`Actions for ${row.payItemName}`}
+                  onEdit={() => {
+                    setEditing(row)
+                  }}
+                  onDelete={() => {
+                    setDeleting(row)
+                  }}
+                />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {editing && (
+        <PayItemDialog
+          employee={employee}
+          row={editing === 'new' ? null : editing}
+          onClose={() => {
+            setEditing(null)
+          }}
+        />
+      )}
+      {deleting && (
+        <ConfirmDelete
+          what={`the ${deleting.payItemName} pay item`}
+          onClose={() => {
+            setDeleting(null)
+          }}
+          onConfirm={() => {
+            remove.mutate({
+              employeeId: employee.id,
+              rowId: deleting.id,
+              rowVersion: deleting.rowVersion,
+            })
+            setDeleting(null)
+          }}
+        />
+      )}
+    </SectionCard>
+  )
+}
+
 export function WorkTab({ employee }: { employee: Employee }) {
   return (
     <div className="@container grid gap-4">
@@ -518,6 +694,7 @@ export function WorkTab({ employee }: { employee: Employee }) {
         <AttendanceSummary employee={employee} />
       </div>
       <BankAccounts employee={employee} />
+      <FixedPayItems employee={employee} />
     </div>
   )
 }

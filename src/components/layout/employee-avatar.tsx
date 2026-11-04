@@ -1,4 +1,6 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { useEmployeePhotoUrl } from '@/hooks/use-employee-photos'
+import { isMockApi } from '@/lib/env'
 import { cn } from '@/lib/utils'
 
 const COLOURS = [
@@ -18,22 +20,38 @@ function initials(name: string): string {
   return ((words[0]?.[0] ?? '') + (words.at(-1)?.[0] ?? '')).toUpperCase()
 }
 
+interface EmployeeAvatarProps {
+  name: string
+  photoUrl?: string | null
+  /** Finds the right photo when two people share a name; without it the name is used. */
+  employeeId?: string | null
+  className?: string
+  /** Text size of the initials, for large avatars. */
+  fallbackClassName?: string
+}
+
+function AvatarWithLookup({ employeeId, ...props }: EmployeeAvatarProps) {
+  return <AvatarFace {...props} photoUrl={useEmployeePhotoUrl(employeeId, props.name)} />
+}
+
 /**
  * A person's photo, or their initials in a colour picked from the name, so a
  * person keeps one colour everywhere.
  */
-export function EmployeeAvatar({
+export function EmployeeAvatar({ employeeId, ...props }: EmployeeAvatarProps) {
+  return !isMockApi && !props.photoUrl ? (
+    <AvatarWithLookup {...props} employeeId={employeeId} />
+  ) : (
+    <AvatarFace {...props} />
+  )
+}
+
+function AvatarFace({
   name,
   photoUrl,
   className,
   fallbackClassName,
-}: {
-  name: string
-  photoUrl?: string | null
-  className?: string
-  /** Text size of the initials, for large avatars. */
-  fallbackClassName?: string
-}) {
+}: Omit<EmployeeAvatarProps, 'employeeId'>) {
   let hash = 0
   for (let index = 0; index < name.length; index += 1) hash += name.charCodeAt(index)
   return (

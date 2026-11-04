@@ -18,6 +18,7 @@ export {
   warningPolicyQueryOptions,
 } from './api/warning-policy.queries'
 export { HistoryDialog } from './components/history/history-dialog'
+export { MyWarningsPage } from './components/my-warnings-page'
 export { WarningOverviewPage } from './components/overview/warning-overview-page'
 export { PenaltyPage } from './components/penalty/penalty-page'
 export { PolicyDetailPage } from './components/policy-detail-page'

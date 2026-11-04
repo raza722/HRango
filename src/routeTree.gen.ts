@@ -19,6 +19,7 @@ import { Route as AppCustomFormRouteImport } from './routes/_app/custom-form'
 import { Route as AppEndOfEmploymentRouteImport } from './routes/_app/end-of-employment'
 import { Route as AppLeavesRouteImport } from './routes/_app/leaves'
 import { Route as AppManpowerPlanningRouteImport } from './routes/_app/manpower-planning'
+import { Route as AppMyProfileRouteImport } from './routes/_app/my-profile'
 import { Route as AppPayrollRouteImport } from './routes/_app/payroll'
 import { Route as AppPerformanceRouteImport } from './routes/_app/performance'
 import { Route as AppProjectManagementRouteImport } from './routes/_app/project-management'
@@ -28,6 +29,8 @@ import { Route as AppRosterRouteImport } from './routes/_app/roster'
 import { Route as AppSchedulingRouteImport } from './routes/_app/scheduling'
 import { Route as AppSeparationManagementRouteImport } from './routes/_app/separation-management'
 import { Route as AppTalentManagementRouteImport } from './routes/_app/talent-management'
+import { Route as PlatformShellRouteImport } from './routes/platform/_shell'
+import { Route as PlatformLoginRouteImport } from './routes/platform/login'
 import { Route as AppAssetsIndexRouteImport } from './routes/_app/assets/index'
 import { Route as AppAssetsAllocationsRouteImport } from './routes/_app/assets/allocations'
 import { Route as AppAssetsClearanceFormRouteImport } from './routes/_app/assets/clearance-form'
@@ -37,6 +40,7 @@ import { Route as AppAttendanceIndexRouteImport } from './routes/_app/attendance
 import { Route as AppAttendanceSectionRouteImport } from './routes/_app/attendance/$section'
 import { Route as AppAttendanceInsightsRouteImport } from './routes/_app/attendance/insights'
 import { Route as AppAttendanceLogsRouteImport } from './routes/_app/attendance/logs'
+import { Route as AppAttendanceMyWarningsRouteImport } from './routes/_app/attendance/my-warnings'
 import { Route as AppAttendanceOfficialVisitsRouteImport } from './routes/_app/attendance/official-visits'
 import { Route as AppAttendanceOvertimeRouteImport } from './routes/_app/attendance/overtime'
 import { Route as AppAttendanceOverviewRouteImport } from './routes/_app/attendance/overview'
@@ -106,6 +110,14 @@ import { Route as AppSettingsSystemUsersRouteImport } from './routes/_app/settin
 import { Route as AppSettingsUserGroupPermissionsRouteImport } from './routes/_app/settings/user-group-permissions'
 import { Route as AppTalentManagementIndexRouteImport } from './routes/_app/talent-management/index'
 import { Route as AppWarningIndexRouteImport } from './routes/_app/warning/index'
+import { Route as PlatformShellIndexRouteImport } from './routes/platform/_shell/index'
+import { Route as PlatformShellActivityRouteImport } from './routes/platform/_shell/activity'
+import { Route as PlatformShellInvoicesRouteImport } from './routes/platform/_shell/invoices'
+import { Route as PlatformShellPlansRouteImport } from './routes/platform/_shell/plans'
+import { Route as PlatformShellSalesRouteImport } from './routes/platform/_shell/sales'
+import { Route as PlatformShellStaffRouteImport } from './routes/platform/_shell/staff'
+import { Route as PlatformShellSubscriptionsRouteImport } from './routes/platform/_shell/subscriptions'
+import { Route as PlatformShellSupportRouteImport } from './routes/platform/_shell/support'
 import { Route as AppBenefitsPlanYearsIndexRouteImport } from './routes/_app/benefits/plan-years/index'
 import { Route as AppBenefitsPlanYearsNewRouteImport } from './routes/_app/benefits/plan-years/new'
 import { Route as AppBenefitsPlansIndexRouteImport } from './routes/_app/benefits/plans/index'
@@ -163,6 +175,8 @@ import { Route as AppTalentManagementEmployeesEmployeeIdRouteImport } from './ro
 import { Route as AppWarningPenaltyIndexRouteImport } from './routes/_app/warning/penalty/index'
 import { Route as AppWarningPolicyIndexRouteImport } from './routes/_app/warning/policy/index'
 import { Route as AppWarningPolicyPolicyIdRouteImport } from './routes/_app/warning/policy/$policyId'
+import { Route as PlatformShellOrganisationsIndexRouteImport } from './routes/platform/_shell/organisations/index'
+import { Route as PlatformShellOrganisationsIdRouteImport } from './routes/platform/_shell/organisations/$id'
 import { Route as AppManpowerPlanningPlanningPlanIdIndexRouteImport } from './routes/_app/manpower-planning/planning/$planId/index'
 import { Route as AppManpowerPlanningPlanningPlanIdEditRouteImport } from './routes/_app/manpower-planning/planning/$planId/edit'
 import { Route as AppSettingsControlPanelAreasIndexRouteImport } from './routes/_app/settings/control-panel/areas/index'
@@ -227,6 +241,11 @@ const AppManpowerPlanningRoute = AppManpowerPlanningRouteImport.update({
   path: '/manpower-planning',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMyProfileRoute = AppMyProfileRouteImport.update({
+  id: '/my-profile',
+  path: '/my-profile',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppPayrollRoute = AppPayrollRouteImport.update({
   id: '/payroll',
   path: '/payroll',
@@ -272,6 +291,16 @@ const AppTalentManagementRoute = AppTalentManagementRouteImport.update({
   path: '/talent-management',
   getParentRoute: () => AppRoute,
 } as any)
+const PlatformShellRoute = PlatformShellRouteImport.update({
+  id: '/platform/_shell',
+  path: '/platform',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlatformLoginRoute = PlatformLoginRouteImport.update({
+  id: '/platform/login',
+  path: '/platform/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppAssetsIndexRoute = AppAssetsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -315,6 +344,11 @@ const AppAttendanceInsightsRoute = AppAttendanceInsightsRouteImport.update({
 const AppAttendanceLogsRoute = AppAttendanceLogsRouteImport.update({
   id: '/attendance/logs',
   path: '/attendance/logs',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAttendanceMyWarningsRoute = AppAttendanceMyWarningsRouteImport.update({
+  id: '/attendance/my-warnings',
+  path: '/attendance/my-warnings',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAttendanceOfficialVisitsRoute =
@@ -688,6 +722,47 @@ const AppWarningIndexRoute = AppWarningIndexRouteImport.update({
   path: '/warning/',
   getParentRoute: () => AppRoute,
 } as any)
+const PlatformShellIndexRoute = PlatformShellIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => PlatformShellRoute,
+} as any)
+const PlatformShellActivityRoute = PlatformShellActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => PlatformShellRoute,
+} as any)
+const PlatformShellInvoicesRoute = PlatformShellInvoicesRouteImport.update({
+  id: '/invoices',
+  path: '/invoices',
+  getParentRoute: () => PlatformShellRoute,
+} as any)
+const PlatformShellPlansRoute = PlatformShellPlansRouteImport.update({
+  id: '/plans',
+  path: '/plans',
+  getParentRoute: () => PlatformShellRoute,
+} as any)
+const PlatformShellSalesRoute = PlatformShellSalesRouteImport.update({
+  id: '/sales',
+  path: '/sales',
+  getParentRoute: () => PlatformShellRoute,
+} as any)
+const PlatformShellStaffRoute = PlatformShellStaffRouteImport.update({
+  id: '/staff',
+  path: '/staff',
+  getParentRoute: () => PlatformShellRoute,
+} as any)
+const PlatformShellSubscriptionsRoute =
+  PlatformShellSubscriptionsRouteImport.update({
+    id: '/subscriptions',
+    path: '/subscriptions',
+    getParentRoute: () => PlatformShellRoute,
+  } as any)
+const PlatformShellSupportRoute = PlatformShellSupportRouteImport.update({
+  id: '/support',
+  path: '/support',
+  getParentRoute: () => PlatformShellRoute,
+} as any)
 const AppBenefitsPlanYearsIndexRoute =
   AppBenefitsPlanYearsIndexRouteImport.update({
     id: '/plan-years/',
@@ -1014,6 +1089,18 @@ const AppWarningPolicyPolicyIdRoute =
     path: '/warning/policy/$policyId',
     getParentRoute: () => AppRoute,
   } as any)
+const PlatformShellOrganisationsIndexRoute =
+  PlatformShellOrganisationsIndexRouteImport.update({
+    id: '/organisations/',
+    path: '/organisations/',
+    getParentRoute: () => PlatformShellRoute,
+  } as any)
+const PlatformShellOrganisationsIdRoute =
+  PlatformShellOrganisationsIdRouteImport.update({
+    id: '/organisations/$id',
+    path: '/organisations/$id',
+    getParentRoute: () => PlatformShellRoute,
+  } as any)
 const AppManpowerPlanningPlanningPlanIdIndexRoute =
   AppManpowerPlanningPlanningPlanIdIndexRouteImport.update({
     id: '/planning/$planId/',
@@ -1109,6 +1196,7 @@ export interface FileRoutesByFullPath {
   '/end-of-employment': typeof AppEndOfEmploymentRouteWithChildren
   '/leaves': typeof AppLeavesRouteWithChildren
   '/manpower-planning': typeof AppManpowerPlanningRouteWithChildren
+  '/my-profile': typeof AppMyProfileRoute
   '/payroll': typeof AppPayrollRouteWithChildren
   '/performance': typeof AppPerformanceRouteWithChildren
   '/project-management': typeof AppProjectManagementRouteWithChildren
@@ -1118,6 +1206,8 @@ export interface FileRoutesByFullPath {
   '/scheduling': typeof AppSchedulingRoute
   '/separation-management': typeof AppSeparationManagementRoute
   '/talent-management': typeof AppTalentManagementRouteWithChildren
+  '/platform': typeof PlatformShellRouteWithChildren
+  '/platform/login': typeof PlatformLoginRoute
   '/assets/allocations': typeof AppAssetsAllocationsRoute
   '/assets/clearance-form': typeof AppAssetsClearanceFormRoute
   '/assets/company-assets': typeof AppAssetsCompanyAssetsRoute
@@ -1125,6 +1215,7 @@ export interface FileRoutesByFullPath {
   '/attendance/$section': typeof AppAttendanceSectionRoute
   '/attendance/insights': typeof AppAttendanceInsightsRoute
   '/attendance/logs': typeof AppAttendanceLogsRoute
+  '/attendance/my-warnings': typeof AppAttendanceMyWarningsRoute
   '/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
   '/attendance/overtime': typeof AppAttendanceOvertimeRoute
   '/attendance/overview': typeof AppAttendanceOverviewRoute
@@ -1181,6 +1272,13 @@ export interface FileRoutesByFullPath {
   '/settings/off-boarding': typeof AppSettingsOffBoardingRouteWithChildren
   '/settings/system-users': typeof AppSettingsSystemUsersRouteWithChildren
   '/settings/user-group-permissions': typeof AppSettingsUserGroupPermissionsRouteWithChildren
+  '/platform/activity': typeof PlatformShellActivityRoute
+  '/platform/invoices': typeof PlatformShellInvoicesRoute
+  '/platform/plans': typeof PlatformShellPlansRoute
+  '/platform/sales': typeof PlatformShellSalesRoute
+  '/platform/staff': typeof PlatformShellStaffRoute
+  '/platform/subscriptions': typeof PlatformShellSubscriptionsRoute
+  '/platform/support': typeof PlatformShellSupportRoute
   '/assets/': typeof AppAssetsIndexRoute
   '/attendance/': typeof AppAttendanceIndexRoute
   '/benefits/': typeof AppBenefitsIndexRoute
@@ -1196,6 +1294,7 @@ export interface FileRoutesByFullPath {
   '/settings/': typeof AppSettingsIndexRoute
   '/talent-management/': typeof AppTalentManagementIndexRoute
   '/warning/': typeof AppWarningIndexRoute
+  '/platform/': typeof PlatformShellIndexRoute
   '/benefits/plan-years/new': typeof AppBenefitsPlanYearsNewRoute
   '/benefits/plans/new': typeof AppBenefitsPlansNewRoute
   '/leaves/settings/general': typeof AppLeavesSettingsGeneralRoute
@@ -1234,6 +1333,7 @@ export interface FileRoutesByFullPath {
   '/settings/user-group-permissions/$roleId': typeof AppSettingsUserGroupPermissionsRoleIdRoute
   '/talent-management/employees/$employeeId': typeof AppTalentManagementEmployeesEmployeeIdRoute
   '/warning/policy/$policyId': typeof AppWarningPolicyPolicyIdRoute
+  '/platform/organisations/$id': typeof PlatformShellOrganisationsIdRoute
   '/benefits/plan-years/': typeof AppBenefitsPlanYearsIndexRoute
   '/benefits/plans/': typeof AppBenefitsPlansIndexRoute
   '/leaves/settings/': typeof AppLeavesSettingsIndexRoute
@@ -1253,6 +1353,7 @@ export interface FileRoutesByFullPath {
   '/talent-management/employees/': typeof AppTalentManagementEmployeesIndexRoute
   '/warning/penalty/': typeof AppWarningPenaltyIndexRoute
   '/warning/policy/': typeof AppWarningPolicyIndexRoute
+  '/platform/organisations/': typeof PlatformShellOrganisationsIndexRoute
   '/manpower-planning/planning/$planId/edit': typeof AppManpowerPlanningPlanningPlanIdEditRoute
   '/settings/control-panel/areas/$areaId': typeof AppSettingsControlPanelAreasAreaIdRoute
   '/settings/control-panel/areas/new': typeof AppSettingsControlPanelAreasNewRoute
@@ -1271,9 +1372,11 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/configuration': typeof AppConfigurationRoute
+  '/my-profile': typeof AppMyProfileRoute
   '/roster': typeof AppRosterRoute
   '/scheduling': typeof AppSchedulingRoute
   '/separation-management': typeof AppSeparationManagementRoute
+  '/platform/login': typeof PlatformLoginRoute
   '/': typeof AppIndexRoute
   '/assets/allocations': typeof AppAssetsAllocationsRoute
   '/assets/clearance-form': typeof AppAssetsClearanceFormRoute
@@ -1282,6 +1385,7 @@ export interface FileRoutesByTo {
   '/attendance/$section': typeof AppAttendanceSectionRoute
   '/attendance/insights': typeof AppAttendanceInsightsRoute
   '/attendance/logs': typeof AppAttendanceLogsRoute
+  '/attendance/my-warnings': typeof AppAttendanceMyWarningsRoute
   '/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
   '/attendance/overtime': typeof AppAttendanceOvertimeRoute
   '/attendance/overview': typeof AppAttendanceOverviewRoute
@@ -1332,6 +1436,13 @@ export interface FileRoutesByTo {
   '/requests/transfer': typeof AppRequestsTransferRoute
   '/settings/biometric-devices': typeof AppSettingsBiometricDevicesRoute
   '/settings/custom-forms': typeof AppSettingsCustomFormsRoute
+  '/platform/activity': typeof PlatformShellActivityRoute
+  '/platform/invoices': typeof PlatformShellInvoicesRoute
+  '/platform/plans': typeof PlatformShellPlansRoute
+  '/platform/sales': typeof PlatformShellSalesRoute
+  '/platform/staff': typeof PlatformShellStaffRoute
+  '/platform/subscriptions': typeof PlatformShellSubscriptionsRoute
+  '/platform/support': typeof PlatformShellSupportRoute
   '/assets': typeof AppAssetsIndexRoute
   '/attendance': typeof AppAttendanceIndexRoute
   '/benefits': typeof AppBenefitsIndexRoute
@@ -1347,6 +1458,7 @@ export interface FileRoutesByTo {
   '/settings': typeof AppSettingsIndexRoute
   '/talent-management': typeof AppTalentManagementIndexRoute
   '/warning': typeof AppWarningIndexRoute
+  '/platform': typeof PlatformShellIndexRoute
   '/benefits/plan-years/new': typeof AppBenefitsPlanYearsNewRoute
   '/benefits/plans/new': typeof AppBenefitsPlansNewRoute
   '/leaves/settings/general': typeof AppLeavesSettingsGeneralRoute
@@ -1385,6 +1497,7 @@ export interface FileRoutesByTo {
   '/settings/user-group-permissions/$roleId': typeof AppSettingsUserGroupPermissionsRoleIdRoute
   '/talent-management/employees/$employeeId': typeof AppTalentManagementEmployeesEmployeeIdRoute
   '/warning/policy/$policyId': typeof AppWarningPolicyPolicyIdRoute
+  '/platform/organisations/$id': typeof PlatformShellOrganisationsIdRoute
   '/benefits/plan-years': typeof AppBenefitsPlanYearsIndexRoute
   '/benefits/plans': typeof AppBenefitsPlansIndexRoute
   '/leaves/settings': typeof AppLeavesSettingsIndexRoute
@@ -1404,6 +1517,7 @@ export interface FileRoutesByTo {
   '/talent-management/employees': typeof AppTalentManagementEmployeesIndexRoute
   '/warning/penalty': typeof AppWarningPenaltyIndexRoute
   '/warning/policy': typeof AppWarningPolicyIndexRoute
+  '/platform/organisations': typeof PlatformShellOrganisationsIndexRoute
   '/manpower-planning/planning/$planId/edit': typeof AppManpowerPlanningPlanningPlanIdEditRoute
   '/settings/control-panel/areas/$areaId': typeof AppSettingsControlPanelAreasAreaIdRoute
   '/settings/control-panel/areas/new': typeof AppSettingsControlPanelAreasNewRoute
@@ -1430,6 +1544,7 @@ export interface FileRoutesById {
   '/_app/end-of-employment': typeof AppEndOfEmploymentRouteWithChildren
   '/_app/leaves': typeof AppLeavesRouteWithChildren
   '/_app/manpower-planning': typeof AppManpowerPlanningRouteWithChildren
+  '/_app/my-profile': typeof AppMyProfileRoute
   '/_app/payroll': typeof AppPayrollRouteWithChildren
   '/_app/performance': typeof AppPerformanceRouteWithChildren
   '/_app/project-management': typeof AppProjectManagementRouteWithChildren
@@ -1439,6 +1554,8 @@ export interface FileRoutesById {
   '/_app/scheduling': typeof AppSchedulingRoute
   '/_app/separation-management': typeof AppSeparationManagementRoute
   '/_app/talent-management': typeof AppTalentManagementRouteWithChildren
+  '/platform/_shell': typeof PlatformShellRouteWithChildren
+  '/platform/login': typeof PlatformLoginRoute
   '/_app/': typeof AppIndexRoute
   '/_app/assets/allocations': typeof AppAssetsAllocationsRoute
   '/_app/assets/clearance-form': typeof AppAssetsClearanceFormRoute
@@ -1447,6 +1564,7 @@ export interface FileRoutesById {
   '/_app/attendance/$section': typeof AppAttendanceSectionRoute
   '/_app/attendance/insights': typeof AppAttendanceInsightsRoute
   '/_app/attendance/logs': typeof AppAttendanceLogsRoute
+  '/_app/attendance/my-warnings': typeof AppAttendanceMyWarningsRoute
   '/_app/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
   '/_app/attendance/overtime': typeof AppAttendanceOvertimeRoute
   '/_app/attendance/overview': typeof AppAttendanceOverviewRoute
@@ -1503,6 +1621,13 @@ export interface FileRoutesById {
   '/_app/settings/off-boarding': typeof AppSettingsOffBoardingRouteWithChildren
   '/_app/settings/system-users': typeof AppSettingsSystemUsersRouteWithChildren
   '/_app/settings/user-group-permissions': typeof AppSettingsUserGroupPermissionsRouteWithChildren
+  '/platform/_shell/activity': typeof PlatformShellActivityRoute
+  '/platform/_shell/invoices': typeof PlatformShellInvoicesRoute
+  '/platform/_shell/plans': typeof PlatformShellPlansRoute
+  '/platform/_shell/sales': typeof PlatformShellSalesRoute
+  '/platform/_shell/staff': typeof PlatformShellStaffRoute
+  '/platform/_shell/subscriptions': typeof PlatformShellSubscriptionsRoute
+  '/platform/_shell/support': typeof PlatformShellSupportRoute
   '/_app/assets/': typeof AppAssetsIndexRoute
   '/_app/attendance/': typeof AppAttendanceIndexRoute
   '/_app/benefits/': typeof AppBenefitsIndexRoute
@@ -1518,6 +1643,7 @@ export interface FileRoutesById {
   '/_app/settings/': typeof AppSettingsIndexRoute
   '/_app/talent-management/': typeof AppTalentManagementIndexRoute
   '/_app/warning/': typeof AppWarningIndexRoute
+  '/platform/_shell/': typeof PlatformShellIndexRoute
   '/_app/benefits/plan-years/new': typeof AppBenefitsPlanYearsNewRoute
   '/_app/benefits/plans/new': typeof AppBenefitsPlansNewRoute
   '/_app/leaves/settings/general': typeof AppLeavesSettingsGeneralRoute
@@ -1556,6 +1682,7 @@ export interface FileRoutesById {
   '/_app/settings/user-group-permissions/$roleId': typeof AppSettingsUserGroupPermissionsRoleIdRoute
   '/_app/talent-management/employees/$employeeId': typeof AppTalentManagementEmployeesEmployeeIdRoute
   '/_app/warning/policy/$policyId': typeof AppWarningPolicyPolicyIdRoute
+  '/platform/_shell/organisations/$id': typeof PlatformShellOrganisationsIdRoute
   '/_app/benefits/plan-years/': typeof AppBenefitsPlanYearsIndexRoute
   '/_app/benefits/plans/': typeof AppBenefitsPlansIndexRoute
   '/_app/leaves/settings/': typeof AppLeavesSettingsIndexRoute
@@ -1575,6 +1702,7 @@ export interface FileRoutesById {
   '/_app/talent-management/employees/': typeof AppTalentManagementEmployeesIndexRoute
   '/_app/warning/penalty/': typeof AppWarningPenaltyIndexRoute
   '/_app/warning/policy/': typeof AppWarningPolicyIndexRoute
+  '/platform/_shell/organisations/': typeof PlatformShellOrganisationsIndexRoute
   '/_app/manpower-planning/planning/$planId/edit': typeof AppManpowerPlanningPlanningPlanIdEditRoute
   '/_app/settings/control-panel/areas/$areaId': typeof AppSettingsControlPanelAreasAreaIdRoute
   '/_app/settings/control-panel/areas/new': typeof AppSettingsControlPanelAreasNewRoute
@@ -1602,6 +1730,7 @@ export interface FileRouteTypes {
     | '/end-of-employment'
     | '/leaves'
     | '/manpower-planning'
+    | '/my-profile'
     | '/payroll'
     | '/performance'
     | '/project-management'
@@ -1611,6 +1740,8 @@ export interface FileRouteTypes {
     | '/scheduling'
     | '/separation-management'
     | '/talent-management'
+    | '/platform'
+    | '/platform/login'
     | '/assets/allocations'
     | '/assets/clearance-form'
     | '/assets/company-assets'
@@ -1618,6 +1749,7 @@ export interface FileRouteTypes {
     | '/attendance/$section'
     | '/attendance/insights'
     | '/attendance/logs'
+    | '/attendance/my-warnings'
     | '/attendance/official-visits'
     | '/attendance/overtime'
     | '/attendance/overview'
@@ -1674,6 +1806,13 @@ export interface FileRouteTypes {
     | '/settings/off-boarding'
     | '/settings/system-users'
     | '/settings/user-group-permissions'
+    | '/platform/activity'
+    | '/platform/invoices'
+    | '/platform/plans'
+    | '/platform/sales'
+    | '/platform/staff'
+    | '/platform/subscriptions'
+    | '/platform/support'
     | '/assets/'
     | '/attendance/'
     | '/benefits/'
@@ -1689,6 +1828,7 @@ export interface FileRouteTypes {
     | '/settings/'
     | '/talent-management/'
     | '/warning/'
+    | '/platform/'
     | '/benefits/plan-years/new'
     | '/benefits/plans/new'
     | '/leaves/settings/general'
@@ -1727,6 +1867,7 @@ export interface FileRouteTypes {
     | '/settings/user-group-permissions/$roleId'
     | '/talent-management/employees/$employeeId'
     | '/warning/policy/$policyId'
+    | '/platform/organisations/$id'
     | '/benefits/plan-years/'
     | '/benefits/plans/'
     | '/leaves/settings/'
@@ -1746,6 +1887,7 @@ export interface FileRouteTypes {
     | '/talent-management/employees/'
     | '/warning/penalty/'
     | '/warning/policy/'
+    | '/platform/organisations/'
     | '/manpower-planning/planning/$planId/edit'
     | '/settings/control-panel/areas/$areaId'
     | '/settings/control-panel/areas/new'
@@ -1764,9 +1906,11 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/configuration'
+    | '/my-profile'
     | '/roster'
     | '/scheduling'
     | '/separation-management'
+    | '/platform/login'
     | '/'
     | '/assets/allocations'
     | '/assets/clearance-form'
@@ -1775,6 +1919,7 @@ export interface FileRouteTypes {
     | '/attendance/$section'
     | '/attendance/insights'
     | '/attendance/logs'
+    | '/attendance/my-warnings'
     | '/attendance/official-visits'
     | '/attendance/overtime'
     | '/attendance/overview'
@@ -1825,6 +1970,13 @@ export interface FileRouteTypes {
     | '/requests/transfer'
     | '/settings/biometric-devices'
     | '/settings/custom-forms'
+    | '/platform/activity'
+    | '/platform/invoices'
+    | '/platform/plans'
+    | '/platform/sales'
+    | '/platform/staff'
+    | '/platform/subscriptions'
+    | '/platform/support'
     | '/assets'
     | '/attendance'
     | '/benefits'
@@ -1840,6 +1992,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/talent-management'
     | '/warning'
+    | '/platform'
     | '/benefits/plan-years/new'
     | '/benefits/plans/new'
     | '/leaves/settings/general'
@@ -1878,6 +2031,7 @@ export interface FileRouteTypes {
     | '/settings/user-group-permissions/$roleId'
     | '/talent-management/employees/$employeeId'
     | '/warning/policy/$policyId'
+    | '/platform/organisations/$id'
     | '/benefits/plan-years'
     | '/benefits/plans'
     | '/leaves/settings'
@@ -1897,6 +2051,7 @@ export interface FileRouteTypes {
     | '/talent-management/employees'
     | '/warning/penalty'
     | '/warning/policy'
+    | '/platform/organisations'
     | '/manpower-planning/planning/$planId/edit'
     | '/settings/control-panel/areas/$areaId'
     | '/settings/control-panel/areas/new'
@@ -1922,6 +2077,7 @@ export interface FileRouteTypes {
     | '/_app/end-of-employment'
     | '/_app/leaves'
     | '/_app/manpower-planning'
+    | '/_app/my-profile'
     | '/_app/payroll'
     | '/_app/performance'
     | '/_app/project-management'
@@ -1931,6 +2087,8 @@ export interface FileRouteTypes {
     | '/_app/scheduling'
     | '/_app/separation-management'
     | '/_app/talent-management'
+    | '/platform/_shell'
+    | '/platform/login'
     | '/_app/'
     | '/_app/assets/allocations'
     | '/_app/assets/clearance-form'
@@ -1939,6 +2097,7 @@ export interface FileRouteTypes {
     | '/_app/attendance/$section'
     | '/_app/attendance/insights'
     | '/_app/attendance/logs'
+    | '/_app/attendance/my-warnings'
     | '/_app/attendance/official-visits'
     | '/_app/attendance/overtime'
     | '/_app/attendance/overview'
@@ -1995,6 +2154,13 @@ export interface FileRouteTypes {
     | '/_app/settings/off-boarding'
     | '/_app/settings/system-users'
     | '/_app/settings/user-group-permissions'
+    | '/platform/_shell/activity'
+    | '/platform/_shell/invoices'
+    | '/platform/_shell/plans'
+    | '/platform/_shell/sales'
+    | '/platform/_shell/staff'
+    | '/platform/_shell/subscriptions'
+    | '/platform/_shell/support'
     | '/_app/assets/'
     | '/_app/attendance/'
     | '/_app/benefits/'
@@ -2010,6 +2176,7 @@ export interface FileRouteTypes {
     | '/_app/settings/'
     | '/_app/talent-management/'
     | '/_app/warning/'
+    | '/platform/_shell/'
     | '/_app/benefits/plan-years/new'
     | '/_app/benefits/plans/new'
     | '/_app/leaves/settings/general'
@@ -2048,6 +2215,7 @@ export interface FileRouteTypes {
     | '/_app/settings/user-group-permissions/$roleId'
     | '/_app/talent-management/employees/$employeeId'
     | '/_app/warning/policy/$policyId'
+    | '/platform/_shell/organisations/$id'
     | '/_app/benefits/plan-years/'
     | '/_app/benefits/plans/'
     | '/_app/leaves/settings/'
@@ -2067,6 +2235,7 @@ export interface FileRouteTypes {
     | '/_app/talent-management/employees/'
     | '/_app/warning/penalty/'
     | '/_app/warning/policy/'
+    | '/platform/_shell/organisations/'
     | '/_app/manpower-planning/planning/$planId/edit'
     | '/_app/settings/control-panel/areas/$areaId'
     | '/_app/settings/control-panel/areas/new'
@@ -2086,6 +2255,8 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  PlatformShellRoute: typeof PlatformShellRouteWithChildren
+  PlatformLoginRoute: typeof PlatformLoginRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -2160,6 +2331,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppManpowerPlanningRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/my-profile': {
+      id: '/_app/my-profile'
+      path: '/my-profile'
+      fullPath: '/my-profile'
+      preLoaderRoute: typeof AppMyProfileRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/payroll': {
       id: '/_app/payroll'
       path: '/payroll'
@@ -2223,6 +2401,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTalentManagementRouteImport
       parentRoute: typeof AppRoute
     }
+    '/platform/_shell': {
+      id: '/platform/_shell'
+      path: '/platform'
+      fullPath: '/platform'
+      preLoaderRoute: typeof PlatformShellRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/platform/login': {
+      id: '/platform/login'
+      path: '/platform/login'
+      fullPath: '/platform/login'
+      preLoaderRoute: typeof PlatformLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/assets/': {
       id: '/_app/assets/'
       path: '/'
@@ -2284,6 +2476,13 @@ declare module '@tanstack/react-router' {
       path: '/attendance/logs'
       fullPath: '/attendance/logs'
       preLoaderRoute: typeof AppAttendanceLogsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/attendance/my-warnings': {
+      id: '/_app/attendance/my-warnings'
+      path: '/attendance/my-warnings'
+      fullPath: '/attendance/my-warnings'
+      preLoaderRoute: typeof AppAttendanceMyWarningsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/attendance/official-visits': {
@@ -2769,6 +2968,62 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppWarningIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/platform/_shell/': {
+      id: '/platform/_shell/'
+      path: '/'
+      fullPath: '/platform/'
+      preLoaderRoute: typeof PlatformShellIndexRouteImport
+      parentRoute: typeof PlatformShellRoute
+    }
+    '/platform/_shell/activity': {
+      id: '/platform/_shell/activity'
+      path: '/activity'
+      fullPath: '/platform/activity'
+      preLoaderRoute: typeof PlatformShellActivityRouteImport
+      parentRoute: typeof PlatformShellRoute
+    }
+    '/platform/_shell/invoices': {
+      id: '/platform/_shell/invoices'
+      path: '/invoices'
+      fullPath: '/platform/invoices'
+      preLoaderRoute: typeof PlatformShellInvoicesRouteImport
+      parentRoute: typeof PlatformShellRoute
+    }
+    '/platform/_shell/plans': {
+      id: '/platform/_shell/plans'
+      path: '/plans'
+      fullPath: '/platform/plans'
+      preLoaderRoute: typeof PlatformShellPlansRouteImport
+      parentRoute: typeof PlatformShellRoute
+    }
+    '/platform/_shell/sales': {
+      id: '/platform/_shell/sales'
+      path: '/sales'
+      fullPath: '/platform/sales'
+      preLoaderRoute: typeof PlatformShellSalesRouteImport
+      parentRoute: typeof PlatformShellRoute
+    }
+    '/platform/_shell/staff': {
+      id: '/platform/_shell/staff'
+      path: '/staff'
+      fullPath: '/platform/staff'
+      preLoaderRoute: typeof PlatformShellStaffRouteImport
+      parentRoute: typeof PlatformShellRoute
+    }
+    '/platform/_shell/subscriptions': {
+      id: '/platform/_shell/subscriptions'
+      path: '/subscriptions'
+      fullPath: '/platform/subscriptions'
+      preLoaderRoute: typeof PlatformShellSubscriptionsRouteImport
+      parentRoute: typeof PlatformShellRoute
+    }
+    '/platform/_shell/support': {
+      id: '/platform/_shell/support'
+      path: '/support'
+      fullPath: '/platform/support'
+      preLoaderRoute: typeof PlatformShellSupportRouteImport
+      parentRoute: typeof PlatformShellRoute
+    }
     '/_app/benefits/plan-years/': {
       id: '/_app/benefits/plan-years/'
       path: '/plan-years'
@@ -3167,6 +3422,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/warning/policy/$policyId'
       preLoaderRoute: typeof AppWarningPolicyPolicyIdRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/platform/_shell/organisations/': {
+      id: '/platform/_shell/organisations/'
+      path: '/organisations'
+      fullPath: '/platform/organisations/'
+      preLoaderRoute: typeof PlatformShellOrganisationsIndexRouteImport
+      parentRoute: typeof PlatformShellRoute
+    }
+    '/platform/_shell/organisations/$id': {
+      id: '/platform/_shell/organisations/$id'
+      path: '/organisations/$id'
+      fullPath: '/platform/organisations/$id'
+      preLoaderRoute: typeof PlatformShellOrganisationsIdRouteImport
+      parentRoute: typeof PlatformShellRoute
     }
     '/_app/manpower-planning/planning/$planId/': {
       id: '/_app/manpower-planning/planning/$planId/'
@@ -3748,6 +4017,7 @@ interface AppRouteChildren {
   AppEndOfEmploymentRoute: typeof AppEndOfEmploymentRouteWithChildren
   AppLeavesRoute: typeof AppLeavesRouteWithChildren
   AppManpowerPlanningRoute: typeof AppManpowerPlanningRouteWithChildren
+  AppMyProfileRoute: typeof AppMyProfileRoute
   AppPayrollRoute: typeof AppPayrollRouteWithChildren
   AppPerformanceRoute: typeof AppPerformanceRouteWithChildren
   AppProjectManagementRoute: typeof AppProjectManagementRouteWithChildren
@@ -3761,6 +4031,7 @@ interface AppRouteChildren {
   AppAttendanceSectionRoute: typeof AppAttendanceSectionRoute
   AppAttendanceInsightsRoute: typeof AppAttendanceInsightsRoute
   AppAttendanceLogsRoute: typeof AppAttendanceLogsRoute
+  AppAttendanceMyWarningsRoute: typeof AppAttendanceMyWarningsRoute
   AppAttendanceOfficialVisitsRoute: typeof AppAttendanceOfficialVisitsRoute
   AppAttendanceOvertimeRoute: typeof AppAttendanceOvertimeRoute
   AppAttendanceOverviewRoute: typeof AppAttendanceOverviewRoute
@@ -3789,6 +4060,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppEndOfEmploymentRoute: AppEndOfEmploymentRouteWithChildren,
   AppLeavesRoute: AppLeavesRouteWithChildren,
   AppManpowerPlanningRoute: AppManpowerPlanningRouteWithChildren,
+  AppMyProfileRoute: AppMyProfileRoute,
   AppPayrollRoute: AppPayrollRouteWithChildren,
   AppPerformanceRoute: AppPerformanceRouteWithChildren,
   AppProjectManagementRoute: AppProjectManagementRouteWithChildren,
@@ -3802,6 +4074,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAttendanceSectionRoute: AppAttendanceSectionRoute,
   AppAttendanceInsightsRoute: AppAttendanceInsightsRoute,
   AppAttendanceLogsRoute: AppAttendanceLogsRoute,
+  AppAttendanceMyWarningsRoute: AppAttendanceMyWarningsRoute,
   AppAttendanceOfficialVisitsRoute: AppAttendanceOfficialVisitsRoute,
   AppAttendanceOvertimeRoute: AppAttendanceOvertimeRoute,
   AppAttendanceOverviewRoute: AppAttendanceOverviewRoute,
@@ -3825,9 +4098,41 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface PlatformShellRouteChildren {
+  PlatformShellActivityRoute: typeof PlatformShellActivityRoute
+  PlatformShellInvoicesRoute: typeof PlatformShellInvoicesRoute
+  PlatformShellPlansRoute: typeof PlatformShellPlansRoute
+  PlatformShellSalesRoute: typeof PlatformShellSalesRoute
+  PlatformShellStaffRoute: typeof PlatformShellStaffRoute
+  PlatformShellSubscriptionsRoute: typeof PlatformShellSubscriptionsRoute
+  PlatformShellSupportRoute: typeof PlatformShellSupportRoute
+  PlatformShellIndexRoute: typeof PlatformShellIndexRoute
+  PlatformShellOrganisationsIdRoute: typeof PlatformShellOrganisationsIdRoute
+  PlatformShellOrganisationsIndexRoute: typeof PlatformShellOrganisationsIndexRoute
+}
+
+const PlatformShellRouteChildren: PlatformShellRouteChildren = {
+  PlatformShellActivityRoute: PlatformShellActivityRoute,
+  PlatformShellInvoicesRoute: PlatformShellInvoicesRoute,
+  PlatformShellPlansRoute: PlatformShellPlansRoute,
+  PlatformShellSalesRoute: PlatformShellSalesRoute,
+  PlatformShellStaffRoute: PlatformShellStaffRoute,
+  PlatformShellSubscriptionsRoute: PlatformShellSubscriptionsRoute,
+  PlatformShellSupportRoute: PlatformShellSupportRoute,
+  PlatformShellIndexRoute: PlatformShellIndexRoute,
+  PlatformShellOrganisationsIdRoute: PlatformShellOrganisationsIdRoute,
+  PlatformShellOrganisationsIndexRoute: PlatformShellOrganisationsIndexRoute,
+}
+
+const PlatformShellRouteWithChildren = PlatformShellRoute._addFileChildren(
+  PlatformShellRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  PlatformShellRoute: PlatformShellRouteWithChildren,
+  PlatformLoginRoute: PlatformLoginRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
