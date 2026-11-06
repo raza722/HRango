@@ -402,6 +402,7 @@ export function AreaChart({
                     <path
                       d={`${line} L${last[0]},${zero} L${first[0]},${zero} Z`}
                       fill={`url(#${gradientId}-fill-${item.key})`}
+                      className="animate-in duration-700 fade-in-0 fill-mode-backwards"
                     />
                   )}
                   <path
@@ -410,6 +411,8 @@ export function AreaChart({
                     stroke={`url(#${gradientId}-line-${item.key})`}
                     strokeWidth={2}
                     strokeLinecap="round"
+                    pathLength={1}
+                    className="animate-draw"
                   />
                   {points.map(([cx, cy], index) => (
                     <circle
@@ -420,6 +423,10 @@ export function AreaChart({
                       fill="#FFFFFF"
                       stroke={zeroBand && Math.abs(cy - zero) < 1 ? ZERO_PINK : item.colour}
                       strokeWidth={1.25}
+                      className="animate-in duration-300 fade-in-0 fill-mode-backwards"
+                      style={{
+                        animationDelay: `${String(150 + (index / Math.max(1, points.length - 1)) * 800)}ms`,
+                      }}
                     />
                   ))}
                 </g>
@@ -570,9 +577,10 @@ export function ColumnChart({
                         rx={Math.min(4, barWidth / 2)}
                         fill={item.colour}
                         className={cn(
-                          'transition-opacity',
+                          'origin-mark-bottom animate-grow-y transition-opacity',
                           active !== null && active !== index && 'opacity-50',
                         )}
+                        style={{ animationDelay: `${String(Math.min(index, 12) * 35)}ms` }}
                       />
                     )
                   })}

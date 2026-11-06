@@ -27,8 +27,8 @@ export function showServerErrors<T extends FieldValues>(
       placed = true
     } else leftOver.push(message)
   }
-  if (!placed) setError('root', { type: 'server', message: error.message })
-  else if (leftOver.length > 0) setError('root', { type: 'server', message: leftOver.join(' ') })
+  if (leftOver.length > 0) setError('root', { type: 'server', message: leftOver.join(' ') })
+  else if (!placed) setError('root', { type: 'server', message: error.message })
 }
 
 /** A refused action's message, for a toast or a line in a dialog. */

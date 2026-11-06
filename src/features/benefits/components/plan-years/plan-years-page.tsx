@@ -197,8 +197,13 @@ export function PlanYearsPage() {
         onClose={close}
         onConfirm={() => {
           if (dialog?.type !== 'delete') return
-          remove.mutate(dialog.row, {
-            onSuccess: close,
+          const deleted = dialog.row
+          remove.mutate(deleted, {
+            onSuccess: () => {
+              close()
+              // The plan year shown is gone: show them all, not a filter nothing can match.
+              if (deleted.id === year) void navigate({ search: { year: undefined } })
+            },
             onError: (error) => {
               close()
               toast.error(

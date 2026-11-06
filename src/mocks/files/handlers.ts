@@ -8,6 +8,33 @@ import { apiPath, createId, errorResponse, latency, requireAuth } from '../utils
 /** Uploads kept in memory, so a mocked record can hand back a link to the file. */
 const uploads = new Map<string, { file: UploadedFile; blob: Blob }>()
 
+/** A one-page PDF (ASCII, so its length is its byte count) saying the file is a sample. */
+function placeholderPdf(): string {
+  const stream = 'BT /F1 14 Tf 72 720 Td (Sample file: the demo keeps no copy of it.) Tj ET'
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${String(stream.length)} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+  let pdf = '%PDF-1.4\n'
+  const offsets = objects.map((body, index) => {
+    const offset = pdf.length
+    pdf += `${String(index + 1)} 0 obj\n${body}\nendobj\n`
+    return offset
+  })
+  const xref = pdf.length
+  const entries = offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`)
+  return `${pdf}xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n${entries.join('')}trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`
+}
+
+/**
+ * What a link to a file the mock holds no bytes for opens: the seeded records' files, and
+ * uploads made before a reload (records keep their links in sessionStorage, uploads live in memory).
+ */
+const PLACEHOLDER_PDF = placeholderPdf()
+
 interface ReadUpload {
   file: File | null
   module: string
@@ -83,7 +110,9 @@ export const filesHandlers = [
 
   http.get(apiPath('/files/:id/download'), ({ params }) => {
     const found = uploads.get(String(params.id))
-    if (!found) return errorResponse(404, 'File not found.', { code: 'NOT_FOUND' })
+    if (!found) {
+      return new HttpResponse(PLACEHOLDER_PDF, { headers: { 'Content-Type': 'application/pdf' } })
+    }
     return new HttpResponse(found.blob, { headers: { 'Content-Type': found.file.mimeType } })
   }),
 
@@ -96,6 +125,14 @@ export const filesHandlers = [
 /** The name an upload was made with (mocked records show it beside the file id). */
 export function mockUploadName(id: string): string | null {
   return uploads.get(id)?.file.name ?? null
+}
+
+/**
+ * An upload as `POST /files` answered it (name, type, size), for a mocked record that takes the
+ * file, as the API reads them from its file store. Null for an id the mock was not sent.
+ */
+export function mockUpload(id: string): UploadedFile | null {
+  return uploads.get(id)?.file ?? null
 }
 
 /** A signed link the mock serves, for mocked records that hold a file. */

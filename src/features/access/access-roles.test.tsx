@@ -135,6 +135,10 @@ describe('Settings → User Group Permissions', { timeout: 60_000 }, () => {
     await user.click(within(payroll).getByRole('combobox', { name: 'Units of Pay Slips: View' }))
     await user.click(await screen.findByRole('option', { name: /^Lahore Head Office/ }))
     await user.keyboard('{Escape}')
+    // Picking a unit takes that tick's message away at once (not only on the next Save).
+    expect(
+      within(payroll).queryByText('Choose at least one branch, department or location.'),
+    ).not.toBeInTheDocument()
 
     // Select all of one screen.
     const sheet = within(payroll).getByRole('checkbox', { name: 'Select all: Salary Sheet' })

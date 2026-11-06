@@ -389,6 +389,8 @@ export function seedJobTitles(): MockJobTitle[] {
     job('jt_pm', 'Project Manager', 6, null, 52),
     job('jt_acc', 'Accountant', 4, null, 50),
     job('jt_exec', 'Marketing Executive', null, null, 48),
+    // The directory's designers' title, and Manpower Planning's design positions.
+    job('jt_uiux', 'UI/UX Designer', null, null, 46),
   ]
 }
 

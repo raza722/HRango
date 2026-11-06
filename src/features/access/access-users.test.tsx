@@ -234,6 +234,20 @@ describe('Settings → System Users', { timeout: 60_000 }, () => {
     expect((await refusal(accessApi.setUserRoles('2', ['6', '8'], 'old'))).status).toBe(409)
   })
 
+  it('says why Edit User can’t switch your own account off', async () => {
+    const { user } = renderApp('/settings/system-users?q=shelley')
+    await rowAction(user, 'Actions for Shelley Kannes', 'Edit')
+    const dialog = await screen.findByRole('dialog', { name: 'Edit User' }, { timeout: 15_000 })
+    await user.click(await within(dialog).findByRole('switch', { name: /^Active/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    // The switch draws no message: the API's refusal shows under the buttons.
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'You can’t disable your own account.',
+    )
+    expect(accessUsers.find('2')?.isActive).toBe(true)
+  })
+
   it('shows effective permissions grouped by module with their sources and denials', async () => {
     const { user } = renderApp('/settings/system-users/6?tab=permissions')
 

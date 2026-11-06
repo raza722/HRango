@@ -65,14 +65,27 @@ export const jobTitles = createMockCollection<MockJobTitle>({
   seed: seedJobTitles,
 })
 
-let generalSettings = seedGeneralSettings()
+/** General Settings: one record, the active company's. */
+const generalSettingsStore = createMockCollection<MockGeneralSettings>({
+  storageKey: 'hrms-mock-general-settings',
+  seed: () => [seedGeneralSettings()],
+})
+
+const currentGeneralSettings = () =>
+  generalSettingsStore.find(CURRENT_COMPANY_ID) ?? seedGeneralSettings()
+
+function storeGeneralSettings(next: MockGeneralSettings): MockGeneralSettings {
+  if (generalSettingsStore.find(next.id)) generalSettingsStore.update(next.id, next)
+  else generalSettingsStore.insert(next)
+  return next
+}
 
 export function resetSettingsDb(): void {
   locations.reset()
   areas.reset()
   branches.reset()
   jobTitles.reset()
-  generalSettings = seedGeneralSettings()
+  generalSettingsStore.reset()
 }
 
 // ---------------------------------------------------------------- answers (names and counts added)
@@ -485,7 +498,7 @@ export const settingsHandlers = [
     await latency()
     return (
       requireAuth(request) ??
-      HttpResponse.json<ApiItem<GeneralSettings>>({ data: toGeneralOut(generalSettings) })
+      HttpResponse.json<ApiItem<GeneralSettings>>({ data: toGeneralOut(currentGeneralSettings()) })
     )
   }),
 
@@ -496,19 +509,16 @@ export const settingsHandlers = [
     const body: unknown = await request.json().catch(() => null)
     const parsed = generalSettingsSchema.safeParse(body)
     if (!parsed.success) return validationFailed(parsed.error.issues)
-    const stale = checkRowVersion(
-      (body as { rowVersion?: unknown }).rowVersion,
-      generalSettings,
-      'company',
-    )
+    const current = currentGeneralSettings()
+    const stale = checkRowVersion((body as { rowVersion?: unknown }).rowVersion, current, 'company')
     if (stale) return stale
-    generalSettings = {
-      ...generalSettings,
+    const saved = storeGeneralSettings({
+      ...current,
       ...parsed.data,
       updatedAt: new Date().toISOString(),
       rowVersion: newRowVersion(),
-    }
-    return HttpResponse.json<ApiItem<GeneralSettings>>({ data: toGeneralOut(generalSettings) })
+    })
+    return HttpResponse.json<ApiItem<GeneralSettings>>({ data: toGeneralOut(saved) })
   }),
 
   http.put(orgPath('/general/logo'), async ({ request }) => {
@@ -517,13 +527,13 @@ export const settingsHandlers = [
     if (unauthorized) return unauthorized
     const body = (await request.json().catch(() => null)) as { fileId?: string | null } | null
     const fileId = body?.fileId ?? null
-    generalSettings = {
-      ...generalSettings,
+    const saved = storeGeneralSettings({
+      ...currentGeneralSettings(),
       logoFileId: fileId,
       logoUrl: fileId ? mockFileUrl(fileId) : null,
       updatedAt: new Date().toISOString(),
       rowVersion: newRowVersion(),
-    }
-    return HttpResponse.json<ApiItem<GeneralSettings>>({ data: toGeneralOut(generalSettings) })
+    })
+    return HttpResponse.json<ApiItem<GeneralSettings>>({ data: toGeneralOut(saved) })
   }),
 ]

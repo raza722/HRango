@@ -141,7 +141,7 @@ export interface OpenRec {
   rowVersion: string
 }
 
-const key = (name: string) => `hrms-mock-manpower-v2-${name}`
+const key = (name: string) => `hrms-mock-manpower-v4-${name}`
 
 export const durations = createMockCollection<DurationRec>({
   storageKey: key('durations'),

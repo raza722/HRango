@@ -17,7 +17,7 @@ import { monthsBetween } from '@/features/manpower-planning'
 import type { ApiErrorBody, ApiItem } from '@/types/api'
 
 import { DEMO_USER } from '../auth/handlers'
-import { mockFileUrl } from '../files/handlers'
+import { mockFileUrl, mockUpload } from '../files/handlers'
 import {
   apiPath,
   createId,
@@ -44,16 +44,16 @@ import {
   salaryRanges,
 } from './db'
 import {
-  BRANCHES,
   COST_CENTERS,
-  DEPARTMENTS,
+  departmentList,
   DIVISIONS,
   EMPLOYEE_GROUPS,
   findPerson,
   GRADES,
-  JOB_TITLES,
+  jobTitleList,
   orgLookupHandlers,
   orgName,
+  stationList,
 } from './org-lookups'
 
 // The mock of `/api/manpower/*` (backend app/routers/manpower.py): the same routes, bodies,
@@ -181,7 +181,7 @@ function toLine(rec: LineRec, index: number): PlanLine {
     ...rec,
     sortOrder: index,
     positionCode: position?.code ?? null,
-    jobTitleName: orgName.jobTitle(position?.jobTitleId ?? person?.jobTitleId),
+    jobTitleName: position ? orgName.jobTitle(position.jobTitleId) : (person?.jobTitleName ?? null),
     employeeCode: person?.code ?? null,
     employeeName: person?.name ?? null,
     departmentName: orgName.department(position?.departmentId ?? person?.departmentId),
@@ -370,9 +370,15 @@ const importRow = z.object({
   maxSalary: z.union([z.string(), z.number()]).nullish(),
 })
 
-/** Uploaded files the mock knows by id (the shared files mock keeps their bytes). */
+/** An uploaded file by id: its name, type and size as the shared files mock took them. */
 function fileMeta(fileId: string) {
-  return { id: fileId, name: `${fileId}.pdf`, mimeType: 'application/pdf', sizeBytes: null }
+  const upload = mockUpload(fileId)
+  return {
+    id: fileId,
+    name: upload?.name ?? `${fileId}.pdf`,
+    mimeType: upload?.mimeType ?? 'application/pdf',
+    sizeBytes: upload?.sizeBytes ?? null,
+  }
 }
 
 // --- plans: lines, budgets -------------------------------------------------------------------
@@ -546,23 +552,24 @@ export const manpowerPlanningHandlers = [
     if (denied) return denied
     const url = new URL(request.url)
     const q = textFilter(url)
-    const rows: PositionTitle[] = JOB_TITLES.filter(
-      (title) => !q || title.name.toLowerCase().includes(q),
-    ).map((title) => {
-      const mine = positions.all().filter((rec) => rec.jobTitleId === title.id)
-      return {
-        id: title.id,
-        name: title.name,
-        positionCount: mine.length,
-        activePositionCount: mine.filter((rec) => rec.status === 'active').length,
-        openPositionCount: openPositions
-          .all()
-          .filter((open) => open.jobTitleId === title.id && open.status === 'active').length,
-        createdAt: title.createdAt,
-        createdByName: ME,
-        updatedAt: null,
-      }
-    })
+    const rows: PositionTitle[] = jobTitleList()
+      .filter((title) => !q || title.name.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((title) => {
+        const mine = positions.all().filter((rec) => rec.jobTitleId === title.id)
+        return {
+          id: title.id,
+          name: title.name,
+          positionCount: mine.length,
+          activePositionCount: mine.filter((rec) => rec.status === 'active').length,
+          openPositionCount: openPositions
+            .all()
+            .filter((open) => open.jobTitleId === title.id && open.status === 'active').length,
+          createdAt: title.createdAt,
+          createdByName: ME,
+          updatedAt: null,
+        }
+      })
     const { page, pageSize } = readPageParams(url)
     return HttpResponse.json(paginate(rows, page, pageSize))
   }),
@@ -613,8 +620,8 @@ export const manpowerPlanningHandlers = [
       const fail = (field: string, message: string) => {
         errors.push({ rowNo, field, message })
       }
-      const title = byName(JOB_TITLES, row.positionTitle)
-      const station = byName(BRANCHES, row.station)
+      const title = byName(jobTitleList(), row.positionTitle)
+      const station = byName(stationList(), row.station)
       const group = byName(EMPLOYEE_GROUPS, row.employeeGroup)
       const min = Number(row.minSalary ?? 0)
       const max = Number(row.maxSalary)
@@ -640,8 +647,8 @@ export const manpowerPlanningHandlers = [
         branchId: station.id,
         employeeGroupId: group.id,
         divisionId: byName(DIVISIONS, row.division)?.id ?? null,
-        departmentId: byName(DEPARTMENTS, row.department)?.id ?? null,
-        subDepartmentId: byName(DEPARTMENTS, row.subDepartment)?.id ?? null,
+        departmentId: byName(departmentList(), row.department)?.id ?? null,
+        subDepartmentId: byName(departmentList(), row.subDepartment)?.id ?? null,
         costCenterId: byName(COST_CENTERS, row.costCenter)?.id ?? null,
         gradeId: byName(GRADES, row.grade)?.id ?? null,
         reportsToId: reportsTo?.id ?? null,

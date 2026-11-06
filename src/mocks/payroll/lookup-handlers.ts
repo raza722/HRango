@@ -16,6 +16,36 @@ import { lookupRow } from './people'
 
 const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-')
 
+/**
+ * Sub-departments: departments with a parent (Manpower Planning's plans and positions use them).
+ * The API lists them with the other departments, each with its `parentId`.
+ */
+const SUB_DEPARTMENTS: readonly { id: string; name: string; department: string }[] = [
+  { id: 'sd_accounts', name: 'Accounts', department: 'Finance' },
+  { id: 'sd_audit', name: 'Audit', department: 'Finance' },
+  { id: 'sd_design', name: 'Design', department: 'Mobile App' },
+  { id: 'sd_digital', name: 'Digital', department: 'Marketing' },
+  { id: 'sd_brand', name: 'Brand', department: 'Marketing' },
+]
+
+/**
+ * `GET /organisation/lookups/departments`: the directory's departments, then the sub-departments
+ * (`parentId` set); `parentId` narrows it to one department's sub-departments, as the API does.
+ */
+export function organisationDepartments(parentId: string | null = null): LookupItem[] {
+  const departments = [...new Set(DIRECTORY.map((employee) => employee.department))]
+    .sort()
+    .map((name): LookupItem => ({ id: `dep_${slug(name)}`, name, parentId: null }))
+  const subDepartments = SUB_DEPARTMENTS.map((item): LookupItem => ({
+    id: item.id,
+    name: item.name,
+    parentId: `dep_${slug(item.department)}`,
+  }))
+  return parentId
+    ? subDepartments.filter((item) => item.parentId === parentId)
+    : [...departments, ...subDepartments]
+}
+
 /** The lists this mock owns; other kinds (grades, job levels…) pass on to the mocks after it. */
 function organisation(kind: string, parentId: string | null = null): LookupItem[] | null {
   switch (kind) {
@@ -31,9 +61,7 @@ function organisation(kind: string, parentId: string | null = null): LookupItem[
     case 'job-titles':
       return jobTitles.all().map((title) => ({ id: title.id, name: title.name }))
     case 'departments':
-      return [...new Set(DIRECTORY.map((employee) => employee.department))]
-        .sort()
-        .map((name) => ({ id: `dep_${slug(name)}`, name }))
+      return organisationDepartments(parentId)
     default:
       return null
   }
@@ -68,7 +96,15 @@ export const payrollLookupHandlers = [
     if (denied) return denied
     const url = new URL(request.url)
     const inactive = url.searchParams.get('includeInactive') === 'true'
-    const rows = DIRECTORY.map(lookupRow).filter((row) => inactive || row.status === 'active')
+    // `?departmentId=` and `?branchId=` narrow it, as the API's do (Manpower imports a department).
+    const departmentId = url.searchParams.get('departmentId')
+    const branchId = url.searchParams.get('branchId')
+    const rows = DIRECTORY.map(lookupRow).filter(
+      (row) =>
+        (inactive || row.status === 'active') &&
+        (!departmentId || row.departmentId === departmentId) &&
+        (!branchId || row.branchId === branchId),
+    )
     return HttpResponse.json(lookupPage(rows, url))
   }),
 

@@ -22,7 +22,8 @@ import { FormDialog } from '../shared/dialogs'
 import { LoadError, LoadingRows } from '../shared/parts'
 import { PasswordField } from '../shared/password-field'
 
-const FIELDS = Object.keys(userToForm(null, null))
+// Not Active: the switch draws no message, so its refusal (your own account) goes under the buttons.
+const FIELDS = Object.keys(userToForm(null, null)).filter((field) => field !== 'isActive')
 
 /**
  * Add User / Edit User (`UserIn`): email, display name, the linked employee, an initial password
