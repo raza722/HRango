@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { SelectField, TextField } from '@/components/form'
 import { useCan } from '@/lib/permissions'
 
-import { MARITAL_LABELS, TM_CODES } from '../../constants'
+import { MARITAL_LABELS, personalHidden, TM_CODES } from '../../constants'
 import { useUpdateProfile } from '../../hooks/use-employees'
 import {
   PROFILE_FIELD_OF,
@@ -16,12 +16,14 @@ import {
 import { type Employee, MARITAL_STATUSES } from '../../types/employees.types'
 import { showServerErrors } from '../../utils/form-errors'
 import { FormDialog } from '../shared/form-dialog'
+import { PersonalHiddenNote } from '../shared/parts'
 
 /**
  * Update Profile (2423:17134): Full Name, Email Address, Phone Number, Address, CNIC No, Date of
  * Birth and Marital Status, then Cancel / Update Profile. Saves the record (`PUT
  * /employees/{id}`) and, when the CNIC changed, `PUT …/identity`; without identity rights the
- * CNIC is read-only (or hidden when the API masks it).
+ * CNIC is read-only (or hidden when the API masks it). When the API hid the personal details
+ * (`canSeePersonal: false`), Phone, Address, Date of Birth and Marital Status give way to a note.
  */
 export function UpdateProfileDialog({
   employee,
@@ -32,6 +34,8 @@ export function UpdateProfileDialog({
 }) {
   const save = useUpdateProfile()
   const canIdentity = useCan(TM_CODES.identity)
+  // Phone, Address, Date of Birth and Marital Status came as nulls: not offered, not sent back.
+  const showPersonal = !personalHidden(employee)
   const form = useForm<UpdateProfileValues>({
     resolver: zodResolver(updateProfileSchema),
     defaultValues: profileToForm(employee),
@@ -74,20 +78,24 @@ export function UpdateProfileDialog({
           type="email"
           placeholder="Enter Email Address"
         />
-        <TextField
-          control={form.control}
-          name="phone"
-          label="Phone Number"
-          type="tel"
-          placeholder="Enter Phone Number"
-        />
-        <TextField
-          control={form.control}
-          name="address"
-          label="Address"
-          placeholder="Enter Residence Address"
-          className="@md:col-span-2"
-        />
+        {showPersonal && (
+          <>
+            <TextField
+              control={form.control}
+              name="phone"
+              label="Phone Number"
+              type="tel"
+              placeholder="Enter Phone Number"
+            />
+            <TextField
+              control={form.control}
+              name="address"
+              label="Address"
+              placeholder="Enter Residence Address"
+              className="@md:col-span-2"
+            />
+          </>
+        )}
         {employee.canSeeIdentity && (
           <TextField
             control={form.control}
@@ -98,15 +106,29 @@ export function UpdateProfileDialog({
             description={canIdentity ? undefined : 'You may not change the CNIC.'}
           />
         )}
-        <TextField control={form.control} name="dateOfBirth" label="Date of Birth" type="date" />
-        <SelectField
-          control={form.control}
-          name="maritalStatus"
-          label="Marital Status"
-          placeholder="Single"
-          clearable
-          options={MARITAL_STATUSES.map((value) => ({ value, label: MARITAL_LABELS[value] }))}
-        />
+        {showPersonal ? (
+          <>
+            <TextField
+              control={form.control}
+              name="dateOfBirth"
+              label="Date of Birth"
+              type="date"
+            />
+            <SelectField
+              control={form.control}
+              name="maritalStatus"
+              label="Marital Status"
+              placeholder="Single"
+              clearable
+              options={MARITAL_STATUSES.map((value) => ({
+                value,
+                label: MARITAL_LABELS[value],
+              }))}
+            />
+          </>
+        ) : (
+          <PersonalHiddenNote className="@md:col-span-2" />
+        )}
       </div>
     </FormDialog>
   )

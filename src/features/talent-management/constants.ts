@@ -4,6 +4,7 @@ import type {
   DependentRelation,
   DocumentType,
   EmergencyRelation,
+  Employee,
   EmployeeStatus,
   Gender,
   MaritalStatus,
@@ -32,10 +33,27 @@ export const TM_CODES = {
   skills: 'employees.skills.edit',
   documents: 'employees.documents.edit',
   bankAccounts: 'employees.bank_accounts.edit',
+  /**
+   * Reading a profile tab's rows (`GET /employees/{id}/<tab>`). Line managers and department
+   * heads hold education, experience, skills and emergency contacts, not dependents, documents
+   * or contracts (backend `default_roles._managing`).
+   */
+  dependentsView: 'employees.dependents.view',
+  documentsView: 'employees.documents.view',
+  educationView: 'employees.education.view',
+  experienceView: 'employees.experience.view',
+  contractsView: 'employees.contracts.view',
   /** Other people's pay: nobody sets their own. */
   salaryView: 'employees.salary.view',
   salaryEdit: 'employees.salary.edit@team',
 } as const
+
+/**
+ * True when the API hid this person's personal details from the user (`canSeePersonal: false`):
+ * the screens show "Hidden" and the forms neither offer nor send those fields.
+ */
+export const personalHidden = (employee: Pick<Employee, 'canSeePersonal'>): boolean =>
+  employee.canSeePersonal === false
 
 /** Rows per page of the Employees table, and its choices. */
 export const EMPLOYEE_PAGE_SIZE = 10

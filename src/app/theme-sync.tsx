@@ -1,14 +1,15 @@
 import { useEffect } from 'react'
 
-import { useUiStore } from '@/stores/ui-store'
+import { shownLanguage, useUiStore } from '@/stores/ui-store'
 
 /**
  * Mirrors ui-store preferences onto <html>: the `dark` class (Tailwind's dark
- * variant), `color-scheme`, and the `lang` attribute. Renders nothing.
+ * variant), `color-scheme`, and the `lang` attribute (of the language the text is in).
+ * Renders nothing.
  */
 export function ThemeSync() {
   const theme = useUiStore((state) => state.theme)
-  const language = useUiStore((state) => state.language)
+  const language = useUiStore((state) => shownLanguage(state.language))
 
   useEffect(() => {
     const root = document.documentElement

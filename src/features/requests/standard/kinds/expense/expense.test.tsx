@@ -38,7 +38,7 @@ async function fillClaim(
 
 describe('Expense claims (the shared standard request pages)', () => {
   it('lists my claims and everyone’s, and submits several claims as one request', async () => {
-    const { user } = renderApp('/requests/expense')
+    const { user } = renderApp('/requests/expense?scope=my')
 
     expect(await screen.findByRole('heading', { name: 'Expense Claims' })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'EXP-0002' })).toBeVisible()

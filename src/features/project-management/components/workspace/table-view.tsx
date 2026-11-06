@@ -1,6 +1,7 @@
 import { format } from 'date-fns'
 import { Download } from 'lucide-react'
 
+import { PanScroll } from '@/components/layout'
 import { downloadText, toCsv } from '@/features/payroll'
 
 import { PRIORITY_META } from '../../constants'
@@ -109,8 +110,8 @@ export function TableBody({
           Export CSV
         </button>
       </div>
-      {/* Rows scroll under the header; both scroll sideways together. */}
-      <div className="@container/list relative overflow-x-auto pb-2 sm:max-h-[max(28rem,calc(100dvh-12rem))] sm:overflow-y-auto">
+      {/* Rows scroll under the header; both scroll sideways together, and empty space drags. */}
+      <PanScroll className="@container/list pb-2 sm:max-h-[max(28rem,calc(100dvh-12rem))] sm:overflow-y-auto">
         {/* Phones: the page scrolls (no box inside it); wider screens keep the header in view. */}
         <div role="table" aria-label="Tasks" className="flex w-max min-w-full flex-col gap-3.5">
           <div className="sticky top-0 z-[6] bg-background pb-0.5">
@@ -141,7 +142,7 @@ export function TableBody({
             </div>
           )}
         </div>
-      </div>
+      </PanScroll>
     </div>
   )
 }

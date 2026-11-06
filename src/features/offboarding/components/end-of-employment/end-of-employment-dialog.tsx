@@ -532,7 +532,9 @@ function RecordForm({
       fileId: attachment?.id ?? null,
       rowVersion: saved?.rowVersion,
     }
-    const answered = Boolean(form.formState.dirtyFields.checklist)
+    // Read live: formState.dirtyFields is the last render's copy, which an answer changed
+    // straight before Save has not reached (nothing on screen subscribes to it).
+    const answered = form.getFieldState('checklist').isDirty
     try {
       const record = await save.mutateAsync({
         id: saved?.id,

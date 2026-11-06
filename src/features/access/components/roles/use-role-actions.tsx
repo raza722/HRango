@@ -96,6 +96,8 @@ export function useRoleActions({
     if (!pending) return null
     const { role } = pending
     const holders = plural(role.userCount, 'person', 'people')
+    // "1 person holds", "2 people hold".
+    const hold = role.userCount === 1 ? 'holds' : 'hold'
     switch (pending.kind) {
       case 'edit':
         return <RoleFormDialog role={role} onClose={close} />
@@ -119,7 +121,7 @@ export function useRoleActions({
             title={`Retire ${role.name}?`}
             description={
               role.userCount > 0
-                ? `The ${holders} who hold it lose its permissions until it is restored, and nobody new can be given it. Its history is kept.`
+                ? `The ${holders} who ${hold} it lose its permissions until it is restored, and nobody new can be given it. Its history is kept.`
                 : 'Nobody can be given it until it is restored. Its history is kept.'
             }
             confirmLabel="Retire Role"
@@ -141,7 +143,7 @@ export function useRoleActions({
             title={`Restore ${role.name}?`}
             description={
               role.userCount > 0
-                ? `The ${holders} who hold it get its permissions back, and it can be given again.`
+                ? `The ${holders} who ${hold} it get its permissions back, and it can be given again.`
                 : 'It can be given to people again.'
             }
             confirmLabel="Restore Role"
@@ -161,7 +163,7 @@ export function useRoleActions({
           return role.isActive ? (
             <ConfirmAction
               title={`${role.name} can’t be deleted`}
-              description={`${holders.charAt(0).toUpperCase()}${holders.slice(1)} hold ${role.name}. Take it away from them first, or retire it: a retired role grants nothing and keeps its history.`}
+              description={`${holders.charAt(0).toUpperCase()}${holders.slice(1)} ${hold} ${role.name}. Take it away from them first, or retire it: a retired role grants nothing and keeps its history.`}
               confirmLabel="Retire Instead"
               onConfirm={() => {
                 open('retire', role)
@@ -171,7 +173,7 @@ export function useRoleActions({
           ) : (
             <ConfirmAction
               title={`${role.name} can’t be deleted`}
-              description={`${holders.charAt(0).toUpperCase()}${holders.slice(1)} still hold ${role.name}. Take it away from them first; it already grants nothing while retired.`}
+              description={`${holders.charAt(0).toUpperCase()}${holders.slice(1)} still ${hold} ${role.name}. Take it away from them first; it already grants nothing while retired.`}
               confirmLabel="See Who Holds It"
               onConfirm={() => {
                 void navigate({

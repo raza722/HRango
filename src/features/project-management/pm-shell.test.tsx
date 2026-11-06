@@ -61,6 +61,26 @@ describe('Project Management shell', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('opens a dashboard from the banner’s Quick Action Menu', async () => {
+    const { user, router } = renderApp('/project-management/workspaces/ws_uxui')
+    await user.click(
+      await screen.findByRole('button', { name: 'Quick Action Menu' }, { timeout: 15_000 }),
+    )
+    const items = await screen.findAllByRole('menuitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Home Dashboard',
+      'Workspace Dashboard',
+      'Project Dashboard',
+      'Task Dashboard',
+    ])
+    // Each item is the link itself.
+    expect(items[3]).toHaveAttribute('href', '/project-management/task-dashboard')
+    await user.click(items[3]!)
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/project-management/task-dashboard')
+    })
+  })
+
   it('opens the Task Dashboard with its figures (the dashboards have their own tests)', async () => {
     renderApp('/project-management/task-dashboard')
     expect(await screen.findByRole('heading', { name: 'Task Dashboard', level: 1 })).toBeVisible()

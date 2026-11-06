@@ -82,7 +82,7 @@ export function CollapsibleCard({
     <Collapsible.Root open={open} onOpenChange={onOpenChange} asChild>
       <Card aria-labelledby={titleId} className={cn(!open && 'pb-6', className)}>
         {header}
-        <Collapsible.Content className="overflow-hidden data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0">
+        <Collapsible.Content className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
           <CardContent className={contentClassName}>{children}</CardContent>
         </Collapsible.Content>
       </Card>

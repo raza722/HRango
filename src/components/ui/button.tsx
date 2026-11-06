@@ -4,21 +4,24 @@ import { Slot } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
 
+// Hover eases the colour and lifts the shadow; pressing sinks the button a little (`scale`),
+// so every click answers at once. Links only underline.
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-normal whitespace-nowrap transition-[color,background-color,border-color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-50 aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-normal whitespace-nowrap transition-[color,background-color,border-color,box-shadow,scale] duration-150 ease-out-soft outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground shadow-xs hover:bg-primary/90',
+        default:
+          'bg-primary text-primary-foreground shadow-xs hover:bg-primary/90 hover:shadow-glow hover:shadow-primary/60',
         destructive:
-          'bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/30',
+          'bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90 hover:shadow-glow hover:shadow-destructive/50 focus-visible:ring-destructive/30',
         success:
-          'bg-success text-success-foreground shadow-xs hover:bg-success/90 focus-visible:ring-success/30',
+          'bg-success text-success-foreground shadow-xs hover:bg-success/90 hover:shadow-glow hover:shadow-success/50 focus-visible:ring-success/30',
         outline:
-          'border border-input bg-card text-field-foreground shadow-xs hover:bg-accent hover:text-accent-foreground',
+          'border border-input bg-card text-field-foreground shadow-xs hover:border-ring/40 hover:bg-accent hover:text-accent-foreground',
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
         ghost: 'hover:bg-accent hover:text-accent-foreground',
-        link: 'text-primary underline-offset-4 hover:underline',
+        link: 'text-primary underline-offset-4 hover:underline active:scale-100',
       },
       // `pointer-coarse:` raises touch targets on phones and tablets (about 40px).
       size: {

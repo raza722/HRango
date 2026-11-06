@@ -14,7 +14,11 @@ import { cn } from '@/lib/utils'
 
 import { APPROVE_ON_STATUS_LABELS, FINAL_APPROVAL_LABELS, LEAVE_CODES } from '../../constants'
 import { useLeaveSettings, useSaveLeaveSettings } from '../../hooks/use-leaves'
-import { APPROVE_ON_STATUSES, FINAL_APPROVAL_AUTHORITIES } from '../../types/leaves.types'
+import {
+  APPROVE_ON_STATUSES,
+  FINAL_APPROVAL_AUTHORITIES,
+  type LeaveSettings,
+} from '../../types/leaves.types'
 import {
   leaveSettingsFieldsClass,
   settingsCancelButtonClass,
@@ -39,26 +43,6 @@ type Values = z.infer<typeof schema>
  */
 export function LeaveGeneralSettingsPage() {
   const settings = useLeaveSettings()
-  const save = useSaveLeaveSettings()
-  const canEdit = useCan(LEAVE_CODES.generalEdit)
-  const switchId = useId()
-  const form = useForm<Values>({
-    resolver: zodResolver(schema),
-    values: settings.data && {
-      finalApprovalBy: settings.data.finalApprovalBy,
-      approveOnStatus: settings.data.approveOnStatus,
-      postDeadline: settings.data.postDeadline,
-    },
-  })
-
-  const submit = form.handleSubmit(async (values) => {
-    try {
-      await save.mutateAsync({ ...values, rowVersion: settings.data?.rowVersion ?? null })
-      form.reset(values)
-    } catch (failure) {
-      if (failure instanceof ApiError) form.setError('root', { message: failure.message })
-    }
-  })
 
   if (settings.error && !settings.data) {
     return (
@@ -80,6 +64,31 @@ export function LeaveGeneralSettingsPage() {
       </div>
     )
   }
+  return <GeneralSettingsForm settings={settings.data} />
+}
+
+/** Made once the settings are loaded, so every field (the switch too) starts with its value. */
+function GeneralSettingsForm({ settings }: { settings: LeaveSettings }) {
+  const save = useSaveLeaveSettings()
+  const canEdit = useCan(LEAVE_CODES.generalEdit)
+  const switchId = useId()
+  const form = useForm<Values>({
+    resolver: zodResolver(schema),
+    values: {
+      finalApprovalBy: settings.finalApprovalBy,
+      approveOnStatus: settings.approveOnStatus,
+      postDeadline: settings.postDeadline,
+    },
+  })
+
+  const submit = form.handleSubmit(async (values) => {
+    try {
+      await save.mutateAsync({ ...values, rowVersion: settings.rowVersion })
+      form.reset(values)
+    } catch (failure) {
+      if (failure instanceof ApiError) form.setError('root', { message: failure.message })
+    }
+  })
 
   return (
     <form

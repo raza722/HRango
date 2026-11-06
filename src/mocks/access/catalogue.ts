@@ -384,6 +384,7 @@ export const ACTION_LABELS: Readonly<Record<string, string>> = {
   print: 'Print',
   download: 'Download',
   assign: 'Assign',
+  end_session: 'End sessions',
   cancel: 'Cancel',
   clock: 'Clock in and out',
   verify: 'Verify',

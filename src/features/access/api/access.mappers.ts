@@ -1,3 +1,4 @@
+import { moduleName, screenName } from '../constants'
 import {
   type AuditEntry,
   type EffectivePermission,
@@ -78,8 +79,8 @@ const textOrNull = (value: string | null | undefined): string | null =>
 export const toPermissionDef = (dto: PermissionOutDto): PermissionDef => ({
   id: dto.id,
   code: dto.code,
-  module: dto.module,
-  screen: dto.screen,
+  module: moduleName(dto.module),
+  screen: screenName(dto.screen, dto.label),
   actionCode: dto.actionCode,
   label: dto.label,
   hint: textOrNull(dto.hint),
@@ -94,8 +95,8 @@ const toUnit = (dto: UnitOutDto): Unit => ({
 
 const toTick = (dto: TickOutDto): Tick => ({
   code: dto.code,
-  module: dto.module,
-  screen: dto.screen,
+  module: moduleName(dto.module),
+  screen: screenName(dto.screen, dto.label),
   actionCode: dto.actionCode,
   label: dto.label,
   isSensitive: dto.isSensitive,
@@ -178,7 +179,7 @@ export function toUserIn(input: UserInput, rowVersion?: string): UserInDto {
 
 export const toEffectivePermission = (dto: EffectivePermissionOutDto): EffectivePermission => ({
   code: dto.code,
-  module: dto.module,
+  module: moduleName(dto.module),
   label: dto.label,
   isSensitive: dto.isSensitive,
   scopes: dto.scopes.map(scopeOf),
@@ -189,7 +190,7 @@ export const toOverride = (dto: OverrideOutDto): Override => ({
   id: dto.id,
   userAccountId: dto.userAccountId,
   code: dto.code,
-  module: dto.module,
+  module: moduleName(dto.module),
   label: dto.label,
   isSensitive: dto.isSensitive,
   effect: oneOf(OVERRIDE_EFFECTS, dto.effect),

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { isToday } from 'date-fns'
 
+import { PanScroll } from '@/components/layout'
 import { EmployeeAvatar } from '@/components/layout/employee-avatar'
 import { cn } from '@/lib/utils'
 
@@ -368,7 +369,9 @@ export function BoardView({
   const [over, setOver] = useState<string | null>(null)
 
   return (
-    <div className="relative flex snap-x gap-4 overflow-x-auto pb-3" role="list" aria-label="Board">
+    // The columns run wider than the screen: a floating scrollbar, drag on empty space (not on
+    // the cards, which drag between columns) and edge shadows (PanScroll).
+    <PanScroll className="flex snap-x gap-4 pb-3" role="list" aria-label="Board" edges>
       {groups.map(({ status, tasks }) => {
         const cards = tasks.toSorted((a, b) => a.order - b.order)
         const open = adding === status.id || composer?.statusId === status.id
@@ -443,6 +446,6 @@ export function BoardView({
           </section>
         )
       })}
-    </div>
+    </PanScroll>
   )
 }

@@ -503,7 +503,8 @@ const def: StandardKindServer<Input> = {
         reason: 'Minor surgery.',
       }),
       full('lv_0006', 'em_mahnoor', 'lt_casual', 3, 1, 'rejected', { daysAgo: 4 }),
-      halfDay('lv_0007', 'em_shelley', 'lt_sick', 2, 'pending', { daysAgo: 1 }),
+      // Casual: of the seeded types only it allows short leave (Sick Leave is full days).
+      halfDay('lv_0007', 'em_shelley', 'lt_casual', 2, 'pending', { daysAgo: 1 }),
       full('lv_0008', 'em_shelley', 'lt_casual', -10, 1, 'completed', {
         daysAgo: 14,
         reason: 'Bank and passport office.',

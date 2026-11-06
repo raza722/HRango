@@ -39,7 +39,7 @@ const entryOf = (employeeId: string, date: string) =>
 describe('Work From Home (the shared standard request pages, on /requests/work-from-home)', () => {
   // Long: two date picks, the strip and a save; the default 15 s is tight on a busy machine.
   it('lists the requests with "Completed", and saves the shifts ticked in the week strip', async () => {
-    const { user } = renderApp('/requests/work-from-home')
+    const { user } = renderApp('/requests/work-from-home?scope=my')
 
     expect(await screen.findByRole('heading', { name: 'WFH Requests' })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'WFH-0007' })).toBeVisible()

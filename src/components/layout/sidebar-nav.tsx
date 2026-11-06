@@ -28,7 +28,7 @@ const rowClassName = cn(
 const activeRowClassName =
   'data-[status=active]:bg-sidebar-accent data-[status=active]:text-sidebar-foreground'
 const iconClassName =
-  'size-5 shrink-0 text-sidebar-muted transition-colors group-hover:text-sidebar-foreground group-data-[status=active]:text-sidebar-foreground'
+  'size-5 shrink-0 text-sidebar-muted transition-[color,scale] duration-200 ease-out-soft group-hover:scale-110 group-hover:text-sidebar-foreground group-data-[status=active]:text-sidebar-foreground'
 
 function WithTooltip({
   label,
@@ -119,7 +119,7 @@ function NavGroup({
         <ChevronDown
           aria-hidden="true"
           className={cn(
-            'size-4 shrink-0 text-sidebar-muted transition-transform',
+            'size-4 shrink-0 text-sidebar-muted transition-transform duration-200 ease-out-soft',
             open && 'rotate-180',
           )}
         />
@@ -127,7 +127,7 @@ function NavGroup({
       <ul
         id={listId}
         hidden={!open}
-        className="mt-1 ml-[1.375rem] flex flex-col gap-0.5 border-l border-sidebar-border pl-3"
+        className="mt-1 ml-[1.375rem] flex animate-in flex-col gap-0.5 border-l border-sidebar-border pl-3 duration-200 fade-in-0 slide-in-from-top-1"
       >
         {item.children.map((child) => (
           <li key={child.to}>
@@ -245,12 +245,19 @@ function TreeEntry({
           >
             <ChevronDown
               aria-hidden="true"
-              className={cn('size-4 transition-transform', shown && 'rotate-180')}
+              className={cn(
+                'size-4 transition-transform duration-200 ease-out-soft',
+                shown && 'rotate-180',
+              )}
             />
           </button>
         )}
       </div>
-      <ul id={listId} hidden={!shown} className="mt-1 flex flex-col gap-1 pl-3">
+      <ul
+        id={listId}
+        hidden={!shown}
+        className="mt-1 flex animate-in flex-col gap-1 pl-3 duration-200 fade-in-0 slide-in-from-top-1"
+      >
         {child.children.map((grandchild) => (
           <TreeEntry key={childKey(grandchild)} child={grandchild} onNavigate={onNavigate} />
         ))}
@@ -345,12 +352,17 @@ function NavTree({
         <ChevronDown
           aria-hidden="true"
           className={cn(
-            'size-4 shrink-0 text-sidebar-muted transition-transform',
+            'size-4 shrink-0 text-sidebar-muted transition-transform duration-200 ease-out-soft',
             open && 'rotate-180',
           )}
         />
       </button>
-      <ul id={listId} hidden={!open} className="mt-1 flex flex-col gap-1 pl-1.5">
+      {/* Opening slides the list down into place (it replays each time `hidden` comes off). */}
+      <ul
+        id={listId}
+        hidden={!open}
+        className="mt-1 flex animate-in flex-col gap-1 pl-1.5 duration-200 fade-in-0 slide-in-from-top-1"
+      >
         {item.children.map((child) => (
           <TreeEntry key={childKey(child)} child={child} onNavigate={onNavigate} />
         ))}

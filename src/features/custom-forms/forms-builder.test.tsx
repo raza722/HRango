@@ -298,7 +298,7 @@ describe('Custom Form → Forms', { timeout: 60_000 }, () => {
     server.use(http.get(apiPath('/forms'), () => errorResponse(404, 'Not Found')))
     renderApp('/custom-form/forms')
     expect(await screen.findByText('Waiting for the server', {}, FIRST_LOAD)).toBeVisible()
-    expect(screen.getByText(/need backend endpoints that do not exist yet/)).toBeVisible()
+    expect(screen.getByText(/need features this server doesn't have yet/)).toBeVisible()
     // Nothing is shown, so nothing is marked as sample data, and nothing can be built.
     expect(screen.queryByText('Sample data')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'New Form' })).not.toBeInTheDocument()

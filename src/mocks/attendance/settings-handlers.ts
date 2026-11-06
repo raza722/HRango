@@ -20,7 +20,7 @@ import type { GeoFence } from '@/features/scheduling'
 import type { ApiItem, Paginated } from '@/types/api'
 
 import { findEmployee } from '../employees/seed'
-import { geoFences } from '../scheduling/handlers'
+import { clearRestDayRule, geoFences, writeRestDayRule } from '../scheduling/handlers'
 import { branches, locations } from '../settings/handlers'
 import { CITIES, COUNTRIES, STATES } from '../settings/seed'
 import {
@@ -693,6 +693,13 @@ function saveRestDayRule(input: z.infer<typeof restDaySchema>, existing: RestDay
   }
   if (existing) restDayRules.update(existing.id, record)
   else restDayRules.insert(record)
+  // The rule's rest days on the Scheduling board (regenerated on a save, as the API does).
+  clearRestDayRule(record.id)
+  writeRestDayRule(
+    record,
+    employees.map((person) => person.employeeId),
+    dates,
+  )
   return ok(record, existing ? 200 : 201)
 }
 
@@ -1113,6 +1120,7 @@ export const attendanceSettingsHandlers = [
       const stale = checkDeleteVersion(request, existing.rowVersion, 'rest day rule')
       if (stale) return stale
       restDayRules.remove(existing.id)
+      clearRestDayRule(existing.id)
       return noContent()
     }),
   ),

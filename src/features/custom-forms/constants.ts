@@ -35,9 +35,6 @@ export const CF_CODES = {
   myFormsSubmit: 'forms.my_forms.submit',
 } as const
 
-/** Where the backend gap is written up. */
-export const BACKEND_DEPENDENCY = 'Custom Form'
-
 export const FORM_PAGE_SIZE = 10
 export const FORM_PAGE_SIZES = [10, 20, 50] as const
 

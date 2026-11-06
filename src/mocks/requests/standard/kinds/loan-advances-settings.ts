@@ -381,9 +381,22 @@ function crud<
   ]
 }
 
-/** Settings → Types and Categories. */
+/**
+ * Settings → Types and Categories, and the Type dialog's "Employment Contract Type" picker
+ * (`/organisation/lookups/employment-types`): no other mock knows these types, and the ones
+ * after this (Manpower Planning's) answer an empty list for any kind they do not hold.
+ */
 export function loanSettingsHandlers(usedBy: UsedBy): HttpHandler[] {
   return [
+    http.get(apiPath('/organisation/lookups/employment-types'), async ({ request }) => {
+      const unauthorized = await guard(request)
+      if (unauthorized) return unauthorized
+      const q = new URL(request.url).searchParams.get('q')?.trim().toLowerCase()
+      const rows = LOAN_EMPLOYMENT_TYPES.filter(
+        (item) => !q || item.name.toLowerCase().includes(q),
+      ).map((item) => ({ ...item, code: null, parentId: null }))
+      return HttpResponse.json<ApiItem<typeof rows>>({ data: rows })
+    }),
     ...crud(
       {
         path: 'types',

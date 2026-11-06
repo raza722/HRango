@@ -34,6 +34,7 @@ import {
   useAssetTypeOptions,
   useDeleteAsset,
   useEverAllocated,
+  useLastPageWithRows,
   useSetAssetActive,
 } from '../../hooks/use-assets'
 import { type Asset, ASSET_AVAILABILITIES, ASSET_STATUSES } from '../../types/assets.types'
@@ -92,9 +93,10 @@ export function CompanyAssetsPage() {
     (list.data?.data ?? []).map((row) => row.id),
     canDelete,
   )
-  const goTo = (next: number) => {
-    void navigate({ search: (prev) => ({ ...prev, page: next }) })
+  const goTo = (next: number, replace = false) => {
+    void navigate({ search: (prev) => ({ ...prev, page: next }), replace })
   }
+  useLastPageWithRows(list, page, goTo)
   const fields: FilterField[] = [
     {
       kind: 'select',

@@ -139,6 +139,13 @@ function PermissionsTab({
         catalogue={catalogue}
         draft={draft}
         onChange={(next) => {
+          // A tick the person has just changed (a unit picked, the scope changed) loses its
+          // message; Save checks it again. The other ticks keep theirs.
+          setErrors((current) =>
+            Object.fromEntries(
+              Object.entries(current).filter(([code]) => next.get(code) === draft.get(code)),
+            ),
+          )
           setDraft(next)
           setFailure(null)
         }}

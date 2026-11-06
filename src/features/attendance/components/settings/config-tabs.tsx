@@ -9,6 +9,7 @@ import {
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 
+import { ErrorState } from '@/components/feedback/error-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -289,8 +290,9 @@ function BasicTab() {
 }
 
 /**
- * Scheduling Configurations. The API stores no such switches yet (only the mock API answers);
- * against the real API the tab says so and the switches stay off.
+ * Scheduling Configurations (`GET/PUT /attendance/settings/scheduling`). A server from before that
+ * route answers 404: the tab then says the switches can't be saved and keeps them off. Any other
+ * failure is an error with Try again.
  */
 function SchedulingTab() {
   const settings = useSchedulingSettings()
@@ -299,7 +301,7 @@ function SchedulingTab() {
     resolver: zodResolver(schedulingSchema),
     values: settings.data,
   })
-  const unavailable = settings.isError
+  const unavailable = settings.error instanceof ApiError && settings.error.isNotFound
 
   const submit = form.handleSubmit(async (values) => {
     try {
@@ -310,6 +312,17 @@ function SchedulingTab() {
   })
 
   if (settings.isPending) return <LoadingForm />
+  if (settings.isError && !unavailable) {
+    return (
+      <ErrorState
+        message={settings.error.message}
+        onRetry={() => {
+          void settings.refetch()
+        }}
+        className="m-4 shadow-none sm:m-6"
+      />
+    )
+  }
 
   return (
     <form

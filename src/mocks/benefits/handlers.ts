@@ -14,7 +14,7 @@ import type { ApiErrorBody, ApiItem } from '@/types/api'
 
 import { toProfile } from '../attendance/seed'
 import { DIRECTORY, findEmployee } from '../employees/seed'
-import { mockFileUrl } from '../files/handlers'
+import { mockFileUrl, mockUpload } from '../files/handlers'
 import { orgLookupHandlers } from '../manpower-planning/org-lookups'
 import { employees as employeeRecords } from '../talent-management/db'
 import {
@@ -354,13 +354,14 @@ export const benefitsHandlers = [
     if (!plan) return notFound('Plan')
     const body = await readBody(request, z.object({ fileId: z.coerce.string().min(1) }))
     if (body instanceof Response) return body
-    // The shared files mock keeps the upload's name to itself: the mock names it by its id.
+    // The name, type and size the upload was made with (the shared files mock keeps them).
+    const upload = mockUpload(body.fileId)
     const rec: FileRec = {
       id: createId('at'),
       fileId: body.fileId,
-      fileName: `${body.fileId}.pdf`,
-      mimeType: 'application/pdf',
-      sizeBytes: null,
+      fileName: upload?.name ?? `${body.fileId}.pdf`,
+      mimeType: upload?.mimeType ?? 'application/pdf',
+      sizeBytes: upload?.sizeBytes ?? null,
       planId: plan.id,
       createdAt: now(),
       rowVersion: '0000000000000001',

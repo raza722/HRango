@@ -87,8 +87,12 @@ export function AuthenticatedLayout({ children }: { children?: ReactNode } = {})
         <main
           id="main-content"
           tabIndex={-1}
-          // Bottom padding clears the iPhone home indicator.
-          className="min-w-0 flex-1 px-4 pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] outline-none sm:px-6 sm:pt-5 lg:px-8 lg:pt-6"
+          // `isolate`: the page is its own stacking layer, so a z-index inside it (a table's
+          // sticky first column, a board's frozen rows) can never paint over the top bar or the
+          // sidebar however high it is. Dialogs, menus and toasts render outside, in portals.
+          // `*:animate-page-in`: a new page settles in (a search or filter change keeps the same
+          // page element, so it does not replay). Bottom padding clears the iPhone home indicator.
+          className="isolate min-w-0 flex-1 px-4 pt-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] outline-none *:animate-page-in sm:px-6 sm:pt-5 lg:px-8 lg:pt-6"
         >
           <InShellContext value={true}>
             {children ?? (canOpen(user, pathname) ? <Outlet /> : <NoAccess />)}

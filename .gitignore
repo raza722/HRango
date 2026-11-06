@@ -7,6 +7,9 @@ dist-ssr
 coverage
 *.tsbuildinfo
 
+# TanStack Router generator's scratch files
+.tanstack
+
 # local env files (commit .env.example / .env.development only)
 .env.local
 .env.*.local

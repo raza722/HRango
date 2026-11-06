@@ -28,12 +28,12 @@ export const ME = CURRENT_EMPLOYEE_ID
 export const ME_USER_ID = 'usr_shelley'
 
 const day = (offset: number) => format(addDays(new Date(), offset), 'yyyy-MM-dd')
-/** UTC instants without an offset, as the API writes them. */
-const at = (daysAgo: number, hour = 10) => {
-  const date = subDays(new Date(), daysAgo)
-  date.setUTCHours(hour, 30, 0, 0)
-  return date.toISOString().slice(0, 19)
-}
+/**
+ * UTC instants without an offset, as the API writes them, on the local calendar day `daysAgo`
+ * back (like `day`): taking the UTC date instead put "today" on yesterday after local midnight.
+ */
+const at = (daysAgo: number, hour = 10) =>
+  `${format(subDays(new Date(), daysAgo), 'yyyy-MM-dd')}T${String(hour).padStart(2, '0')}:30:00`
 
 let version = 0x2000
 /** A fresh row version (16 hex digits, as the API sends them). */

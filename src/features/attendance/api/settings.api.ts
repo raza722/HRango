@@ -125,7 +125,7 @@ export const settingsApi = {
   basic: (signal?: AbortSignal) => getData<BasicSettings>('/attendance/settings/basic', signal),
   saveBasic: (input: BasicSettings) =>
     send<BasicSettings>('put', '/attendance/settings/basic', input),
-  /** Not in the API yet: only the mock API answers (see docs/backend-mapping). */
+  /** `attendance.settings.basic.view` / `.edit`, like Basic. */
   scheduling: (signal?: AbortSignal) =>
     getData<SchedulingSettings>('/attendance/settings/scheduling', signal),
   saveScheduling: (input: SchedulingSettings) =>

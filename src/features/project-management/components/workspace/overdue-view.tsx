@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { differenceInCalendarDays, parseISO } from 'date-fns'
 
+import { PanScroll } from '@/components/layout'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -172,7 +173,10 @@ function TaskTable({
     'px-3 py-2 text-left text-sm font-semibold whitespace-nowrap text-[#626262] dark:text-title'
   const cell = 'px-3 py-3 align-top text-sm text-[#303030] dark:text-title'
   return (
-    <div className="relative overflow-x-auto rounded-[0.875rem] border border-[#ECECEC] bg-white dark:border-border dark:bg-card">
+    <PanScroll
+      className="rounded-[0.875rem] border border-[#ECECEC] bg-white dark:border-border dark:bg-card"
+      edges
+    >
       <table className="w-full min-w-[44rem] border-collapse">
         <caption className="sr-only">{caption}</caption>
         <thead>
@@ -232,7 +236,7 @@ function TaskTable({
           ))}
         </tbody>
       </table>
-    </div>
+    </PanScroll>
   )
 }
 

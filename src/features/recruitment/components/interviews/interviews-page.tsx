@@ -351,7 +351,7 @@ export function InterviewsPage() {
                           onClick={() => {
                             update({ view: row.id })
                           }}
-                          className="w-fit max-w-full rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                          className="w-fit max-w-full min-w-0 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                         >
                           <CandidateCell
                             name={row.applicantName}

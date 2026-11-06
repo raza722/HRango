@@ -148,12 +148,24 @@ function DependentDialog({
  * the man / woman icon by relation, and the add button. Edit and Delete on each card.
  */
 export function DependentsTab({ employee }: { employee: Employee }) {
-  const canEdit = useCanOnEmployee(TM_CODES.dependents, employee.id)
-  const dependents = useEmployeeChildren(employee.id, 'dependents')
+  // Without `employees.dependents.view` for this person (line managers, department heads) the
+  // API refuses the list: say so instead of asking.
+  const canView = useCanOnEmployee(TM_CODES.dependentsView, employee.id)
+  const canEdit = useCanOnEmployee(TM_CODES.dependents, employee.id) && canView
+  const dependents = useEmployeeChildren(employee.id, 'dependents', canView)
   const remove = useDeleteChild('dependents', 'Dependent')
   const [editing, setEditing] = useState<Dependent | 'new' | null>(null)
   const [deleting, setDeleting] = useState<Dependent | null>(null)
   const rows = dependents.data ?? []
+
+  if (!canView) {
+    return (
+      <div className="@container grid gap-4">
+        <h3 className="text-base font-medium text-title">Dependents</h3>
+        <EmptyNote>You can’t see this person’s dependents.</EmptyNote>
+      </div>
+    )
+  }
 
   return (
     <div className="@container grid gap-4">

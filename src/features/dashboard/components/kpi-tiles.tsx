@@ -74,7 +74,7 @@ export function KpiTile({
     <>
       <span
         aria-hidden="true"
-        className="hidden size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary @[11rem]:flex dark:bg-primary/20 dark:text-[#c4b5fd]"
+        className="hidden size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary transition-[background-color,scale] duration-200 ease-out-soft group-hover:scale-110 group-hover:bg-primary/15 @[11rem]:flex dark:bg-primary/20 dark:text-[#c4b5fd]"
       >
         <Icon className="size-5" />
       </span>
@@ -113,7 +113,7 @@ export function KpiTile({
           aria-describedby={hasNote ? noteId : undefined}
           className={cn(
             tileClass,
-            'transition-shadow outline-none hover:shadow-md hover:ring-1 hover:ring-primary/30 focus-visible:ring-2 focus-visible:ring-ring/60',
+            'group transition-[box-shadow,translate] duration-200 ease-out-soft outline-none hover:-translate-y-0.5 hover:shadow-lift hover:ring-1 hover:ring-primary/30 focus-visible:ring-2 focus-visible:ring-ring/60 active:translate-y-0 motion-reduce:hover:translate-y-0',
           )}
         >
           {body}
@@ -148,7 +148,11 @@ export function KpiRow({
   error?: { what: string; error: Error | null; onRetry: () => void } | undefined
 }) {
   return (
-    <ul aria-label={label} className={cn('grid gap-3 sm:gap-4', ROW_COLUMNS[columns])}>
+    <ul
+      aria-label={label}
+      // The tiles enter one after another.
+      className={cn('grid stagger-children gap-3 sm:gap-4', ROW_COLUMNS[columns])}
+    >
       {error && (
         <li className="col-span-full">
           <WidgetError what={error.what} error={error.error} onRetry={error.onRetry} />

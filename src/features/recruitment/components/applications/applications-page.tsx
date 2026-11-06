@@ -332,9 +332,9 @@ export function ApplicationsPage() {
           actionsFor={(application) =>
             actions.actionsFor(application).filter((item) => item.label !== 'Move Stage')
           }
-          onMove={(application, stage) => {
-            move.mutate({ record: application, body: { stage } })
-          }}
+          onMove={(application, stage) =>
+            move.mutateAsync({ record: application, body: { stage } })
+          }
           onDropClosed={(application, stage) => {
             actions.open(
               stage === 'rejected' ? 'reject' : stage === 'hired' ? 'hire' : 'withdraw',

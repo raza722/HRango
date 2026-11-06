@@ -178,7 +178,7 @@ designations|grades|job-titles}`; places from `GET /organisation/geo/countries |
 | Tab             | Routes                                                                                                            | Permission codes                        |
 | --------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | Basic           | `GET/PUT /api/attendance/settings/basic`                                                                          | `attendance.settings.basic.view/edit`   |
-| Scheduling      | none in the API (mock only: `GET/PUT /attendance/settings/scheduling`)                                            | none                                    |
+| Scheduling      | `GET/PUT /api/attendance/settings/scheduling` (backend of 30 Oct 2026)                                            | `attendance.settings.basic.view/edit`   |
 | Rest Days       | `GET/POST /api/scheduling/settings/rest-days`, `GET/PUT/DELETE …/rest-days/{id}`, `POST …/rest-days/delete-range` | `scheduling.settings.rest_days.*`       |
 | Break Types     | `GET/POST /api/scheduling/settings/break-types`, `PUT/DELETE …/{id}`                                              | `scheduling.settings.break_types.*`     |
 | IP Restrictions | `GET/POST /api/attendance/settings/ip-restrictions`, `GET/PUT/DELETE …/{id}`                                      | `attendance.settings.ip_restrictions.*` |
@@ -197,12 +197,10 @@ pictureOnDashboardPunch, minimumWorkableMinutes, lateGraceMinutes, rowVersion}`.
 
 ### Scheduling
 
-- **Backend gap**: the switches "Geo Fences Required On Shift" and "Ignore rest days for shift selection" have no
-  endpoint. `att.usp_clock` reads `company_setting (scheduling, geo_fence_required_on_shift)` but nothing writes it;
-  "ignore rest days" is not read anywhere. Decision: keep the tab; it calls `GET/PUT /attendance/settings/scheduling`,
-  which only the mock answers. Against the API the 404 shows "These switches cannot be saved yet: the server does not
-  store them." with the switches disabled. Needed: e.g. `GET/PUT /api/scheduling/settings/configuration`
-  (`geoFenceRequiredOnShift`, `ignoreRestDaysForLeaves`, `rowVersion`) with a `scheduling.settings.*` code.
+- The backend of 30 Oct 2026 has `GET/PUT /attendance/settings/scheduling` (guarded by Basic's codes, so the tab
+  shows with `attendance.settings.basic.view`). A server from before that answers 404: the tab then shows "These
+  switches cannot be saved yet: the server does not store them." with the switches disabled. Any other failure shows
+  an error with Try again (until 30 Oct 2026 every failure read as "not stored").
 
 ### Rest Days
 
@@ -273,8 +271,9 @@ stateId, cityId, religion}` plus names in responses. Removed the rule **Name** f
   computed `addressCount`, `dayCount`, `restDayCount`). Records are stored in the API's shapes under new storage keys
   (`…-api`). Geo fences still store name and drawing in Scheduling's `geoFences` collection (Scheduling's pickers keep
   seeing them) plus details in `geoFenceSettings` (`id`, `active` still read by `mocks/scheduling/handlers.ts`).
-- Rest-day rules are a new `restDayRules` collection; the mock attendance engine does not turn them into rest days
-  (it never read rest-day rules), so in mock mode a new rule does not change time sheets.
+- Rest-day rules are a new `restDayRules` collection. Saving or deleting one writes or clears its rest days on the
+  Scheduling board store (see roster-scheduling.md); the mock attendance engine still does not read them, so in mock
+  mode a new rule does not change time sheets.
 - `/employees/lookup` for these tabs' codes (`attendance.*`, `scheduling.settings.*`) is answered by the attendance
   mock (see Mocks below); `/organisation/lookups/*` and `/organisation/geo/*` come from the settings mocks.
 - `audience.ts`: `holidayFor` follows the new rule shape (ids of the branch's country/state/city); `matchesTargets`

@@ -58,7 +58,7 @@ async function openAction(user: UserEvent, code: string, action: string) {
 describe('Official Visits (the shared standard request pages)', () => {
   it('lists my visits and everyone’s, and files one with its attachment', async () => {
     acceptUploads()
-    const { user } = renderApp('/requests/official-visits')
+    const { user } = renderApp('/requests/official-visits?scope=my')
 
     expect(await screen.findByRole('heading', { name: 'Official Visit Requests' })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'OV-0003' })).toBeVisible()

@@ -108,6 +108,23 @@ describe('End of Employment', { timeout: 60_000 }, () => {
     expect(record?.finalSettlementId).toBe(settlement?.id)
   })
 
+  it('saves a checklist answer edited straight before Save', async () => {
+    const { user } = renderApp('/end-of-employment/pending')
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for Talha Aziz' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Edit' }))
+    const dialog = await screen.findByRole('dialog', { name: 'End of Employment Edit' })
+    await user.click(within(dialog).getByRole('tab', { name: 'Checklist' }))
+    await pickDay(user, dialog, /^Access Card Returned/, new Date())
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('End of employment updated')).toBeInTheDocument()
+    const record = endOfEmployments.find('eoe_1')
+    expect(record?.checklist.cf_access_card).toBe(format(new Date(), 'yyyy-MM-dd'))
+    // The other answers are kept as they were.
+    expect(record?.checklist.cf_handover).toBe('Deployment scripts handed to Asad Mehmood.')
+  })
+
   it('opens the clearance form, filled in, when Asset Clearance is ticked', async () => {
     const { user } = renderApp('/end-of-employment/all')
 

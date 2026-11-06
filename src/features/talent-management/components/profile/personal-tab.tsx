@@ -13,6 +13,7 @@ import {
   GENDER_LABELS,
   labelOf,
   MARITAL_LABELS,
+  personalHidden,
   SALARY_FREQUENCY_LABELS,
   statusMeta,
   TM_CODES,
@@ -199,7 +200,9 @@ function EmergencyContacts({ employee }: { employee: Employee }) {
             >
               <div className="min-w-0">
                 <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-title">
-                  {contact.name}
+                  {/* A flex item keeps its longest word's width unless it may shrink: min-w-0 lets a
+                      long unbroken name wrap inside the card instead of running out of it. */}
+                  <span className="min-w-0 break-words">{contact.name}</span>
                   {contact.isPrimary && (
                     <Chip
                       meta={{
@@ -210,7 +213,7 @@ function EmergencyContacts({ employee }: { employee: Employee }) {
                     />
                   )}
                 </p>
-                <p className="text-xs text-grey">
+                <p className="text-xs break-words text-grey">
                   {labelOf(EMERGENCY_RELATION_LABELS, contact.relation)} | {contact.phone}
                   {contact.altPhone ? `, ${contact.altPhone}` : ''}
                 </p>
@@ -266,7 +269,7 @@ function EmergencyContacts({ employee }: { employee: Employee }) {
  * organisation), and the emergency contacts.
  */
 export function PersonalTab({ employee }: { employee: Employee }) {
-  const hidden = employee.canSeePersonal === false
+  const hidden = personalHidden(employee)
   const personally = (value: string) => (hidden ? 'Hidden' : value)
   const personal: [string, string][] = [
     ['Full Name', employee.name],

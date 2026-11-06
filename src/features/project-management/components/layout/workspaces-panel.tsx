@@ -94,7 +94,10 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
 
   if (collapsed) {
     return (
-      <aside aria-label="Workspaces" className="flex shrink-0 justify-start lg:w-12">
+      <aside
+        aria-label="Workspaces"
+        className="flex shrink-0 justify-start lg:sticky lg:top-[6.125rem] lg:w-12 lg:self-start"
+      >
         <button
           type="button"
           onClick={() => {
@@ -112,7 +115,11 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
   return (
     <aside
       aria-label="Workspaces"
-      className="flex shrink-0 flex-col rounded-[1.625rem] bg-white p-2.5 shadow-xs lg:max-h-[calc(100dvh-8rem)] lg:w-[18.75rem] dark:bg-card"
+      // Beside the page (lg+) the panel stays in view while a long list scrolls: it sticks just
+      // under the top bar (74px bar + 24px page padding = 6.125rem) and is the screen's height,
+      // so its own list scrolls inside it. Stacked above the page on smaller screens it scrolls
+      // away with it.
+      className="flex shrink-0 flex-col rounded-[1.625rem] bg-white p-2.5 shadow-xs lg:sticky lg:top-[6.125rem] lg:h-[calc(100dvh-8rem)] lg:w-[18.75rem] lg:self-start dark:bg-card"
     >
       <div className="flex items-center justify-between pt-2.5 pl-2.5">
         <h2 className="text-base leading-6 font-medium text-[#4F4F4F] dark:text-title">

@@ -6,6 +6,8 @@ import { server } from '@/mocks/node'
 import { apiPath } from '@/mocks/utils'
 import { renderApp, setViewportWidth } from '@/test/test-utils'
 
+import { toPermissionDef } from './api/access.mappers'
+import { moduleName, screenName, tickText } from './constants'
 import { createUserFormSchema, overrideFormSchema, tickErrors } from './schemas/access-forms.schema'
 import { passwordIssue } from './schemas/password.schema'
 import { countChanges, draftOf } from './utils/permission-tree'
@@ -205,5 +207,35 @@ describe('Access schemas', () => {
       ),
     ).toBe(2)
     expect(countChanges(saved, new Map())).toBe(1)
+  })
+
+  it('names a tick without its screen, and never shows a raw action code', () => {
+    const tick = (label: string, actionCode: string) =>
+      tickText({ label, screen: 'Sessions', actionCode })
+    expect(tick('Sessions: View', 'view')).toBe('View')
+    expect(tick('Sessions: End sessions', 'end_session')).toBe('End sessions')
+    expect(tick('end_session', 'end_session')).toBe('End session')
+    expect(tick('Sessions: view_all', 'view_all')).toBe('View everyone')
+    expect(tick('', 'approve_final')).toBe('Approve final')
+  })
+
+  it('names the modules and screens the API sends as codes', () => {
+    // The backend's catalogue row: module and screen are codes, only the label names the screen.
+    const definition = toPermissionDef({
+      id: '7',
+      code: 'access.sessions.end_session',
+      module: 'access',
+      screen: 'access.sessions',
+      actionCode: 'end_session',
+      label: 'Sessions: End sessions',
+      hint: null,
+      isSensitive: false,
+    })
+    expect(definition).toMatchObject({ module: 'Access', screen: 'Sessions' })
+    expect(tickText(definition)).toBe('End sessions')
+    expect(moduleName('projects')).toBe('Project Management')
+    // The mock already sends names: they pass through.
+    expect(moduleName('Talent Management')).toBe('Talent Management')
+    expect(screenName('Sessions', 'Sessions: View')).toBe('Sessions')
   })
 })

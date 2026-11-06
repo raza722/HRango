@@ -1,7 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
+import { format, nextSaturday } from 'date-fns'
 import { describe, expect, it } from 'vitest'
 
+import { formatDisplayDate } from '@/lib/date'
 import { DEMO_USER } from '@/mocks/auth/handlers'
 import { useAuthStore } from '@/stores/auth-store'
 import { renderApp } from '@/test/test-utils'
@@ -182,6 +184,37 @@ describe('Scheduling dialogs', () => {
     expect(within(pick).getByRole('button', { name: 'Remove Laiba Shah' })).toBeVisible()
     await user.click(within(pick).getByRole('button', { name: 'Save' }))
     expect(await screen.findByText(/^Default shift applied/)).toBeInTheDocument()
+  })
+
+  it('turns a day off into a paid rest day from Create New Rest Day', async () => {
+    const saturday = format(nextSaturday(new Date()), 'yyyy-MM-dd')
+    const label = formatDisplayDate(saturday)
+    const week = { scope: 'all', view: 'week', date: saturday } as const
+    const { user, router } = renderApp(`/scheduling?scope=all&view=week&date=${saturday}&q=Kashif`)
+    // Kashif's roster has Saturdays off: the seed's "Day off".
+    expect(
+      await screen.findByRole('button', { name: `Kashif Raza, ${label}: day off` }),
+    ).toBeVisible()
+
+    // "+" on an empty day (Talha Aziz has left, so nothing is planned for him).
+    await router.navigate({ to: '/scheduling', search: { ...week, q: 'Talha' } })
+    await user.click(await screen.findByRole('button', { name: `Add to Talha Aziz, ${label}` }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Create rest day' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Create New Rest Day' })
+    await user.click(within(dialog).getByRole('switch', { name: /^Is Rest Day Payable/ }))
+    await user.click(await within(dialog).findByRole('checkbox', { name: 'Select Kashif Raza' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText(/^Rest days saved: 2 rest days added/)).toBeInTheDocument()
+
+    // The rule's rest day replaces the day off, payable, and says where it came from.
+    await router.navigate({ to: '/scheduling', search: { ...week, q: 'Kashif' } })
+    await user.click(
+      await screen.findByRole('button', { name: `Kashif Raza, ${label}: paid rest day` }),
+    )
+    await user.click(await screen.findByRole('button', { name: `View Kashif Raza, ${label}` }))
+    const view = await screen.findByRole('dialog', { name: 'Rest Day' })
+    expect(within(view).getByText('Yes, a paid rest day')).toBeVisible()
+    expect(within(view).getByText('A rest-day rule (Scheduling settings)')).toBeVisible()
   })
 
   it('deletes a date range for everyone after confirming', async () => {

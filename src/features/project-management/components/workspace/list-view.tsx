@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
 
 import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
+import { PanScroll } from '@/components/layout'
 
 import { columnFromApi } from '../../api/pm.mappers'
 import { COLUMN_LABELS } from '../../constants'
@@ -349,7 +350,9 @@ export function ListView({
           }
         />
       ) : (
-        <div className="@container/list relative overflow-x-auto pb-2">
+        // Wider than the screen with many columns: its scrollbar floats at the screen's bottom
+        // and empty space drags sideways (PanScroll), so the first columns are never far away.
+        <PanScroll className="@container/list pb-2">
           <div className="flex w-max min-w-full flex-col gap-[1.875rem]">
             {narrowed && shown.length === 0 && (
               <p
@@ -386,7 +389,7 @@ export function ListView({
               />
             ))}
           </div>
-        </div>
+        </PanScroll>
       )}
 
       <RolePermissionDialog

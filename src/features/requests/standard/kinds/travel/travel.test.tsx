@@ -72,7 +72,7 @@ const setTime = (label: RegExp | string, value: string) => {
 
 describe('Travel (the shared standard request pages)', () => {
   it('lists my requests and everyone’s', async () => {
-    const { user } = renderApp('/requests/travel')
+    const { user } = renderApp('/requests/travel?scope=my')
 
     expect(await screen.findByRole('heading', { name: 'Travel Request' })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'TR-0006' }, { timeout: 5000 })).toBeVisible()
@@ -88,7 +88,7 @@ describe('Travel (the shared standard request pages)', () => {
     { timeout: 40_000 },
     async () => {
       acceptUploads()
-      const { user } = renderApp('/requests/travel')
+      const { user } = renderApp('/requests/travel?scope=my')
 
       await user.click(await screen.findByRole('button', { name: 'Create' }))
       const dialog = await screen.findByRole('dialog', { name: 'Travel Request Create' })

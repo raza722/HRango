@@ -278,6 +278,12 @@ export function seedRestDayBatches(): RestDayBatchRecord[] {
   ]
 }
 
+/**
+ * The batch of the seeded roster weeks: their shifts and their days off (the roster's weekend,
+ * "Day off" on the board), which the API has no rest-day row for.
+ */
+export const SEED_BATCH_ID = 'batch_seed'
+
 export function seedEntries(): ScheduleEntry[] {
   const groups = new Map(seedRosterGroups().map((group) => [group.id, group]))
   const { from, to } = seedRange()
@@ -329,7 +335,7 @@ export function seedEntries(): ScheduleEntry[] {
             : [],
         slot: slotFor(group, isShift && (pattern.clockOut ?? '') < (pattern.clockIn ?? '')),
         restDayPayable: false,
-        batchId: 'batch_seed',
+        batchId: SEED_BATCH_ID,
         createdAt: stamp,
         updatedAt: stamp,
       })

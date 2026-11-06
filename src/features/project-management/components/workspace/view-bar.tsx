@@ -41,6 +41,9 @@ import { popupStyles } from './workspace-styles'
 const barButton =
   'inline-flex h-[3.1875rem] shrink-0 items-center gap-[0.6875rem] rounded-xl px-4 text-lg leading-[1.5] font-medium text-[#3D3D3D] dark:text-title outline-none transition-colors hover:bg-[#F8F5FF] dark:hover:bg-[#7127EA]/15 focus-visible:ring-2 focus-visible:ring-[#A181FF] data-[state=open]:bg-[#F8F5FF] dark:data-[state=open]:bg-[#7127EA]/15 [&_svg]:text-[#5D5D5D] dark:[&_svg]:text-title'
 
+/** Views the design has no screen for yet (the workspace page shows "not designed yet"). */
+const UNDESIGNED: ReadonlySet<ViewKind> = new Set(['gantt', 'workload', 'mind-map'])
+
 /** The 35 px grey rules between the view buttons and before Add Task. */
 const Divider = () => (
   <span
@@ -82,7 +85,8 @@ export function ViewBar({
   canAddView: boolean
 }) {
   const views = VIEW_KINDS.filter((kind) => kind === 'list' || workspace.setup.views.includes(kind))
-  const missing = VIEW_KINDS.filter((kind) => !views.includes(kind))
+  // A view with no screen yet is not offered (adding one would save an empty page for everyone).
+  const missing = VIEW_KINDS.filter((kind) => !views.includes(kind) && !UNDESIGNED.has(kind))
 
   return (
     <div className="flex min-h-[4.6875rem] flex-wrap items-center gap-2 rounded-xl bg-white p-3 dark:bg-card">

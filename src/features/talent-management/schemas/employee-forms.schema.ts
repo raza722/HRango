@@ -4,7 +4,12 @@ import { z } from 'zod'
 import { parseDateValue } from '@/lib/date'
 import type { FileRef } from '@/lib/files'
 
-import { CONTRACT_DURATIONS, DEPENDENT_SIDES, type DependentSide } from '../constants'
+import {
+  CONTRACT_DURATIONS,
+  DEPENDENT_SIDES,
+  type DependentSide,
+  personalHidden,
+} from '../constants'
 import {
   type BankAccountInput,
   CONTRACT_TYPES,
@@ -195,28 +200,33 @@ export function employeeToForm(employee: Employee | null): EmployeeFormValues {
 
 /**
  * The `EmployeeIn` body. The CNIC goes on a new record; on an edit it is left out (it changes
- * through `PUT …/identity`, and a masked CNIC must not be sent back as blank).
+ * through `PUT …/identity`, and a masked CNIC must not be sent back as blank). On a record whose
+ * personal details the API hid (`canSeePersonal: false`) those fields are left out too: the form
+ * was given nulls for them, and sending those back must not read as clearing them.
  */
 export function employeeFormToInput(
   values: EmployeeFormValues,
   employee: Employee | null,
 ): EmployeeInput {
-  return {
-    code: textOrNull(values.code),
-    firstName: values.firstName.trim(),
-    lastName: values.lastName.trim(),
+  const personal = {
     parentName: textOrNull(values.parentName),
-    gender: values.gender || null,
     maritalStatus: values.maritalStatus || null,
     religion: textOrNull(values.religion),
     nationality: textOrNull(values.nationality),
     dateOfBirth: values.dateOfBirth || null,
-    ...(employee ? {} : { cnic: textOrNull(values.cnic) }),
-    email: textOrNull(values.email),
     phone1: textOrNull(values.phone1),
     phone2: textOrNull(values.phone2),
     homeAddress: textOrNull(values.homeAddress),
     homeCityId: employee?.homeCityId ?? null,
+  } satisfies Partial<EmployeeInput>
+  return {
+    code: textOrNull(values.code),
+    firstName: values.firstName.trim(),
+    lastName: values.lastName.trim(),
+    gender: values.gender || null,
+    ...(employee && personalHidden(employee) ? {} : personal),
+    ...(employee ? {} : { cnic: textOrNull(values.cnic) }),
+    email: textOrNull(values.email),
     branchId: values.branchId ?? '',
     locationId: values.locationId,
     areaId: values.areaId,
@@ -291,7 +301,10 @@ export function profileToForm(employee: Employee): UpdateProfileValues {
   }
 }
 
-/** The record with the popup's fields changed (`PUT /employees/{id}`), and the CNIC apart. */
+/**
+ * The record with the popup's fields changed (`PUT /employees/{id}`), and the CNIC apart. Phone,
+ * Address, Date of Birth and Marital Status stay out when the API hid them (`canSeePersonal`).
+ */
 export function profileToInput(
   values: UpdateProfileValues,
   employee: Employee,
@@ -303,10 +316,14 @@ export function profileToInput(
       firstName,
       lastName,
       email: textOrNull(values.email),
-      phone1: textOrNull(values.phone),
-      homeAddress: textOrNull(values.address),
-      dateOfBirth: values.dateOfBirth || null,
-      maritalStatus: values.maritalStatus || null,
+      ...(personalHidden(employee)
+        ? {}
+        : {
+            phone1: textOrNull(values.phone),
+            homeAddress: textOrNull(values.address),
+            dateOfBirth: values.dateOfBirth || null,
+            maritalStatus: values.maritalStatus || null,
+          }),
     },
     cnic: employee.canSeeIdentity ? textOrNull(values.cnic) : undefined,
   }

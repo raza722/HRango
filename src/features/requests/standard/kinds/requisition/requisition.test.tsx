@@ -31,7 +31,7 @@ const confirmYes = async (user: UserEvent) => {
 
 describe('Requisitions (the shared standard request pages)', () => {
   it('submits a requisition with two items', async () => {
-    const { user } = renderApp('/requests/requisition')
+    const { user } = renderApp('/requests/requisition?scope=my')
 
     expect(await screen.findByRole('heading', { name: 'Requisitions' })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'RQN-0002' })).toBeVisible()

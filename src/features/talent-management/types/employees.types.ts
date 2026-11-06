@@ -34,7 +34,10 @@ export interface Employee {
   /** Null (masked) when `canSeeIdentity` is false. */
   cnic: string | null
   canSeeIdentity: boolean
-  /** False on a colleague's record without `employees.personal.view`: personal fields read null. */
+  /**
+   * False on a colleague's record without `employees.personal.view`: the `PERSONAL_FIELDS` read
+   * null. An API from before 30 Oct 2026 leaves it out (everything shown).
+   */
   canSeePersonal?: boolean
   email: string | null
   phone1: string | null
@@ -87,6 +90,26 @@ export interface Employee {
   updatedAt: string | null
   rowVersion: string
 }
+
+/**
+ * The `EmployeeOut` fields the API reads as null on a colleague's record when the user lacks
+ * `employees.personal.view` for them (`canSeePersonal: false`; backend `PERSONAL_FIELDS`).
+ */
+export const PERSONAL_FIELDS = [
+  'parentName',
+  'maritalStatus',
+  'religion',
+  'nationality',
+  'dateOfBirth',
+  'phone1',
+  'phone2',
+  'homeAddress',
+  'homeCityId',
+  'homeCityName',
+  'emergencyContactName',
+  'emergencyContactPhone',
+] as const satisfies readonly (keyof Employee)[]
+export type PersonalField = (typeof PERSONAL_FIELDS)[number]
 
 /** `POST /employees`, `PUT /employees/{id}` (`EmployeeIn`). Ids go as the strings the API gave. */
 export interface EmployeeInput {

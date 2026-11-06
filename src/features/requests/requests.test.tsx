@@ -4,6 +4,7 @@ import { addDays, differenceInCalendarMonths, format, isWeekend, subDays } from 
 import { describe, expect, it } from 'vitest'
 
 import { attendancePunches } from '@/mocks/attendance/db'
+import { holidays } from '@/mocks/attendance/settings-db'
 import { punchRequests, shiftRequests } from '@/mocks/requests/db'
 import { scheduleEntries } from '@/mocks/scheduling/handlers'
 import { renderApp } from '@/test/test-utils'
@@ -27,16 +28,25 @@ async function pickDate(user: UserEvent, label: string | RegExp, date: Date) {
   await user.click(screen.getByRole('button', { name: new RegExp(format(date, 'MMMM do, yyyy')) }))
 }
 
-/** Today or the last weekday before it (a Morning Work shift day). */
+/** A day off: a weekend, or a public holiday of the sample data (which has no shifts on it). */
+function isDayOff(day: Date): boolean {
+  const date = format(day, 'yyyy-MM-dd')
+  return (
+    isWeekend(day) ||
+    holidays.all().some((holiday) => holiday.startDate <= date && date <= holiday.endDate)
+  )
+}
+
+/** Today or the last working day before it (a Morning Work shift day). */
 function lastWeekday(): Date {
   let day = new Date()
-  while (isWeekend(day)) day = subDays(day, 1)
+  while (isDayOff(day)) day = subDays(day, 1)
   return day
 }
 
 function nextWeekday(): Date {
   let day = addDays(new Date(), 1)
-  while (isWeekend(day)) day = addDays(day, 1)
+  while (isDayOff(day)) day = addDays(day, 1)
   return day
 }
 
@@ -58,6 +68,12 @@ describe('Punch requests', () => {
     expect(
       await screen.findByRole('heading', { name: 'Punch Request', level: 1 }),
     ).toBeInTheDocument()
+    // The demo HR manager opens on everyone's requests; her own are under My.
+    expect(screen.getByRole('tab', { name: 'All Punch Requests' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    await user.click(screen.getByRole('tab', { name: 'My Punch Request' }))
     expect(await screen.findByRole('cell', { name: 'RQ-PCH-0001' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'All (3)' })).toBeVisible()
     // The sidebar's Requests tree and the sub menu both mark Punch as the current page.
@@ -187,7 +203,7 @@ describe('Punch requests', () => {
 
 describe('Shift requests', () => {
   it('asks to swap a shift with a colleague, who consents first', async () => {
-    const { user } = renderApp('/requests/shift')
+    const { user } = renderApp('/requests/shift?scope=my')
 
     const form = await screen.findByRole('form', { name: 'Shift Request' })
     await pickDate(user, /^Date/, nextWeekday())

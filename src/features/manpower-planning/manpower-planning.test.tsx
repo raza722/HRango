@@ -19,8 +19,8 @@ import { apiPath, MOCK_TOKEN_PREFIX } from '@/mocks/utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { renderApp } from '@/test/test-utils'
 
-// Organisation's pickers and the employee picker are other modules' endpoints: these tests
-// put the sample company's in front, whatever other mocks serve.
+// Manpower's own Organisation lists (divisions, groups, grades, cost centres) in front; the
+// departments, branches, job titles and people come from the shared Organisation mocks.
 beforeEach(() => {
   server.use(...orgLookupHandlers)
 })
@@ -37,7 +37,7 @@ async function rowOf(text: string) {
   return row
 }
 
-/** The row whose ⋮ menu has this name ("Actions for Accounts 2024"). */
+/** The row whose ⋮ menu has this name ("Actions for Accountant 2024"). */
 async function rowOfMenu(name: string) {
   const row = (await screen.findByRole('button', { name })).closest('tr')
   if (!row) throw new Error(`No row for ${name}`)
@@ -133,7 +133,7 @@ describe('Planning', () => {
     expect(within(apps).getByText('2025')).toBeVisible()
     expect(within(apps).getByText('Approved')).toBeVisible()
     expect(within(apps).getByText('Current')).toBeInTheDocument()
-    expect(within(apps).getByText('Hamza Ashraf')).toBeVisible()
+    expect(within(apps).getByText('Shelley Kannes')).toBeVisible()
     expect(screen.getByRole('cell', { name: 'Finance Planning' })).toBeVisible()
 
     await choose(user, 'Status', 'Pending')
@@ -213,7 +213,7 @@ describe('Planning', () => {
     expect(screen.getByRole('textbox', { name: 'Min salary, line 1' })).toHaveValue('30000')
     expect(screen.getByRole('textbox', { name: 'Max salary, line 1' })).toHaveValue('45000')
     expect(screen.getByLabelText('Department, line 1')).toHaveTextContent('Mobile App')
-    expect(screen.getByLabelText('Station, line 1')).toHaveTextContent('Lahore Johar Town')
+    expect(screen.getByLabelText('Station, line 1')).toHaveTextContent('Johar Town Delivery Centre')
     expect(screen.getByRole('button', { name: 'Plan from, line 1' })).toHaveTextContent('Jan 2026')
     expect(screen.getByRole('button', { name: 'Plan to, line 1' })).toHaveTextContent('Dec 2026')
     const allowance = screen.getByRole('textbox', { name: 'Total allowance, line 1' })
@@ -256,18 +256,50 @@ describe('Planning', () => {
     const plan = plans.all().find((item) => item.title === 'Design Hiring')
     expect(plan?.status).toBe('pending')
     expect(plan?.lines[0]).toMatchObject({ startDate: '2026-01-01', endDate: '2026-06-30' })
-    // One budget per title and department: the new designer and Maryam, a UI/UX Designer.
+    // One budget per title and department: the new Mobile App designer, and Maryam, a UI/UX
+    // Designer in Software.
     const asked = budgets.all().filter((item) => item.manpowerPlanId === plan?.id)
-    expect(asked).toHaveLength(1)
-    expect(asked[0]).toMatchObject({
+    expect(asked).toHaveLength(2)
+    expect(asked.find((item) => item.departmentId === 'dep_mobile-app')).toMatchObject({
       title: 'UI/UX Designer',
       budgetDurationId: 'bd_2026',
       totalPositions: 1,
-      amount: 50000 * 6 + 80000 * 12,
+      amount: 50000 * 6,
       startDate: '2026-01-01',
-      endDate: '2026-12-31',
+      endDate: '2026-06-30',
       status: 'pending',
     })
+    expect(asked.find((item) => item.departmentId === 'dep_software')).toMatchObject({
+      title: 'UI/UX Designer',
+      jobTitleId: 'jt_uiux',
+      totalPositions: 0,
+      amount: 80000 * 12,
+    })
+  }, 60_000)
+
+  it('keeps an attached file’s name and size on the plan', async () => {
+    // No upload stub: the shared files mock takes the upload, as in the running app.
+    const { user } = renderApp('/manpower-planning/planning/new')
+
+    expect(await screen.findByRole('heading', { name: 'Add Planning', level: 1 })).toBeVisible()
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'QA Plan')
+    await choose(user, 'Plan Year', '2026')
+    await user.click(screen.getByRole('button', { name: 'Add one new position' }))
+    await choose(user, 'Position, line 1', 'UI/UX Designer (12214)')
+    await user.upload(
+      screen.getByLabelText('Attach files to the plan'),
+      new File(['x'.repeat(2048)], 'qa-plan.pdf', { type: 'application/pdf' }),
+    )
+    expect(await screen.findByRole('link', { name: 'qa-plan.pdf' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Submit' }))
+    expect(await screen.findByText('Plan submitted for approval')).toBeInTheDocument()
+
+    expect(plans.all().find((item) => item.title === 'QA Plan')?.files).toEqual([
+      expect.objectContaining({ name: 'qa-plan.pdf', sizeBytes: 2048 }),
+    ])
+    await user.click(await screen.findByRole('link', { name: 'Details of QA Plan' }))
+    expect(await screen.findByRole('heading', { name: /Plan Details/, level: 1 })).toBeVisible()
+    expect(await screen.findByRole('link', { name: 'qa-plan.pdf' })).toBeVisible()
   }, 60_000)
 
   it('imports the department’s positions and employees into a plan', async () => {
@@ -302,6 +334,45 @@ describe('Planning', () => {
     ).toBeInTheDocument()
   })
 
+  it('matches the app’s shared department lookup, not only this module’s sample one', async () => {
+    // As in the running app: the shared Organisation mocks answer the pickers.
+    server.resetHandlers()
+    const { user } = renderApp('/manpower-planning/planning')
+
+    // Made by the directory's HR Manager, not by someone only this module knew.
+    expect(within(await rowOf('Finance Planning')).getByText('Shelley Kannes')).toBeVisible()
+    await user.click(await screen.findByRole('link', { name: 'Details of Finance Planning' }))
+    expect(await screen.findByRole('heading', { name: /Plan Details/, level: 1 })).toBeVisible()
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Department' })).toHaveTextContent('Finance')
+    })
+    // The sub-department is the shared lookup's, a department under Finance.
+    expect(screen.getByRole('combobox', { name: 'Sub-Department' })).toHaveTextContent('Accounts')
+    // The person kept on has the title the directory (and the employee lookup) gives her.
+    const kept = screen.getByRole('combobox', { name: 'Employee, line 1' }).closest('tr')
+    if (!kept) throw new Error('No row for the existing position')
+    expect(kept).toHaveTextContent('Hina Raza')
+    expect(within(kept).getByText('Finance Manager')).toBeVisible()
+    await user.click(screen.getByRole('link', { name: 'Back' }))
+
+    await user.click(await screen.findByRole('link', { name: /Add New Plan/ }))
+    expect(await screen.findByRole('heading', { name: 'Add Planning', level: 1 })).toBeVisible()
+    await choose(user, 'Plan Year', '2025')
+    await choose(user, 'Department', 'Finance')
+    await user.click(screen.getByRole('combobox', { name: 'Sub-Department' }))
+    expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual([
+      'ALL',
+      'Accounts',
+      'Audit',
+    ])
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: 'Import Positions' }))
+    expect(await screen.findByText('2 positions imported')).toBeInTheDocument()
+    // The shared employee lookup narrows by department too: Finance's two, not everyone.
+    await user.click(screen.getByRole('button', { name: 'Import Existing Employees' }))
+    expect(await screen.findByText('2 employees imported')).toBeInTheDocument()
+  }, 30_000)
+
   it('opens a plan’s details and approvals, keeps an approved plan read-only and edits a pending one', async () => {
     const { user } = renderApp('/manpower-planning/planning')
 
@@ -334,7 +405,7 @@ describe('Planning', () => {
     expect(title).toHaveValue('Finance Planning')
     expect(screen.getByRole('link', { name: 'finance-plan.pdf' })).toBeVisible()
     expect(screen.getByRole('combobox', { name: 'Employee, line 1' })).toHaveTextContent(
-      'Omer Farooq',
+      'Hina Raza',
     )
 
     // A field error from the server lands on its line: lines[1] is the first existing one.
@@ -395,7 +466,7 @@ describe('Budget Approvals', () => {
     expect(within(row).getByText('Awaiting approval')).toBeVisible()
     expect(within(row).getByText('Pending')).toBeVisible()
     // Pending only, by default.
-    expect(screen.queryByRole('cell', { name: 'Marketing' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('cell', { name: 'Marketing Executive' })).not.toBeInTheDocument()
 
     await openMenu(user, 'Actions for Accountant 2025', 'Approve')
     const popup = await screen.findByRole('alertdialog', { name: 'Approve Budget' })
@@ -411,7 +482,7 @@ describe('Budget Approvals', () => {
     const opened = openPositions.all().find((item) => item.eBudgetId === 'bg_fin_accountant')
     expect(opened).toMatchObject({ title: 'Accountant', totalPositions: 2, endDate: '2025-12-31' })
 
-    await openMenu(user, 'Actions for Accounts 2025', 'Approve')
+    await openMenu(user, 'Actions for Existing positions 2025', 'Approve')
     await user.click(
       within(await screen.findByRole('alertdialog', { name: 'Approve Budget' })).getByRole(
         'button',
@@ -434,9 +505,16 @@ describe('Budget Approvals', () => {
     // The positions are now open.
     await user.click(sidebarLink('Open Positions'))
     expect(await screen.findByRole('heading', { name: 'Open Positions', level: 1 })).toBeVisible()
-    const open = await rowOfMenu('Actions for Accountant')
+    // Beside 2024's Accountant positions.
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Actions for Accountant' })).toHaveLength(2)
+    })
+    const open = screen
+      .getAllByRole('button', { name: 'Actions for Accountant' })
+      .map((button) => button.closest('tr'))
+      .find((row) => row?.textContent.includes('31 Dec 2025'))
+    if (!open) throw new Error('No row for 2025’s Accountant positions')
     expect(totalOf(open)).toBe('2')
-    expect(within(open).getByText('31 Dec 2025')).toBeVisible()
   })
 
   it('rejects a budget, and editing it on E-Budgeting sends it back', async () => {
@@ -482,17 +560,17 @@ describe('E-Budgeting', () => {
     const { user } = renderApp('/manpower-planning/e-budgeting')
 
     expect(await screen.findByRole('heading', { name: 'E-Budgeting' })).toBeVisible()
-    const accounts = await rowOfMenu('Actions for Accounts 2024')
+    const accounts = await rowOfMenu('Actions for Accountant 2024')
     for (const text of ['2024', '150,000', '1 Jan 2024', '31 Dec 2024', 'Active']) {
       expect(within(accounts).getByText(text)).toBeVisible()
     }
 
-    await openMenu(user, 'Actions for Accounts 2024', 'Edit')
+    await openMenu(user, 'Actions for Accountant 2024', 'Edit')
     expect(
       await screen.findByText('This budget is approved, so it can no longer be changed.'),
     ).toBeInTheDocument()
 
-    await openMenu(user, 'Actions for Accounts 2024', 'Delete')
+    await openMenu(user, 'Actions for Accountant 2024', 'Delete')
     let popup = await screen.findByRole('alertdialog', { name: 'Delete Budget' })
     expect(within(popup).getByText('Are you sure you want to Delete this budget?')).toBeVisible()
     await user.click(within(popup).getByRole('button', { name: 'Delete' }))
@@ -504,7 +582,9 @@ describe('E-Budgeting', () => {
     await user.click(within(popup).getByRole('button', { name: 'Delete' }))
     expect(await screen.findByText('Budget deleted')).toBeInTheDocument()
     await waitFor(() => {
-      expect(screen.queryByRole('cell', { name: 'Accountant' })).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Actions for Accountant 2025' }),
+      ).not.toBeInTheDocument()
     })
     expect(budgets.find('bg_fin_accountant')).toBeUndefined()
 
@@ -515,7 +595,7 @@ describe('E-Budgeting', () => {
     expect(await within(dialog).findByText('Choose the budget duration')).toBeVisible()
     expect(within(dialog).getByText('Enter the title or choose the position title')).toBeVisible()
     await choose(user, 'Budget Duration', '2026')
-    await choose(user, 'Position Title', 'Marketing')
+    await choose(user, 'Position Title', 'Marketing Executive')
     await user.type(within(dialog).getByRole('textbox', { name: 'Budget Amount' }), '240000')
     await pickDate(user, 'Start Date', '2026-02-01')
     await pickDate(user, 'End Date', '2026-11-30')
@@ -524,12 +604,16 @@ describe('E-Budgeting', () => {
     await waitFor(() => {
       expect(
         budgets.all().find((item) => item.amount === 240000 && item.manpowerPlanId === null),
-      ).toMatchObject({ title: 'Marketing', jobTitleId: 'jt_marketing', status: 'pending' })
+      ).toMatchObject({
+        title: 'Marketing Executive',
+        jobTitleId: 'jt_exec',
+        status: 'pending',
+      })
     })
 
     await user.type(screen.getByRole('searchbox', { name: 'Search budgets' }), 'UI/UX')
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Actions for Accounts 2024' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Actions for Accountant 2024' })).toBeNull()
     })
     expect(screen.getAllByRole('cell', { name: 'UI/UX Designer' }).length).toBeGreaterThan(0)
     const search = screen.getByRole('searchbox', { name: 'Search budgets' })
@@ -562,23 +646,27 @@ describe('Open Positions', () => {
     const { user } = renderApp('/manpower-planning/open-positions')
 
     expect(await screen.findByRole('heading', { name: 'Open Positions', level: 1 })).toBeVisible()
-    const accounts = await rowOfMenu('Actions for Accounts')
+    const accounts = await rowOfMenu('Actions for Accountant')
     expect(totalOf(accounts)).toBe('5')
     expect(within(accounts).getByText('31 Dec 2024')).toBeVisible()
     // Its end date has passed: shown as expired, not active.
     expect(within(accounts).getByText('Expired')).toBeVisible()
-    expect(within(await rowOfMenu('Actions for Marketing')).getByText('No JD yet')).toBeVisible()
+    expect(
+      within(await rowOfMenu('Actions for Marketing Executive')).getByText('No JD yet'),
+    ).toBeVisible()
 
-    await user.click(within(accounts).getByRole('button', { name: 'Download the JD of Accounts' }))
+    await user.click(
+      within(accounts).getByRole('button', { name: 'Download the JD of Accountant' }),
+    )
     await waitFor(() => {
       expect(click).toHaveBeenCalled()
     })
     const anchor = click.mock.contexts[0] as HTMLAnchorElement
     expect(anchor.href).toContain('/files/file_jd_op_accounts/download')
 
-    await openMenu(user, 'Actions for Accounts', 'Edit')
-    const dialog = await screen.findByRole('dialog', { name: 'Edit Accounts' })
-    expect(within(dialog).getByText('Accounts JD.pdf')).toBeVisible()
+    await openMenu(user, 'Actions for Accountant', 'Edit')
+    const dialog = await screen.findByRole('dialog', { name: 'Edit Accountant' })
+    expect(within(dialog).getByText('Accountant JD.pdf')).toBeVisible()
     const total = within(dialog).getByRole('textbox', { name: 'Total Positions' })
     await user.clear(total)
     await user.type(total, '0')
@@ -594,13 +682,15 @@ describe('Open Positions', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save Position' }))
     expect(await screen.findByText('Open position updated')).toBeInTheDocument()
     await waitFor(async () => {
-      expect(totalOf(await rowOfMenu('Actions for Accounts'))).toBe('6')
+      expect(totalOf(await rowOfMenu('Actions for Accountant'))).toBe('6')
     })
     expect(openPositions.find('op_accounts')?.jdFile?.id).not.toBe('file_jd_op_accounts')
 
-    await openMenu(user, 'Actions for Accounts', 'Close Position')
+    await openMenu(user, 'Actions for Accountant', 'Close Position')
     expect(await screen.findByText('Position closed')).toBeInTheDocument()
-    expect(await within(await rowOfMenu('Actions for Accounts')).findByText('Closed')).toBeVisible()
+    expect(
+      await within(await rowOfMenu('Actions for Accountant')).findByText('Closed'),
+    ).toBeVisible()
     expect(openPositions.find('op_accounts')?.status).toBe('closed')
   })
 })
@@ -656,8 +746,9 @@ describe('E-Budget Settings', () => {
   it('lists the position titles from Organisation with their use', async () => {
     const { user } = renderApp('/manpower-planning/e-budget-settings?tab=position-title')
 
-    const accounts = await rowOf('Accounts')
-    expect(within(accounts).getByText('1 of 1 active')).toBeVisible()
+    // Settings' job titles: 12212 and 12213 are both Accountant positions.
+    const accounts = await rowOf('Accountant')
+    expect(within(accounts).getByText('2 of 2 active')).toBeVisible()
     expect(screen.getByRole('link', { name: 'Position Title' })).toHaveAttribute(
       'aria-current',
       'page',
@@ -667,7 +758,7 @@ describe('E-Budget Settings', () => {
 
     await user.type(screen.getByRole('searchbox', { name: 'Search position titles' }), 'design')
     await waitFor(() => {
-      expect(screen.queryByRole('cell', { name: 'Accounts' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('cell', { name: 'Accountant' })).not.toBeInTheDocument()
     })
     expect(screen.getByRole('cell', { name: 'UI/UX Designer' })).toBeVisible()
   })
@@ -692,7 +783,7 @@ describe('E-Budget Settings', () => {
 
     await choose(user, 'Station', 'Karachi Sales Office')
     await choose(user, 'Employee Group', 'B')
-    await choose(user, 'Position Title', 'Marketing')
+    await choose(user, 'Position Title', 'Marketing Executive')
     await choose(user, 'Department', 'Marketing')
     await choose(user, 'Sub Department', 'Brand')
     await choose(user, 'Reports To', 'Accountant (12212)')
@@ -711,7 +802,7 @@ describe('E-Budget Settings', () => {
       .all()
       .find(
         (item) =>
-          item.jobTitleId === 'jt_marketing' &&
+          item.jobTitleId === 'jt_exec' &&
           item.branchId === 'br_khi' &&
           item.subDepartmentId === 'sd_brand',
       )
@@ -723,8 +814,8 @@ describe('E-Budget Settings', () => {
 
     const sheet = [
       'Position Code,Position Title,Division,Station,Department,Sub-Department,Employee Group,Cost Center,Grade,Reports To,Minimum Salary,Maximum Salary',
-      '13001,Accounts,Corporate,Islamabad Office,Finance,Audit,C,Head Office,Grade 2,12212,"18,000",22000',
-      '13002,Accounts,Corporate,Mars Office,Finance,Audit,C,,,,18000,22000',
+      '13001,Accountant,Corporate,Islamabad Office,Finance,Audit,C,Head Office,Grade 2,12212,"18,000",22000',
+      '13002,Accountant,Corporate,Mars Office,Finance,Audit,C,,,,18000,22000',
     ].join('\n')
     await user.upload(
       screen.getByLabelText('Upload employee positions (CSV saved from Excel)'),
@@ -747,6 +838,38 @@ describe('E-Budget Settings', () => {
     })
     expect(screen.getByText(/^13001/)).toBeVisible()
   }, 60_000)
+
+  it('filters positions by a department of the app’s shared department lookup', async () => {
+    // As in the running app: the shared Organisation mocks answer the pickers, not org-lookups.
+    server.resetHandlers()
+    const { user } = renderApp('/manpower-planning/e-budget-settings?tab=employee-position')
+
+    expect(await screen.findByText(/^12212/)).toBeVisible()
+    await choose(user, 'Department', 'Finance')
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+    expect(
+      await screen.findByRole('button', { name: 'Actions for Accountant 12212' }),
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Actions for Accountant 12213' })).toBeVisible()
+  })
+
+  it('names a new position by a title of the app’s shared job title lookup', async () => {
+    server.resetHandlers()
+    const { user } = renderApp('/manpower-planning/e-budget-settings?tab=employee-position')
+
+    expect(await screen.findByText(/^12212/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Add Employee Position' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Employee Position' })
+    await choose(user, 'Position Title', 'HR Manager')
+    await choose(user, 'Station', 'Islamabad Office')
+    await choose(user, 'Employee Group', 'C')
+    await user.type(within(dialog).getByRole('textbox', { name: 'Maximum Salary' }), '80000')
+    await user.click(within(dialog).getByRole('button', { name: 'Save Position' }))
+    expect(await screen.findByText('Employee position saved')).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: 'Actions for HR Manager POS-0005' }),
+    ).toBeVisible()
+  }, 30_000)
 
   it('deactivates a position and adds a salary range', async () => {
     const { user } = renderApp('/manpower-planning/e-budget-settings?tab=employee-position')

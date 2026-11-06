@@ -1,11 +1,12 @@
 import type { BudgetRec, DurationRec, LineRec, OpenRec, PlanRec, PositionRec, RangeRec } from './db'
 
-// Sample data as the Manpower Planning frames draw it: "Hamza Ashraf" made every record;
-// Accounts, UI/UX Designer and Marketing budgets for 2024 with 5, 4 and 3 open positions;
-// "Apps Planning" approved for 2025; "Finance Planning" waiting; Accountant (12212) as the
-// employee position. Organisation's lists and people are in `org-lookups.ts`.
+// Sample data as the Manpower Planning frames draw it, in the app's shared company: Shelley
+// Kannes (HR Manager) made every record; Accountant, UI/UX Designer and Marketing Executive
+// budgets for 2024 with 5, 4 and 3 open positions; "Apps Planning" approved for 2025; "Finance
+// Planning" waiting; Accountant (12212) as the employee position. Titles are Settings' job
+// titles and people the company directory's; the other Organisation lists are in `org-lookups.ts`.
 
-const BY = 'Hamza Ashraf'
+const BY = 'Shelley Kannes'
 const rv = (n: number) => `00000000000000${String(n).padStart(2, '0')}`
 
 export function seedDurations(): DurationRec[] {
@@ -67,7 +68,7 @@ export function seedPositions(): PositionRec[] {
   const finance = {
     divisionId: 'dv_corporate',
     branchId: 'br_lhr_ho',
-    departmentId: 'dp_finance',
+    departmentId: 'dep_finance',
     subDepartmentId: 'sd_accounts',
     costCenterId: 'cc_100',
   }
@@ -75,14 +76,14 @@ export function seedPositions(): PositionRec[] {
     position(
       'ep_accountant',
       '12212',
-      'jt_accountant',
+      'jt_acc',
       { ...finance, employeeGroupId: 'eg_a', gradeId: 'gr_4' },
       '2024-01-10T22:30:00',
     ),
     position(
       'ep_accounts',
       '12213',
-      'jt_accounts',
+      'jt_acc',
       { ...finance, employeeGroupId: 'eg_b', gradeId: 'gr_3' },
       '2024-01-05T10:00:00',
     ),
@@ -93,7 +94,7 @@ export function seedPositions(): PositionRec[] {
       {
         divisionId: 'dv_technology',
         branchId: 'br_lhr_jt',
-        departmentId: 'dp_mobile',
+        departmentId: 'dep_mobile-app',
         subDepartmentId: 'sd_design',
         employeeGroupId: 'eg_a',
         costCenterId: 'cc_200',
@@ -104,11 +105,11 @@ export function seedPositions(): PositionRec[] {
     position(
       'ep_marketing',
       '12215',
-      'jt_marketing',
+      'jt_exec',
       {
         divisionId: 'dv_commercial',
         branchId: 'br_khi',
-        departmentId: 'dp_marketing',
+        departmentId: 'dep_marketing',
         subDepartmentId: 'sd_digital',
         employeeGroupId: 'eg_b',
         costCenterId: null,
@@ -180,7 +181,7 @@ export function seedPlans(): PlanRec[] {
       budgetDurationId: 'bd_2025',
       divisionId: null,
       branchId: null,
-      departmentId: 'dp_mobile',
+      departmentId: 'dep_mobile-app',
       subDepartmentId: 'sd_design',
       employeeGroupId: 'eg_a',
       description: 'One more UI/UX designer for the app team in the first two months.',
@@ -248,10 +249,10 @@ export function seedPlans(): PlanRec[] {
       budgetDurationId: 'bd_2025',
       divisionId: 'dv_corporate',
       branchId: 'br_lhr_ho',
-      departmentId: 'dp_finance',
+      departmentId: 'dep_finance',
       subDepartmentId: 'sd_accounts',
       employeeGroupId: 'eg_a',
-      description: 'Two accountants from March, and Omer Farooq kept on for the year.',
+      description: 'Two accountants from March, and Hina Raza kept on for the year.',
       status: 'pending',
       submittedAt: '2025-02-12T10:30:00',
       files: [
@@ -275,18 +276,18 @@ export function seedPlans(): PlanRec[] {
           'bg_fin_accountant',
         ),
         {
-          id: 'xl_fin_omer',
+          id: 'xl_fin_hina',
           kind: 'existing_employee',
           positionId: null,
-          employeeId: 'em_omer',
+          employeeId: 'em_hina',
           headcount: 1,
           startDate: '2025-01-01',
           endDate: '2025-12-31',
           minSalary: null,
           maxSalary: null,
-          monthlySalary: 90000,
+          monthlySalary: 300000,
           totalAllowance: 5000,
-          eBudgetId: 'bg_fin_accounts',
+          eBudgetId: 'bg_fin_existing',
         },
       ],
       createdAt: '2025-02-12T10:30:00',
@@ -305,8 +306,8 @@ export function seedBudgets(): BudgetRec[] {
       title: 'Accountant',
       budgetDurationId: 'bd_2025',
       manpowerPlanId: 'pl_finance',
-      jobTitleId: 'jt_accountant',
-      departmentId: 'dp_finance',
+      jobTitleId: 'jt_acc',
+      departmentId: 'dep_finance',
       amount: 2100000,
       totalPositions: 2,
       startDate: '2025-03-01',
@@ -316,14 +317,16 @@ export function seedBudgets(): BudgetRec[] {
       decidedAt: null,
       createdAt: '2025-02-12T10:30:00',
     }),
+    // Hina Raza: a Finance Manager, a title Settings does not list, so her line has a budget of
+    // its own named as the API names one: "Existing positions".
     budget({
-      id: 'bg_fin_accounts',
-      title: 'Accounts',
+      id: 'bg_fin_existing',
+      title: 'Existing positions',
       budgetDurationId: 'bd_2025',
       manpowerPlanId: 'pl_finance',
-      jobTitleId: 'jt_accounts',
-      departmentId: 'dp_finance',
-      amount: 1140000,
+      jobTitleId: null,
+      departmentId: 'dep_finance',
+      amount: 3660000,
       totalPositions: 0,
       startDate: '2025-01-01',
       endDate: '2025-12-31',
@@ -338,7 +341,7 @@ export function seedBudgets(): BudgetRec[] {
       budgetDurationId: 'bd_2025',
       manpowerPlanId: 'pl_apps',
       jobTitleId: 'jt_uiux',
-      departmentId: 'dp_mobile',
+      departmentId: 'dep_mobile-app',
       amount: 100000,
       totalPositions: 1,
       startDate: '2025-01-01',
@@ -350,11 +353,11 @@ export function seedBudgets(): BudgetRec[] {
     }),
     budget({
       id: 'bg_wf_accounts',
-      title: 'Accounts',
+      title: 'Accountant',
       budgetDurationId: 'bd_2024',
       manpowerPlanId: 'pl_workforce',
-      jobTitleId: 'jt_accounts',
-      departmentId: 'dp_finance',
+      jobTitleId: 'jt_acc',
+      departmentId: 'dep_finance',
       amount: 150000,
       totalPositions: 5,
       startDate: '2024-01-01',
@@ -370,7 +373,7 @@ export function seedBudgets(): BudgetRec[] {
       budgetDurationId: 'bd_2024',
       manpowerPlanId: 'pl_workforce',
       jobTitleId: 'jt_uiux',
-      departmentId: 'dp_mobile',
+      departmentId: 'dep_mobile-app',
       amount: 100000,
       totalPositions: 4,
       startDate: '2024-02-01',
@@ -382,11 +385,11 @@ export function seedBudgets(): BudgetRec[] {
     }),
     budget({
       id: 'bg_wf_marketing',
-      title: 'Marketing',
+      title: 'Marketing Executive',
       budgetDurationId: 'bd_2024',
       manpowerPlanId: 'pl_workforce',
-      jobTitleId: 'jt_marketing',
-      departmentId: 'dp_marketing',
+      jobTitleId: 'jt_exec',
+      departmentId: 'dep_marketing',
       amount: 50000,
       totalPositions: 3,
       startDate: '2024-03-01',
@@ -449,7 +452,7 @@ export function seedOpenPositions(): OpenRec[] {
       'ep_uiux',
       'UI/UX Designer',
       'jt_uiux',
-      'dp_mobile',
+      'dep_mobile-app',
       'br_lhr_jt',
       1,
       '2025-02-28',
@@ -461,9 +464,9 @@ export function seedOpenPositions(): OpenRec[] {
       'bg_wf_accounts',
       'nl_wf_acc',
       'ep_accounts',
-      'Accounts',
-      'jt_accounts',
-      'dp_finance',
+      'Accountant',
+      'jt_acc',
+      'dep_finance',
       'br_lhr_ho',
       5,
       '2024-12-31',
@@ -477,7 +480,7 @@ export function seedOpenPositions(): OpenRec[] {
       'ep_uiux',
       'UI/UX Designer',
       'jt_uiux',
-      'dp_mobile',
+      'dep_mobile-app',
       'br_lhr_jt',
       4,
       '2024-12-31',
@@ -489,9 +492,9 @@ export function seedOpenPositions(): OpenRec[] {
       'bg_wf_marketing',
       'nl_wf_mk',
       'ep_marketing',
-      'Marketing',
-      'jt_marketing',
-      'dp_marketing',
+      'Marketing Executive',
+      'jt_exec',
+      'dep_marketing',
       'br_khi',
       3,
       '2024-12-31',

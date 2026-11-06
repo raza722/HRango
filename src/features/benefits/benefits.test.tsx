@@ -2,25 +2,18 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
 import { addDays, format, parse } from 'date-fns'
 import { http, HttpResponse } from 'msw'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { ApiError } from '@/lib/api-error'
 import { DEMO_USER } from '@/mocks/auth/handlers'
 import { enrollmentWindows, planFiles, plans, planYears, updateRequests } from '@/mocks/benefits/db'
 import { DIRECTORY } from '@/mocks/employees/seed'
-import { orgLookupHandlers } from '@/mocks/manpower-planning/org-lookups'
 import { server } from '@/mocks/node'
 import { apiPath, MOCK_TOKEN_PREFIX } from '@/mocks/utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { renderApp } from '@/test/test-utils'
 
 import { benefitsApi } from './api/benefits.api'
-
-// The people picker is the Employees module's endpoint: these tests put the sample company's in
-// front, whatever other mocks serve.
-beforeEach(() => {
-  server.use(...orgLookupHandlers)
-})
 
 const iso = (date: Date) => format(date, 'yyyy-MM-dd')
 
@@ -286,6 +279,22 @@ describe('Benefits: Plan Years', { timeout: 60_000 }, () => {
     await waitFor(() => {
       expect(stat('Plan Years')).toBe('1')
     })
+  })
+
+  it('shows every plan year again after deleting the one shown', async () => {
+    const { user, router } = renderApp('/benefits/plan-years?year=by_previous')
+
+    const previous = `Fiscal year ${String(year - 1)}`
+    await openRowMenu(user, previous, 'Delete')
+    const confirm = await screen.findByRole('alertdialog', { name: 'Delete Plan Year' })
+    await user.click(within(confirm).getByRole('button', { name: 'Delete Plan Year' }))
+    expect(await screen.findByText('Plan year deleted')).toBeInTheDocument()
+    // The filter is cleared, not left on a plan year that is no longer there.
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({})
+    })
+    expect(await findRow('Fiscal year')).toBeTruthy()
+    expect(screen.queryByText('That plan year is no longer here.')).not.toBeInTheDocument()
   })
 
   it('opens an enrollment window in two steps', async () => {
@@ -664,5 +673,34 @@ describe('Benefits: the checks QA asked for', { timeout: 60_000 }, () => {
       expect((error as ApiError).fieldErrors.effectiveDate).toBe('Choose today or a later day.')
     }
     expect(enrollmentWindows.all().some((item) => item.name === 'Back-dated')).toBe(error === null)
+  })
+
+  it('keeps an added file’s name and size, and every file link opens a file', async () => {
+    // No upload stub: the shared files mock takes the upload, as in the running app.
+    const { user } = renderApp('/benefits/files')
+
+    const seeded = await screen.findByRole('link', { name: 'HDHP1 summary of benefits.pdf' })
+    await user.click(screen.getByRole('button', { name: 'Add File' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Add File' })
+    await choose(user, 'Plan', 'Vision Plus')
+    await user.upload(
+      within(dialog).getByLabelText(/^File/),
+      new File(['x'.repeat(3 * 1024)], 'qa-plan.pdf', { type: 'application/pdf' }),
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Add File' }))
+    expect(await screen.findByText('File added')).toBeInTheDocument()
+
+    const added = (await findRow('qa-plan.pdf')).getByRole('link', { name: 'qa-plan.pdf' })
+    expect((await findRow('qa-plan.pdf')).getByText('3 KB')).toBeVisible()
+    expect(planFiles.all().find((file) => file.planId === 'bp_vision')).toMatchObject({
+      fileName: 'qa-plan.pdf',
+      sizeBytes: 3 * 1024,
+    })
+    // The upload's link opens it; a seeded file's link a sample PDF, not a 404.
+    expect((await fetch((added as HTMLAnchorElement).href)).ok).toBe(true)
+    const sample = await fetch((seeded as HTMLAnchorElement).href)
+    expect(sample.ok).toBe(true)
+    expect(sample.headers.get('Content-Type')).toBe('application/pdf')
+    expect(await sample.text()).toMatch(/^%PDF-/)
   })
 })

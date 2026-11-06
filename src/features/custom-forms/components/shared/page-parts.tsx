@@ -6,7 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { isMockApi } from '@/lib/env'
 import { cn } from '@/lib/utils'
 
-import { BACKEND_DEPENDENCY, type ChipMeta, STATUS_META } from '../../constants'
+import { type ChipMeta, STATUS_META } from '../../constants'
 import type { FormStatus } from '../../types/custom-forms.types'
 import { cardClass, cardTitleClass, chipClass, pageTitleClass } from '../../utils/styles'
 
@@ -136,9 +136,8 @@ export function WaitingForServer({ what }: { what: string }) {
   return (
     <div role="status" className={cn(cardClass, 'p-4 sm:p-6')}>
       <EmptyBox icon={<CloudOff />} title="Waiting for the server">
-        {what} need backend endpoints that do not exist yet (Backend Dependencies,{' '}
-        {BACKEND_DEPENDENCY}). This page starts working as soon as the API has them; nothing here is
-        lost or broken.
+        {what} need features this server doesn&apos;t have yet. The page starts working once the
+        server is updated; nothing here is lost or broken.
       </EmptyBox>
     </div>
   )

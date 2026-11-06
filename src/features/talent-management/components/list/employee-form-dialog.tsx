@@ -13,6 +13,7 @@ import {
   EMPLOYEE_STATUS_META,
   GENDER_LABELS,
   MARITAL_LABELS,
+  personalHidden,
   SALARY_FREQUENCY_LABELS,
   TM_CODES,
 } from '../../constants'
@@ -35,6 +36,7 @@ import {
 import { showServerErrors } from '../../utils/form-errors'
 import { dialogClass, dialogTitleClass, wideDialogClass } from '../../utils/styles'
 import { FormDialog } from '../shared/form-dialog'
+import { PersonalHiddenNote } from '../shared/parts'
 
 type OrgField = Extract<
   keyof EmployeeFormValues,
@@ -127,6 +129,8 @@ function EmployeeForm({ employee, onClose }: { employee: Employee | null; onClos
   const branchLocation = locationOf(branchId)
   const known = (id: string | null, name: string | null) =>
     id && name ? [{ value: id, label: name }] : undefined
+  // The API sent nulls for the personal details: they are not offered, and not sent back.
+  const showPersonal = !employee || !personalHidden(employee)
 
   const submit = form.handleSubmit(async (values) => {
     try {
@@ -180,12 +184,14 @@ function EmployeeForm({ employee, onClose }: { employee: Employee | null; onClos
           required
           placeholder="Enter Last Name"
         />
-        <TextField
-          control={form.control}
-          name="parentName"
-          label="Father / Husband Name"
-          placeholder="Enter Name"
-        />
+        {showPersonal && (
+          <TextField
+            control={form.control}
+            name="parentName"
+            label="Father / Husband Name"
+            placeholder="Enter Name"
+          />
+        )}
         <SelectField
           control={form.control}
           name="gender"
@@ -194,27 +200,39 @@ function EmployeeForm({ employee, onClose }: { employee: Employee | null; onClos
           clearable
           options={GENDERS.map((value) => ({ value, label: GENDER_LABELS[value] }))}
         />
-        <SelectField
-          control={form.control}
-          name="maritalStatus"
-          label="Marital Status"
-          placeholder="Select Marital Status"
-          clearable
-          options={MARITAL_STATUSES.map((value) => ({ value, label: MARITAL_LABELS[value] }))}
-        />
-        <TextField control={form.control} name="dateOfBirth" label="Date of Birth" type="date" />
-        <TextField
-          control={form.control}
-          name="religion"
-          label="Religion"
-          placeholder="Enter Religion"
-        />
-        <TextField
-          control={form.control}
-          name="nationality"
-          label="Nationality"
-          placeholder="Enter Nationality"
-        />
+        {showPersonal && (
+          <>
+            <SelectField
+              control={form.control}
+              name="maritalStatus"
+              label="Marital Status"
+              placeholder="Select Marital Status"
+              clearable
+              options={MARITAL_STATUSES.map((value) => ({
+                value,
+                label: MARITAL_LABELS[value],
+              }))}
+            />
+            <TextField
+              control={form.control}
+              name="dateOfBirth"
+              label="Date of Birth"
+              type="date"
+            />
+            <TextField
+              control={form.control}
+              name="religion"
+              label="Religion"
+              placeholder="Enter Religion"
+            />
+            <TextField
+              control={form.control}
+              name="nationality"
+              label="Nationality"
+              placeholder="Enter Nationality"
+            />
+          </>
+        )}
         {(!employee || employee.canSeeIdentity) && (
           <TextField
             control={form.control}
@@ -225,6 +243,7 @@ function EmployeeForm({ employee, onClose }: { employee: Employee | null; onClos
             description={employee ? 'Change it with Update Profile on the profile.' : undefined}
           />
         )}
+        {!showPersonal && <PersonalHiddenNote className="@md:col-span-2 @3xl:col-span-3" />}
       </Group>
 
       <Group title="Contact">
@@ -235,25 +254,29 @@ function EmployeeForm({ employee, onClose }: { employee: Employee | null; onClos
           type="email"
           placeholder="Enter Email Address"
         />
-        <TextField
-          control={form.control}
-          name="phone1"
-          label="Phone Number"
-          placeholder="Enter Phone Number"
-        />
-        <TextField
-          control={form.control}
-          name="phone2"
-          label="Other Phone Number"
-          placeholder="Enter Phone Number"
-        />
-        <TextField
-          control={form.control}
-          name="homeAddress"
-          label="Address"
-          placeholder="Enter Residence Address"
-          className="@md:col-span-2 @3xl:col-span-3"
-        />
+        {showPersonal && (
+          <>
+            <TextField
+              control={form.control}
+              name="phone1"
+              label="Phone Number"
+              placeholder="Enter Phone Number"
+            />
+            <TextField
+              control={form.control}
+              name="phone2"
+              label="Other Phone Number"
+              placeholder="Enter Phone Number"
+            />
+            <TextField
+              control={form.control}
+              name="homeAddress"
+              label="Address"
+              placeholder="Enter Residence Address"
+              className="@md:col-span-2 @3xl:col-span-3"
+            />
+          </>
+        )}
       </Group>
 
       <Group title="Organisation">

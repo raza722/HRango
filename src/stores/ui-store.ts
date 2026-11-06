@@ -4,13 +4,22 @@ import { immer } from 'zustand/middleware/immer'
 
 export type Theme = 'light' | 'dark'
 
+/** The switcher's languages; `translated` once the interface has its text in that language. */
 export const LANGUAGES = [
-  { code: 'en', label: 'English', region: 'United States' },
-  { code: 'fr', label: 'Français', region: 'France' },
-  { code: 'de', label: 'Deutsch', region: 'Deutschland' },
+  { code: 'en', label: 'English', region: 'United States', translated: true },
+  { code: 'fr', label: 'Français', region: 'France', translated: false },
+  { code: 'de', label: 'Deutsch', region: 'Deutschland', translated: false },
 ] as const
 
 export type LanguageCode = (typeof LANGUAGES)[number]['code']
+
+/**
+ * The language the interface is actually in: the chosen one once it is translated, English until
+ * then (so `<html lang>` matches the text screen readers read).
+ */
+export function shownLanguage(code: LanguageCode): LanguageCode {
+  return LANGUAGES.find((item) => item.code === code)?.translated ? code : 'en'
+}
 
 interface UiState {
   theme: Theme

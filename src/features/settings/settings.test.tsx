@@ -156,6 +156,26 @@ describe('General Settings', { timeout: 60_000 }, () => {
       expect(name).toHaveValue(saved)
     })
   })
+
+  it('keeps a save in the tab’s session, so a reload reads it back', async () => {
+    const { user } = renderApp('/settings/control-panel/general')
+    const legal = await screen.findByRole('textbox', { name: 'Legal Name' }, { timeout: 15_000 })
+    await waitFor(() => {
+      expect(legal).not.toHaveValue('')
+    })
+    await user.clear(legal)
+    await user.type(legal, 'Top Edge Holdings')
+    await user.click(screen.getByRole('combobox', { name: 'Date Format' }))
+    await user.click(await screen.findByRole('option', { name: /\(yyyy-MM-dd\)/ }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('General settings saved')).toBeInTheDocument()
+    // Mock tables live in sessionStorage: what the mock reads back after a reload.
+    const stored = Object.values<string>(sessionStorage).find((raw) => raw.includes('"legalName"'))
+    expect(stored && JSON.parse(stored)).toEqual([
+      expect.objectContaining({ legalName: 'Top Edge Holdings', dateFormat: 'yyyy-MM-dd' }),
+    ])
+  })
 })
 
 describe('Locations', () => {

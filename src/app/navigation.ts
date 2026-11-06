@@ -184,11 +184,12 @@ export const NAV_ITEMS: readonly NavItem[] = [
         permission: 'scheduling.schedules',
         selfService: true,
       },
+      // Not self-service: no module lists warnings (Warning holds only their settings), so those
+      // who manage people would have no other way to theirs.
       {
         label: 'My Warnings',
         to: '/attendance/my-warnings',
         permission: 'warning.warnings',
-        selfService: true,
       },
     ],
   },

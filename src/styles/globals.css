@@ -214,6 +214,128 @@
   }
 }
 
+/*
+ * Motion for the app shell. Short and soft: a page settles in, blocks and charts grow from
+ * their baseline, loading placeholders shimmer. Every keyframe animates the individual
+ * `translate` / `scale` properties with `backwards` fill, so nothing is left transformed
+ * when it ends (a leftover transform would trap fixed or sticky children). The reduced-motion
+ * rule at the end of this file stops all of it.
+ */
+/* `static`: always emitted, because plain CSS below (the controls' transition) reads it too. */
+@theme static {
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@theme {
+  /* A soft coloured glow under a hovered button or tile: `shadow-glow shadow-primary/50`. */
+  --shadow-glow: 0 6px 16px -6px rgb(15 23 42 / 0.25);
+  /* The lift of a hovered card that opens something. */
+  --shadow-lift: 0 10px 24px -12px rgb(15 23 42 / 0.28);
+
+  --animate-page-in: page-in 0.32s var(--ease-out-soft) backwards;
+  --animate-enter: enter 0.45s var(--ease-out-soft) backwards;
+  --animate-grow-y: grow-y 0.7s var(--ease-out-soft) backwards;
+  --animate-grow-x: grow-x 0.7s var(--ease-out-soft) backwards;
+  --animate-draw: draw 1.1s var(--ease-out-soft) backwards;
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+
+  @keyframes page-in {
+    from {
+      opacity: 0;
+      translate: 0 6px;
+    }
+  }
+  @keyframes enter {
+    from {
+      opacity: 0;
+      translate: 0 10px;
+    }
+  }
+  /* A column or bar growing from its baseline (`origin-bottom`, SVG: `transform-box: fill-box`). */
+  @keyframes grow-y {
+    from {
+      scale: 1 0;
+    }
+  }
+  @keyframes grow-x {
+    from {
+      scale: 0 1;
+    }
+  }
+  /* A line drawing itself; the path needs `pathLength={1}`. */
+  @keyframes draw {
+    from {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 1;
+    }
+    to {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 0;
+    }
+  }
+  @keyframes shimmer {
+    from {
+      translate: -100% 0;
+    }
+    to {
+      translate: 100% 0;
+    }
+  }
+}
+
+/* A row of tiles or cards entering one after another (45ms apart, up to the 12th). */
+@utility stagger-children {
+  & > * {
+    animation: var(--animate-enter);
+  }
+  & > :nth-child(2) {
+    animation-delay: 45ms;
+  }
+  & > :nth-child(3) {
+    animation-delay: 90ms;
+  }
+  & > :nth-child(4) {
+    animation-delay: 135ms;
+  }
+  & > :nth-child(5) {
+    animation-delay: 180ms;
+  }
+  & > :nth-child(6) {
+    animation-delay: 225ms;
+  }
+  & > :nth-child(7) {
+    animation-delay: 270ms;
+  }
+  & > :nth-child(8) {
+    animation-delay: 315ms;
+  }
+  & > :nth-child(9) {
+    animation-delay: 360ms;
+  }
+  & > :nth-child(10) {
+    animation-delay: 405ms;
+  }
+  & > :nth-child(11) {
+    animation-delay: 450ms;
+  }
+  & > :nth-child(12) {
+    animation-delay: 495ms;
+  }
+  & > :nth-child(n + 13) {
+    animation-delay: 540ms;
+  }
+}
+
+/* SVG marks scale from their own box (their bottom or left edge), not the chart's corner. */
+@utility origin-mark-bottom {
+  transform-box: fill-box;
+  transform-origin: bottom;
+}
+@utility origin-mark-left {
+  transform-box: fill-box;
+  transform-origin: left;
+}
+
 @theme inline {
   --font-sans: 'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-inter: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -373,5 +495,40 @@
   button:not(:disabled),
   [role='button']:not(:disabled) {
     cursor: pointer;
+  }
+
+  /*
+   * Every control eases its hover and focus colours, including the modules' own toolbar
+   * buttons and links that set no transition. `:where` keeps this at zero specificity, so a
+   * component's `transition-*` class still wins.
+   */
+  :where(a[href], button, [role='button'], [role='tab'], summary, input, select, textarea) {
+    transition-property:
+      color, background-color, border-color, outline-color, text-decoration-color, fill, stroke,
+      box-shadow, opacity;
+    transition-duration: 150ms;
+    transition-timing-function: var(--ease-out-soft);
+  }
+}
+
+/*
+ * "Reduce motion" in the system settings: no entrances, shimmer, floating or sliding, and
+ * colour changes are instant. Content still appears; it just does not move.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* A loading spinner is motion that carries meaning: keep it turning, a little slower. */
+  .animate-spin {
+    animation-duration: 1.5s !important;
+    animation-iteration-count: infinite !important;
   }
 }

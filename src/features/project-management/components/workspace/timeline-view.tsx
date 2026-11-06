@@ -17,6 +17,7 @@ import {
 } from 'date-fns'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
+import { PanScroll } from '@/components/layout'
 import { cn } from '@/lib/utils'
 
 import type { PmAccess } from '../../hooks/use-pm-access'
@@ -425,7 +426,8 @@ export function TimelineView({
         </div>
       </div>
 
-      <div className="relative overflow-x-auto rounded-[0.875rem] border border-[#ECECEC] bg-white dark:border-border dark:bg-card">
+      {/* Weeks and months run wide: floating scrollbar and drag on empty days (PanScroll). */}
+      <PanScroll className="rounded-[0.875rem] border border-[#ECECEC] bg-white dark:border-border dark:bg-card">
         <div role="table" aria-label={`Timeline, ${title}`} className="w-max min-w-full">
           <div role="row" className="flex border-b border-[#ECECEC] dark:border-border">
             <span
@@ -528,7 +530,7 @@ export function TimelineView({
             </div>
           ))}
         </div>
-      </div>
+      </PanScroll>
 
       {outside > 0 && groups.length > 0 && (
         <p className="text-xs text-[#707070] dark:text-grey">

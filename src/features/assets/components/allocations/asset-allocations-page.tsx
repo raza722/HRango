@@ -28,7 +28,12 @@ import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { ALLOCATION_STATUS_META, ASSET_PAGE_SIZE } from '../../constants'
-import { useAllocations, useAssetOptions, useAssetTypeOptions } from '../../hooks/use-assets'
+import {
+  useAllocations,
+  useAssetOptions,
+  useAssetTypeOptions,
+  useLastPageWithRows,
+} from '../../hooks/use-assets'
 import type { Allocation } from '../../types/assets.types'
 import { AllocationDialog } from './allocation-dialog'
 import { DeallocateDialog } from './deallocate-dialog'
@@ -48,7 +53,13 @@ const columns: DataTableColumn<Allocation>[] = [
     header: 'Employee',
     mobile: 'heading',
     cell: (row) => (
-      <PersonCell person={{ name: row.employeeName ?? row.employeeId, photoUrl: null, employeeId: row.employeeId }} />
+      <PersonCell
+        person={{
+          name: row.employeeName ?? row.employeeId,
+          photoUrl: null,
+          employeeId: row.employeeId,
+        }}
+      />
     ),
   },
   { id: 'asset', header: 'Asset', cell: (row) => row.assetName },
@@ -104,9 +115,10 @@ export function AssetAllocationsPage() {
     from: filters.from,
     to: filters.to,
   })
-  const goTo = (next: number) => {
-    void navigate({ search: (prev) => ({ ...prev, page: next }) })
+  const goTo = (next: number, replace = false) => {
+    void navigate({ search: (prev) => ({ ...prev, page: next }), replace })
   }
+  useLastPageWithRows(list, page, goTo)
   const fields: FilterField[] = [
     {
       kind: 'employee',

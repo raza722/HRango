@@ -26,6 +26,12 @@ describe('filterNavItems', () => {
     expect(labels({ ...person, employeeId: 'em_shelley' })).toEqual(
       NAV_ITEMS.filter((item) => !item.selfService).map((item) => item.label),
     )
+    // My Warnings has no copy in a module, so it stays (My Schedule is Scheduling's).
+    const attendance = filterNavItems(NAV_ITEMS, { ...person, employeeId: 'em_shelley' }).find(
+      (item) => item.label === 'Attendance',
+    )
+    expect(attendance?.children?.map((child) => child.label)).toContain('My Warnings')
+    expect(attendance?.children?.map((child) => child.label)).not.toContain('My Schedule')
   })
 
   it('shows a module only when the user may view one of its screens', () => {

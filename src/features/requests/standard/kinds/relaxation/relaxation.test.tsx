@@ -47,7 +47,7 @@ function nextWorkday(): Date {
 
 describe('Relaxation (the shared standard request pages)', () => {
   it('lists my requests and everyone’s, and keeps a new one inside the shift', async () => {
-    const { user } = renderApp('/requests/relaxation')
+    const { user } = renderApp('/requests/relaxation?scope=my')
 
     expect(await screen.findByRole('heading', { name: 'Relaxation Requests' })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'RLX-0006' })).toBeVisible()

@@ -17,6 +17,10 @@ import type {
  * Permission codes. The OpenAPI names none for `/recruitment/…`; these follow the
  * module.screen.action pattern of Payroll and Manpower (`payroll.payslips.view`,
  * `manpower.open_positions.close`) and are assumptions until the catalogue confirms them.
+ * Five are folded into another action in the backend's catalogue (hRango-Backend
+ * `comparison/16-frontend-permission-codes.md`), so they check the code its route requires:
+ * moving a stage and withdrawing are `applications.edit`, putting an opening on hold is
+ * `openings.edit`, sending an offer is `offers.submit` and withdrawing one is `offers.cancel`.
  * In mock mode (no permissions list) every code is granted.
  */
 export const RC_CODES = {

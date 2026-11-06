@@ -1,5 +1,8 @@
+import { useEffect, useRef } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+
+import type { Paginated } from '@/types/api'
 
 import {
   type AllocationFilters,
@@ -104,6 +107,29 @@ export const useAllocation = (id: string | null) =>
 
 export const useClearances = (params: PageQuery<ClearanceFilters>) =>
   useQuery(assetListQueryOptions('clearances', params, assetsApi.clearances))
+
+/**
+ * Every asset list: when its page no longer exists (its last row was deleted), it goes back to
+ * the last page with rows, as `PaginatedTableCard` does. `goTo(page, true)` replaces the URL, so
+ * Back does not return to the empty page.
+ */
+export function useLastPageWithRows(
+  list: { data: Paginated<unknown> | undefined; isPlaceholderData: boolean },
+  page: number,
+  goTo: (page: number, replace: boolean) => void,
+) {
+  const lastPage = list.data ? Math.max(1, list.data.meta.totalPages) : undefined
+  // The pages make `goTo` anew on each render; only a new page or total should run it again.
+  const goToRef = useRef(goTo)
+  useEffect(() => {
+    goToRef.current = goTo
+  }, [goTo])
+  useEffect(() => {
+    if (lastPage !== undefined && !list.isPlaceholderData && page > lastPage) {
+      goToRef.current(lastPage, true)
+    }
+  }, [lastPage, page, list.isPlaceholderData])
+}
 
 export const useClearance = (id: string | null) =>
   useQuery({

@@ -46,7 +46,7 @@ function TabsContent({ className, ...props }: ComponentProps<typeof TabsPrimitiv
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      className={cn('min-w-0 outline-none', className)}
+      className={cn('min-w-0 animate-in duration-200 fade-in-0 outline-none', className)}
       {...props}
     />
   )
