@@ -176,7 +176,8 @@ describe('Home Dashboard', { timeout: 60_000 }, () => {
     renderApp(HOME)
     const recents = await region(/^Recents/)
     expect(await within(recents).findByText('Not available yet')).toBeVisible()
-    expect(within(recents).getByText(/Backend Dependencies T7/)).toBeVisible()
+    expect(within(recents).getByText(/this server doesn't have yet/)).toBeVisible()
+    expect(within(recents).queryByText(/Backend Dependencies/)).not.toBeInTheDocument()
     // Nothing is shown, so nothing is marked as sample data.
     expect(within(recents).queryByText('Sample data')).not.toBeInTheDocument()
   })

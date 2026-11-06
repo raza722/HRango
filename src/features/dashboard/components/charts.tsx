@@ -278,7 +278,11 @@ export function PartBar({
   return (
     <div className="grid min-w-0 gap-2.5">
       <div className="relative">
-        <div aria-label={label} role="group" className="flex h-6 w-full gap-[2px]">
+        <div
+          aria-label={label}
+          role="group"
+          className="flex h-6 w-full origin-left animate-grow-x gap-[2px]"
+        >
           {shown.map((part, index) => (
             <div
               key={part.key}
@@ -364,7 +368,7 @@ export function BarRows({ label, rows }: { label: string; rows: readonly BarRow[
   const max = Math.max(1, ...rows.map((row) => row.total))
   return (
     <ul aria-label={label} className="grid gap-2.5">
-      {rows.map((row) => {
+      {rows.map((row, rowIndex) => {
         const parts = row.parts.filter((part) => part.value > 0)
         const breakdown = row.parts
           .filter((part) => part.value > 0)
@@ -402,9 +406,10 @@ export function BarRows({ label, rows }: { label: string; rows: readonly BarRow[
               </span>
               <span
                 aria-hidden="true"
-                className="flex h-2.5 gap-[2px]"
+                className="flex h-2.5 origin-left animate-grow-x gap-[2px] transition-[width] duration-500 ease-out-soft"
                 style={{
                   width: `${String(Math.max(row.total > 0 ? 2 : 0, (row.total / max) * 100))}%`,
+                  animationDelay: `${String(Math.min(rowIndex, 10) * 40)}ms`,
                 }}
               >
                 {parts.map((part, index) => (
@@ -450,6 +455,11 @@ export interface ColumnSeries {
 }
 
 const PAD = { top: 10, right: 6, bottom: 22, left: 34 }
+
+/** A column grows from its own baseline when the chart appears (motion-safe: see globals.css). */
+const COLUMN_MOTION = 'origin-mark-bottom animate-grow-y transition-opacity'
+/** Each label's columns start 35ms after the label before. */
+const grow = (index: number) => `${String(Math.min(index, 12) * 35)}ms`
 
 /**
  * Columns per label (month): stacked (part of a whole, 2px surface gaps between the parts, the
@@ -562,7 +572,8 @@ export function ColumnChart({
                 <path
                   key={item.key}
                   d={column(left, top, bottom, bar, isTop)}
-                  className={cn(TONE_FILL[item.tone], 'transition-opacity', dim && 'opacity-40')}
+                  className={cn(COLUMN_MOTION, TONE_FILL[item.tone], dim && 'opacity-40')}
+                  style={{ animationDelay: grow(index) }}
                 />
               )
             }
@@ -570,7 +581,8 @@ export function ColumnChart({
               <path
                 key={item.key}
                 d={column(left + position * (bar + gap), y(value), base, bar, true)}
-                className={cn(TONE_FILL[item.tone], 'transition-opacity', dim && 'opacity-40')}
+                className={cn(COLUMN_MOTION, TONE_FILL[item.tone], dim && 'opacity-40')}
+                style={{ animationDelay: grow(index) }}
               />
             )
           })

@@ -1,3 +1,4 @@
+import { format } from 'date-fns'
 import { http, HttpResponse } from 'msw'
 import { z } from 'zod'
 
@@ -299,7 +300,8 @@ function row(task: TaskRecord, hidden: readonly string[] = []): TaskRowDto {
     .filter((entry) => entry.taskId === task.id && !entry.isRunning)
     .reduce((sum, entry) => sum + (entry.minutes ?? 0), 0)
   const points = task.assignees.reduce((sum, entry) => sum + (entry.storyPoints ?? 0), 0)
-  const today = new Date().toISOString().slice(0, 10)
+  // The local day, as the seed's dates are: the UTC date lags a day after local midnight.
+  const today = format(new Date(), 'yyyy-MM-dd')
   const out: TaskRowDto = {
     id: task.id,
     workspaceId: task.workspaceId,

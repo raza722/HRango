@@ -32,8 +32,17 @@ export function PmMenuItem({
   icon,
   className,
   children,
+  asChild,
   ...props
 }: ComponentProps<typeof Menu.Item> & { icon?: ReactNode }) {
+  // With `asChild` the child (a link) is the item: Radix needs it as the only child, unwrapped.
+  if (asChild) {
+    return (
+      <Menu.Item asChild className={cn(menuStyles.item, className)} {...props}>
+        {children}
+      </Menu.Item>
+    )
+  }
   return (
     <Menu.Item className={cn(menuStyles.item, className)} {...props}>
       {icon && <span className={menuStyles.icon}>{icon}</span>}

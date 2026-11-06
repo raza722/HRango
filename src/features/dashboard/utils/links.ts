@@ -21,14 +21,19 @@ const SLUG_BY_CODE = new Map<string, string>(
   Object.entries(REQUEST_TYPE_CODES).map(([slug, code]) => [code, slug]),
 )
 
+/** Request types with a page of their own; the rest share `/requests/$type`. */
+const OWN_PAGE: Partial<Record<string, AppPath>> = {
+  punch: '/requests/punch',
+  shift: '/requests/shift',
+  transfer: '/requests/transfer',
+}
+
 /** Where a request type's approvals are decided (its Approvals tab, pending first). */
 export function approvalsLink(type: string): DashLink {
   if (type === 'overtime') return { to: '/attendance/overtime', search: { tab: 'applications' } }
   const slug = SLUG_BY_CODE.get(type)
   if (!slug) return { to: '/requests/punch', search: { tab: 'approvals' } }
-  return {
-    to: '/requests/$type',
-    params: { type: slug },
-    search: { tab: 'approvals', status: 'pending' },
-  }
+  const search = { tab: 'approvals', status: 'pending' }
+  const own = OWN_PAGE[slug]
+  return own ? { to: own, search } : { to: '/requests/$type', params: { type: slug }, search }
 }

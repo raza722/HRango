@@ -1,4 +1,4 @@
-import { configure, screen, waitFor, within } from '@testing-library/react'
+import { configure, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { applications, history } from '@/mocks/recruitment/db'
@@ -80,6 +80,52 @@ describe('Recruitment → Applications', { timeout: 60_000 }, () => {
     const menu = await screen.findByRole('menu')
     expect(within(menu).queryByRole('menuitem', { name: /Move to/ })).not.toBeInTheDocument()
     expect(within(menu).queryByRole('menuitem', { name: 'Reject' })).not.toBeInTheDocument()
+  })
+
+  it('drags a card onto another stage, and onto Rejected to open the reject dialog', async () => {
+    renderApp('/recruitment/applications')
+    await screen.findByRole('region', { name: 'Pipeline board' }, { timeout: 15_000 })
+    const applied = await within(column('applied')).findByRole('list', {
+      name: 'Applied applications',
+    })
+    const card = (name: string) =>
+      within(document.body).getByRole('button', { name }).closest('li')!
+
+    // Over a column it can go to, the card shows where it lands; its own column takes nothing.
+    const zain = within(applied).getByRole('button', { name: 'Zain Abbas' }).closest('li')!
+    expect(zain).toHaveAttribute('draggable', 'true')
+    fireEvent.dragStart(zain)
+    fireEvent.dragOver(column('applied'))
+    fireEvent.dragOver(column('shortlisted'))
+    expect(
+      await within(column('shortlisted')).findByText('Move to Shortlisted'),
+    ).toBeInTheDocument()
+    fireEvent.drop(column('shortlisted'))
+    fireEvent.dragEnd(zain)
+
+    // It shows in the new column straight away, then the server confirms it.
+    expect(
+      within(column('shortlisted')).getByRole('button', { name: 'Zain Abbas' }),
+    ).toBeInTheDocument()
+    expect(within(column('applied')).queryByRole('button', { name: 'Zain Abbas' })).toBeNull()
+    expect(await screen.findByText('Zain Abbas moved to Shortlisted')).toBeVisible()
+    expect(
+      await within(column('shortlisted')).findByRole('button', {
+        name: 'Actions for Zain Abbas, QA Engineer',
+      }),
+    ).toBeVisible()
+
+    // Closed applications do not drag.
+    expect(card('Sana Javed')).toHaveAttribute('draggable', 'false')
+
+    // A closing column asks first.
+    const hira = card('Hira Baig')
+    fireEvent.dragStart(hira)
+    fireEvent.dragOver(column('rejected'))
+    expect(await within(column('rejected')).findByText('Reject…')).toBeInTheDocument()
+    fireEvent.drop(column('rejected'))
+    fireEvent.dragEnd(hira)
+    expect(await dialog('Reject Application')).toBeVisible()
   })
 
   it('rejects an application with a reason from the settings list', async () => {

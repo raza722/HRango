@@ -29,7 +29,12 @@ import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { ASSET_PAGE_SIZE, ASSET_TYPE_STATUS_META } from '../../constants'
-import { useAssetTypes, useDeleteAssetType, useSetAssetTypeActive } from '../../hooks/use-assets'
+import {
+  useAssetTypes,
+  useDeleteAssetType,
+  useLastPageWithRows,
+  useSetAssetTypeActive,
+} from '../../hooks/use-assets'
 import type { AssetType } from '../../types/assets.types'
 import { AssetTypeDialog } from './asset-type-dialog'
 
@@ -89,9 +94,10 @@ export function AssetTypesPage() {
     q: filters.q,
     isActive: filters.status ? filters.status === 'active' : undefined,
   })
-  const goTo = (next: number) => {
-    void navigate({ search: (prev) => ({ ...prev, page: next }) })
+  const goTo = (next: number, replace = false) => {
+    void navigate({ search: (prev) => ({ ...prev, page: next }), replace })
   }
+  useLastPageWithRows(list, page, goTo)
   const close = () => {
     setDialog(null)
   }

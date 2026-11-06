@@ -123,6 +123,35 @@ describe('Company Assets', () => {
     ).toBeVisible()
   })
 
+  it('goes back to the last page with rows after deleting the last row of a page', async () => {
+    const never = assets
+      .all()
+      .find((asset) => !allocations.all().some((row) => row.assetId === asset.id))
+    if (!never) throw new Error('Every asset was allocated')
+    // Eleven assets: page 2 holds only AST-00011.
+    for (const number of [10, 11]) {
+      assets.insert({
+        ...never,
+        id: `as_${String(number)}`,
+        code: `AST-000${String(number)}`,
+        identificationNo: `EXTRA-${String(number)}`,
+      })
+    }
+    const { user, router } = renderApp('/assets/company-assets?page=2')
+
+    await openRowMenu(user, `Actions for AST-00011, ${never.name}`)
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    const confirm = await screen.findByRole('alertdialog', { name: 'Delete asset' })
+    await user.click(within(confirm).getByRole('button', { name: 'Yes' }))
+
+    // Page 1, the default, leaves the URL.
+    await waitFor(() => {
+      expect(router.state.location.search).not.toHaveProperty('page')
+    })
+    expect(await screen.findByText('Showing 1 to 10 of 10 assets')).toBeVisible()
+    expect(screen.getByText('AST-00001')).toBeVisible()
+  })
+
   it('refuses to deactivate an allocated asset and activates an unavailable one', async () => {
     const { user } = renderApp('/assets/company-assets')
 

@@ -249,12 +249,17 @@ export function WidgetEmpty({
   )
 }
 
-/** A widget whose endpoint the backend does not have yet (the real API answered 404). */
+/**
+ * A widget whose endpoint the server does not have yet (the real API answered 404). `dependency`
+ * is its entry in docs/backend-dependencies.md, kept on the element for developers, not shown.
+ */
 export function NotAvailable({ what, dependency }: { what: string; dependency: string }) {
   return (
-    <WidgetEmpty icon={<CloudOff />} title="Not available yet">
-      {what} need a backend endpoint that does not exist yet (Backend Dependencies {dependency}).
-    </WidgetEmpty>
+    <div data-backend-dependency={dependency} className="contents">
+      <WidgetEmpty icon={<CloudOff />} title="Not available yet">
+        {what} need a feature this server doesn&apos;t have yet.
+      </WidgetEmpty>
+    </div>
   )
 }
 

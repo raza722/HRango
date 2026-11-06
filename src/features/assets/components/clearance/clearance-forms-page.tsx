@@ -33,7 +33,12 @@ import { cn } from '@/lib/utils'
 
 import { useOrgLookup } from '../../api/lookups.api'
 import { ASSET_PAGE_SIZE, CLEARANCE_STATUS_META } from '../../constants'
-import { useClearances, useDeleteClearance, useSetClearancesApproved } from '../../hooks/use-assets'
+import {
+  useClearances,
+  useDeleteClearance,
+  useLastPageWithRows,
+  useSetClearancesApproved,
+} from '../../hooks/use-assets'
 import { CLEARANCE_STATUSES, type ClearanceRow } from '../../types/assets.types'
 import { ClearanceFormDialog } from './clearance-form-dialog'
 
@@ -80,10 +85,11 @@ export function ClearanceFormsPage() {
   })
   const rows = list.data?.data ?? []
 
-  const goTo = (next: number) => {
+  const goTo = (next: number, replace = false) => {
     setSelected(new Map())
-    void navigate({ search: (prev) => ({ ...prev, page: next }) })
+    void navigate({ search: (prev) => ({ ...prev, page: next }), replace })
   }
+  useLastPageWithRows(list, page, goTo)
   const close = () => {
     setDialog(null)
   }
