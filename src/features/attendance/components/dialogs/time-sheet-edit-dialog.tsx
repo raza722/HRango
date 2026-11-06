@@ -79,6 +79,7 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
         const shown = Object.entries(error.fieldErrors).filter(([field, message]) => {
           if (field === 'lastOut') form.setError('checkOutTime', { message })
           else if (field === 'firstIn') form.setError('checkInTime', { message })
+          else if (field === 'markedStatus') form.setError('markShortDay', { message })
           else if (field === 'comments') form.setError('comments', { message })
           else return false
           return true
@@ -91,6 +92,8 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
   })
 
   const rootError = form.formState.errors.root?.message
+  // The marks' one rule ("Half Day or Short Day, not both"); CheckboxField shows no errors.
+  const markError = form.formState.errors.markShortDay?.message
 
   return (
     <AppDialog
@@ -196,9 +199,24 @@ export function TimeSheetEditDialog({ dayKey, onClose }: { dayKey: DayKey; onClo
                       </div>
                       <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
                         <CheckboxField control={control} name="markAbsent" label="Mark Absent" />
-                        <CheckboxField control={control} name="markHalfDay" label="Mark Half Day" />
+                        <CheckboxField
+                          control={control}
+                          name="markHalfDay"
+                          label="Mark Half Day"
+                          onCheckedChange={() => {
+                            form.clearErrors('markShortDay')
+                          }}
+                        />
                       </div>
                       <CheckboxField control={control} name="markShortDay" label="Mark Short Day" />
+                      {markError && (
+                        <p
+                          role="alert"
+                          className="text-sm text-destructive @xl:col-span-2 @3xl:col-span-3"
+                        >
+                          {markError}
+                        </p>
+                      )}
                     </>
                   )}
                 </div>

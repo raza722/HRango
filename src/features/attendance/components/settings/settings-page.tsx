@@ -26,10 +26,10 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   holidays: 'Holidays',
 }
 
-/** The view permission of each tab; Scheduling has none in the API (it has no endpoint yet). */
-const TAB_PERMISSIONS: Record<SettingsTab, string | null> = {
+/** The view permission of each tab (Scheduling's route checks Basic's). */
+const TAB_PERMISSIONS: Record<SettingsTab, string> = {
   basic: 'attendance.settings.basic.view',
-  scheduling: null,
+  scheduling: 'attendance.settings.basic.view',
   'rest-days': 'scheduling.settings.rest_days.view',
   'break-types': 'scheduling.settings.break_types.view',
   'ip-restrictions': 'attendance.settings.ip_restrictions.view',
@@ -47,8 +47,7 @@ export function AttendanceSettingsPage() {
   const tabsRef = useRef<HTMLDivElement>(null)
   const user = useAuthStore((state) => state.user)
   const tabs = SETTINGS_TABS.filter((item) => {
-    const code = TAB_PERMISSIONS[item]
-    return code === null || can(user, code)
+    return can(user, TAB_PERMISSIONS[item])
   })
   // A tab the user may not see falls back to the first one they may.
   const tab = tabs.includes(requested) ? requested : (tabs[0] ?? requested)

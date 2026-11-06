@@ -260,7 +260,20 @@ describe('Leaves', { timeout: 60_000 }, () => {
     ).toBeVisible()
     expect(leaveRequestRows().find((row) => row.reason === 'Long weekend.')).toBeUndefined()
 
-    // Several days around it: the holiday is named and left out of Selected Days.
+    // Several days around it: the holiday is named and left out of Selected Days. The sample data
+    // dates the demo user's own leave from today, so clear any of it from those days first (in
+    // the week before Iqbal Day a pending half day lands on the day after it).
+    const around = [addDays(iqbal, -1), iqbal, addDays(iqbal, 1)].map(iso)
+    for (const request of standardRequests.all()) {
+      const dates = request.payload.dates
+      if (
+        request.employeeId === DEMO_USER.employeeId &&
+        Array.isArray(dates) &&
+        dates.some((date) => typeof date === 'string' && around.includes(date))
+      ) {
+        standardRequests.remove(request.id)
+      }
+    }
     await user.click(within(dialog).getByRole('switch', { name: 'Category: Single' }))
     // Start Date opens on the day already chosen; End Date on the start.
     await pickDate(user, /^Start Date/, addDays(iqbal, -1), iqbal)

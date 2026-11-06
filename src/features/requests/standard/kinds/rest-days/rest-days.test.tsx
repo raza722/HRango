@@ -40,7 +40,7 @@ const confirmYes = async (user: UserEvent) => {
 
 describe('Rest Days (the shared standard request pages, on /requests/rest-day)', () => {
   it('lists my requests and everyone’s, and submits a new one', async () => {
-    const { user } = renderApp('/requests/rest-days')
+    const { user } = renderApp('/requests/rest-days?scope=my')
 
     expect(await screen.findByRole('heading', { name: 'Rest Days Requests' })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'RD-006' })).toBeVisible()

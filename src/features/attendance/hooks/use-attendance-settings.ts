@@ -32,7 +32,7 @@ export function useBasicSettings() {
   return useQuery(basicSettingsQueryOptions())
 }
 
-/** Scheduling switches: the API has no endpoint yet, so this fails outside the mock API. */
+/** Scheduling switches; a server from before the route answers 404 (not retried). */
 export function useSchedulingSettings() {
   return useQuery({
     queryKey: settingsKeys.scheduling(),

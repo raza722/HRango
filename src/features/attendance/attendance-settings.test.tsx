@@ -1,6 +1,7 @@
 import { screen, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
 import { differenceInCalendarMonths, format, isWeekend, parse, subDays } from 'date-fns'
+import { http } from 'msw'
 import { describe, expect, it } from 'vitest'
 
 import { holidayFor } from '@/mocks/attendance/audience'
@@ -11,6 +12,8 @@ import {
   restDayRules,
   settingsStore,
 } from '@/mocks/attendance/settings-db'
+import { server } from '@/mocks/node'
+import { apiPath, errorResponse } from '@/mocks/utils'
 import { renderApp } from '@/test/test-utils'
 
 async function choose(user: UserEvent, label: string | RegExp, option: string | RegExp) {
@@ -69,6 +72,30 @@ describe('Attendance Settings', () => {
     expect(saved?.dashboardPunch).toBe(false)
     expect(saved?.lateGraceMinutes).toBe(10)
     expect(saved?.rowVersion).not.toBe(before)
+  })
+
+  it('says the scheduling switches cannot be saved only when the server lacks the route', async () => {
+    server.use(
+      http.get(apiPath('/attendance/settings/scheduling'), () => errorResponse(404, 'Not Found')),
+    )
+    const { unmount } = renderApp('/attendance/settings?tab=scheduling')
+    expect(
+      await screen.findByText(
+        'These switches cannot be saved yet: the server does not store them.',
+      ),
+    ).toBeVisible()
+    unmount()
+
+    // Any other failure is an ordinary error that can be retried.
+    server.use(
+      http.get(apiPath('/attendance/settings/scheduling'), () =>
+        errorResponse(500, 'Something broke on the server'),
+      ),
+    )
+    renderApp('/attendance/settings?tab=scheduling')
+    expect(await screen.findByText('Something broke on the server')).toBeVisible()
+    expect(screen.getByRole('button', { name: /try again/i })).toBeVisible()
+    expect(screen.queryByText(/cannot be saved yet/)).not.toBeInTheDocument()
   })
 
   it('creates a break type, and refuses a second one with the same name', async () => {

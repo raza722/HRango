@@ -1,13 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import type { UserEvent } from '@testing-library/user-event'
 import { addDays, differenceInCalendarMonths, format } from 'date-fns'
-import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 
-import { server } from '@/mocks/node'
 import { standardRequests } from '@/mocks/requests/standard'
-import { LOAN_EMPLOYMENT_TYPES } from '@/mocks/requests/standard/kinds/loan-advances-settings'
-import { apiPath } from '@/mocks/utils'
 import { renderApp } from '@/test/test-utils'
 
 async function choose(user: UserEvent, label: RegExp, option: string | RegExp) {
@@ -50,7 +46,7 @@ const LONG = 40_000
 
 describe('Loan & Advances (the request engine’s loan type and the Loans module)', () => {
   it('lists my loans and everyone’s', async () => {
-    const { user } = renderApp('/requests/loan-advances')
+    const { user } = renderApp('/requests/loan-advances?scope=my')
 
     expect(await screen.findByRole('heading', { name: 'Loan & Advances' }, FIRST)).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'RQ-LA-0006' }, FIRST)).toBeVisible()
@@ -65,7 +61,7 @@ describe('Loan & Advances (the request engine’s loan type and the Loans module
   it(
     'submits one with a guarantor; the type’s rules refuse a second Car Loan',
     async () => {
-      const { user } = renderApp('/requests/loan-advances')
+      const { user } = renderApp('/requests/loan-advances?scope=my')
 
       expect(await screen.findByRole('cell', { name: 'RQ-LA-0006' }, FIRST)).toBeVisible()
       await user.click(await screen.findByRole('button', { name: 'Create' }))
@@ -208,12 +204,6 @@ describe('Loan & Advances (the request engine’s loan type and the Loans module
   it(
     'creates a type in Settings, and the Create form offers it',
     async () => {
-      // The settings mock has no employment types; serve the ones the loan types use.
-      server.use(
-        http.get(apiPath('/organisation/lookups/employment-types'), () =>
-          HttpResponse.json({ data: LOAN_EMPLOYMENT_TYPES }),
-        ),
-      )
       const { user } = renderApp('/requests/loan-advances?tab=settings')
 
       expect(await screen.findByRole('cell', { name: 'Car Loan' }, FIRST)).toBeVisible()
@@ -234,6 +224,7 @@ describe('Loan & Advances (the request engine’s loan type and the Loans module
         within(dialog).getByRole('textbox', { name: /^Gap Between Installments/ }),
         '1',
       )
+      // The contract types are the mock API's own (`/organisation/lookups/employment-types`).
       await choose(user, /^Employment Contract Type/, 'Permanent')
       await user.keyboard('{Escape}')
       await choose(user, /^Deduction Payitem/, 'Loan Deduction')

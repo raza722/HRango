@@ -160,6 +160,35 @@ describe('Time Sheet', () => {
     expect(await within(history).findByText('Update Mark')).toBeVisible()
   })
 
+  it('says under the marks that a day is Half Day or Short Day, not both', async () => {
+    const date = recentWorkday(5, true)
+    const label = formatSheetDate(date)
+    const { user } = renderApp(
+      `/attendance/time-sheet?scope=all&employeeId=em_omar&from=${date}&to=${date}`,
+    )
+
+    await user.click(await screen.findByRole('button', { name: `Edit, Omar Siddiqui, ${label}` }))
+    const edit = await screen.findByRole('dialog', {
+      name: /^Edit the time sheet of Omar Siddiqui/,
+    })
+    const halfDay = await within(edit).findByRole('checkbox', { name: 'Mark Half Day' })
+    const shortDay = within(edit).getByRole('checkbox', { name: 'Mark Short Day' })
+    expect(halfDay).not.toBeChecked()
+    expect(shortDay).not.toBeChecked()
+    await user.click(halfDay)
+    await user.click(shortDay)
+    await user.click(within(edit).getByRole('button', { name: 'Save' }))
+
+    expect(await within(edit).findByRole('alert')).toHaveTextContent(
+      'Choose Half Day or Short Day, not both',
+    )
+    expect(screen.getByRole('dialog', { name: /^Edit the time sheet/ })).toBeVisible()
+
+    // Unticking one of them clears it.
+    await user.click(halfDay)
+    expect(within(edit).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('processes the range on All', async () => {
     const { user } = renderApp('/attendance/time-sheet?scope=all')
 

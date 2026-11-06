@@ -27,8 +27,8 @@ import type {
 // --- request types ----------------------------------------------------------------------------------
 
 /**
- * Frontend page (URL segment under /requests) â†’ the API's request type code.
- * The API's URL segment is the code with hyphens (`shift_swap` â†’ `/requests/shift-swap`).
+ * Frontend page (URL segment under /requests) → the API's request type code.
+ * The API's URL segment is the code with hyphens (`shift_swap` → `/requests/shift-swap`).
  */
 export const REQUEST_TYPE_CODES = {
   punch: 'punch',
@@ -53,7 +53,7 @@ export type RequestTypeCode = (typeof REQUEST_TYPE_CODES)[RequestPageSlug]
 /** `/requests/<api slug>`: the type code with hyphens. */
 export const apiSlug = (code: string) => code.replaceAll('_', '-')
 
-/** The API path of a page's request type: `leave` â†’ `/requests/leave`, `shift` â†’ `/requests/shift-swap`. */
+/** The API path of a page's request type: `leave` → `/requests/leave`, `shift` → `/requests/shift-swap`. */
 export const typePath = (page: RequestPageSlug, suffix = '') =>
   `/requests/${apiSlug(REQUEST_TYPE_CODES[page])}${suffix}`
 
@@ -65,7 +65,7 @@ export const typePermission = (
 
 // --- shapes ----------------------------------------------------------------------------------------
 
-/** pending â†’ approved | rejected; approved â†’ cancelling â†’ cancelled (or back to approved). */
+/** pending → approved | rejected; approved → cancelling → cancelled (or back to approved). */
 export type BackendStatus = 'pending' | 'approved' | 'rejected' | 'cancelling' | 'cancelled'
 
 /** Row menu actions the API grants on a request's detail. */
@@ -247,14 +247,14 @@ export function toCounts(
 
 const person = (id: string | null | undefined, name: string | null | undefined): PersonRef => ({
   id: id ?? '',
-  name: name ?? 'â€”',
+  name: name ?? '—',
   code: '',
 })
 
 const personOrNull = (id: string | null | undefined, name: string | null | undefined) =>
   id ? person(id, name) : null
 
-/** Words for an approver kind (`line_manager` â†’ Line Manager). */
+/** Words for an approver kind (`line_manager` → Line Manager). */
 export const APPROVER_KIND_LABELS: Record<string, string> = {
   line_manager: 'Line Manager',
   hod: 'HOD',
@@ -362,8 +362,8 @@ export function toEmployee(request: BackendRequest<unknown>): RequestEmployee {
     id: request.employeeId,
     name: request.employeeName ?? request.employeeCode,
     code: request.employeeCode,
-    department: request.departmentName ?? 'â€”',
-    designation: request.jobTitleName ?? 'â€”',
+    department: request.departmentName ?? '—',
+    designation: request.jobTitleName ?? '—',
     company: null,
     branch: request.branchName,
     location: request.locationName,
@@ -407,7 +407,7 @@ export function rowActions(request: BackendRequest<unknown>, source: RowSource):
   return actions
 }
 
-/** The detail's actions in the screens' words (approve / reject â†’ decide â€¦). */
+/** The detail's actions in the screens' words (approve / reject → decide …). */
 export function detailActions(actions: readonly BackendAction[]): RequestAction[] {
   const out = new Set<RequestAction>(['view', 'flow', 'history'])
   for (const action of actions) {

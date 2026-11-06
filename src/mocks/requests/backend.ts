@@ -490,8 +490,9 @@ export function pageOf(
     BackendStatus,
     number
   >
-  // Approvals: each row sits in one tab, so the counts add up to All. One waiting for you is
-  // Pending (whatever its status, e.g. a cancelling one in Cancellations); the rest go by status.
+  // Approvals: one waiting for you is Pending (whatever its status, e.g. a cancelling one in
+  // Cancellations); the rest go by status, except a pending one now waiting for someone else (you
+  // approved or forwarded it), which is under All alone, as the API counts them (`meta.total`).
   for (const { row, waiting } of filtered) {
     if (waiting === undefined) counts[row.status] += 1
     else if (waiting) counts.pending += 1

@@ -38,7 +38,7 @@ const confirmYes = async (user: UserEvent) => {
 
 describe('Resignation (the request engine’s resignation type)', () => {
   it('lists my resignation and everyone’s, and submits one for an employee', async () => {
-    const { user } = renderApp('/requests/resignation')
+    const { user } = renderApp('/requests/resignation?scope=my')
 
     expect(await screen.findByRole('heading', { name: 'Resignation Requests' })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'RQ-RSG-0006' })).toBeVisible()
@@ -77,7 +77,7 @@ describe('Resignation (the request engine’s resignation type)', () => {
   }, 30_000)
 
   it('refuses a second resignation while one is waiting', async () => {
-    const { user } = renderApp('/requests/resignation')
+    const { user } = renderApp('/requests/resignation?scope=my')
 
     await user.click(await screen.findByRole('button', { name: 'Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Create Resignation Request' })

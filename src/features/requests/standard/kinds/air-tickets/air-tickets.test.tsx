@@ -31,7 +31,7 @@ const confirmYes = async (user: UserEvent) => {
 
 describe('Air ticket claims (the shared standard request pages)', () => {
   it('submits a claim and refuses a second one for the same travel date', async () => {
-    const { user } = renderApp('/requests/air-tickets')
+    const { user } = renderApp('/requests/air-tickets?scope=my')
 
     expect(await screen.findByRole('heading', { name: 'Air Ticket Claims' })).toBeVisible()
     expect(await screen.findByRole('cell', { name: 'AIR-0002' })).toBeVisible()

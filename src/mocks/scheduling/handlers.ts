@@ -28,7 +28,7 @@ import {
 import type { ApiItem } from '@/types/api'
 
 import { holidayFor } from '../attendance/audience'
-import { holidays } from '../attendance/settings-db'
+import { holidays, restDayRules } from '../attendance/settings-db'
 import { createMockCollection } from '../collection'
 import { DIRECTORY, type DirectoryEmployee, findEmployee } from '../employees/seed'
 import { enrollments, rosterGroups } from '../roster/handlers'
@@ -38,9 +38,11 @@ import {
   CURRENT_EMPLOYEE_ID,
   profileOf,
   type RestDayBatchRecord,
+  SEED_BATCH_ID,
   seedEntries,
   seedGeoFences,
   seedRestDayBatches,
+  slotFor,
 } from './seed'
 import {
   apiTime,
@@ -260,7 +262,8 @@ function toRestDay(entry: ScheduleEntry): BoardRestDay {
     id: entry.id,
     restDate: entry.date,
     isPayable: entry.restDayPayable,
-    restDayRuleId: restDayBatches.find(entry.batchId) ? entry.batchId : null,
+    restDayRuleId:
+      restDayBatches.find(entry.batchId) || restDayRules.find(entry.batchId) ? entry.batchId : null,
     requestId: null,
   }
 }
@@ -367,6 +370,52 @@ const restOn = (employeeId: string, date: string) =>
 function insertShift(record: Omit<ScheduleEntry, 'id' | 'createdAt' | 'updatedAt'>) {
   const now = new Date().toISOString()
   return scheduleEntries.insert({ ...record, id: createId('se'), createdAt: now, updatedAt: now })
+}
+
+// --- rest-day rules ----------------------------------------------------------------------------
+
+/**
+ * A rest-day rule's days on the board (the Attendance mock saves the rule), as
+ * `sch.usp_rest_day_rule_save` writes them to `sch.rest_day`: a day already a rest day of another
+ * rule or a request keeps it, payable flag and all; a seeded day off (no row on the API) becomes
+ * the rule's. A shift stays: the API adds the rest day beside it and the board shows the shift
+ * first, but the other mocks read one entry a day, so the mock leaves that day as it is.
+ */
+export function writeRestDayRule(
+  rule: { id: string; isPayable: boolean },
+  employeeIds: readonly string[],
+  dates: readonly string[],
+): void {
+  const now = new Date().toISOString()
+  for (const employeeId of employeeIds) {
+    for (const date of dates) {
+      const rest = restOn(employeeId, date)
+      if (shiftOn(employeeId, date) || (rest && rest.batchId !== SEED_BATCH_ID)) continue
+      const record: Omit<ScheduleEntry, 'id' | 'createdAt' | 'updatedAt'> = {
+        employeeId,
+        date,
+        kind: 'rest',
+        rosterGroupId: rest?.rosterGroupId ?? null,
+        clockIn: null,
+        clockOut: null,
+        workFromHome: false,
+        geoFenceIds: [],
+        breaks: [],
+        slot: rest?.slot ?? slotFor({ title: 'Rest Day', days: [] }),
+        restDayPayable: rule.isPayable,
+        batchId: rule.id,
+      }
+      if (rest) scheduleEntries.update(rest.id, { ...rest, ...record, updatedAt: now })
+      else scheduleEntries.insert({ ...record, id: createId('se'), createdAt: now, updatedAt: now })
+    }
+  }
+}
+
+/** Takes a rule's rest days off the board before it is saved again or deleted (as the API does). */
+export function clearRestDayRule(ruleId: string): void {
+  for (const entry of scheduleEntries.all()) {
+    if (entry.kind === 'rest' && entry.batchId === ruleId) scheduleEntries.remove(entry.id)
+  }
 }
 
 // --- the board ---------------------------------------------------------------------------------

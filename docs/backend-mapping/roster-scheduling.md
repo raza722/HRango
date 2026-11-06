@@ -173,5 +173,8 @@ Backend notes (not bugs, worth knowing):
   `/employees/lookup` (the shared paged `lookupPage` mocks: attendance for attendance codes, then the settings /
   payroll fallbacks; `departmentId` is not filtered there) and `/organisation/lookups/{kind}` (payroll's
   `lookup-handlers.ts`), `/attendance/settings/geo-fences` (attendance).
-- Holidays are always empty on the mock board; rest days created through the attendance mock's rest-day rules do
-  not appear on the mock board (separate stores).
+- Holidays are always empty on the mock board. Saving a rest-day rule through the attendance mock writes its rest
+  days to the board store (`writeRestDayRule` in `mocks/scheduling/handlers.ts`, after `usp_rest_day_rule_save`): a
+  roster day off becomes the rule's rest day with its payable flag, a day already a rest day keeps its own, and
+  deleting the rule clears them. One difference: on a day with a shift the backend adds the rest day beside the
+  shift; the mock leaves the shift alone (one entry per day).

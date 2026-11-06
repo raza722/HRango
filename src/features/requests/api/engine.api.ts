@@ -100,22 +100,34 @@ export const engineApi = {
     return adaptPage(kind, data, { tab: 'request' }, toPayload)
   },
 
-  /** `GET /requests/approvals?box=&type=<code>&status&page&pageSize&<filters>`. */
+  /**
+   * `GET /requests/approvals?box=&type=<code>&status&page&pageSize&<filters>`. A box also lists
+   * what you decided or passed on; Pending there means waiting for you, so a request now waiting
+   * for someone else is in no status tab and All is the box's total, not the tabs' sum.
+   */
   async approvals<K extends RequestPageSlug, P>(
     kind: K,
     params: EngineApprovalParams,
     toPayload: PayloadMapper<P>,
     signal?: AbortSignal,
   ) {
-    const { data } = await apiClient.get<BackendRequestPage>('/requests/approvals', {
-      params: compactQuery({
-        ...params,
-        type: REQUEST_TYPE_CODES[kind],
-        status: fromStatus(params.status),
-      }),
-      signal,
-    })
-    return adaptPage(kind, data, { tab: 'approvals', box: params.box }, toPayload)
+    const read = (status: RequestStatus | undefined, page: number, pageSize: number) =>
+      apiClient.get<BackendRequestPage>('/requests/approvals', {
+        params: compactQuery({
+          ...params,
+          page,
+          pageSize,
+          type: REQUEST_TYPE_CODES[kind],
+          status: fromStatus(status),
+        }),
+        signal,
+      })
+    const [{ data }, all] = await Promise.all([
+      read(params.status, params.page, params.pageSize),
+      params.status ? read(undefined, 1, 1).then(({ data: box }) => box.meta.total) : null,
+    ])
+    const page = adaptPage(kind, data, { tab: 'approvals', box: params.box }, toPayload)
+    return { ...page, counts: { ...page.counts, all: all ?? data.meta.total } }
   },
 
   /** One request with its flow, history, files and the caller's actions. */

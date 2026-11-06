@@ -66,7 +66,7 @@ function aMonday(): Date {
 }
 
 describe('Leave (the shared standard request pages, on /requests/leave)', () => {
-  it('shows the balance card over my requests, and everyone’s on All Requests', async () => {
+  it('shows the balance card, opens on everyone’s requests for HR, and mine on My Request', async () => {
     const { user } = renderApp('/requests/leave')
 
     expect(await screen.findByRole('heading', { name: 'Leave Request' })).toBeVisible()
@@ -76,16 +76,23 @@ describe('Leave (the shared standard request pages, on /requests/leave)', () => 
     const card = screen.getByRole('table', { name: /leave balance/i })
     expect(await within(card).findByRole('rowheader', { name: 'Casual Leaves' })).toBeVisible()
 
+    // The demo HR manager (no permissions list in the mock: allowed everything) sees everyone's.
+    expect(screen.getByRole('tab', { name: 'All Requests' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(await screen.findByRole('cell', { name: 'LV-0001' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Approved' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Unapproved' })).toBeVisible()
+
+    await user.click(screen.getByRole('tab', { name: 'My Request' }))
     expect(await screen.findByRole('cell', { name: 'LV-0007' })).toBeVisible()
     expect(screen.getByRole('cell', { name: /Short Leave/ })).toBeVisible()
     expect(screen.queryByRole('cell', { name: 'LV-0001' })).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('tab', { name: 'All Requests' }))
-    expect(await screen.findByRole('cell', { name: 'LV-0001' })).toBeVisible()
   })
 
   it('checks the fields, then saves a leave of the shift days', async () => {
-    const { user } = renderApp('/requests/leave')
+    const { user } = renderApp('/requests/leave?scope=my')
 
     await user.click(await screen.findByRole('button', { name: 'Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Leave Request Create' })
@@ -115,7 +122,7 @@ describe('Leave (the shared standard request pages, on /requests/leave)', () => 
   }, 30_000)
 
   it('saves a short leave inside the day’s shift', async () => {
-    const { user } = renderApp('/requests/leave')
+    const { user } = renderApp('/requests/leave?scope=my')
 
     await user.click(await screen.findByRole('button', { name: 'Create' }))
     const dialog = await screen.findByRole('dialog', { name: 'Leave Request Create' })
@@ -153,6 +160,29 @@ describe('Leave (the shared standard request pages, on /requests/leave)', () => 
     })
   }, 30_000)
 
+  it('edits a seeded pending half day and saves it under its type’s rules', async () => {
+    const { user } = renderApp('/requests/leave?scope=my')
+
+    await openAction(user, 'LV-0007', 'Edit')
+    const dialog = await screen.findByRole('dialog', { name: 'Leave Request Edit' })
+    const reason = within(dialog).getByRole('textbox', { name: /^Reason/ })
+    await waitFor(() => {
+      expect(reason).toHaveValue('Doctor’s appointment.')
+    })
+    await user.clear(reason)
+    await user.type(reason, 'Doctor’s appointment moved to the morning.')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect((await screen.findAllByText('Request updated')).length).toBeGreaterThan(0)
+    expect(standardRequests.find('lv_0007')?.payload).toMatchObject({
+      leaveTypeId: 'lt_casual',
+      short: true,
+      shortType: 'half-day',
+      count: 0.5,
+      reason: 'Doctor’s appointment moved to the morning.',
+    })
+  }, 30_000)
+
   it('approves a request, showing the person’s balance, and counts it as availed', async () => {
     const { user } = renderApp('/requests/leave?tab=approvals')
 
@@ -187,5 +217,23 @@ describe('Leave (the shared standard request pages, on /requests/leave)', () => 
     await waitFor(() => {
       expect(standardRequests.find('lv_0005')?.status).toBe('cancelled')
     })
+  })
+
+  it('counts under All every request a box lists, also one now waiting for someone else', async () => {
+    const { user } = renderApp('/requests/leave?tab=approvals&view=delegates')
+
+    // Bilal approved LV-0003, which now waits for the HR manager herself: listed, not Pending.
+    expect(await screen.findByRole('cell', { name: 'LV-0003' })).toBeVisible()
+    expect(screen.getAllByRole('cell', { name: /^LV-/ })).toHaveLength(4)
+    const tabs = screen.getByRole('list', { name: 'Requests by status' })
+    expect(within(tabs).getByRole('button', { name: 'All (4)' })).toBeVisible()
+    expect(within(tabs).getByRole('button', { name: 'Pending (2)' })).toBeVisible()
+
+    // All keeps the box's total while another status tab is chosen.
+    await user.click(within(tabs).getByRole('button', { name: /^Rejected/ }))
+    await waitFor(() => {
+      expect(screen.getAllByRole('cell', { name: /^LV-/ })).toHaveLength(1)
+    })
+    expect(within(tabs).getByRole('button', { name: 'All (4)' })).toBeVisible()
   })
 })

@@ -22,10 +22,7 @@ export interface BasicSettings {
   rowVersion: string | null
 }
 
-/**
- * Attendance → Settings → Scheduling. The API has no endpoint for these switches yet; only the
- * mock API serves `/attendance/settings/scheduling`.
- */
+/** Attendance → Settings → Scheduling (`GET/PUT /attendance/settings/scheduling`). */
 export interface SchedulingSettings {
   geoFenceRequiredOnShift: boolean
   ignoreRestDaysForLeaves: boolean
