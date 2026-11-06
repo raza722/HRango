@@ -75,11 +75,11 @@ function HubCard({ link }: { link: HubLink }) {
       to={link.to}
       params={link.params}
       search={link.search}
-      className="group flex h-full items-start gap-3 rounded-lg border bg-card p-4 transition-colors outline-none hover:border-sidebar/40 hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:border-border"
+      className="group flex h-full items-start gap-3 rounded-lg border bg-card p-4 transition-[background-color,border-color,box-shadow,translate] duration-200 ease-out-soft outline-none hover:-translate-y-0.5 hover:border-sidebar/40 hover:bg-muted/40 hover:shadow-lift focus-visible:ring-2 focus-visible:ring-ring/50 active:translate-y-0 motion-reduce:hover:translate-y-0 dark:hover:border-border"
     >
       <span
         aria-hidden="true"
-        className="flex size-10 shrink-0 items-center justify-center rounded-md bg-sidebar/10 text-sidebar dark:bg-primary/20 dark:text-heading"
+        className="flex size-10 shrink-0 items-center justify-center rounded-md bg-sidebar/10 text-sidebar transition-[background-color,scale] duration-200 ease-out-soft group-hover:scale-105 group-hover:bg-sidebar/15 dark:bg-primary/20 dark:text-heading"
       >
         <Icon className="size-5" />
       </span>
@@ -92,7 +92,7 @@ function HubCard({ link }: { link: HubLink }) {
       </span>
       <ChevronRight
         aria-hidden="true"
-        className="mt-2.5 size-4 shrink-0 text-label transition-transform group-hover:translate-x-0.5"
+        className="mt-2.5 size-4 shrink-0 text-label transition-[translate,color] duration-200 ease-out-soft group-hover:translate-x-1 group-hover:text-heading"
       />
     </Link>
   )

@@ -25,7 +25,7 @@ function SelectTrigger({
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       className={cn(
-        'flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-base whitespace-nowrap text-field-foreground shadow-xs transition-[color,box-shadow] outline-none data-[placeholder]:text-label sm:px-4 sm:text-sm pointer-coarse:h-11',
+        'flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-base whitespace-nowrap text-field-foreground shadow-xs transition-[color,border-color,box-shadow] duration-150 outline-none data-[placeholder]:text-label sm:px-4 sm:text-sm pointer-coarse:h-11 [&:enabled:not(:focus-visible):not([aria-invalid=true]):hover]:border-ring/45',
         'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/25',
         'disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/15',
         // A long value ends in an ellipsis (shadcn's line-clamp never applied: its `flex`

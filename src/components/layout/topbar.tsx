@@ -56,7 +56,13 @@ export function TopbarIconButton({
   ...props
 }: TopbarIconButtonProps) {
   return (
-    <Button variant="secondary" size="icon" className={cn('relative', className)} {...props}>
+    <Button
+      variant="secondary"
+      size="icon"
+      // `group`: the icon inside can answer the hover (the theme toggle's turns).
+      className={cn('group relative', className)}
+      {...props}
+    >
       {children}
       {indicator && (
         <span

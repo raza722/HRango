@@ -1,5 +1,9 @@
 import { type ClassValue, clsx } from 'clsx'
-import { twMerge } from 'tailwind-merge'
+import { extendTailwindMerge } from 'tailwind-merge'
+
+// The theme's own shadow sizes (globals.css), so `shadow-glow shadow-primary/50` keeps both: a
+// size and a colour, not two colours where the last one wins.
+const twMerge = extendTailwindMerge({ extend: { theme: { shadow: ['glow', 'lift'] } } })
 
 /** Merges class names and resolves conflicting Tailwind utilities (last one wins). */
 export function cn(...inputs: ClassValue[]): string {

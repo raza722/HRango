@@ -1166,6 +1166,15 @@ How it works:
   columns (that stays in the List view); dragging reorders rows without changing their status;
   **Export CSV** saves the tasks shown, subtasks included (built in the browser: the API has no
   task export).
+- **Scrolling sideways** (List, Board, Table, Timeline, Overdue): the wide views use `PanScroll`
+  (`components/layout/pan-scroll.tsx`). While the view is on screen but its own bottom is not, its
+  horizontal scrollbar floats at the bottom of the screen (mouse and trackpad screens; phones
+  swipe), so the first columns are a drag away instead of at the end of the list. With a mouse,
+  pressing on empty space and dragging pans the view (grab hand); buttons, fields, menus and the
+  drag handles and cards that move tasks keep their own behaviour, and the release after a pan
+  is not a click. The Board and Overdue views shade the side that has more to show (the others
+  have a sticky Task column). Shift + wheel and trackpad swipes work as usual. The Workspaces
+  panel stays in view beside the page on wide screens.
 - **Calendar and Timeline views** (not drawn; layouts approved 27 Oct 2026): `?view=calendar`
   and `?view=timeline`, over the same tasks, search and Filters. Their settings stay in the
   address (`on` the day shown, `calendar=week`, `scale`, `group`), not saved for everyone.
@@ -1596,6 +1605,11 @@ How it works:
 - The board reads one `stage=` page per column (20 cards, then Show more); the dashboard's
   Pipeline by Stage is one `pageSize=1` read per stage (the dashboard route has no per-stage
   counts).
+- Dragging a card (mouse or trackpad): the columns it can go to are outlined, the one under it
+  shows "Move to …" (or "Reject…", "Hire…", "Withdraw…", which open their dialog), and the board
+  scrolls when the card nears its side. A move shows in the new column at once with a spinner and
+  goes back if the server refuses it. Hired, rejected and withdrawn cards don't drag. On touch
+  screens the card's ⋮ menu moves it. Empty space drags the board sideways (`PanScroll`).
 - Hire (`POST …/hire`) creates the employee and the application then links to their Talent
   Management profile; in the mock it adds them to the Talent Management employees (not to the
   static directory the pickers read, and without a salary).
@@ -1604,7 +1618,13 @@ Assumptions to confirm with the backend: the OpenAPI lists no status values for 
 (assumed draft, open, on_hold, closed), interviews (scheduled, completed, no_show, cancelled) or
 offers (draft, sent, accepted, declined, withdrawn, expired); application stages are `StageIn`'s
 five plus hired, rejected and withdrawn. Permission codes are `recruitment.<screen>.<action>`
-(for example `recruitment.openings.publish`, `recruitment.applications.hire`), assumed.
+(for example `recruitment.openings.publish`, `recruitment.applications.hire`), assumed, except
+five the backend folds into another action (hRango-Backend
+`comparison/16-frontend-permission-codes.md`): moving a stage and withdrawing check
+`recruitment.applications.edit`, putting an opening on hold `recruitment.openings.edit`, sending
+an offer `recruitment.offers.submit` and withdrawing one `recruitment.offers.cancel`. Before
+30 Oct 2026 the screens checked codes the backend doesn't have, so with a real sign-in nobody
+could move a card.
 Departures: Reject asks for a reason and Cancel Interview for remarks (both optional in the
 API); Employment Type shows only when its lookup has entries; City is a country picker plus that
 country's cities.
@@ -1895,6 +1915,30 @@ Rules where a frame could not be followed:
 - Not drawn, so only switched to the module's family: Payroll and payslip History tables, the
   Roster Add / Edit form, the list footers ("Showing x of y"), the printable pay slip.
 
+### Motion and hover
+
+The designs draw no motion, so the shell has one small, consistent set (`src/styles/globals.css`,
+second `@theme` block), all of it off for "reduce motion" (the media rule at the end of the file):
+
+- **Pages** settle in (`*:animate-page-in` on `<main>`, 0.32 s fade and 6 px rise); a search or
+  filter change keeps the page, so it does not replay.
+- **Controls**: every link, button, tab and field eases its hover and focus colours (a zero-
+  specificity base rule, so a component's own `transition-*` wins). Shared buttons sink to 97 %
+  while pressed and the filled ones glow in their colour on hover (`shadow-glow`); fields tint
+  their border on hover, never over the focus ring or an error's red.
+- **Cards that open something** (module landing tiles, dashboard key figures) lift 2 px with a
+  soft shadow (`shadow-lift`) and their icon grows; the arrow moves on.
+- **Opening things**: sidebar groups and trees slide down, chevrons turn, collapsible cards open
+  their height, tab panels fade in, menus / popovers / tooltips slide out of their trigger's side,
+  dialogs rise as they zoom in, the theme icon spins in.
+- **Loading**: skeletons shimmer (a light band across, hidden for reduce motion).
+- **Dashboards**: key figures enter one after another (`stagger-children`), columns grow from their
+  baseline and bars from the left (`animate-grow-y` / `-x` with `origin-mark-bottom` on SVG), and
+  Payroll's yearly line draws itself (`animate-draw`, `pathLength={1}`) with its markers following.
+- Keyframes animate `translate` / `scale` with `backwards` fill, so nothing stays transformed (a
+  leftover transform would trap fixed or sticky children). `cn` knows the two shadow names, so
+  `shadow-glow shadow-primary/60` keeps both the size and the colour.
+
 ## Testing
 
 `npm run test:run` — one test per layer, all against the same MSW handlers the browser uses:
@@ -1934,7 +1978,7 @@ Rules where a frame could not be followed:
 | Project Management     | `src/features/project-management/*.test.tsx`: the panel, landing, dashboards, sharing, comments and moving a task across workspaces (`pm-shell`); the four dashboards, the agenda, resolving a comment, the personal list, chart table views, pickers, tiles, loading / empty / error / no access, a pending endpoint missing and phone width (`dashboards`); the whole Create Workspace wizard with its views, statuses and organizer pages (`create-workspace`); the List view, its column and row menus and role permissions (`workspace`); every task field popup (`task-fields`); the Overdue tab, extension requests and their answers, and the Reminders page (`overdue`); the Board view's columns, Move menu, drag and drop and Add Task, and the Table view's columns, sorting, fixed header menu and Export CSV (`views`); the Calendar's days, dragging, "+n more", Unscheduled, task popup and phone list, and the Timeline's bars, keys, dragging, grouping, scales and Unscheduled (`dated-views`); the Activity view's day groups, sentences, filters, recording of edits, Load more and Export CSV, and the Team view's rows, counts, legend, phone layout and opening the List view for a person or the unassigned tasks (`activity-team`) |
 | System Users, Roles    | `src/features/access/*.test.tsx`: users list and filters, create with password rules, roles, disable / enable, overrides, effective permissions, sessions, set password; roles, the permission editor (ticks, scopes, units, select all, save, unsaved guard), copy, retire / restore, delete refusals; the Control Panel Users redirect; Request Flows roles; error state and phone width; `src/app/layouts/account-menu.test.tsx` (Change Password)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Biometric Devices      | `src/features/attendance/biometric-devices*.test.tsx`: list and filters, create / edit with IP, port and unique serial checks, stale 409, delete refusals and Set Inactive, enrolments (add, renumber, remove, unique numbers, unsaved guard), import preview and result with failed lines into Attendance Logs, error state and phone width                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Recruitment            | `src/features/recruitment/*.test.tsx`: openings (create, publish, statuses), candidates, the pipeline (move, reject with a reason, hire), interviews (schedule, complete, evaluate), offers (create, send, accept) and rejection reasons, the dashboard, a stale rowVersion, API errors and phone width                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Recruitment            | `src/features/recruitment/*.test.tsx`: openings (create, publish, statuses), candidates, the pipeline (move from the menu or by dragging, reject with a reason, hire), interviews (schedule, complete, evaluate), offers (create, send, accept) and rejection reasons, the dashboard, a stale rowVersion, API errors and phone width                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | Performance            | `src/features/performance/*.test.tsx`: goals and check-ins, KPIs, cycles with participants and launch, self and manager reviews into Finalise, `AppraisalsView` with props, an API error and phone width                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Custom Form            | `src/features/custom-forms/**/*.test.ts(x)`: building with several field types, reorder, preview and publish; filling with validation, one response per person, a server 422; responses, the summary and CSV export; the waiting state when the endpoints 404; permissions and phone width; the answer and builder schemas                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Manpower Planning      | `src/features/manpower-planning/manpower-planning.test.tsx` (plans and filters, Delete Plan Year, Add Planning with new and existing positions, imports, details / approvals and the edit lock, approving a budget into open positions, rejecting and re-editing one, budget deletes, a load error with retry, JD download and open-position edit / close, budget duration, position titles, employee position and sheet upload)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
