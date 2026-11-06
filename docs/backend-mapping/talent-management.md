@@ -44,11 +44,11 @@ Payroll and are not linked from it (the profile's Related card still links them 
 | Work → Performance Details              | none (no performance API in the app): an empty table that says so                                                                                                                                                                                                                                           | —                                                 |
 | Work → Attendance                       | `GET /attendance/time-sheet/summary?tab=all&employeeId&fromDate&toDate` (this month)                                                                                                                                                                                                                        | Attendance's                                      |
 | Work → Bank Accounts                    | `GET/POST /employees/{id}/bank-accounts`, `PUT/DELETE …/{accountId}`                                                                                                                                                                                                                                        | buttons `employees.directory.edit`                |
-| Documents → Academics                   | `GET/POST /employees/{id}/education`, `PUT/DELETE …/{rowId}`; file `POST /files` → `fileId`                                                                                                                                                                                                                 | buttons `employees.directory.edit`                |
-| Documents → Contracts                   | `GET/POST /employees/{id}/contracts`, `PUT/DELETE …/{rowId}`; file → `fileId`                                                                                                                                                                                                                               | same                                              |
-| Documents → Documents (Upload Document) | `GET/POST /employees/{id}/documents`, `PUT/DELETE …/{rowId}` (`fileId` required)                                                                                                                                                                                                                            | same                                              |
-| Documents → Experience                  | `GET/POST /employees/{id}/experience`, `PUT/DELETE …/{rowId}`; a chosen file → `POST …/documents` (type `experience_letter`)                                                                                                                                                                                | same                                              |
-| Dependents                              | `GET/POST /employees/{id}/dependents`, `PUT/DELETE …/{rowId}`                                                                                                                                                                                                                                               | same                                              |
+| Documents → Academics                   | `GET/POST /employees/{id}/education`, `PUT/DELETE …/{rowId}`; file `POST /files` → `fileId`                                                                                                                                                                                                                 | list `.education.view`; buttons `.documents.edit` |
+| Documents → Contracts                   | `GET/POST /employees/{id}/contracts`, `PUT/DELETE …/{rowId}`; file → `fileId`                                                                                                                                                                                                                               | list `.contracts.view`; buttons as above          |
+| Documents → Documents (Upload Document) | `GET/POST /employees/{id}/documents`, `PUT/DELETE …/{rowId}` (`fileId` required)                                                                                                                                                                                                                            | list `.documents.view`; buttons as above          |
+| Documents → Experience                  | `GET/POST /employees/{id}/experience`, `PUT/DELETE …/{rowId}`; a chosen file → `POST …/documents` (type `experience_letter`)                                                                                                                                                                                | list `.experience.view`; buttons as above         |
+| Dependents                              | `GET/POST /employees/{id}/dependents`, `PUT/DELETE …/{rowId}`                                                                                                                                                                                                                                               | list `.dependents.view`; edit `.dependents.edit`  |
 | Benefits → Employee Benefits            | none (the Benefits API has no per-person contributions): an empty table that says so; View Details → `/benefits/employees`                                                                                                                                                                                  | —                                                 |
 | Benefits → Benefit Accounts             | `GET /payroll/payslips/summary?employeeId` (`payrollApi.myAccounts`; benefit and pay-item accounts)                                                                                                                                                                                                         | Payroll's                                         |
 | Leave → Leave Overview This Month       | `GET /leaves/balances?employeeId&pageSize=100` (entitled per type) + `GET /leaves/applications?tab=all&status=approved&employeeId&fromDate&toDate` (days this month)                                                                                                                                        | Leaves'                                           |
@@ -60,6 +60,15 @@ already send (`employees.directory.view` for pickers, `employees.update_requests
 Information) and extend them: `employees.directory.create`, `.edit`, `.deactivate`, `employees.identity.edit`
 (`TM_CODES` in `constants.ts`). Child tables and the photo use `.directory.edit`. Check them against the catalogue.
 In mock mode (no permissions list) everything shows.
+
+**Profile tabs read under their own view codes** (checked against the backend on 6 Nov 2026, commit 14b3940:
+`PROFILE_TABS` in `backend/app/routers/employees.py`). `GET /employees/{id}/<tab>` needs `employees.<tab>.view` for
+that person; in the table above `.x.view` stands for `employees.x.view`. Line managers and department heads
+(`_managing` in `backend/app/core/default_roles.py`) hold `.emergency_contacts`, `.skills`, `.education` and
+`.experience` for their people, but not `.dependents`, `.documents` or the sensitive `.contracts`. The Dependents tab
+and each group of the Documents tab check their code with `useCanOnEmployee` (the plain code on your own record,
+`@team` or wider on anyone else's). Without it they skip the request and say "You can’t see this person’s …" instead
+of failing to load; a user who may read none of the four groups gets one note for the whole Documents tab.
 
 Query keys: the Work, Benefits and Leave tabs read through the other features' APIs under those features' own keys
 (`payrollKeys.list('payslips', …)`, `standardKeys.list('loan-advances', …)`, `attendanceKeys.summary(…)`,
@@ -74,6 +83,15 @@ employee write invalidates `['employees']` (lists, tiles, records, child tables,
 - **CNIC**: sent on `POST /employees` only. Edits leave `cnic` out of `PUT /employees/{id}` (a masked CNIC must not be
   written back as blank) and change it through `PUT …/identity`. With `canSeeIdentity: false` the Personal tab shows
   "Hidden" and the field is not offered.
+- **Personal details (`canSeePersonal`)**: without the sensitive `employees.personal.view` for a colleague (everyone
+  holds it for their own record), `EmployeeOut` reads `canSeePersonal: false` and null for `parentName`,
+  `maritalStatus`, `religion`, `nationality`, `dateOfBirth`, `phone1`, `phone2`, `homeAddress`, `homeCityId`,
+  `homeCityName`, `emergencyContactName` and `emergencyContactPhone` (`PERSONAL_FIELDS` in `employees.types.ts`, as
+  in the backend's `employees_service.py`). The Personal tab shows "Hidden" for them. Edit Employee and Update
+  Profile do not offer them (a note says why), and `PUT /employees/{id}` goes without them, so the blanks are never
+  written back; the API also keeps the stored values when it saves such a record. There is no mapping layer:
+  `personalHidden()` in `constants.ts` reads the flag, and a missing flag (an API older than 30 Oct 2026) shows
+  everything.
 - **Experience** has no file in `ExperienceIn`; the popup's Upload Document becomes an `experience_letter` document
   titled "{Job Title} at {Company}". **In Process** on Academics is `isInProcess` (To Date cleared); on Experience and
   Contracts it means no `toDate`.
@@ -94,7 +112,10 @@ employee write invalidates `['employees']` (lists, tiles, records, child tables,
   match. Personal data (gender, marital status, date of birth, CNIC, email, phones, addresses, joining dates; four
   people on probation) is seeded; the child tables carry the frames' samples for Shelley Kannes (Ashraf Hussain /
   Fatima Bibi, the seven skill chips, BZU Multan, Project Contract, Resume, HexaTech) and a few others; everyone has a
-  primary emergency contact.
+  primary emergency contact. `PERSONAL_HIDDEN` holds the sample colleague whose personal details the API hides
+  (Daniyal Qureshi, `em_daniyal`): his record reads `canSeePersonal: false` with the personal fields null, and a
+  `PUT` keeps the stored values, as the API does. The mock has no permissions list, so every tab's view code passes;
+  `profile-access.test.tsx` signs in with a line manager's codes to cover the notes.
 - `handlers.ts`: list filters and paging; validation like the API's (required names ≤ 200, job title ≤ 100, phone ≤ 30,
   account number ≤ 50, enum values, dates in order, known branch / location / area / department / designation / people,
   a line manager other than the person); 409 `EMPLOYEE_CODE_DUPLICATE` on `code`, `SKILL_DUPLICATE`,

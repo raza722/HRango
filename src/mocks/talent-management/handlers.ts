@@ -18,6 +18,8 @@ import {
   type Experience,
   GENDERS,
   MARITAL_STATUSES,
+  PERSONAL_FIELDS,
+  type PersonalField,
   SALARY_FREQUENCIES,
   SKILL_LEVELS,
 } from '@/features/talent-management/types/employees.types'
@@ -61,6 +63,7 @@ import {
   type EmployeeRec,
   type ExperienceRec,
   nextRowVersion,
+  PERSONAL_HIDDEN,
   type SkillRec,
 } from './seed'
 
@@ -167,13 +170,24 @@ const primaryContact = (employeeId: string) => {
   return rows.find((row) => row.isPrimary) ?? rows[0]
 }
 
-/** `EmployeeOut`: the stored record with the names, counts and tenure the API adds. */
+/** What `EmployeeOut` reads for the personal fields when `canSeePersonal` is false. */
+const PERSONAL_BLANK = Object.fromEntries(PERSONAL_FIELDS.map((field) => [field, null])) as Record<
+  PersonalField,
+  null
+>
+
+/**
+ * `EmployeeOut`: the stored record with the names, counts and tenure the API adds; a colleague
+ * whose personal details the user may not see (`PERSONAL_HIDDEN`) reads them as null.
+ */
 export function toEmployee(rec: EmployeeRec): Employee {
   const contact = primaryContact(rec.id)
-  return {
+  const canSeePersonal = !PERSONAL_HIDDEN.has(rec.id)
+  const employee: Employee = {
     ...rec,
     name: fullName(rec),
     canSeeIdentity: true,
+    canSeePersonal,
     homeCityName: null,
     photoUrl: rec.photoFileId ? mockFileUrl(rec.photoFileId) : null,
     branchName: branches.find(rec.branchId)?.name ?? '',
@@ -186,6 +200,7 @@ export function toEmployee(rec: EmployeeRec): Employee {
     emergencyContactPhone: contact?.phone ?? null,
     directReportCount: employees.all().filter((row) => row.lineManagerId === rec.id).length,
   }
+  return canSeePersonal ? employee : { ...employee, ...PERSONAL_BLANK }
 }
 
 const LIST_FILTERS = [
@@ -295,7 +310,7 @@ function writeEmployee(
   // A body without `cnic` keeps the stored one (identity has its own endpoint).
   const sentCnic = typeof raw === 'object' && raw !== null && 'cnic' in raw
   const id = current?.id ?? createId('em')
-  return {
+  const rec: EmployeeRec = {
     id,
     code,
     firstName: body.firstName,
@@ -346,6 +361,23 @@ function writeEmployee(
     createdAt: current?.createdAt ?? now(),
     updatedAt: current ? now() : null,
     rowVersion: nextRowVersion(),
+  }
+  // As the API: the form of a record with hidden personal details came back with the blanks it
+  // was shown, so what is stored stays.
+  if (!current || !PERSONAL_HIDDEN.has(current.id)) return rec
+  const { parentName, maritalStatus, religion, nationality, dateOfBirth } = current
+  const { phone1, phone2, homeAddress, homeCityId } = current
+  return {
+    ...rec,
+    parentName,
+    maritalStatus,
+    religion,
+    nationality,
+    dateOfBirth,
+    phone1,
+    phone2,
+    homeAddress,
+    homeCityId,
   }
 }
 

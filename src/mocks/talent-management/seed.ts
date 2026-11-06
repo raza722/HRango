@@ -30,6 +30,7 @@ export type EmployeeRec = Omit<
   Employee,
   | 'name'
   | 'canSeeIdentity'
+  | 'canSeePersonal'
   | 'branchName'
   | 'locationName'
   | 'areaName'
@@ -107,6 +108,14 @@ const DEPARTMENT_HEAD: Record<string, string> = {
 
 /** Recent joiners still on probation. */
 const ON_PROBATION = new Set(['em_laiba', 'em_talha', 'em_asad', 'em_rabia'])
+
+/**
+ * Colleagues whose personal details the API hides from the signed-in user, as it does without
+ * `employees.personal.view` for them: their records read `canSeePersonal: false` with the
+ * personal fields null, and a save keeps what is stored. The mock has no permissions list, so
+ * this sample stands in for the rule.
+ */
+export const PERSONAL_HIDDEN = new Set(['em_daniyal'])
 
 const FATHERS = [
   'Ashraf Hussain',

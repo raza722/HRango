@@ -115,17 +115,22 @@ function RecordGroup<T>({
   title,
   query,
   empty,
+  hidden,
   render,
 }: {
   title: string
   query: { data: T[] | undefined; isPending: boolean; isError: boolean }
   empty: string
+  /** Shown in place of the rows when the user may not read them (the query is then off). */
+  hidden?: string | undefined
   render: (row: T) => ReactNode
 }) {
   return (
     <section aria-label={title} className="grid gap-2.5">
       <h3 className="text-base font-medium text-title">{title}</h3>
-      {query.isPending ? (
+      {hidden ? (
+        <EmptyNote>{hidden}</EmptyNote>
+      ) : query.isPending ? (
         <LoadingRows rows={1} label={title.toLowerCase()} />
       ) : query.isError ? (
         <EmptyNote>The {title.toLowerCase()} could not be loaded.</EmptyNote>
@@ -144,11 +149,17 @@ function RecordGroup<T>({
  * Add Professional Experience, Add Contract) on the upload button.
  */
 export function DocumentsTab({ employee }: { employee: Employee }) {
+  // Each group is read under its own view code; a line manager or department head holds
+  // education and experience but not documents or contracts, and the API refuses those lists.
+  const canViewAcademics = useCanOnEmployee(TM_CODES.educationView, employee.id)
+  const canViewContracts = useCanOnEmployee(TM_CODES.contractsView, employee.id)
+  const canViewDocuments = useCanOnEmployee(TM_CODES.documentsView, employee.id)
+  const canViewExperience = useCanOnEmployee(TM_CODES.experienceView, employee.id)
   const canEdit = useCanOnEmployee(TM_CODES.documents, employee.id)
-  const academics = useEmployeeChildren(employee.id, 'education')
-  const contracts = useEmployeeChildren(employee.id, 'contracts')
-  const documents = useEmployeeChildren(employee.id, 'documents')
-  const experience = useEmployeeChildren(employee.id, 'experience')
+  const academics = useEmployeeChildren(employee.id, 'education', canViewAcademics)
+  const contracts = useEmployeeChildren(employee.id, 'contracts', canViewContracts)
+  const documents = useEmployeeChildren(employee.id, 'documents', canViewDocuments)
+  const experience = useEmployeeChildren(employee.id, 'experience', canViewExperience)
   const [editing, setEditing] = useState<Editing | null>(null)
   const [deleting, setDeleting] = useState<Deleting | null>(null)
   const removeEducation = useDeleteChild('education', LABELS.education)
@@ -200,6 +211,10 @@ export function DocumentsTab({ employee }: { employee: Employee }) {
     },
   ]
 
+  if (!canViewAcademics && !canViewContracts && !canViewDocuments && !canViewExperience) {
+    return <EmptyNote>You can’t see this person’s documents.</EmptyNote>
+  }
+
   return (
     <div className="@container grid gap-6">
       {canEdit && (
@@ -235,6 +250,7 @@ export function DocumentsTab({ employee }: { employee: Employee }) {
         title="Academics"
         query={academics}
         empty="No academic records yet."
+        hidden={canViewAcademics ? undefined : 'You can’t see this person’s academic records.'}
         render={(row: Education) => (
           <RecordCard
             key={row.id}
@@ -265,6 +281,7 @@ export function DocumentsTab({ employee }: { employee: Employee }) {
         title="Contracts"
         query={contracts}
         empty="No contracts yet."
+        hidden={canViewContracts ? undefined : 'You can’t see this person’s contracts.'}
         render={(row: Contract) => {
           const type = labelOf(CONTRACT_TYPE_LABELS, row.contractType)
           const title = row.remarks ?? `${type} Contract`
@@ -300,6 +317,7 @@ export function DocumentsTab({ employee }: { employee: Employee }) {
         title="Documents"
         query={documents}
         empty="No documents yet."
+        hidden={canViewDocuments ? undefined : 'You can’t see this person’s documents.'}
         render={(row: EmployeeDocument) => {
           const type = labelOf(DOCUMENT_TYPE_LABELS, row.documentType)
           const title = row.title ?? type
@@ -339,6 +357,9 @@ export function DocumentsTab({ employee }: { employee: Employee }) {
         title="Experience"
         query={experience}
         empty="No professional experience yet."
+        hidden={
+          canViewExperience ? undefined : 'You can’t see this person’s professional experience.'
+        }
         render={(row: Experience) => (
           <RecordCard
             key={row.id}

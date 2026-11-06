@@ -56,6 +56,19 @@ export function EmptyNote({ children }: { children: ReactNode }) {
   return <p className="py-6 text-center text-sm text-muted-foreground">{children}</p>
 }
 
+/**
+ * In the employee forms, in place of the personal fields the API hid (`canSeePersonal: false`):
+ * they are not offered, and a save keeps them as they are.
+ */
+export function PersonalHiddenNote({ className }: { className?: string }) {
+  return (
+    <p className={cn('rounded-[10px] bg-muted px-3 py-2.5 text-xs text-grey', className)}>
+      You can’t see this person’s personal details (family, date of birth, phones and home address),
+      so they are not offered here. Saving keeps them as they are.
+    </p>
+  )
+}
+
 /** Placeholder rows while a card loads. */
 export function LoadingRows({ rows = 3, label }: { rows?: number; label: string }) {
   return (
