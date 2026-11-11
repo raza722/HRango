@@ -63,8 +63,8 @@ export const fieldStyles = {
   /** The round red (x) that removes a row. */
   removeIcon:
     'ml-auto inline-flex size-[1.375rem] shrink-0 items-center justify-center rounded-full bg-[rgba(236,71,79,0.1)] text-[#DC3545] dark:text-[#FF8A94] hover:bg-[rgba(236,71,79,0.2)] [&_svg]:size-[0.55rem]',
-  /** Thin scrollbars (track rgba(41,55,73,0.07), thumb #E4E4E4). */
-  scroll: '[scrollbar-color:#E4E4E4_rgba(41,55,73,0.07)] [scrollbar-width:thin]',
+  /** Thin scrollbars: the app's slim theme scrollbar. */
+  scroll: 'scrollbar-thin',
   /** Dark tooltip (#282828, radius 8, Regular 16 white). */
   tooltip: 'rounded-md bg-[#282828] px-3 py-1.5 text-[0.71875rem] text-white',
 } as const

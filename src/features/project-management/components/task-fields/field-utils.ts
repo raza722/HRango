@@ -388,9 +388,15 @@ export const ADDED_PREVIEW = 3
 // --- links ----------------------------------------------------------------------------------------
 
 /** The address a task's link icon copies: its workspace list, with the task as the hash. */
+/**
+ * A task's address: its workspace (in its list) with the task panel open (`?task=`), the same
+ * shape as the backend's notification links.
+ */
 export function taskLink(task: Pick<Task, 'id' | 'workspaceId' | 'listId'>, origin: string) {
-  const list = task.listId ? `?list=${encodeURIComponent(task.listId)}` : ''
-  return `${origin}/project-management/workspaces/${task.workspaceId}${list}#${task.id}`
+  const params = new URLSearchParams()
+  if (task.listId) params.set('list', task.listId)
+  params.set('task', task.id)
+  return `${origin}/project-management/workspaces/${task.workspaceId}?${params.toString()}`
 }
 
 // --- dependency roll-ups --------------------------------------------------------------------------

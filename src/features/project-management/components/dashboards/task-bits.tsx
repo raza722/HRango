@@ -11,7 +11,7 @@ import { usePeople } from '../../hooks/use-pm'
 import { dash } from './dashboard-styles'
 import { dueLabel } from './dashboard-utils'
 
-/** Opens the task in its workspace's List view (the task screen opens from the hash). */
+/** Opens the task's panel in its workspace (`?task=`). */
 export function TaskLink({
   task,
   children,
@@ -25,7 +25,7 @@ export function TaskLink({
     <Link
       to="/project-management/workspaces/$workspaceId"
       params={{ workspaceId: task.workspaceId }}
-      hash={task.id}
+      search={{ task: task.id }}
       className={className}
     >
       {children}

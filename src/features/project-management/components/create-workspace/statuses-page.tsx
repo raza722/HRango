@@ -271,6 +271,12 @@ export function StatusesPage({
           )}
         >
           <div className="flex max-w-[30.35rem] flex-col gap-5 lg:pl-[0.5625rem]">
+            {!custom && (
+              <p className="rounded-xl bg-[#F0E9FD] px-4 py-3 text-sm text-[#4A3A75] dark:bg-[#7127EA]/15 dark:text-[#D9C9FF]">
+                These are the template&apos;s statuses. To add, rename, recolour or remove a status,
+                choose &quot;Use custom statuses for workspace&quot;.
+              </p>
+            )}
             {groups.map((group: StatusGroup) => (
               <StatusGroupSection
                 key={group}

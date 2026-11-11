@@ -70,7 +70,10 @@ export function DetailsStep({ employees, people, focusHeading }: DetailsStepProp
             <label htmlFor={ids.name} className={wz.label}>
               Workspace Name
             </label>
-            <span id={ids.nameCounter} className={wz.counter}>
+            <span
+              id={ids.nameCounter}
+              className={cn(wz.counter, name.length >= WORKSPACE_NAME_MAX - 5 && wz.counterFull)}
+            >
               {name.length}/{WORKSPACE_NAME_MAX} characters
             </span>
           </div>
@@ -164,8 +167,9 @@ export function DetailsStep({ employees, people, focusHeading }: DetailsStepProp
           <EmployeePickerDialog
             open={pickingOwner}
             onOpenChange={setPickingOwner}
-            title="Add Workspace Owner"
+            title="Choose Workspace Owner"
             showTitle
+            confirmLabel="Select Owner"
             employees={employees}
             multiple={false}
             selected={ownerId ? [ownerId] : []}
@@ -182,7 +186,13 @@ export function DetailsStep({ employees, people, focusHeading }: DetailsStepProp
             <label htmlFor={ids.description} className={wz.label}>
               Description (Optional)
             </label>
-            <span id={ids.descriptionCounter} className={wz.counter}>
+            <span
+              id={ids.descriptionCounter}
+              className={cn(
+                wz.counter,
+                description.length >= WORKSPACE_DESCRIPTION_MAX - 20 && wz.counterFull,
+              )}
+            >
               {description.length}/{WORKSPACE_DESCRIPTION_MAX} characters
             </span>
           </div>

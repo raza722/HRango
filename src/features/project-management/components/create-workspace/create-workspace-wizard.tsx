@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FormProvider, useForm, useWatch } from 'react-hook-form'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 
@@ -118,6 +118,24 @@ function WizardBody({
   const [moved, setMoved] = useState(false)
   const [library, setLibrary] = useState<StatusLibrary>(EMPTY_LIBRARY)
   const [rootError, setRootError] = useState<string | undefined>()
+  const me = lookups.data?.me ?? null
+
+  // You are the owner unless you choose someone else (removing yourself is kept).
+  useEffect(() => {
+    if (me && form.getValues('ownerId') === null && !form.getFieldState('ownerId').isDirty) {
+      form.setValue('ownerId', me.id)
+    }
+  }, [me, form])
+
+  /** Step 2 starts on the owner's department, when the list has one of that name. */
+  const prefillDepartment = () => {
+    if (form.getValues('departmentId')) return
+    const owner = ownerId ? people.get(ownerId) : undefined
+    const match = owner
+      ? departments.data?.find((entry) => entry.name === owner.department && !entry.parentId)
+      : undefined
+    if (match) form.setValue('departmentId', match.id, { shouldDirty: true })
+  }
 
   const goTo = (next: WizardStep) => {
     setStep(next)
@@ -301,6 +319,7 @@ function WizardBody({
                 <ContinueButton
                   disabled={!complete}
                   onClick={() => {
+                    if (step === 'details') prefillDepartment()
                     if (step === 'workflow' && !setup && template) {
                       form.setValue(
                         'setup',

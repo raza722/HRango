@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react'
+import { type ReactNode, useContext } from 'react'
 
 import { cn } from '@/lib/utils'
 
+import { DetailCloseLabelContext } from './detail-close-label'
 import { useFocusOnMount } from './use-focus-on-mount'
 import { BackLink, CancelButton, CloseButton, DoneButton, FormError } from './wizard-controls'
 import { wz } from './wizard-styles'
@@ -33,6 +34,7 @@ export function DetailLayout({
   children,
 }: DetailLayoutProps) {
   const headingRef = useFocusOnMount<HTMLHeadingElement>(true)
+  const closeLabel = useContext(DetailCloseLabelContext)
   return (
     <>
       <header
@@ -53,7 +55,7 @@ export function DetailLayout({
           {title}
         </h2>
         <CloseButton
-          label="Close Create Workspace"
+          label={closeLabel}
           onClick={onClose}
           className="col-start-2 row-start-1 justify-self-end sm:col-start-3"
         />

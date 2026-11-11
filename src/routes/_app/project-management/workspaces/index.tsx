@@ -1,18 +1,21 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 
-import { CreateWorkspaceLanding } from '@/features/project-management/components/layout/create-workspace-landing'
+import { WorkspacesHome } from '@/features/project-management/components/layout/workspaces-home'
 import { pageTitle } from '@/lib/constants'
 
-/** Create Workspace Page (388:137608): the call to action beside the Workspaces panel. */
+/**
+ * Workspaces: the workspaces the person can open beside the Workspaces panel, or the Create
+ * Workspace page (388:137608) while there are none.
+ */
 export const Route = createFileRoute('/_app/project-management/workspaces/')({
-  head: () => ({ meta: [{ title: pageTitle('Create Workspace') }] }),
-  component: CreateWorkspaceRoute,
+  head: () => ({ meta: [{ title: pageTitle('Workspaces') }] }),
+  component: WorkspacesRoute,
 })
 
-function CreateWorkspaceRoute() {
+function WorkspacesRoute() {
   const navigate = useNavigate()
   return (
-    <CreateWorkspaceLanding
+    <WorkspacesHome
       onCreate={() => {
         void navigate({ to: '/project-management/workspaces', search: { create: true } })
       }}

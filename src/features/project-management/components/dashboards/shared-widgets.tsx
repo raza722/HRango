@@ -34,14 +34,7 @@ import {
 } from '../../hooks/use-dashboards'
 import { fileKind, formatFileSize } from '../task-fields/field-utils'
 import { AssigneeBars } from './assignee-bars'
-import {
-  NotAvailable,
-  PreviewBadge,
-  Widget,
-  WidgetEmpty,
-  WidgetError,
-  WidgetSkeleton,
-} from './dashboard-parts'
+import { NotAvailable, Widget, WidgetEmpty, WidgetError, WidgetSkeleton } from './dashboard-parts'
 import { dash } from './dashboard-styles'
 import {
   type FolderStat,
@@ -116,7 +109,7 @@ function EntityLink({
         <Link
           to="/project-management/workspaces/$workspaceId"
           params={{ workspaceId }}
-          hash={entityId}
+          search={{ task: entityId }}
           className={className}
         >
           {children}
@@ -211,13 +204,7 @@ export function RecentsWidget({
       </ul>
     )
   return (
-    <Widget
-      title="Recents"
-      icon={<History />}
-      description={description}
-      badge={recents.data?.available ? <PreviewBadge dependency="T7" /> : undefined}
-      className={className}
-    >
+    <Widget title="Recents" icon={<History />} description={description} className={className}>
       {body}
     </Widget>
   )
@@ -273,7 +260,6 @@ export function DocsWidget({
       title="Docs"
       icon={<FileText />}
       description="Latest docs, newest first. Docs open once the editor exists."
-      badge={docs.data?.available ? <PreviewBadge dependency="T1" /> : undefined}
       className={className}
     >
       {body}
