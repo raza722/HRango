@@ -26,6 +26,7 @@ async function patchSummary(
   return { previous }
 }
 
+/** An inbox change shows at once (optimistic), so it needs no saving pill (`quiet`). */
 function useInboxMutation<TVariables>(
   mutationFn: (variables: TVariables) => Promise<unknown>,
   change: (summary: InboxSummary, variables: TVariables) => InboxSummary,
@@ -33,6 +34,7 @@ function useInboxMutation<TVariables>(
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn,
+    meta: { quiet: true },
     onMutate: (variables: TVariables) =>
       patchSummary(queryClient, (summary) => change(summary, variables)),
     onError: (_error, _variables, onMutateResult) => {

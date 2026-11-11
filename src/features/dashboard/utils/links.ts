@@ -9,11 +9,18 @@ export interface DashLink {
   search?: Record<string, string | number | boolean>
 }
 
-/** Everyone's time sheet for one day (and one state). */
-export function timeSheetLink(day: string, dayStatus?: DayStatus): DashLink {
+/** A From–To range of days, `yyyy-MM-dd`. */
+export interface DayRange {
+  from: string
+  to: string
+}
+
+/** Everyone's time sheet for one day or a range (and one state). */
+export function timeSheetLink(days: string | DayRange, dayStatus?: DayStatus): DashLink {
+  const { from, to } = typeof days === 'string' ? { from: days, to: days } : days
   return {
     to: '/attendance/time-sheet',
-    search: { scope: 'all', from: day, to: day, ...(dayStatus ? { dayStatus } : {}) },
+    search: { scope: 'all', from, to, ...(dayStatus ? { dayStatus } : {}) },
   }
 }
 

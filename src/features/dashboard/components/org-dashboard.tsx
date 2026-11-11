@@ -11,6 +11,7 @@ import {
   Users,
 } from 'lucide-react'
 
+import { summaryQueryOptions } from '@/features/attendance'
 import { cn } from '@/lib/utils'
 
 import {
@@ -22,6 +23,7 @@ import {
 } from '../api/dashboard.api'
 import { openOpeningsQueryOptions } from '../api/module-queries'
 import type { DashboardAccess } from '../hooks/use-dashboard-access'
+import type { DashboardPeriod } from '../routing'
 import {
   formatChange,
   formatCount,
@@ -50,15 +52,6 @@ import {
   WomenByTitleWidget,
 } from './workforce-widgets'
 
-export interface DashboardPeriod {
-  /** `yyyy-MM` the monthly figures cover. */
-  month: string
-  /** Its last day, `yyyy-MM-dd`. */
-  monthEnd: string
-  currentMonth: string
-  today: string
-}
-
 const monthName = (value: string) => format(parse(value.slice(0, 7), 'yyyy-MM', new Date()), 'MMMM')
 
 /** A change against last month, for a tile's delta line. */
@@ -79,6 +72,10 @@ function deltaOf(
  * The HR and CEO dashboards: the key figures, attendance, the workforce, the module cards and
  * recent activity, from `GET /dashboard/hr` (or `/ceo`) and the modules' own summaries. The CEO
  * dashboard has no personal items (approvals waiting for the caller, notices and events).
+ *
+ * The attendance tiles cover From → To from the time sheet's own totals, so they match the Time
+ * Sheet they open; one day reads as people, several as person-days. The attendance card and Who's
+ * in show To; the monthly figures the month of To.
  */
 export function OrgDashboard({
   kind,
@@ -90,9 +87,13 @@ export function OrgDashboard({
   access: DashboardAccess
 }) {
   const personal = kind === 'hr'
-  const params = dashboardParamsFor(period.month === period.currentMonth ? undefined : period.month)
   const dashboard = useQuery({
-    ...dashboardQueryOptions(kind, params),
+    ...dashboardQueryOptions(kind, dashboardParamsFor(period)),
+    placeholderData: keepPreviousData,
+  })
+  const sheet = useQuery({
+    ...summaryQueryOptions({ scope: 'all', from: period.from, to: period.to }),
+    enabled: access.timeSheet,
     placeholderData: keepPreviousData,
   })
   const openings = useQuery({ ...openOpeningsQueryOptions(), enabled: access.openings })
@@ -118,16 +119,34 @@ export function OrgDashboard({
   const a = dashboard.data?.attendance
   const loading = dashboard.isPending
   const previous = w?.turnoverByMonth.at(-2)
-  const day = a?.day ?? period.today
+  const day = a?.day ?? period.to
   const onToday = day === period.today
-  const expected = a ? a.present + a.absent + a.onLeave : 0
   const topWaiting = waiting.data?.byType[0]
   const year = Number(period.month.slice(0, 4))
   const monthNo = Number(period.month.slice(5, 7))
-  const lastMonth =
-    period.month.slice(0, 4) < period.currentMonth.slice(0, 4)
-      ? 12
-      : Number(period.currentMonth.slice(5, 7))
+
+  // The tiles: the time sheet's totals for From → To ("Present" counts the days worked: present,
+  // half and short days, WFH, official visits). Without the time sheet, the dashboard's day.
+  const s = sheet.data
+  const shown = access.timeSheet
+    ? s && {
+        present: s.present + s.halfDay + s.shortDay + s.wfh + s.officialVisit,
+        absent: s.absent,
+        onLeave: s.leave,
+      }
+    : a && { present: a.present, absent: a.absent, onLeave: a.onLeave }
+  const severalDays = access.timeSheet && period.from !== period.to
+  const tileDay = access.timeSheet ? period.to : day
+  const tileToday = tileDay === period.today
+  const expected = shown ? shown.present + shown.absent + shown.onLeave : 0
+  const days = { from: period.from, to: period.to }
+  const tilesLoading = access.timeSheet ? sheet.isPending : loading
+  const tilesRetry =
+    access.timeSheet && sheet.isError
+      ? () => {
+          void sheet.refetch()
+        }
+      : undefined
 
   return (
     <>
@@ -156,40 +175,57 @@ export function OrgDashboard({
               loading={loading}
             />
             <KpiTile
-              label={onToday ? 'Present today' : `Present on ${formatDay(day)}`}
-              value={a ? formatCount(a.present) : ''}
+              label={
+                severalDays
+                  ? 'Present'
+                  : tileToday
+                    ? 'Present today'
+                    : `Present on ${formatDay(tileDay)}`
+              }
+              value={shown ? formatCount(shown.present) : ''}
               // Out of everyone expected at work, as the Attendance card and absenteeism count it
               // (not headcount: days off and shifts not yet started would pull the share down).
               note={
-                a
+                shown
                   ? expected > 0
-                    ? `of ${formatCount(expected)} expected · ${formatPercent(shareOf(a.present, expected))}`
+                    ? `of ${formatCount(expected)} expected${severalDays ? ' person-days' : ''} · ${formatPercent(shareOf(shown.present, expected))}`
                     : 'Nobody expected yet'
                   : undefined
               }
               icon={UserCheck}
-              link={access.timeSheet ? timeSheetLink(day) : undefined}
-              loading={loading}
+              link={access.timeSheet ? timeSheetLink(days) : undefined}
+              loading={tilesLoading}
+              onRetry={tilesRetry}
             />
             <KpiTile
-              label={onToday ? 'On leave today' : 'On leave'}
-              value={a ? formatCount(a.onLeave) : ''}
+              label={severalDays ? 'On leave' : tileToday ? 'On leave today' : 'On leave'}
+              value={shown ? formatCount(shown.onLeave) : ''}
               note={
-                a && w
-                  ? `${formatPercent(shareOf(a.onLeave, w.headcount))} of headcount`
-                  : undefined
+                shown && severalDays
+                  ? `${formatPercent(shareOf(shown.onLeave, expected))} of person-days`
+                  : shown && w
+                    ? `${formatPercent(shareOf(shown.onLeave, w.headcount))} of headcount`
+                    : undefined
               }
               icon={CalendarOff}
-              link={access.timeSheet ? timeSheetLink(day, 'leave') : undefined}
-              loading={loading}
+              link={access.timeSheet ? timeSheetLink(days, 'leave') : undefined}
+              loading={tilesLoading}
+              onRetry={tilesRetry}
             />
             <KpiTile
               label="Absenteeism"
-              value={a ? formatPercent(a.absenteeismPercent) : ''}
-              note={a ? `${plural(a.absent, 'person', 'people')} absent` : undefined}
+              value={shown ? formatPercent(shareOf(shown.absent, expected)) : ''}
+              note={
+                shown
+                  ? severalDays
+                    ? `${plural(shown.absent, 'person-day', 'person-days')} absent`
+                    : `${plural(shown.absent, 'person', 'people')} absent`
+                  : undefined
+              }
               icon={Percent}
-              link={access.timeSheet ? timeSheetLink(day, 'absent') : undefined}
-              loading={loading}
+              link={access.timeSheet ? timeSheetLink(days, 'absent') : undefined}
+              loading={tilesLoading}
+              onRetry={tilesRetry}
             />
             <KpiTile
               label="New hires"
@@ -275,11 +311,13 @@ export function OrgDashboard({
               query={attendance}
               year={year}
               month={monthNo}
-              lastMonth={lastMonth}
+              // The API counts the months up to To.
+              lastMonth={monthNo}
             />
           </div>
           <WhosInWidget
             query={attendance}
+            day={onToday ? undefined : day}
             link={access.timeSheet ? timeSheetLink(day) : undefined}
           />
         </Section>
@@ -298,12 +336,7 @@ export function OrgDashboard({
         </Section>
       </div>
 
-      <ModuleCards
-        month={period.month}
-        monthEnd={period.monthEnd}
-        access={access}
-        personal={personal}
-      />
+      <ModuleCards period={period} access={access} personal={personal} />
 
       <Section title="Recent activity">
         <div className="grid gap-4 sm:gap-5 @2xl/page:grid-cols-2 @[96rem]/page:grid-cols-4">

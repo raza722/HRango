@@ -3,6 +3,7 @@ import { Link, Outlet, useRouterState } from '@tanstack/react-router'
 
 import { NAV_ITEMS } from '@/app/navigation'
 import { canOpen } from '@/app/route-access'
+import { SavingIndicator } from '@/components/feedback/saving-indicator'
 import { LanguageSwitcher, Sidebar, SIDEBAR_WIDTH, ThemeToggle, Topbar } from '@/components/layout'
 import { ChangePasswordDialog } from '@/features/access'
 import { useLogout, useSessionRefresh } from '@/features/auth'
@@ -99,6 +100,7 @@ export function AuthenticatedLayout({ children }: { children?: ReactNode } = {})
           </InShellContext>
         </main>
       </div>
+      <SavingIndicator />
     </div>
   )
 }

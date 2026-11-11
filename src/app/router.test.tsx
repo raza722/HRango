@@ -9,7 +9,9 @@ describe('routing and auth gate', () => {
   it('sends signed-out visitors to /login and remembers where they were going', async () => {
     const { router } = renderApp('/warning/policy?page=2', { signedIn: false })
 
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: 'Sign in to your workspace' }),
+    ).toBeInTheDocument()
     expect(router.state.location.pathname).toBe('/login')
     expect(router.state.location.search).toEqual({ redirect: '/warning/policy?page=2' })
   })

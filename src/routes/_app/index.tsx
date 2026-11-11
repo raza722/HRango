@@ -4,6 +4,7 @@ import {
   dashboardKindFor,
   DashboardPage,
   dashboardParamsFor,
+  dashboardPeriodFor,
   dashboardQueryOptions,
   dashboardSearchSchema,
 } from '@/features/dashboard'
@@ -12,13 +13,13 @@ import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/_app/')({
   validateSearch: dashboardSearchSchema,
-  loaderDeps: ({ search }) => ({ month: search.month }),
+  loaderDeps: ({ search }) => ({ from: search.from, to: search.to, month: search.month }),
   // Start fetching the user's dashboard during navigation, but render the page right away.
   loader: ({ context: { queryClient }, deps }) => {
     const kind = dashboardKindFor(useAuthStore.getState().user)
     if (kind) {
       queryClient
-        .query(dashboardQueryOptions(kind, dashboardParamsFor(deps.month)))
+        .query(dashboardQueryOptions(kind, dashboardParamsFor(dashboardPeriodFor(deps))))
         .catch(() => undefined)
     }
   },

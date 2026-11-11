@@ -1,21 +1,17 @@
 import type { ComponentType, SVGProps } from 'react'
 import { Link } from '@tanstack/react-router'
-import { addMonths, format, parse } from 'date-fns'
-import {
-  BriefcaseBusiness,
-  CalendarPlus,
-  ChevronLeft,
-  ChevronRight,
-  PlayCircle,
-  UserPlus,
-} from 'lucide-react'
+import { format, subDays } from 'date-fns'
+import { BriefcaseBusiness, CalendarPlus, PlayCircle, UserPlus } from 'lucide-react'
 
 import { buttonVariants } from '@/components/ui/button'
-import { MonthPicker } from '@/features/payroll'
+import { DateBox } from '@/features/attendance'
+import { parseDateValue } from '@/lib/date'
 import { cn } from '@/lib/utils'
 
 import type { DashboardKind } from '../api/dashboard.api'
 import type { DashboardAccess } from '../hooks/use-dashboard-access'
+import { DASHBOARD_MAX_DAYS, type DashboardPeriod } from '../routing'
+import { formatMonthYear } from '../utils/format'
 import type { DashLink } from '../utils/links'
 
 function greeting(date: Date): string {
@@ -39,31 +35,31 @@ interface QuickAction {
   allowed: boolean
 }
 
-const shift = (month: string, by: number) =>
-  format(addMonths(parse(month, 'yyyy-MM', new Date()), by), 'yyyy-MM')
-
 /**
- * The page title card: the greeting and today's date, which dashboard this is, the month the
- * monthly figures cover (‹ month ›, up to the current month) and the quick actions the user may
- * take, each opening its page.
+ * The page title card: the greeting and today's date, which dashboard this is, From and To (the
+ * dates the figures cover, up to today and at most a year apart) and the quick actions the user
+ * may take, each opening its page. When the dates are not one month from its 1st, a line says
+ * which month the monthly figures show.
  */
 export function DashboardHeader({
   kind,
   name,
   now,
-  month,
-  currentMonth,
-  onMonthChange,
+  period,
+  onPeriodChange,
   access,
 }: {
   kind: DashboardKind | null
   name: string | undefined
   now: Date
-  month: string
-  currentMonth: string
-  onMonthChange: (month: string) => void
+  period: DashboardPeriod
+  onPeriodChange: (from: string, to: string) => void
   access: DashboardAccess
 }) {
+  const to = parseDateValue(period.to)
+  const wholeMonth =
+    period.from === `${period.month}-01` &&
+    (period.to === period.monthEnd || period.to === period.today)
   const actions: QuickAction[] = [
     {
       key: 'leave',
@@ -118,41 +114,37 @@ export function DashboardHeader({
           </p>
         </div>
         {kind && (
-          <div
-            role="group"
-            aria-label="Month"
-            className="flex w-full items-center gap-1.5 @lg:w-auto"
-          >
-            <button
-              type="button"
-              aria-label="Previous month"
-              onClick={() => {
-                onMonthChange(shift(month, -1))
-              }}
-              className="flex size-9 shrink-0 items-center justify-center rounded-md border border-input bg-card text-field-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50"
+          <div className="grid w-full gap-1.5 @lg:w-auto @lg:max-w-96">
+            <div
+              role="group"
+              aria-label="Dates the figures cover"
+              className="grid grid-cols-2 gap-2 @lg:w-96"
             >
-              <ChevronLeft aria-hidden="true" className="size-4" />
-            </button>
-            <MonthPicker
-              aria-label="Month the figures cover"
-              value={month}
-              max={currentMonth}
-              onChange={(value) => {
-                onMonthChange(value)
-              }}
-              className="h-9 min-w-0 flex-1 @lg:w-48 @lg:flex-none"
-            />
-            <button
-              type="button"
-              aria-label="Next month"
-              disabled={month >= currentMonth}
-              onClick={() => {
-                onMonthChange(shift(month, 1))
-              }}
-              className="flex size-9 shrink-0 items-center justify-center rounded-md border border-input bg-card text-field-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40"
-            >
-              <ChevronRight aria-hidden="true" className="size-4" />
-            </button>
+              <DateBox
+                label="From"
+                value={period.from}
+                minDate={to ? subDays(to, DASHBOARD_MAX_DAYS - 1) : undefined}
+                maxDate={to}
+                onChange={(from) => {
+                  onPeriodChange(from, period.to)
+                }}
+              />
+              {/* Any day up to today: a To before From moves From to the 1st of To's month. */}
+              <DateBox
+                label="To"
+                value={period.to}
+                maxDate={parseDateValue(period.today)}
+                onChange={(next) => {
+                  onPeriodChange(period.from, next)
+                }}
+              />
+            </div>
+            {!wholeMonth && (
+              <p className="text-xs leading-snug text-muted-foreground">
+                Hires, leavers, turnover, payroll and recruitment are given per month: they show{' '}
+                {formatMonthYear(period.month)}, the month of To.
+              </p>
+            )}
           </div>
         )}
       </div>
