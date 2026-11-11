@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -25,6 +25,7 @@ import type {
   ExtensionRequest,
   PmLookups,
   PmPerson,
+  RecentEntity,
   Reminder,
   ReminderEntry,
   ShareEntity,
@@ -41,7 +42,9 @@ import type {
   Workspace,
   WorkspaceInput,
   WorkspaceItem,
+  WorkspaceItemPatch,
   WorkspacePatch,
+  WorkspaceSettingsInput,
 } from '../types/pm.types'
 
 // --- who is signed in -------------------------------------------------------------------------------
@@ -195,8 +198,40 @@ export const useSetCover = () =>
     'Cover changed',
   )
 
-export const useDeleteWorkspace = () =>
-  usePmMutation((workspace: Workspace) => pmApi.deleteWorkspace(workspace), 'Workspace deleted')
+/**
+ * Deletes a workspace. Its own queries are dropped first (re-reading them would only answer
+ * 404), then the rest of the module refreshes. The caller leaves the workspace's page itself.
+ */
+export function useDeleteWorkspace() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (workspace: Workspace) => pmApi.deleteWorkspace(workspace),
+    onSuccess: async (_result, workspace) => {
+      queryClient.removeQueries({ queryKey: pmKeys.workspace(workspace.id) })
+      queryClient.removeQueries({ queryKey: [...pmKeys.all, 'tasks', workspace.id] })
+      await queryClient.invalidateQueries({ queryKey: pmKeys.all })
+      toast.success(`${workspace.name} deleted`)
+    },
+  })
+}
+
+/** Workspace Settings: details, views, statuses and organizer in one save. */
+export const useSaveWorkspaceSettings = () =>
+  usePmMutation(
+    ({ workspace, input }: { workspace: Workspace; input: WorkspaceSettingsInput }) =>
+      pmApi.saveWorkspaceSettings(workspace, input),
+    'Workspace settings saved',
+    true,
+  )
+
+/** Rename a folder or list, or move a list. */
+export const useUpdateItem = () =>
+  usePmMutation(({ item, patch }: { item: WorkspaceItem; patch: WorkspaceItemPatch }) =>
+    pmApi.updateItem(item, patch),
+  )
+
+/** Delete a folder (its lists stay) or an empty list. */
+export const useDeleteItem = () => usePmMutation((item: WorkspaceItem) => pmApi.deleteItem(item))
 
 export const useSaveColumnPermission = () =>
   usePmMutation(
@@ -331,6 +366,33 @@ export const useWorkspaceActivity = (workspaceId: string, filters: ActivityFilte
       last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined,
     placeholderData: keepPreviousData,
   })
+
+/** The task panel's history of one task, newest first, 30 lines at a time. */
+export const useTaskActivity = (taskId: string | null) =>
+  useInfiniteQuery({
+    queryKey: pmKeys.taskActivity(taskId ?? ''),
+    queryFn: ({ pageParam, signal }) => pmApi.taskActivity(taskId ?? '', pageParam, signal),
+    initialPageParam: 1,
+    getNextPageParam: (last) =>
+      last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined,
+    enabled: taskId !== null,
+  })
+
+/**
+ * Remembers that the caller opened a workspace, list or task (Recents), once per entity while
+ * the screen stays open. A failure is ignored: Recents are a convenience.
+ */
+export function useRecordRecent(entityType: RecentEntity, entityId: string | null) {
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    if (!entityId) return
+    void pmApi
+      .recordRecent(entityType, entityId)
+      .then(() =>
+        queryClient.invalidateQueries({ queryKey: [...pmKeys.all, 'dashboard', 'recents'] }),
+      )
+  }, [entityType, entityId, queryClient])
+}
 
 /** The Reminders page: the caller's reminders (`includeDone` adds the sent and past ones). */
 export const useReminders = (includeDone: boolean) =>

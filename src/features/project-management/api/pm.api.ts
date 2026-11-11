@@ -4,6 +4,7 @@ import { apiClient } from '@/lib/axios'
 import { uploadFile } from '@/lib/files'
 import type { ApiItem, Paginated } from '@/types/api'
 
+import { VIEW_LABELS } from '../constants'
 import type {
   ActivityEntry,
   ActivityFilters,
@@ -16,6 +17,7 @@ import type {
   PmPerson,
   PmRole,
   PmTemplates,
+  RecentEntity,
   Reminder,
   ReminderEntry,
   ShareEntity,
@@ -31,13 +33,17 @@ import type {
   TaskRow,
   TimeEntry,
   TimeEntryInput,
+  ViewsDraft,
   Workspace,
   WorkspaceInput,
   WorkspaceItem,
+  WorkspaceItemPatch,
   WorkspacePatch,
+  WorkspaceSettingsInput,
   WorkspaceSummary,
   WorkspaceTree,
 } from '../types/pm.types'
+import { isBuiltView } from '../types/pm.types'
 import type {
   ActivityDto,
   AttachmentDto,
@@ -335,6 +341,8 @@ async function saveColumns(workspace: Workspace, patch: WorkspacePatch) {
       taskListId: null,
       config: { ...own.config, ...config },
       isPrivate: own.isPrivate,
+      isPinned: own.isPinned,
+      isProtected: own.isProtected,
       isDefault: own.isDefault,
       rowVersion: own.rowVersion,
     })
@@ -388,6 +396,95 @@ async function updateWorkspace(workspace: Workspace, patch: WorkspacePatch): Pro
   await saveColumns(workspace, patch)
 }
 
+/** A temporary id the Edit Statuses page gives a new status (`st_new_...`): sent as null. */
+const isNewStatusId = (id: string) => id.startsWith('st_new_')
+
+/**
+ * The shared views after Workspace Settings → Views: new kinds are added, unticked ones removed
+ * (never List, never a required view) and the default moved. Private views are left alone.
+ */
+async function saveViews(workspace: Workspace, draft: ViewsDraft): Promise<void> {
+  const shared = workspace.views.filter((view) => !view.isPrivate && view.listId === null)
+  const kinds = new Set(shared.map((view) => view.kind))
+  const wanted = new Set(draft.views)
+  for (const view of shared) {
+    if (view.kind === 'list' || view.isRequired || !isBuiltView(view.kind)) continue
+    if (!wanted.has(view.kind)) await remove(path(`/views/${view.id}`), view.rowVersion)
+  }
+  for (const kind of draft.views) {
+    if (kinds.has(kind)) continue
+    await send('post', path(`/workspaces/${workspace.id}/views`), {
+      viewType: viewToApi(kind),
+      name: VIEW_LABELS[kind],
+      isDefault: kind === draft.defaultView,
+    })
+  }
+  const current = shared.find((view) => view.isDefault)?.kind ?? 'list'
+  const target = shared.find((view) => view.kind === draft.defaultView)
+  // A view added above already carries isDefault; an existing one is switched over here.
+  if (draft.defaultView !== current && target) {
+    await send('put', path(`/views/${target.id}`), {
+      viewType: viewToApi(target.kind),
+      name: target.name,
+      taskListId: null,
+      config: target.config,
+      isPinned: target.isPinned,
+      isPrivate: false,
+      isProtected: target.isProtected,
+      isDefault: true,
+      rowVersion: target.rowVersion,
+    })
+  }
+}
+
+/**
+ * Workspace Settings: details, views, statuses and organizer, each sent only when it changed.
+ * The workspace's rowVersion moves with every save, so each one carries the version the
+ * previous save answered with.
+ */
+async function saveWorkspaceSettings(
+  workspace: Workspace,
+  input: WorkspaceSettingsInput,
+): Promise<void> {
+  let rowVersion = workspace.rowVersion
+  if (input.details) {
+    const { details } = input
+    const body: WorkspaceUpdateDto = {
+      name: details.name.trim(),
+      description: details.description.trim() || null,
+      privacy: details.visibility,
+      ownerId: toApiId(details.ownerId),
+      departmentId: toApiId(details.departmentId),
+      rowVersion,
+    }
+    rowVersion = (await send<WorkspaceDto>('put', path(`/workspaces/${workspace.id}`), body))
+      .rowVersion
+  }
+  if (input.statuses) {
+    const { statuses } = input
+    rowVersion = (
+      await send<WorkspaceDto>('put', path(`/workspaces/${workspace.id}/statuses`), {
+        statusMode: statuses.statusMode,
+        statusTemplate: statuses.statusMode === 'custom' ? statuses.statusTemplate : null,
+        statuses: statuses.statuses.map((status) => ({
+          id: isNewStatusId(status.id) ? null : toApiId(status.id),
+          name: status.name.trim(),
+          color: status.color,
+          statusGroup: statusGroupToApi(status.group),
+        })),
+        rowVersion,
+      })
+    ).rowVersion
+  }
+  if (input.organizer) {
+    await send<WorkspaceDto>('put', path(`/workspaces/${workspace.id}/features`), {
+      features: input.organizer.map((feature) => ({ featureCode: featureToApi(feature) })),
+      rowVersion,
+    })
+  }
+  if (input.views) await saveViews(workspace, input.views)
+}
+
 // --- the API -------------------------------------------------------------------------------------------------
 
 export const pmApi = {
@@ -405,10 +502,23 @@ export const pmApi = {
     (await getAll<PersonDto>(path('/people'), {}, signal)).map(personFromApi),
 
   /** Departments for Define Workflow (`GET /organisation/lookups/departments`). */
-  departments: async (signal?: AbortSignal): Promise<PmDepartment[]> =>
-    (await getItem<LookupItemDto[]>('/organisation/lookups/departments', undefined, signal)).map(
-      (entry) => ({ id: entry.id, name: entry.name }),
-    ),
+  /**
+   * Departments A–Z, each followed by its sub-departments (A–Z), as the department pickers list
+   * them; the lookup sends the departments first and the sub-departments after them all.
+   */
+  departments: async (signal?: AbortSignal): Promise<PmDepartment[]> => {
+    const all = (
+      await getItem<LookupItemDto[]>('/organisation/lookups/departments', undefined, signal)
+    ).map((entry) => ({ id: entry.id, name: entry.name, parentId: entry.parentId ?? null }))
+    const byName = (a: PmDepartment, b: PmDepartment) => a.name.localeCompare(b.name)
+    const ids = new Set(all.map((entry) => entry.id))
+    // A sub-department whose department is not listed is shown as a department of its own.
+    const tops = all.filter((entry) => !entry.parentId || !ids.has(entry.parentId)).toSorted(byName)
+    return tops.flatMap((top) => [
+      top,
+      ...all.filter((entry) => entry.parentId === top.id).toSorted(byName),
+    ])
+  },
 
   workspaces: async (signal?: AbortSignal): Promise<WorkspaceSummary[]> =>
     (await getAll<WorkspaceSummaryDto>(path('/workspaces'), {}, signal)).map(
@@ -490,6 +600,57 @@ export const pmApi = {
           name: input.name,
           folderId: input.parentId ? toApiId(folderApiId(input.parentId)) : null,
         }),
+
+  /**
+   * Rename a folder or list, or move a list into a folder (or to the top level). `PUT /lists/{id}`
+   * replaces every field, so the list's other settings go back as they are.
+   */
+  updateItem: async (item: WorkspaceItem, patch: WorkspaceItemPatch): Promise<void> => {
+    const name = (patch.name ?? item.name).trim()
+    if (item.kind === 'folder') {
+      await send('put', path(`/folders/${folderApiId(item.id)}`), {
+        name,
+        sortOrder: item.order,
+        rowVersion: item.rowVersion,
+      })
+      return
+    }
+    const parentId = patch.parentId === undefined ? item.parentId : patch.parentId
+    const settings = item.list
+    await send('put', path(`/lists/${item.id}`), {
+      name,
+      folderId: parentId ? toApiId(folderApiId(parentId)) : null,
+      privacy: settings?.privacy ?? 'workspace',
+      color: settings?.color ?? null,
+      description: settings?.description ?? null,
+      startAt: settings?.startAt ?? null,
+      endAt: settings?.endAt ?? null,
+      priority: settings?.priority ?? null,
+      sortOrder: item.order,
+      rowVersion: item.rowVersion,
+    })
+  },
+
+  /** A folder (its lists move to the top level) or an empty list (one with tasks is refused). */
+  deleteItem: (item: WorkspaceItem) =>
+    remove(
+      path(item.kind === 'folder' ? `/folders/${folderApiId(item.id)}` : `/lists/${item.id}`),
+      item.rowVersion,
+    ),
+
+  saveWorkspaceSettings,
+
+  /** Remembers what the caller opened, for Recents (`POST /recents`); failures are ignored. */
+  recordRecent: async (entityType: RecentEntity, entityId: string): Promise<void> => {
+    try {
+      await apiClient.post(path('/recents'), {
+        entityType,
+        entityId: toApiId(entityType === 'folder' ? folderApiId(entityId) : entityId),
+      })
+    } catch {
+      // Recents are a convenience: a server without them, or a refused call, changes nothing.
+    }
+  },
 
   // --- tasks ---------------------------------------------------------------------------------
 
@@ -752,6 +913,19 @@ export const pmApi = {
     return { ...data, data: data.data.map(activityFromApi) }
   },
 
+  /** One task's history, newest first (`GET /tasks/{id}/activity`), for the task panel. */
+  taskActivity: async (
+    taskId: string,
+    page: number,
+    signal?: AbortSignal,
+  ): Promise<Paginated<ActivityEntry>> => {
+    const { data } = await apiClient.get<Paginated<ActivityDto>>(
+      path(`/tasks/${taskId}/activity`),
+      { params: { page, pageSize: ACTIVITY_PAGE_SIZE }, ...(signal ? { signal } : {}) },
+    )
+    return { ...data, data: data.data.map(activityFromApi) }
+  },
+
   /** The caller's reminders, soonest first; `includeDone` adds the ones already sent or past. */
   reminders: async (includeDone: boolean, signal?: AbortSignal): Promise<ReminderEntry[]> =>
     (await getAll<ReminderDto>(path('/reminders'), { includeDone }, signal))
@@ -917,6 +1091,7 @@ export const pmKeys = {
   reminders: (includeDone: boolean) => [...pmKeys.all, 'reminders', includeDone] as const,
   activity: (workspaceId: string, filters: ActivityFilters) =>
     [...pmKeys.all, 'activity', workspaceId, filters] as const,
+  taskActivity: (taskId: string) => [...pmKeys.all, 'task-activity', taskId] as const,
   tags: (workspaceId: string) => [...pmKeys.all, 'tags', workspaceId] as const,
   share: (entityType: ShareEntity, entityId: string) =>
     [...pmKeys.all, 'share', entityType, entityId] as const,

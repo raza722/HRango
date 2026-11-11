@@ -6,6 +6,7 @@ import type {
   ColumnPermissionsDto,
   CommentDto,
   PersonDto,
+  StatusDto,
   TaskDto,
   TaskPageDto,
   TaskRowDto,
@@ -712,14 +713,9 @@ const taskOf = (taskId: string) => {
 
 // --- handlers -------------------------------------------------------------------------------------------
 
+// Define Workflow's departments come from the shared `GET /organisation/lookups/departments`
+// mock (Payroll's lookups); Create Workspace checks its `departmentId` against the same list.
 export const projectManagementHandlers = [
-  // Departments for Define Workflow (organisation lookups; the PM mock serves the one it needs).
-  http.get(apiPath('/organisation/lookups/departments'), async ({ request }) => {
-    const denied = await authed(request)
-    if (denied) return denied
-    return ok(DEPARTMENTS)
-  }),
-
   http.get(base('/templates'), async ({ request }) => {
     const denied = await authed(request)
     if (denied) return denied
@@ -891,9 +887,28 @@ export const projectManagementHandlers = [
     if (!parsed.success) return rejected(parsed.error)
     if (staleRow(workspace, parsed.data.rowVersion)) return stale()
     const { rowVersion: _rowVersion, ...rest } = parsed.data
+    if (!DEPARTMENTS.some((entry) => entry.id === rest.departmentId)) {
+      return invalid('Select your department.', { departmentId: 'Select your department.' })
+    }
+    if (!findEmployee(rest.ownerId)) {
+      return invalid('Workspace owner not found.', { ownerId: 'Workspace owner not found.' })
+    }
+    // As `usp_workspace_save`: only a workspace admin hands the workspace to someone else, and
+    // the new owner becomes one of its workspace admins.
+    const ownerChanged = rest.ownerId !== workspace.ownerId
+    if (ownerChanged && rankIn(workspace) < 5) {
+      return forbidden('Only a workspace admin can change the owner.')
+    }
+    const members = ownerChanged
+      ? [
+          ...workspace.members.filter((member) => member.employeeId !== rest.ownerId),
+          { employeeId: rest.ownerId, memberRole: 'workspace_admin' },
+        ]
+      : workspace.members
     const next = {
       ...workspace,
       ...rest,
+      members,
       description: rest.description ?? null,
       updatedAt: utcNow(),
       rowVersion: nextRowVersion(),
@@ -1289,8 +1304,235 @@ export const projectManagementHandlers = [
       rowVersion: nextRowVersion(),
     }
     views.update(view.id, next)
+    // One shared default per workspace: making this one the default unsets the others.
+    if (next.isDefault && !next.isPrivate) {
+      for (const other of views.all()) {
+        if (
+          other.id !== view.id &&
+          other.workspaceId === view.workspaceId &&
+          !other.isPrivate &&
+          other.isDefault
+        ) {
+          views.update(other.id, { ...other, isDefault: false, rowVersion: nextRowVersion() })
+        }
+      }
+    }
     const { workspaceId: _workspaceId, ...body } = next
     return ok(body)
+  }),
+
+  http.delete(base('/views/:id'), async ({ request, params }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const view = views.find(param(params))
+    const workspace = view ? readable(view.workspaceId) : undefined
+    if (!view || !workspace) return notFound('view')
+    if (staleRow(view, new URL(request.url).searchParams.get('rowVersion'))) return stale()
+    if (!view.isPrivate && rankIn(workspace) < 4) {
+      return forbidden('Only workspace admins and HR can change shared views.')
+    }
+    if (view.isRequired || view.viewType === 'list') {
+      return conflict('The List view is required and cannot be removed.', 'VIEW_REQUIRED')
+    }
+    views.remove(view.id)
+    return noContent()
+  }),
+
+  // Edit Statuses after creation (`usp_workspace_statuses_save`): the whole set, in order.
+  http.put(base('/workspaces/:id/statuses'), async ({ request, params }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const workspace = readable(param(params))
+    if (!workspace) return notFound('workspace')
+    if (rankIn(workspace) < 4) return forbidden('Only workspace admins and HR can edit statuses.')
+    const parsed = await readBody(
+      request,
+      z.object({
+        statusMode: z.enum(['default', 'custom']).nullish(),
+        statusTemplate: z.string().nullish(),
+        statuses: z.array(statusIn).min(1),
+        rowVersion,
+      }),
+    )
+    if (!parsed.success) return rejected(parsed.error)
+    if (staleRow(workspace, parsed.data.rowVersion)) return stale()
+    const sent = parsed.data.statuses
+    const names = sent.map((status) => status.name.toLowerCase())
+    if (new Set(names).size !== names.length) {
+      return invalid('Status names must be unique.', { statuses: 'Status names must be unique.' })
+    }
+    if (
+      !sent.some((status) => status.statusGroup === 'not_started') ||
+      !sent.some((status) => status.statusGroup === 'done' || status.statusGroup === 'closed')
+    ) {
+      const message = 'Keep at least one Not Started status and one Done or Closed status.'
+      return invalid(message, { statuses: message })
+    }
+    const own = new Set(workspace.statuses.map((status) => status.id))
+    if (sent.some((status) => status.id && !own.has(status.id))) {
+      const message = 'A status does not belong to this workspace.'
+      return invalid(message, { statuses: message })
+    }
+    const kept = new Set(sent.flatMap((status) => (status.id ? [status.id] : [])))
+    const removed = workspace.statuses.filter((status) => !kept.has(status.id))
+    const inUse = removed.filter((status) =>
+      tasks.all().some((task) => task.statusId === status.id),
+    )
+    if (inUse.length > 0) {
+      return conflict(
+        `Tasks still use ${inUse.map((status) => status.name).join(', ')}. Move them to another status first.`,
+        'STATUS_IN_USE',
+      )
+    }
+    const statuses: StatusDto[] = sent.map((status, index) => ({
+      id: status.id ?? createId('st'),
+      name: status.name,
+      color: status.color ?? null,
+      statusGroup: status.statusGroup,
+      sortOrder: (index + 1) * 10,
+      wipLimit: status.wipLimit ?? null,
+    }))
+    const next = {
+      ...workspace,
+      statusMode: parsed.data.statusMode ?? workspace.statusMode,
+      statusTemplate:
+        parsed.data.statusTemplate === undefined
+          ? workspace.statusTemplate
+          : parsed.data.statusTemplate,
+      statuses,
+      updatedAt: utcNow(),
+      rowVersion: nextRowVersion(),
+    }
+    return ok(detail(workspaces.update(workspace.id, next) ?? next))
+  }),
+
+  // The Organizer features after creation (`usp_workspace_features_save`): the whole set.
+  http.put(base('/workspaces/:id/features'), async ({ request, params }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const workspace = readable(param(params))
+    if (!workspace) return notFound('workspace')
+    if (rankIn(workspace) < 4)
+      return forbidden('Only workspace admins and HR can edit the organizer.')
+    const parsed = await readBody(
+      request,
+      z.object({
+        features: z.array(
+          z.object({ featureCode: z.string(), settingValue: z.string().max(4000).nullish() }),
+        ),
+        rowVersion,
+      }),
+    )
+    if (!parsed.success) return rejected(parsed.error)
+    if (staleRow(workspace, parsed.data.rowVersion)) return stale()
+    const next = {
+      ...workspace,
+      features: parsed.data.features.map((feature) => ({
+        featureCode: feature.featureCode,
+        settingValue: feature.settingValue ?? null,
+      })),
+      updatedAt: utcNow(),
+      rowVersion: nextRowVersion(),
+    }
+    return ok(detail(workspaces.update(workspace.id, next) ?? next))
+  }),
+
+  // Rename or reorder a folder (`usp_folder_save`): managers and above.
+  http.put(base('/folders/:id'), async ({ request, params }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const folder = folders.find(param(params))
+    const workspace = folder ? readable(folder.workspaceId) : undefined
+    if (!folder || !workspace) return notFound('folder')
+    if (rankIn(workspace) < 3) return forbidden('Only managers and above can manage folders.')
+    const parsed = await readBody(
+      request,
+      z.object({
+        name: z.string().trim().min(1).max(200),
+        sortOrder: z.number().int().nullish(),
+        rowVersion,
+      }),
+    )
+    if (!parsed.success) return rejected(parsed.error)
+    if (staleRow(folder, parsed.data.rowVersion)) return stale()
+    const next = {
+      ...folder,
+      name: parsed.data.name,
+      sortOrder: parsed.data.sortOrder ?? folder.sortOrder,
+      rowVersion: nextRowVersion(),
+    }
+    folders.update(folder.id, next)
+    const { workspaceId: _workspaceId, ...body } = next
+    return ok(body)
+  }),
+
+  // Delete a folder (`usp_folder_delete`): its lists move to the workspace's top level.
+  http.delete(base('/folders/:id'), async ({ request, params }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const folder = folders.find(param(params))
+    const workspace = folder ? readable(folder.workspaceId) : undefined
+    if (!folder || !workspace) return notFound('folder')
+    if (rankIn(workspace) < 3) return forbidden('Only managers and above can manage folders.')
+    if (staleRow(folder, new URL(request.url).searchParams.get('rowVersion'))) return stale()
+    for (const list of lists.all().filter((entry) => entry.folderId === folder.id)) {
+      lists.update(list.id, { ...list, folderId: null, rowVersion: nextRowVersion() })
+    }
+    folders.remove(folder.id)
+    return noContent()
+  }),
+
+  // Rename a list or move it into (or out of) a folder (`usp_list_save`): managers and above.
+  http.put(base('/lists/:id'), async ({ request, params }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const list = lists.find(param(params))
+    const workspace = list ? readable(list.workspaceId) : undefined
+    if (!list || !workspace) return notFound('list')
+    if (rankIn(workspace) < 3) return forbidden('Only managers and above can manage lists.')
+    const parsed = await readBody(
+      request,
+      z.object({
+        name: z.string().trim().min(1).max(200),
+        folderId: id.nullish(),
+        sortOrder: z.number().int().nullish(),
+        rowVersion,
+      }),
+    )
+    if (!parsed.success) return rejected(parsed.error)
+    if (staleRow(list, parsed.data.rowVersion)) return stale()
+    const folderId = parsed.data.folderId ?? null
+    if (folderId && folders.find(folderId)?.workspaceId !== workspace.id) {
+      return invalid('Folder not found.', { folderId: 'Folder not found.' })
+    }
+    const next = {
+      ...list,
+      name: parsed.data.name,
+      folderId,
+      sortOrder: parsed.data.sortOrder ?? list.sortOrder,
+      lastModifiedAt: utcNow(),
+      rowVersion: nextRowVersion(),
+    }
+    lists.update(list.id, next)
+    const { workspaceId: _workspaceId, ...body } = next
+    const own = tasks.all().filter((task) => task.taskListId === list.id)
+    return ok({ ...body, taskCount: own.length, closedCount: 0, progressPercent: 0 })
+  }),
+
+  // Delete a list (`usp_list_delete`): refused while it still has tasks.
+  http.delete(base('/lists/:id'), async ({ request, params }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const list = lists.find(param(params))
+    const workspace = list ? readable(list.workspaceId) : undefined
+    if (!list || !workspace) return notFound('list')
+    if (rankIn(workspace) < 3) return forbidden('Only managers and above can manage lists.')
+    if (staleRow(list, new URL(request.url).searchParams.get('rowVersion'))) return stale()
+    if (tasks.all().some((task) => task.taskListId === list.id)) {
+      return conflict('This list still has tasks. Move or delete them first', 'LIST_NOT_EMPTY')
+    }
+    lists.remove(list.id)
+    return noContent()
   }),
 
   // --- favourites, tags -------------------------------------------------------------------------------
@@ -1493,6 +1735,21 @@ export const projectManagementHandlers = [
       .toSorted((a, b) => b.performedAt.localeCompare(a.performedAt))
       .map(({ workspaceId: _workspaceId, ...entry }) => entry)
     const { page, pageSize } = readPageParams(url)
+    return HttpResponse.json(paginate(lines, page, pageSize))
+  }),
+
+  // One task's history, newest first (`GET /projects/tasks/{id}/activity`, the task panel).
+  http.get(base('/tasks/:id/activity'), async ({ request, params }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const task = taskOf(param(params))
+    if (!task) return notFound('task')
+    const lines = activities
+      .all()
+      .filter((entry) => entry.entityType === 'task' && entry.entityId === task.id)
+      .toSorted((a, b) => b.performedAt.localeCompare(a.performedAt))
+      .map(({ workspaceId: _workspaceId, ...entry }) => entry)
+    const { page, pageSize } = readPageParams(new URL(request.url))
     return HttpResponse.json(paginate(lines, page, pageSize))
   }),
 

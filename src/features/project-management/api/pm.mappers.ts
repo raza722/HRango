@@ -7,6 +7,7 @@ import {
   type ColumnPermission,
   EXTENSION_STATUSES,
   type ExtensionRequest,
+  isBuiltView,
   type ListColumn,
   type OrganizerFeature,
   type PermissionLevel,
@@ -132,6 +133,18 @@ export const viewFromApi = (type: string): ViewKind | null => {
 }
 export const viewToApi = (kind: ViewKind): ApiViewType => (kind === 'mind-map' ? 'mind_map' : kind)
 
+/**
+ * A template's or workspace's views as the screens show them: only built views (see
+ * BUILT_VIEWS), List always first among them, and a default that falls back to List.
+ */
+function shownViews(kinds: readonly ViewKind[], defaultKind: ViewKind | null | undefined) {
+  const views = [...new Set(kinds.filter(isBuiltView))]
+  return {
+    views: views.includes('list') ? views : (['list', ...views] as ViewKind[]),
+    defaultView: defaultKind && isBuiltView(defaultKind) ? defaultKind : ('list' as ViewKind),
+  }
+}
+
 const FEATURE_TO_API: Record<OrganizerFeature, ApiFeatureCode> = {
   priority: 'priority',
   'add-fields': 'custom_fields',
@@ -220,13 +233,14 @@ const templateStatus = (
 /** Workflow templates (Define Workflow cards) and status templates from `GET /templates`. */
 export function templatesFromApi(workflows: TemplateDto[], statuses: TemplateDto[]): PmTemplates {
   const workflowList = workflows.map((dto): WorkflowTemplate => {
-    const views = dto.views
-      .map((view) => viewFromApi(view.viewType))
-      .filter((view): view is ViewKind => view !== null)
-    const defaultView =
-      viewFromApi(dto.views.find((view) => view.isDefault)?.viewType ?? 'list') ?? 'list'
+    const { views, defaultView } = shownViews(
+      dto.views
+        .map((view) => viewFromApi(view.viewType))
+        .filter((view): view is ViewKind => view !== null),
+      viewFromApi(dto.views.find((view) => view.isDefault)?.viewType ?? 'list'),
+    )
     const setup: WorkspaceSetup = {
-      views: views.includes('list') ? views : ['list', ...views],
+      views,
       defaultView,
       statusMode: 'default',
       statusTemplate: null,
@@ -295,6 +309,8 @@ const viewOf = (dto: WorkspaceDto['views'][number]): WorkspaceView | null => {
     isDefault: dto.isDefault,
     isRequired: dto.isRequired,
     isPrivate: dto.isPrivate,
+    isPinned: dto.isPinned,
+    isProtected: dto.isProtected,
     ownerId: dto.ownerId,
     config: dto.config,
     rowVersion: dto.rowVersion,
@@ -422,6 +438,8 @@ export function workspaceFromApi(
       kind: 'folder',
       name: folder.name,
       order: folder.sortOrder ?? 0,
+      list: null,
+      taskCount: 0,
       rowVersion: folder.rowVersion,
     })),
     ...dto.lists.map((list): WorkspaceItem => ({
@@ -431,6 +449,15 @@ export function workspaceFromApi(
       kind: 'list',
       name: list.name,
       order: list.sortOrder ?? 0,
+      list: {
+        privacy: list.privacy,
+        color: list.color,
+        description: list.description,
+        startAt: list.startAt,
+        endAt: list.endAt,
+        priority: list.priority,
+      },
+      taskCount: list.taskCount,
       rowVersion: list.rowVersion,
     })),
   ].toSorted((a, b) => a.order - b.order)
@@ -440,8 +467,7 @@ export function workspaceFromApi(
     template: dto.workflowTemplate,
     templateName: dto.workflowTemplateName,
     setup: {
-      views: kinds.includes('list') ? kinds : ['list', ...kinds],
-      defaultView: shared.find((view) => view.isDefault)?.kind ?? 'list',
+      ...shownViews(kinds, shared.find((view) => view.isDefault)?.kind),
       statusMode: dto.statusMode === 'custom' ? 'custom' : 'default',
       statusTemplate: dto.statusTemplate,
       statuses: dto.statuses

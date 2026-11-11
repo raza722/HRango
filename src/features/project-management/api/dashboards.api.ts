@@ -7,9 +7,9 @@ import type { FavoriteDto } from './pm.dto'
 import { folderApiId, instant } from './pm.mappers'
 
 // The four Project Management dashboards read the module's existing calls (workspaces, each
-// workspace's tasks, comments, attachments, favourites). What has no endpoint yet (recents, docs,
-// the personal list) is a typed pending call: the mock answers it in development, and against
-// the real API it reports "not available" instead of failing (docs/backend-mapping/pm-dashboards.md).
+// workspace's tasks, comments, attachments, favourites). Recents, docs and the personal list
+// have backend endpoints now; they stay typed "pending" calls, so a server without them shows
+// "not available" instead of failing (docs/backend-mapping/pm-dashboards.md).
 
 const path = (rest: string) => `/projects${rest}`
 
@@ -124,7 +124,8 @@ export const dashboardsApi = {
       }))
       .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt)),
 
-  // TODO(backend): endpoint not available (Backend Dependencies T7, "Recents").
+  // `GET /projects/recents` (backend routers/projects_extras.py); pending() keeps an older
+  // server working.
   /** What the caller opened lately, newest first: everywhere, in one workspace or in one folder. */
   recents: (
     scope: { workspaceId?: string | undefined; folderId?: string | undefined },
@@ -150,7 +151,7 @@ export const dashboardsApi = {
       })),
     ),
 
-  // TODO(backend): endpoint not available (Backend Dependencies T1, "Docs").
+  // `GET /projects/workspaces/{id}/docs` (backend routers/projects_docs.py).
   /** A workspace's docs (or one folder's, by its `folder:<id>`), most recently changed first. */
   docs: (
     workspaceId: string,
@@ -179,14 +180,14 @@ export const dashboardsApi = {
       }))
     }),
 
-  // TODO(backend): endpoint not available (Backend Dependencies T11, "Personal List").
+  // `/projects/personal-list` (backend routers/projects_extras.py).
   /** The caller's own to-do list, open items first. */
   personalList: (signal?: AbortSignal): Promise<Pending<PersonalItem[]>> =>
     pending(async () =>
       (await getItem<PersonalItemDto[]>(path('/personal-list'), {}, signal)).map(personalFromApi),
     ),
 
-  // TODO(backend): endpoint not available (Backend Dependencies T11, "Personal List").
+  // `/projects/personal-list` (backend routers/projects_extras.py).
   addPersonalItem: async (input: {
     title: string
     dueDate: string | null
@@ -195,7 +196,7 @@ export const dashboardsApi = {
     return personalFromApi(data.data)
   },
 
-  // TODO(backend): endpoint not available (Backend Dependencies T11, "Personal List").
+  // `/projects/personal-list` (backend routers/projects_extras.py).
   setPersonalItemDone: async (item: PersonalItem, done: boolean): Promise<PersonalItem> => {
     const { data } = await apiClient.patch<ApiItem<PersonalItemDto>>(
       path(`/personal-list/${item.id}`),
@@ -204,7 +205,7 @@ export const dashboardsApi = {
     return personalFromApi(data.data)
   },
 
-  // TODO(backend): endpoint not available (Backend Dependencies T11, "Personal List").
+  // `/projects/personal-list` (backend routers/projects_extras.py).
   deletePersonalItem: async (item: PersonalItem): Promise<void> => {
     await apiClient.delete(path(`/personal-list/${item.id}`), {
       params: { rowVersion: item.rowVersion },

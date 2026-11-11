@@ -3,6 +3,7 @@ import { addDays, format, subDays } from 'date-fns'
 import type { StatusDto, TemplateDto } from '@/features/project-management/api/pm.dto'
 
 import { DIRECTORY } from '../employees/seed'
+import { organisationDepartments } from '../payroll/lookup-handlers'
 import { CURRENT_EMPLOYEE_ID } from '../scheduling/seed'
 import type {
   ActivityRecord,
@@ -240,14 +241,15 @@ export const STATUS_TEMPLATES: TemplateDto[] = [
 
 // --- departments (organisation lookups) ------------------------------------------------------------
 
-const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '_')
+/**
+ * The departments and sub-departments exactly as `GET /organisation/lookups/departments` serves
+ * them (one shared mock list, so the ids the wizard picks are the ids Create Workspace accepts).
+ */
+export const DEPARTMENTS = organisationDepartments()
 
-/** The directory's departments as `GET /organisation/lookups/departments` lists them. */
-export const DEPARTMENTS = [...new Set(DIRECTORY.map((employee) => employee.department))]
-  .sort()
-  .map((name) => ({ id: `dep_${slug(name)}`, name }))
-
-export const departmentId = (name: string) => `dep_${slug(name)}`
+/** A department's lookup id from its name (`dep_human-resource-management`). */
+export const departmentId = (name: string) =>
+  DEPARTMENTS.find((entry) => entry.name === name && entry.parentId === null)?.id ?? `dep_${name}`
 
 // --- workspaces ------------------------------------------------------------------------------------
 

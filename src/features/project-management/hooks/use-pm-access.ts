@@ -16,6 +16,8 @@ export function usePmAccess(workspace: Pick<Workspace, 'myRole'> | null | undefi
     editWorkspace: useCan('projects.workspaces.edit'),
     deleteWorkspace: useCan('projects.workspaces.delete'),
     createList: useCan('projects.lists.create'),
+    editList: useCan('projects.lists.edit'),
+    deleteList: useCan('projects.lists.delete'),
     createTask: useCan('projects.tasks.create'),
     editTask: useCan('projects.tasks.edit'),
     deleteTask: useCan('projects.tasks.delete'),
@@ -32,11 +34,20 @@ export function usePmAccess(workspace: Pick<Workspace, 'myRole'> | null | undefi
   return {
     rank,
     createWorkspace: codes.createWorkspace,
-    /** Rename, description, cover, members, column permissions, shared views: admins and HR. */
+    /**
+     * Workspace Settings (details, views, statuses, organizer), cover, members, column
+     * permissions, shared views: admins and HR.
+     */
     editWorkspace: codes.editWorkspace && rank >= 4,
+    /** Hand the workspace to another owner (`usp_workspace_save`): workspace admins only. */
+    changeOwner: codes.editWorkspace && rank >= 5,
     deleteWorkspace: codes.deleteWorkspace && rank >= 5,
     /** Folders, lists, Convert to List, Labels (a custom field): managers and above. */
     manageLists: codes.createList && rank >= 3,
+    /** Rename and move folders and lists (`PUT /folders|lists/{id}`): managers and above. */
+    editLists: codes.editList && rank >= 3,
+    /** Delete a folder or an empty list: managers and above. */
+    deleteLists: codes.deleteList && rank >= 3,
     /** Add tasks, move, tags, assign: team leaders and above. */
     addTasks: codes.createTask && rank >= 2,
     moveTasks: codes.editTask && rank >= 2,

@@ -233,7 +233,7 @@ describe('Priority', () => {
     await waitFor(() => {
       expect(stored('tk_flow').priority).toBeNull()
     })
-    expect(await screen.findByText('Priorities this task')).toBeVisible()
+    expect(await screen.findByText('Set priority')).toBeVisible()
   })
 })
 

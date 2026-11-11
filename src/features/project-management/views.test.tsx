@@ -138,7 +138,7 @@ describe('Table view', { timeout: 60_000 }, () => {
     await user.click(within(table).getByRole('button', { name: 'Sort by Due Date' }))
     const names = within(table)
       .getAllByRole('row')
-      .map((row) => row.querySelector('span[title][class*="truncate"]')?.textContent)
+      .map((row) => row.querySelector('[title][class*="truncate"]')?.textContent)
       .filter(Boolean)
     // Earliest due first: Prototype the List view (two days ago) leads.
     expect(names[0]).toBe('Prototype the List view')

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { Link, useRouter } from '@tanstack/react-router'
+import { Settings2, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { EmployeeAvatar } from '@/components/layout/employee-avatar'
@@ -11,8 +12,9 @@ import { usePmAccess } from '../../hooks/use-pm-access'
 import type { PmPerson, Workspace, WorkspacePatch } from '../../types/pm.types'
 import { CoverPopover, DescriptionPopover } from './banner-popovers'
 import { coverStyle } from './covers'
+import { DeleteWorkspaceDialog } from './delete-workspace-dialog'
 import { InviteMembersDialog } from './invite-members-dialog'
-import { PmMenu, PmMenuContent, PmMenuItem, PmMenuTrigger } from './menu-parts'
+import { PmMenu, PmMenuContent, PmMenuItem, PmMenuSeparator, PmMenuTrigger } from './menu-parts'
 import {
   AppsIcon,
   CopyLinkIcon,
@@ -23,6 +25,7 @@ import {
   SearchIcon,
 } from './workspace-icons'
 import { membersOf } from './workspace-members'
+import { WorkspaceSettingsDialog } from './workspace-settings-dialog'
 import { bannerStyles, popupStyles } from './workspace-styles'
 
 /** Avatars drawn before the "16 +" bubble. */
@@ -63,6 +66,8 @@ export function WorkspaceBanner({
   const router = useRouter()
   const [inviting, setInviting] = useState(false)
   const [renaming, setRenaming] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const renameFocus = useRef(false)
   const access = usePmAccess(workspace)
   const members = membersOf(workspace, people)
@@ -159,6 +164,30 @@ export function WorkspaceBanner({
               >
                 Copy link
               </PmMenuItem>
+              {access.editWorkspace && (
+                <PmMenuItem
+                  icon={<Settings2 className="size-5" />}
+                  onSelect={() => {
+                    setSettingsOpen(true)
+                  }}
+                >
+                  Workspace Settings
+                </PmMenuItem>
+              )}
+              {access.deleteWorkspace && (
+                <>
+                  <PmMenuSeparator />
+                  <PmMenuItem
+                    icon={<Trash2 className="size-5" />}
+                    className="text-[#B7192C] dark:text-[#FF9AA3]"
+                    onSelect={() => {
+                      setDeleting(true)
+                    }}
+                  >
+                    Delete Workspace
+                  </PmMenuItem>
+                </>
+              )}
             </PmMenuContent>
           </PmMenu>
           {access.editWorkspace && <DescriptionPopover workspace={workspace} onSave={onSave} />}
@@ -278,6 +307,29 @@ export function WorkspaceBanner({
         </div>
       </div>
 
+      <WorkspaceSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        workspace={workspace}
+        access={access}
+        onDelete={
+          access.deleteWorkspace
+            ? () => {
+                setSettingsOpen(false)
+                setDeleting(true)
+              }
+            : undefined
+        }
+      />
+      <DeleteWorkspaceDialog
+        workspace={workspace}
+        open={deleting}
+        onOpenChange={setDeleting}
+        onDeleted={() => {
+          setDeleting(false)
+          void router.navigate({ to: '/project-management/workspaces' })
+        }}
+      />
       <InviteMembersDialog
         open={inviting}
         onOpenChange={setInviting}

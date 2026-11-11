@@ -84,12 +84,13 @@ describe('Activity view', { timeout: 60_000 }, () => {
     expect(days.slice(0, 2)).toEqual(['Today', 'Yesterday'])
     expect(screen.getByText('Showing 6 of 6 changes')).toBeVisible()
 
-    // A task name opens the task in the List view.
+    // A task name opens the task panel over the Activity view.
     await user.click(screen.getByRole('button', { name: 'Iteration List' }))
     await waitFor(() => {
-      expect(router.state.location.hash).toBe('tk_flow')
+      expect(router.state.location.search).toHaveProperty('task', 'tk_flow')
     })
-    expect(router.state.location.search).not.toHaveProperty('view', 'activity')
+    expect(router.state.location.search).toHaveProperty('view', 'activity')
+    expect(await screen.findByRole('dialog', { name: 'Iteration List' })).toBeVisible()
   })
 
   it('filters by search, action and dates', async () => {

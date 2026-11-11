@@ -7,7 +7,7 @@ import { columnEditable } from '../../hooks/use-pm-access'
 import type { TaskRow, TaskStatus } from '../../types/pm.types'
 import { TASK_CELLS, TaskNameAdornments } from '../task-fields/task-cells'
 import { useListView } from './list-context'
-import { COLUMN_GAP, COLUMN_WIDTHS, INDENT_REM, TAIL_WIDTH } from './list-utils'
+import { COLUMN_GAP, COLUMN_WIDTHS, INDENT_REM, READ_ONLY_INERT, TAIL_WIDTH } from './list-utils'
 import { TaskRowMenu } from './task-row-menu'
 import {
   DragHandleIcon,
@@ -17,23 +17,6 @@ import {
   SubtaskIcon,
 } from './workspace-icons'
 import { listStyles } from './workspace-styles'
-
-/**
- * Columns whose cell is only a popup to edit the value: read-only, they become inert. Comments
- * (Latest Comment), the files list and time entries still open to read.
- */
-const READ_ONLY_INERT: ReadonlySet<string> = new Set([
-  'assignees',
-  'startDate',
-  'dueDate',
-  'priority',
-  'tags',
-  'labels',
-  'status',
-  'timeEstimate',
-  'storyPoints',
-  'dependencies',
-])
 
 /**
  * One task row (task row group 1:2779) and, when expanded, its subtasks indented under it.
@@ -250,21 +233,26 @@ export function TaskRowView({
   )
 }
 
-/** The name, or the rename box while renaming. */
+/**
+ * The name, which opens the task panel; or the rename box while renaming (the row menu's
+ * "Rename Task"; the panel's title renames too).
+ */
 function TaskName({ task }: { task: TaskRow }) {
-  const { renamingId, onRename, actions, access } = useListView()
+  const { renamingId, onRename, actions, onOpenTask } = useListView()
 
   if (renamingId !== task.id) {
     return (
-      <span
-        className="min-w-0 flex-1 truncate text-[1.1858rem] leading-[1.5] font-medium text-[#626262] dark:text-title"
+      <button
+        type="button"
         title={task.name}
-        onDoubleClick={() => {
-          if (access.editTasks) onRename(task.id)
+        aria-label={`Open ${task.name}`}
+        onClick={() => {
+          onOpenTask(task)
         }}
+        className="min-w-0 flex-1 truncate rounded-md text-left text-[1.1858rem] leading-[1.5] font-medium text-[#626262] outline-none hover:text-[#7127EA] hover:underline focus-visible:ring-2 focus-visible:ring-[#A181FF] dark:text-title dark:hover:text-[#C4ABFF]"
       >
         {task.name}
-      </span>
+      </button>
     )
   }
 

@@ -84,10 +84,11 @@ describe('Calendar view', { timeout: 60_000 }, () => {
     const peek = await screen.findByRole('dialog', { name: 'User Persona List' })
     expect(within(peek).getByRole('button', { name: /^Due Date: / })).toBeVisible()
     expect(within(peek).getByRole('button', { name: /^Start Date: / })).toBeVisible()
-    await user.click(within(peek).getByRole('button', { name: 'Open in List view' }))
+    await user.click(within(peek).getByRole('button', { name: 'Open task' }))
     await waitFor(() => {
-      expect(router.state.location.hash).toBe('tk_persona')
+      expect(router.state.location.search).toHaveProperty('task', 'tk_persona')
     })
+    expect(await screen.findByRole('dialog', { name: 'User Persona List' })).toBeVisible()
   })
 
   it('is a list of the days with tasks on a phone', async () => {

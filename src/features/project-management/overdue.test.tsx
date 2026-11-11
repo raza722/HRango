@@ -52,12 +52,12 @@ describe('Overdue tab', { timeout: 60_000 }, () => {
     )
     expect(closedRow).toHaveTextContent(/Closed .*, 2 days late/)
 
-    // A task's name opens it in the List view.
+    // A task's name opens its panel over the Overdue tab.
     await user.click(within(openTable).getByRole('button', { name: /^Accessibility audit/ }))
     await waitFor(() => {
-      expect(router.state.location.hash).toBe('tk_audit')
+      expect(router.state.location.search).toHaveProperty('task', 'tk_audit')
     })
-    expect(router.state.location.search).not.toHaveProperty('overdue')
+    expect(router.state.location.search).toHaveProperty('overdue', true)
   })
 
   it('lets an assignee ask for more time, once', async () => {
@@ -173,7 +173,7 @@ describe('Reminders page', { timeout: 60_000 }, () => {
 
     expect(await screen.findByRole('heading', { name: 'Reminders' }, FIRST_LOAD)).toBeVisible()
     const audit = await screen.findByRole('link', { name: 'Accessibility audit of the old portal' })
-    expect(audit).toHaveAttribute('href', '/project-management/workspaces/ws_qa#tk_audit')
+    expect(audit).toHaveAttribute('href', '/project-management/workspaces/ws_qa?task=tk_audit')
     expect(screen.getByText('Upcoming')).toBeVisible()
     expect(
       screen.queryByRole('link', { name: 'User Qualitative Research' }),

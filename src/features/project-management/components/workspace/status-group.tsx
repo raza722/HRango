@@ -13,6 +13,7 @@ import {
   ChevronDownIcon,
   ExpandIcon,
   MilestoneIcon,
+  PlusIcon,
   RowDotsIcon,
   StatusRingIcon,
   TaskIcon,
@@ -69,7 +70,11 @@ export function StatusGroup({
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-5">
-      <div className="sticky left-0 flex h-[4.3125rem] w-fit max-w-full min-w-0 items-center gap-5 rounded-[0.625rem] bg-white pr-3 pl-2.5 sm:min-w-[30rem] dark:bg-card">
+      {/* The design's 30rem header only where the list has room (a container query on the
+          List view): narrower, a fixed width pushed its Add Task past the edge. */}
+      {/* Below lg the rows are wider than the screen; the header keeps to the screen's width
+          (page padding taken off) so its status name shortens instead. */}
+      <div className="sticky left-0 flex h-[4.3125rem] w-fit max-w-[calc(100vw-2.5rem)] min-w-0 items-center gap-3 rounded-[0.625rem] bg-white pr-3 pl-2.5 lg:max-w-full @2xl/list:min-w-[30rem] @2xl/list:gap-5 dark:bg-card">
         <span className="flex min-w-0 items-center gap-3">
           <button
             type="button"
@@ -246,9 +251,11 @@ export function AddTaskMenu({
         <button
           type="button"
           aria-label={label}
-          className="inline-flex h-[3.19rem] shrink-0 items-center gap-[0.6rem] rounded-[0.72rem] px-[0.96rem] text-[1.078rem] leading-[1.5] font-semibold text-[#7127EA] outline-none hover:bg-[#F8F5FF] focus-visible:ring-2 focus-visible:ring-[#A181FF] dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/15"
+          className="inline-flex h-[3.19rem] shrink-0 items-center gap-[0.6rem] rounded-[0.72rem] px-2.5 text-[1.078rem] leading-[1.5] font-semibold text-[#7127EA] outline-none hover:bg-[#F8F5FF] focus-visible:ring-2 focus-visible:ring-[#A181FF] sm:px-[0.96rem] dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/15"
         >
-          Add Task
+          {/* A "+" on phones, where the words would run past the screen's edge. */}
+          <PlusIcon aria-hidden="true" className="size-3.5 sm:hidden" />
+          <span className="hidden sm:inline">Add Task</span>
           <ChevronDownIcon className="h-2 w-3.5" />
         </button>
       </PmMenuTrigger>
