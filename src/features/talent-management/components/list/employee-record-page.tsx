@@ -1,4 +1,4 @@
-import { type SyntheticEvent, useState } from 'react'
+import { type SyntheticEvent, useEffect, useState } from 'react'
 import { getRouteApi, Link } from '@tanstack/react-router'
 import { Info, Mail, Phone, Search } from 'lucide-react'
 
@@ -15,11 +15,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useEmployeeLookupSearch } from '@/hooks/use-employee-lookup'
+import { useSearchAsYouType } from '@/hooks/use-search-as-you-type'
 import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { EMPLOYEE_PAGE_SIZES, isInactiveStatus, statusMeta, TM_CODES } from '../../constants'
 import { useEmployeeList, useSetEmployeeActive } from '../../hooks/use-employees'
+import { saveEmployeeListView } from '../../routing'
 import type { Employee } from '../../types/employees.types'
 import { serialOf } from '../../utils/format'
 import {
@@ -104,10 +106,13 @@ export function EmployeeRecordPage() {
   const canCreate = useCan(TM_CODES.create)
   const canEdit = useCan(TM_CODES.edit)
   const canDeactivate = useCan(TM_CODES.deactivate)
-  const [text, setText] = useState(search.q ?? '')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [switching, setSwitching] = useState<Employee | null>(null)
   const setActive = useSetEmployeeActive()
+
+  useEffect(() => {
+    saveEmployeeListView(search)
+  }, [search])
 
   const list = useEmployeeList({
     q: search.q,
@@ -123,6 +128,13 @@ export function EmployeeRecordPage() {
   const update = (patch: Partial<typeof search>) => {
     void navigate({ search: (current) => ({ ...current, ...patch }) })
   }
+  // Searches as you type (a pause after the last key); Search or Enter searches at once.
+  const textSearch = useSearchAsYouType({
+    value: search.q,
+    onSearch: (q) => {
+      update({ q, page: 1 })
+    },
+  })
   const filters: EmployeeFilters = {
     status: search.status,
     branchId: search.branchId,
@@ -213,7 +225,7 @@ export function EmployeeRecordPage() {
 
   const onSearch = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault()
-    update({ q: text.trim() || undefined, page: 1 })
+    textSearch.flush()
   }
   const mailto = `mailto:?subject=${encodeURIComponent('Employee Record')}&body=${encodeURIComponent(
     typeof window === 'undefined' ? '' : window.location.href,
@@ -274,10 +286,7 @@ export function EmployeeRecordPage() {
               <Input
                 aria-label="Search employees"
                 placeholder="Search ..."
-                value={text}
-                onChange={(event) => {
-                  setText(event.target.value)
-                }}
+                {...textSearch.inputProps}
                 className="h-9 min-w-0 flex-1"
               />
               <Button

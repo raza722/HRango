@@ -6,7 +6,8 @@ import { ErrorState } from '@/components/feedback/error-state'
 import { Spinner } from '@/components/feedback/spinner'
 import { DatePickerField, SelectField, TextField } from '@/components/form'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { EmployeeSearchSelectField, SearchSelectField } from '@/features/payroll'
+import { EmployeeSearchSelectField, RsField, SearchSelectField } from '@/features/payroll'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import {
@@ -131,6 +132,8 @@ function EmployeeForm({ employee, onClose }: { employee: Employee | null; onClos
     id && name ? [{ value: id, label: name }] : undefined
   // The API sent nulls for the personal details: they are not offered, and not sent back.
   const showPersonal = !employee || !personalHidden(employee)
+  // Pay is sensitive: the joining salary is offered to those who may set salaries.
+  const canSetSalary = useCan(TM_CODES.salaryEdit)
 
   const submit = form.handleSubmit(async (values) => {
     try {
@@ -353,6 +356,14 @@ function EmployeeForm({ employee, onClose }: { employee: Employee | null; onClos
             label: SALARY_FREQUENCY_LABELS[value],
           }))}
         />
+        {!employee && canSetSalary && (
+          <RsField
+            control={form.control}
+            name="joiningSalary"
+            label="Joining Salary"
+            description="Paid from the joining date. Later changes: Payroll → Salary Revision."
+          />
+        )}
       </Group>
     </FormDialog>
   )

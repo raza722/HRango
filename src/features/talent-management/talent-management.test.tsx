@@ -3,6 +3,7 @@ import type { UserEvent } from '@testing-library/user-event'
 import { format } from 'date-fns'
 import { describe, expect, it } from 'vitest'
 
+import { salaryRevisions } from '@/mocks/payroll/db'
 import {
   bankAccounts,
   contracts,
@@ -183,6 +184,41 @@ describe('Talent Management → Employees', () => {
     })
   }, 30_000)
 
+  it('sets a new employee’s joining salary, which Salary Revision starts from', async () => {
+    const { user } = renderApp('/talent-management/employees?q=Sana')
+    await user.click(await screen.findByRole('button', { name: '+ Add New' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Add New Employee' })
+    await user.type(within(dialog).getByRole('textbox', { name: /^First Name/ }), 'Sana')
+    await user.type(within(dialog).getByRole('textbox', { name: /^Last Name/ }), 'Iqbal')
+    await choose(user, /^Branch/, 'Lahore Head Office')
+
+    // A salary needs the date it starts from.
+    await user.type(within(dialog).getByRole('textbox', { name: /^Joining Salary/ }), '12a')
+    await user.click(within(dialog).getByRole('button', { name: 'Add Employee' }))
+    expect(await within(dialog).findByText('Enter the salary in rupees, e.g. 150000')).toBeVisible()
+    expect(
+      within(dialog).getByText('Choose the joining date: the salary starts from it'),
+    ).toBeVisible()
+    await user.clear(within(dialog).getByRole('textbox', { name: /^Joining Salary/ }))
+    await user.type(within(dialog).getByRole('textbox', { name: /^Joining Salary/ }), '185,000')
+    await pickToday(user, 'Joining Date')
+    await user.click(within(dialog).getByRole('button', { name: 'Add Employee' }))
+
+    expect((await screen.findAllByText('Employee added')).length).toBeGreaterThan(0)
+    const saved = employees.all().find((person) => person.firstName === 'Sana')
+    const salary = salaryRevisions.all().find((row) => row.employeeId === saved?.id)
+    expect(salary).toMatchObject({
+      source: 'joining',
+      salary: 185_000,
+      effectiveDate: format(new Date(), 'yyyy-MM-dd'),
+    })
+
+    // An edit leaves the salary to Salary Revision.
+    await openRowMenu(user, 'Actions for Sana Iqbal', 'Edit')
+    const edit = await screen.findByRole('dialog', { name: 'Edit Employee' })
+    expect(within(edit).queryByRole('textbox', { name: /^Joining Salary/ })).not.toBeInTheDocument()
+  }, 30_000)
+
   it('deactivates and reactivates from the row menu', async () => {
     const { user } = renderApp('/talent-management/employees?q=Kashif')
     await screen.findByRole('link', { name: 'Kashif Raza' })
@@ -194,12 +230,21 @@ describe('Talent Management → Employees', () => {
     // Inactive people leave the list unless asked for.
     expect(await screen.findByText('No employees match the search or filters.')).toBeVisible()
 
+    // Status "All statuses" brings them back (left and inactive people included).
     await user.click(screen.getByRole('button', { name: 'Filter' }))
     const filters = await screen.findByRole('dialog', { name: 'Filters' })
-    await user.click(within(filters).getByRole('checkbox', { name: 'Include inactive employees' }))
+    await choose(user, 'Status', 'All statuses')
     await user.click(within(filters).getByRole('button', { name: 'Apply' }))
     expect(await screen.findByRole('link', { name: 'Kashif Raza' })).toBeVisible()
     expect(screen.getByText('Inactive')).toBeVisible()
+    // Reopened, the panel shows the choice.
+    await user.click(screen.getByRole('button', { name: /^Filter\s*1\s*in use$/ }))
+    expect(
+      within(await screen.findByRole('dialog', { name: 'Filters' })).getByRole('combobox', {
+        name: 'Status',
+      }),
+    ).toHaveTextContent('All statuses')
+    await user.keyboard('{Escape}')
 
     await openRowMenu(user, 'Actions for Kashif Raza', 'Reactivate')
     await confirm(user, 'Reactivate')
@@ -298,6 +343,21 @@ describe('Talent Management → Employees', () => {
     expect(await screen.findByRole('button', { name: /^Logo Design/ })).toBeVisible()
     expect(router.state.location.search).toEqual({ tab: 'skills' })
   }, 30_000)
+
+  it('returns from a profile to the list as it was left, filters included', async () => {
+    const { user, router } = renderApp('/talent-management/employees?status=probation')
+    const table = await screen.findByRole('table', { name: 'Employees' })
+    await user.click(await within(table).findByRole('link', { name: 'Laiba Shah' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Laiba Shah' })).toBeVisible()
+    // Changing tab replaces the address; the way back still knows the list's filters.
+    await user.click(screen.getByRole('tab', { name: 'Work' }))
+
+    await user.click(screen.getByRole('link', { name: 'Employee Record' }))
+    expect(await screen.findByRole('heading', { name: 'Employee Record' })).toBeVisible()
+    expect(router.state.location.search).toEqual({ status: 'probation' })
+    expect(await screen.findByText('Showing 1–4 of 4')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^Filter\s*1\s*in use$/ })).toBeVisible()
+  })
 
   it('updates the profile, the CNIC through identity', async () => {
     const { user } = renderApp('/talent-management/employees/em_hina')

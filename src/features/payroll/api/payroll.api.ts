@@ -252,6 +252,8 @@ export interface StatementFilters {
 }
 
 export interface RevisionFilters {
+  /** Employee name or code. */
+  q?: string | undefined
   employeeId?: string | undefined
   from?: string | undefined
   to?: string | undefined

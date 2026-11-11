@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { type KeyboardEvent, useId, useState } from 'react'
 import { X } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -43,6 +43,16 @@ export function FiltersDialog({
   const set = (key: string, next: string | undefined) => {
     setDraft((current) => ({ ...current, [key]: next === '' ? undefined : next }))
   }
+  const search = () => {
+    onApply(draft)
+    onClose()
+  }
+  // Enter in a typed field searches, as the Search button does.
+  const searchOnEnter = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    search()
+  }
 
   const control = (field: FilterField, id: string) => {
     if (field.kind === 'select') {
@@ -83,6 +93,7 @@ export function FiltersDialog({
           onChange={(event) => {
             set(field.key, event.target.value)
           }}
+          onKeyDown={searchOnEnter}
         />
       )
     }
@@ -98,6 +109,7 @@ export function FiltersDialog({
             onChange={(event) => {
               set(field.from, event.target.value)
             }}
+            onKeyDown={searchOnEnter}
           />
           <Input
             inputMode="decimal"
@@ -107,6 +119,7 @@ export function FiltersDialog({
             onChange={(event) => {
               set(field.to, event.target.value)
             }}
+            onKeyDown={searchOnEnter}
           />
         </div>
       )
@@ -199,14 +212,7 @@ export function FiltersDialog({
           >
             Save Preset
           </Button>
-          <Button
-            type="button"
-            onClick={() => {
-              onApply(draft)
-              onClose()
-            }}
-            className={cn(footerButton, btn.orange)}
-          >
+          <Button type="button" onClick={search} className={cn(footerButton, btn.orange)}>
             Search
           </Button>
           <Button

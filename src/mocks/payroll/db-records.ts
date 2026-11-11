@@ -34,8 +34,11 @@ export interface StoredSalaryRevision {
   percentage: number | null
   previousSalary: number
   salary: number
-  /** Written by an approved promotion (Requests → Promotion): changed there, not here. */
-  source?: 'promotion'
+  /**
+   * Written by an approved promotion (Requests → Promotion), or the joining salary given when the
+   * employee was added (Talent Management): changed there, not here.
+   */
+  source?: 'promotion' | 'joining'
   /** The promotion request's code (`RQ-PRM-0004`). */
   sourceCode?: string
 }

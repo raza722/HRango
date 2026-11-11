@@ -1034,15 +1034,19 @@ function revisionRow(revision: StoredSalaryRevision): SalaryRevisionRow {
     employeeCode: fields.employeeCode,
     employeeName: fields.employeeName,
     effectiveDate: revision.effectiveDate,
-    previousAmount: revision.previousSalary,
+    // A joining salary is the first one: nothing before it, and no change (as the API sends it).
+    previousAmount: revision.source === 'joining' ? null : revision.previousSalary,
     amount: revision.salary,
-    changeType: revision.type === 'percentage' ? 'percent' : 'flat',
+    changeType:
+      revision.source === 'joining' ? null : revision.type === 'percentage' ? 'percent' : 'flat',
     changeValue:
-      revision.type === 'percentage'
-        ? revision.percentage
-        : revision.salary - revision.previousSalary,
+      revision.source === 'joining'
+        ? null
+        : revision.type === 'percentage'
+          ? revision.percentage
+          : revision.salary - revision.previousSalary,
     source: revision.source ?? 'revision',
-    canEdit: revision.source !== 'promotion',
+    canEdit: revision.source === undefined,
     departmentName: fields.departmentName,
     locationName: fields.locationName,
     branchName: fields.branchName,
@@ -1071,10 +1075,15 @@ const revisionInput = z.object({
 
 /** 409 for a revision a promotion wrote: it is changed (or undone) on the promotion. */
 const fromPromotion = (revision: StoredSalaryRevision) =>
-  conflict(
-    `This salary came from ${revision.sourceCode ? `promotion ${revision.sourceCode}` : 'a promotion'}. Cancel the promotion in Requests → Promotion to undo it.`,
-    'FROM_PROMOTION',
-  )
+  revision.source === 'joining'
+    ? conflict(
+        'This salary came from joining or a promotion. It cannot be edited here',
+        'SALARY_NOT_REVISION',
+      )
+    : conflict(
+        `This salary came from ${revision.sourceCode ? `promotion ${revision.sourceCode}` : 'a promotion'}. Cancel the promotion in Requests → Promotion to undo it.`,
+        'FROM_PROMOTION',
+      )
 
 function revised(previous: number, changeType: 'flat' | 'percent', changeValue: number) {
   return changeType === 'flat'
@@ -1192,7 +1201,7 @@ const revisionHandlers = [
         if (current && stale(input.rowVersion, revisionVersion(current))) {
           return changedByOthers('salary revision')
         }
-        if (current?.source === 'promotion') return fromPromotion(current)
+        if (current?.source) return fromPromotion(current)
         if (input.changeType === 'percent' && input.changeValue <= -100) {
           return invalid('A percentage cut cannot be 100% or more.', {
             changeValue: 'A percentage cut cannot be 100% or more.',
@@ -1247,7 +1256,7 @@ const revisionHandlers = [
     if (stale(param(new URL(request.url), 'rowVersion'), revisionVersion(found))) {
       return changedByOthers('salary revision')
     }
-    if (found.source === 'promotion') return fromPromotion(found)
+    if (found.source) return fromPromotion(found)
     salaryRevisions.remove(found.id)
     return new HttpResponse(null, { status: 204 })
   }),

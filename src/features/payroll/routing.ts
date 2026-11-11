@@ -7,6 +7,12 @@ export const pageSearchSchema = z.object({
 export type PageSearch = z.infer<typeof pageSearchSchema>
 export const PAGE_SEARCH_DEFAULTS = { page: 1 } as const
 
+/** A list with a search box: its page and the text searched (`?q=`). */
+export const searchPageSchema = pageSearchSchema.extend({
+  q: z.string().trim().min(1).max(200).optional().catch(undefined),
+})
+export type SearchPageSearch = z.infer<typeof searchPageSchema>
+
 /** Reports: the open tab (`?report=`) and its page. */
 export const REPORT_TABS = ['accounts', 'employee-wise', 'daily-wages', 'summary'] as const
 export const reportSearchSchema = z.object({

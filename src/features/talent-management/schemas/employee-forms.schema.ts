@@ -82,6 +82,20 @@ const today = () => format(new Date(), 'yyyy-MM-dd')
 /** A date on or after another (both `yyyy-MM-dd`; empty passes). */
 const notBefore = (later: string, earlier: string) => !later || !earlier || later >= earlier
 
+/** Rupees as typed ("150,000", "85000.50"), or null for an empty box. */
+const rupees = (value: string): number | null => {
+  const plain = value.replace(/,/g, '').trim()
+  return plain === '' ? null : Number(plain)
+}
+/** 0 or more, at most 2 decimals and 16 digits before the point (the API's DECIMAL(18,2)). */
+const optionalRupees = z
+  .string()
+  .trim()
+  .refine(
+    (value) => /^(\d{1,16}(\.\d{1,2})?)?$/.test(value.replace(/,/g, '')),
+    'Enter the salary in rupees, e.g. 150000',
+  )
+
 // --- Add / Edit employee -------------------------------------------------------------------
 
 export const employeeFormSchema = z
@@ -122,8 +136,17 @@ export const employeeFormSchema = z
     joiningDate: optionalDay,
     probationEndDate: optionalDay,
     confirmationDate: optionalDay,
+    /** Add only: the first salary (sent as `joiningSalary`). */
+    joiningSalary: optionalRupees,
   })
   .superRefine((values, ctx) => {
+    if (values.joiningSalary && !values.joiningDate) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['joiningDate'],
+        message: 'Choose the joining date: the salary starts from it',
+      })
+    }
     if (values.dateOfBirth && values.dateOfBirth >= today()) {
       ctx.addIssue({
         code: 'custom',
@@ -195,11 +218,13 @@ export function employeeToForm(employee: Employee | null): EmployeeFormValues {
     joiningDate: orEmpty(employee?.joiningDate),
     probationEndDate: orEmpty(employee?.probationEndDate),
     confirmationDate: orEmpty(employee?.confirmationDate),
+    joiningSalary: '',
   }
 }
 
 /**
- * The `EmployeeIn` body. The CNIC goes on a new record; on an edit it is left out (it changes
+ * The `EmployeeIn` body. The CNIC and the joining salary go on a new record; on an edit they are
+ * left out (the salary changes through Salary Revision; the CNIC
  * through `PUT …/identity`, and a masked CNIC must not be sent back as blank). On a record whose
  * personal details the API hid (`canSeePersonal: false`) those fields are left out too: the form
  * was given nulls for them, and sending those back must not read as clearing them.
@@ -226,6 +251,8 @@ export function employeeFormToInput(
     gender: values.gender || null,
     ...(employee && personalHidden(employee) ? {} : personal),
     ...(employee ? {} : { cnic: textOrNull(values.cnic) }),
+    // A salary is set once, when the person is added; after that Salary Revision changes it.
+    ...(employee ? {} : { joiningSalary: rupees(values.joiningSalary) }),
     email: textOrNull(values.email),
     branchId: values.branchId ?? '',
     locationId: values.locationId,

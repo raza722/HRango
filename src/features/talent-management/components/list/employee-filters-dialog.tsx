@@ -1,10 +1,8 @@
-import { useId, useState } from 'react'
+import { useState } from 'react'
 
 import { FormField } from '@/components/form'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { Label } from '@/components/ui/label'
 import { SearchSelect } from '@/features/payroll'
 import { cn } from '@/lib/utils'
 
@@ -26,10 +24,14 @@ export type EmployeeFilters = Pick<
   'status' | 'branchId' | 'departmentId' | 'designationId' | 'includeInactive'
 >
 
+/** The Status choice for everyone, those who left and inactive records too (`includeInactive`). */
+const ALL_STATUSES = 'all'
+
 /**
  * Filter (the frame's filter_alt icon; no panel is drawn): Status, Branch, Department and
- * Designation (`GET /organisation/lookups/{kind}`), and Include inactive employees. Apply puts
- * them in the URL; Reset clears them.
+ * Designation (`GET /organisation/lookups/{kind}`). Status left empty means current employees
+ * (the API leaves out Left and Inactive); "All statuses" asks for everyone. Apply puts them in the
+ * URL; Reset clears them.
  */
 export function EmployeeFiltersDialog({
   value,
@@ -41,7 +43,6 @@ export function EmployeeFiltersDialog({
   onClose: () => void
 }) {
   const [draft, setDraft] = useState<EmployeeFilters>(value)
-  const checkboxId = useId()
   const { lists } = useOrgLookups(['branches', 'departments', 'designations'] as const)
   const options = (rows: readonly { id: string; name: string }[]) =>
     rows.map((row) => ({ value: row.id, label: row.name }))
@@ -85,18 +86,22 @@ export function EmployeeFiltersDialog({
             {(a11y) => (
               <SearchSelect
                 {...a11y}
-                value={draft.status ?? null}
+                value={draft.status ?? (draft.includeInactive ? ALL_STATUSES : null)}
                 onChange={(next) => {
                   setDraft((current) => ({
                     ...current,
                     status: EMPLOYEE_STATUSES.find((status) => status === next),
+                    includeInactive: next === ALL_STATUSES ? true : undefined,
                   }))
                 }}
-                options={EMPLOYEE_STATUSES.map((status) => ({
-                  value: status,
-                  label: EMPLOYEE_STATUS_META[status].label,
-                }))}
-                placeholder="All Statuses"
+                options={[
+                  { value: ALL_STATUSES, label: 'All statuses' },
+                  ...EMPLOYEE_STATUSES.map((status) => ({
+                    value: status,
+                    label: EMPLOYEE_STATUS_META[status].label,
+                  })),
+                ]}
+                placeholder="Current employees"
                 clearable
               />
             )}
@@ -104,20 +109,10 @@ export function EmployeeFiltersDialog({
           {select('Branch', 'All Branches', 'branchId', lists.branches)}
           {select('Department', 'All Departments', 'departmentId', lists.departments)}
           {select('Designation', 'All Designations', 'designationId', lists.designations)}
-          <div className="flex items-center gap-2.5 sm:col-span-2">
-            <Checkbox
-              id={checkboxId}
-              tone="navy"
-              checked={draft.includeInactive === true}
-              onCheckedChange={(checked) => {
-                setDraft((current) => ({
-                  ...current,
-                  includeInactive: checked === true ? true : undefined,
-                }))
-              }}
-            />
-            <Label htmlFor={checkboxId}>Include inactive employees</Label>
-          </div>
+          <p className="text-xs text-muted-foreground sm:col-span-2">
+            Current employees are those Active, On Probation or On Notice. All statuses adds the
+            people who left and inactive records.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-4 pt-6">
           <Button type="button" onClick={onClose} className={cancelButtonClass}>
