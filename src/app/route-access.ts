@@ -23,6 +23,7 @@ const RULES: readonly (readonly [path: string, screens: string | readonly string
   ['/attendance/overview', 'attendance.overview'],
   ['/attendance/insights', 'attendance.overview'],
   ['/attendance/time-sheet', 'attendance.time_sheet'],
+  ['/attendance/missing-punch', 'attendance.time_sheet'],
   ['/attendance/logs', 'attendance.logs'],
   ['/attendance/official-visits', 'requests.official_visit'],
   ['/attendance/overtime', 'requests.overtime'],

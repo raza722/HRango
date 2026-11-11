@@ -163,7 +163,7 @@ export function TimeSheetTable({
 }: TimeSheetTableProps) {
   const columns = scope === 'my' ? COLUMNS.filter((column) => column !== 'Employee') : COLUMNS
   return (
-    <div className="scrollbar-brand overflow-x-auto overscroll-x-contain">
+    <div className="table-scroll scrollbar-brand">
       <table
         aria-busy={isLoading || isFetching}
         className={cn(

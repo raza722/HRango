@@ -97,8 +97,7 @@ function buildMenu(current: AttendanceSection | null, className?: string): MenuI
       icon: MissingPunchMenuIcon,
       link: (
         <Link
-          to="/attendance/$section"
-          params={{ section: 'missing-punch' }}
+          to="/attendance/missing-punch"
           aria-current={current === 'missing-punch' ? 'page' : undefined}
           className={cls(current === 'missing-punch')}
         >

@@ -1,9 +1,8 @@
 import { useEffect, useId, useState } from 'react'
 import { format } from 'date-fns'
-import { Camera, Clock } from 'lucide-react'
+import { Camera, Clock, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { Spinner } from '@/components/feedback/spinner'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api-error'
 import { uploadFile } from '@/lib/files'
@@ -122,7 +121,11 @@ export function ClockCard() {
         disabled={pending || !allowed}
         className="mt-2 h-8 w-full max-w-52 bg-[#3B6FF5] text-white hover:bg-[#3B6FF5]/90"
       >
-        {pending && !clock.isPending ? <Spinner className="size-4" /> : <Clock />}
+        {pending && !clock.isPending ? (
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+        ) : (
+          <Clock />
+        )}
         {clockedIn ? 'Clock Out' : 'Clock In'}
       </Button>
       {!allowed && (

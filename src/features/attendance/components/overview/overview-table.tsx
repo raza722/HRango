@@ -41,7 +41,7 @@ export function OverviewTable({
 }: OverviewTableProps) {
   const month = days[0] ? format(parse(days[0], 'yyyy-MM-dd', new Date()), 'MMMM yyyy') : ''
   return (
-    <div className="scrollbar-brand overflow-x-auto overscroll-x-contain">
+    <div className="table-scroll scrollbar-brand">
       <table
         aria-busy={isLoading || isFetching}
         className={cn(

@@ -11,6 +11,7 @@ import {
 } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useSearchAsYouType } from '@/hooks/use-search-as-you-type'
 import { useCan } from '@/lib/permissions'
 
 import { useDeleteOvertimePolicy, useOvertimePolicies } from '../../hooks/use-overtime'
@@ -68,7 +69,13 @@ const columns: DataTableColumn<OvertimePolicy>[] = [
 export function PolicyTab({ search, update }: OvertimeTabProps) {
   const [dialog, setDialog] = useState<Dialog>(null)
   const [filtersOpen, setFiltersOpen] = useState(Boolean(search.q))
-  const [text, setText] = useState(search.q ?? '')
+  // The Name box searches as you type (a pause after the last key); Enter searches at once.
+  const textSearch = useSearchAsYouType({
+    value: search.q,
+    onSearch: (q) => {
+      update({ q })
+    },
+  })
   const canCreate = useCan('attendance.settings.overtime_policies.create')
   const canEdit = useCan('attendance.settings.overtime_policies.edit')
   const canDelete = useCan('attendance.settings.overtime_policies.delete')
@@ -111,7 +118,7 @@ export function PolicyTab({ search, update }: OvertimeTabProps) {
             className="grid gap-1.5"
             onSubmit={(event) => {
               event.preventDefault()
-              update({ q: text.trim() || undefined })
+              textSearch.flush()
             }}
           >
             <label htmlFor="overtime-policy-search" className="text-sm font-medium text-heading">
@@ -121,13 +128,8 @@ export function PolicyTab({ search, update }: OvertimeTabProps) {
               id="overtime-policy-search"
               type="search"
               placeholder="Search policies"
-              value={text}
-              onChange={(event) => {
-                setText(event.target.value)
-              }}
-              onBlur={() => {
-                update({ q: text.trim() || undefined })
-              }}
+              {...textSearch.inputProps}
+              onBlur={textSearch.flush}
             />
           </form>
           <FilterSelect

@@ -72,7 +72,7 @@ function PeopleList({
           aria-label={label}
           aria-multiselectable="true"
           onKeyDown={onListKey}
-          className="min-h-0 flex-1 [scrollbar-width:thin] [scrollbar-color:#7469E8_transparent] overflow-y-auto py-1"
+          className="scrollbar-thin min-h-0 flex-1 overflow-y-auto py-1"
         >
           {people.map((person, index) => {
             const isPicked = picked.has(person.id)

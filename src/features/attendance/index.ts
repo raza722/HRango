@@ -1,5 +1,5 @@
 // Public API of the attendance feature. Import from '@/features/attendance', not from deep paths.
-export { attendanceApi, attendanceKeys } from './api/attendance.api'
+export { attendanceApi, attendanceKeys, summaryQueryOptions } from './api/attendance.api'
 export {
   deviceEnrolmentsQueryOptions,
   deviceQueryOptions,
@@ -17,9 +17,11 @@ export {
 export { AttendanceSectionPlaceholder } from './components/layout/attendance-section-placeholder'
 export { sectionLabel } from './components/layout/attendance-sections'
 export { AttendanceLogsPage } from './components/logs/attendance-logs-page'
+export { MissingPunchPage } from './components/missing-punch/missing-punch-page'
 export { AttendanceOvertimePage } from './components/overtime/overtime-page'
 export { AttendanceOverviewPage } from './components/overview/attendance-overview-page'
 export { AttendanceSettingsPage } from './components/settings/settings-page'
+export { DateBox } from './components/shared/date-box'
 export { TimeSheetPage } from './components/time-sheet/time-sheet-page'
 export {
   ABSENCE_MARK_LABELS,
@@ -50,6 +52,9 @@ export {
   LOGS_SEARCH_DEFAULTS,
   type LogsSearch,
   logsSearchSchema,
+  MISSING_PUNCH_SEARCH_DEFAULTS,
+  type MissingPunchSearch,
+  missingPunchSearchSchema,
   OVERVIEW_SEARCH_DEFAULTS,
   type OverviewSearch,
   overviewSearchSchema,

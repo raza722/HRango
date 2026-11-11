@@ -79,6 +79,10 @@
   --sidebar-link-active: #60a5fa; /* render: current Settings sub-page (blue) */
   --sidebar-scrollbar: #2f4159; /* chosen: thumb a shade lighter than the navy */
   --sidebar-scrollbar-hover: #4b5f7b;
+  /* Every other scrollbar: the theme's purple on the muted track (as under the tables). */
+  --scrollbar-thumb: var(--primary);
+  --scrollbar-thumb-hover: color-mix(in oklab, var(--primary) 78%, black);
+  --scrollbar-track: var(--muted);
 }
 
 .dark {
@@ -283,6 +287,73 @@
   }
 }
 
+/*
+ * The Pegasus loader (components/feedback/brand-loader.tsx): the mark glides as if in flight, its
+ * shadow breathes under it, sparkles twinkle and the caption's dots bounce; the saving pill rises
+ * in. "Reduce motion" stills all of it except the comet arc (`animate-spin`, kept turning).
+ */
+@theme {
+  --animate-pegasus-glide: pegasus-glide 1.8s ease-in-out infinite;
+  --animate-pegasus-shadow: pegasus-shadow 1.8s ease-in-out infinite;
+  --animate-twinkle: twinkle 1.8s ease-in-out infinite;
+  --animate-dot-bounce: dot-bounce 1.2s ease-in-out infinite;
+  --animate-pill-in: pill-in 0.3s var(--ease-out-soft) both;
+
+  @keyframes pegasus-glide {
+    0%,
+    100% {
+      transform: translateY(7%) rotate(-4deg);
+    }
+    50% {
+      transform: translateY(-9%) rotate(3deg);
+    }
+  }
+  @keyframes pegasus-shadow {
+    0%,
+    100% {
+      opacity: 0.45;
+      transform: scaleX(1);
+    }
+    50% {
+      opacity: 0.18;
+      transform: scaleX(0.65);
+    }
+  }
+  @keyframes twinkle {
+    0%,
+    100% {
+      opacity: 0;
+      transform: scale(0.3) rotate(0deg);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1) rotate(45deg);
+    }
+  }
+  @keyframes dot-bounce {
+    0%,
+    80%,
+    100% {
+      opacity: 0.3;
+      transform: translateY(0);
+    }
+    40% {
+      opacity: 1;
+      transform: translateY(-3px);
+    }
+  }
+  @keyframes pill-in {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
 /* A row of tiles or cards entering one after another (45ms apart, up to the 12th). */
 @utility stagger-children {
   & > * {
@@ -428,48 +499,112 @@
   }
 }
 
-/* Thin scrollbar for light surfaces (lists, dialogs). */
+/*
+ * The theme's scrollbar, everywhere (see the base layer below for the default): a rounded purple
+ * thumb on the soft muted track, darker while hovered. `scrollbar-thin` is the slim version for
+ * small boxes (menus, lists in dialogs, tab strips); `scrollbar-brand` the full one, named where
+ * a design draws it (the Scheduling grid, the tables).
+ */
 @utility scrollbar-thin {
   &::-webkit-scrollbar {
     width: 0.375rem;
     height: 0.375rem;
   }
   &::-webkit-scrollbar-track {
-    background: transparent;
+    background-color: var(--scrollbar-track);
+    border-radius: 9999px;
   }
   &::-webkit-scrollbar-thumb {
     border-radius: 9999px;
-    background-color: var(--input);
+    background-color: var(--scrollbar-thumb);
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
   }
   @supports not selector(::-webkit-scrollbar) {
     scrollbar-width: thin;
-    scrollbar-color: var(--input) transparent;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   }
 }
 
-/* The purple horizontal scrollbar under the Scheduling grid, as drawn. */
+/* The purple scrollbar under the Scheduling grid, as drawn: the theme's own, full size. */
 @utility scrollbar-brand {
   &::-webkit-scrollbar {
     height: 0.625rem;
     width: 0.625rem;
   }
   &::-webkit-scrollbar-track {
-    background-color: var(--muted);
+    background-color: var(--scrollbar-track);
     border-radius: 9999px;
   }
   &::-webkit-scrollbar-thumb {
     border-radius: 9999px;
-    background-color: var(--primary);
+    background-color: var(--scrollbar-thumb);
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
   }
   @supports not selector(::-webkit-scrollbar) {
     scrollbar-width: auto;
-    scrollbar-color: var(--primary) var(--muted);
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+}
+
+/*
+ * A table's own scroll area: a long page (Show 25 / 50) scrolls up and down inside the table, at
+ * most about one screen tall, so its sideways scrollbar is always on screen; the header row stays
+ * in view. A short table is as tall as its rows and does not scroll. `isolation` keeps the header
+ * (and sticky columns) inside the area, under the app's top bar.
+ */
+@utility table-scroll {
+  overflow: auto;
+  max-height: max(24rem, calc(100dvh - 8rem));
+  overscroll-behavior-x: contain;
+  isolation: isolate;
+  & thead {
+    position: sticky;
+    top: 0;
+    /* Above the sticky first columns of the time sheet and the boards (z 10–30). */
+    z-index: 40;
+    background-color: var(--card);
   }
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+
+  /*
+   * The default scrollbar of every scrolling box, the page included: the theme's (the purple one
+   * under the tables) instead of the browser's grey. Chromium and Safari use these
+   * ::-webkit-scrollbar rules; Firefox, which has none, the standard colours (set only there,
+   * because Chromium drops its own rules on a box once scrollbar-color is set). The scrollbar-*
+   * utilities above restyle particular boxes (the navy sidebar, slim lists); a box that sets its
+   * own scrollbar-color or scrollbar-width keeps it.
+   */
+  *::-webkit-scrollbar {
+    width: 0.625rem;
+    height: 0.625rem;
+  }
+  *::-webkit-scrollbar-track {
+    background-color: var(--scrollbar-track);
+    border-radius: 9999px;
+  }
+  *::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background-color: var(--scrollbar-thumb);
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    html {
+      scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    }
   }
 
   html {

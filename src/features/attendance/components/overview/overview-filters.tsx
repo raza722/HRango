@@ -16,9 +16,12 @@ export interface OverviewFilterValues {
   month: string
 }
 
+const sameValues = (a: OverviewFilterValues, b: OverviewFilterValues) =>
+  a.status === b.status && a.departmentId === b.departmentId && a.month === b.month
+
 /**
- * Employee Status, Department, Month and Year, applied together with Search
- * as in the design, and Export (the API's CSV of the month). The API has no
+ * Employee Status, Department, Month and Year, each applied as soon as it is picked (Search, as in
+ * the design, applies them again), and Export (the API's CSV of the month). The API has no
  * employee filter on the overview: the search box above finds a person.
  */
 export function OverviewFilters({
@@ -36,17 +39,26 @@ export function OverviewFilters({
   const departments = useOrgLookup('departments')
   const canExport = useCan('attendance.overview.export')
   const [exporting, setExporting] = useState(false)
-  const [values, setValues] = useState<OverviewFilterValues>({
+  const fromUrl: OverviewFilterValues = {
     status: search.status,
     departmentId: search.departmentId,
     month,
-  })
+  }
+  const [values, setValues] = useState(fromUrl)
+  // The URL changed elsewhere (Back, Forward): show what it says.
+  const [shown, setShown] = useState(fromUrl)
+  if (!sameValues(fromUrl, shown)) {
+    setShown(fromUrl)
+    setValues(fromUrl)
+  }
   const [year = '', monthNumber = ''] = values.month.split('-')
   const thisYear = new Date().getFullYear()
   const years = Array.from({ length: 5 }, (_, index) => String(thisYear - 3 + index))
 
   const set = (patch: Partial<OverviewFilterValues>) => {
-    setValues((current) => ({ ...current, ...patch }))
+    const next = { ...values, ...patch }
+    setValues(next)
+    onApply(next)
   }
 
   return (

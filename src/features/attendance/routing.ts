@@ -71,6 +71,29 @@ export const timeSheetSearchSchema = z.object({
 })
 export type TimeSheetSearch = z.infer<typeof timeSheetSearchSchema>
 
+/** Defaults left out of the Missing Punch URL. */
+export const MISSING_PUNCH_SEARCH_DEFAULTS = { scope: 'my', page: 1, pageSize: 10 } as const
+
+/**
+ * Attendance → Missing Punch: My / Subordinates / All, the person (not My), From / To (default
+ * the last 30 days), the name searched, and the page.
+ */
+export const missingPunchSearchSchema = z.object({
+  scope: z.enum(TIME_SHEET_SCOPES).default('my').catch('my'),
+  employeeId: optionalText,
+  from: optionalDay,
+  to: optionalDay,
+  q: optionalText,
+  page: z.number().int().min(1).default(1).catch(1),
+  pageSize: z
+    .number()
+    .int()
+    .refine((size) => (TIME_SHEET_PAGE_SIZES as readonly number[]).includes(size))
+    .default(10)
+    .catch(10),
+})
+export type MissingPunchSearch = z.infer<typeof missingPunchSearchSchema>
+
 export const SETTINGS_TABS = [
   'basic',
   'scheduling',
