@@ -1,6 +1,7 @@
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
 
 import { InShellContext } from '@/app/layouts/in-shell-context'
+import { SavingIndicator } from '@/components/feedback/saving-indicator'
 import { Sidebar, SIDEBAR_WIDTH, ThemeToggle, Topbar } from '@/components/layout'
 import { BREAKPOINTS, useMediaQuery } from '@/hooks/use-media-query'
 import { usePlatformStore } from '@/stores/platform-store'
@@ -65,6 +66,7 @@ export function PlatformLayout() {
           </InShellContext>
         </main>
       </div>
+      <SavingIndicator />
     </div>
   )
 }

@@ -279,7 +279,6 @@ export function GoalsPage() {
             />
             <div className="flex flex-wrap items-center gap-3">
               <SearchBox
-                key={search.q ?? ''}
                 value={search.q}
                 label="Search goals"
                 onSearch={(q) => {

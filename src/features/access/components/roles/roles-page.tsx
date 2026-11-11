@@ -151,7 +151,6 @@ export function RolesPage() {
         toolbar={
           <>
             <SearchBox
-              key={search.q ?? ''}
               value={search.q}
               label="Search roles"
               placeholder="Name or description"

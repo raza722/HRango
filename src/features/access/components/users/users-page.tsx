@@ -232,7 +232,6 @@ export function SystemUsersPage() {
         toolbar={
           <div className="grid w-full gap-3">
             <SearchBox
-              key={search.q ?? ''}
               value={search.q}
               label="Search users"
               placeholder="Name, email or employee code"

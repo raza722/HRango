@@ -273,7 +273,6 @@ export function CyclesPage() {
         toolbar={
           <>
             <SearchBox
-              key={search.q ?? ''}
               value={search.q}
               label="Search review cycles"
               onSearch={(q) => {

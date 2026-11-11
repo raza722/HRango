@@ -8,6 +8,7 @@ import { type DataTableColumn, PageContainer, PaginatedTableCard } from '@/compo
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { downloadText, SearchSelect } from '@/features/payroll'
+import { useSearchAsYouType } from '@/hooks/use-search-as-you-type'
 import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
@@ -62,7 +63,13 @@ function FormResponses({
 }) {
   const canExport = useCan(CF_CODES.responsesExport)
   const canEdit = useCan(CF_CODES.formsEdit)
-  const [text, setText] = useState(search.q ?? '')
+  // Searches as you type (a pause after the last key); Search or Enter searches at once.
+  const textSearch = useSearchAsYouType({
+    value: search.q,
+    onSearch: (q) => {
+      update({ q, page: 1 })
+    },
+  })
   const [exporting, setExporting] = useState(false)
   const responses = useResponses(form.id, {
     q: search.q,
@@ -156,7 +163,7 @@ function FormResponses({
 
   const onSearch = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault()
-    update({ q: text.trim() || undefined, page: 1 })
+    textSearch.flush()
   }
 
   return (
@@ -243,10 +250,7 @@ function FormResponses({
               <Input
                 aria-label="Search respondents"
                 placeholder="Search name or code…"
-                value={text}
-                onChange={(event) => {
-                  setText(event.target.value)
-                }}
+                {...textSearch.inputProps}
                 className="h-9 min-w-0 flex-1"
               />
               <Button

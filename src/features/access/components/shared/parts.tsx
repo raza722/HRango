@@ -1,4 +1,4 @@
-import { type ReactNode, type SyntheticEvent, useId, useState } from 'react'
+import { type ReactNode, type SyntheticEvent, useId } from 'react'
 import { Link } from '@tanstack/react-router'
 import { ArrowLeft, Check, Info, Search, ShieldAlert, X } from 'lucide-react'
 
@@ -6,6 +6,7 @@ import { ErrorState } from '@/components/feedback/error-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useSearchAsYouType } from '@/hooks/use-search-as-you-type'
 import { ApiError } from '@/lib/api-error'
 import { isMockApi } from '@/lib/env'
 import { cn } from '@/lib/utils'
@@ -185,8 +186,8 @@ export function Facts({
 }
 
 /**
- * The list's search: a box and a Search button; the text goes to the URL on submit. Give it
- * `key={q}` so a cleared URL clears the box.
+ * The list's search: a box and a Search button. The text goes to the URL as you type (once typing
+ * pauses), or at once on Search / Enter; a URL changed elsewhere (Back, Clear) shows in the box.
  */
 export function SearchBox({
   value,
@@ -201,10 +202,11 @@ export function SearchBox({
   placeholder?: string
   className?: string
 }) {
-  const [text, setText] = useState(value ?? '')
+  // Searches as you type (a pause after the last key); Search or Enter searches at once.
+  const search = useSearchAsYouType({ value, onSearch })
   const submit = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault()
-    onSearch(text.trim() || undefined)
+    search.flush()
   }
   return (
     <form
@@ -217,10 +219,7 @@ export function SearchBox({
         type="search"
         aria-label={label}
         placeholder={placeholder}
-        value={text}
-        onChange={(event) => {
-          setText(event.target.value)
-        }}
+        {...search.inputProps}
         className="h-9 min-w-0 flex-1"
       />
       <Button type="submit" className={cn(toolbarButtonClass, navyButtonClass, 'gap-2')}>

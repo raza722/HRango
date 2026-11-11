@@ -1,10 +1,11 @@
-import { type ReactNode, type SyntheticEvent, useId, useState } from 'react'
+import { type ReactNode, type SyntheticEvent, useId } from 'react'
 import { Search, X } from 'lucide-react'
 
 import { ErrorState } from '@/components/feedback/error-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { btn, toolbarButton } from '@/features/payroll'
+import { useSearchAsYouType } from '@/hooks/use-search-as-you-type'
 import { ApiError } from '@/lib/api-error'
 import { cn } from '@/lib/utils'
 
@@ -70,8 +71,8 @@ export function FilterField({
 }
 
 /**
- * "Search …": applies on Enter or the search button (the URL keeps it). Give it `key={value}`
- * so it shows the URL's text again when that changes elsewhere (Clear filters, Back).
+ * "Search …": applies as you type (once typing pauses), or at once on Enter or the search button
+ * (the URL keeps it); a URL changed elsewhere (Clear filters, Back) shows in the box.
  */
 export function SearchBox({
   id,
@@ -86,10 +87,11 @@ export function SearchBox({
   placeholder: string
   label: string
 }) {
-  const [text, setText] = useState(value ?? '')
+  // Searches as you type (a pause after the last key); the button or Enter searches at once.
+  const search = useSearchAsYouType({ value, onSearch })
   const submit = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault()
-    onSearch(text.trim() || undefined)
+    search.flush()
   }
   return (
     <form role="search" onSubmit={submit} className="flex min-w-0 gap-2">
@@ -98,10 +100,7 @@ export function SearchBox({
         type="search"
         aria-label={label}
         placeholder={placeholder}
-        value={text}
-        onChange={(event) => {
-          setText(event.target.value)
-        }}
+        {...search.inputProps}
         className="h-10 min-w-0 flex-1 bg-card"
       />
       <Button

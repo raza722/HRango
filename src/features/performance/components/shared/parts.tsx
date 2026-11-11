@@ -1,4 +1,4 @@
-import { type ReactNode, type SyntheticEvent, useId, useState } from 'react'
+import { type ReactNode, type SyntheticEvent, useId } from 'react'
 import { AlertTriangle, ArrowLeft, Lock, Search } from 'lucide-react'
 
 import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
@@ -7,6 +7,7 @@ import { AllScopeIcon, MyScopeIcon, SubordinatesScopeIcon } from '@/components/i
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useSearchAsYouType } from '@/hooks/use-search-as-you-type'
 import { cn } from '@/lib/utils'
 
 import {
@@ -255,8 +256,8 @@ export function Facts({
 }
 
 /**
- * The list's search: a box and a Search button; the text goes to the URL on submit. Give it
- * `key={q}` so a cleared URL clears the box.
+ * The list's search: a box and a Search button. The text goes to the URL as you type (once typing
+ * pauses), or at once on Search / Enter; a URL changed elsewhere (Back, Clear) shows in the box.
  */
 export function SearchBox({
   value,
@@ -269,20 +270,18 @@ export function SearchBox({
   label: string
   placeholder?: string
 }) {
-  const [text, setText] = useState(value ?? '')
+  // Searches as you type (a pause after the last key); Search or Enter searches at once.
+  const search = useSearchAsYouType({ value, onSearch })
   const submit = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault()
-    onSearch(text.trim() || undefined)
+    search.flush()
   }
   return (
     <form role="search" onSubmit={submit} className="flex min-w-0 flex-1 gap-2 sm:max-w-md">
       <Input
         aria-label={label}
         placeholder={placeholder}
-        value={text}
-        onChange={(event) => {
-          setText(event.target.value)
-        }}
+        {...search.inputProps}
         className="h-9 min-w-0 flex-1"
       />
       <Button

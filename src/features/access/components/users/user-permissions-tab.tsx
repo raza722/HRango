@@ -96,7 +96,6 @@ export function UserPermissionsTab({
           {denials.length > 0 && ` · ${plural(denials.length, 'denial')}`}
         </p>
         <SearchBox
-          key={q ?? ''}
           value={q}
           label="Search permissions"
           placeholder="Screen, action or code"

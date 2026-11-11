@@ -332,7 +332,6 @@ export function PermissionEditor({
     <div className="grid gap-3">
       <div className="flex flex-wrap items-center gap-3">
         <SearchBox
-          key={q ?? ''}
           value={q}
           label="Search permissions"
           placeholder="Module, screen or action"
