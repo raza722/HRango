@@ -7,6 +7,8 @@ import { useAuthStore } from '@/stores/auth-store'
 import type { ApiItem } from '@/types/api'
 import type { AuthUser } from '@/types/auth'
 
+import type { DashboardPeriod } from '../routing'
+
 // ---------------------------------------------------------------- API shapes (`/api/dashboard/*`)
 
 export interface CountItem {
@@ -182,11 +184,19 @@ export const dashboardKeys = {
 }
 
 /**
- * The query for a chosen month (`yyyy-MM`, from `?month=`): its first day. The current month
- * sends nothing, so the route loader and the page share one cache entry.
+ * The query for the dashboard's dates. The API takes a month (any day of it) for the monthly
+ * figures and one attendance day; it has no From → To (Backend Dependencies D1), so it is asked
+ * for the month of To and for To itself (Who's in, the attendance card, and the by-month chart,
+ * whose year follows that day). This month and today send nothing, so the route loader and the
+ * page share one cache entry.
  */
-export function dashboardParamsFor(month: string | undefined): DashboardParams {
-  return month ? { month: `${month}-01` } : {}
+export function dashboardParamsFor(
+  period: Pick<DashboardPeriod, 'to' | 'today' | 'month' | 'currentMonth'>,
+): DashboardParams {
+  const params: DashboardParams = {}
+  if (period.month !== period.currentMonth) params.month = `${period.month}-01`
+  if (period.to !== period.today) params.day = period.to
+  return params
 }
 
 function compact(params: DashboardParams): Record<string, string> {

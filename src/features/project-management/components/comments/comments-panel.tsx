@@ -89,7 +89,7 @@ function CommentsPanel({ target, onClose }: { target: CommentsTarget; onClose: (
     employees,
     tasks: tasks.data ?? [],
     taskLink: (taskId) =>
-      `${window.location.origin}/project-management/workspaces/${target.workspaceId}#${taskId}`,
+      `${window.location.origin}/project-management/workspaces/${target.workspaceId}?task=${encodeURIComponent(taskId)}`,
   }
 
   const all = comments.data ?? []
@@ -406,7 +406,7 @@ function CommentCard({
               <DropdownMenuItem
                 onSelect={() => {
                   void navigator.clipboard
-                    .writeText(`${shared.taskLink(comment.taskId)}?comment=${comment.id}`)
+                    .writeText(`${shared.taskLink(comment.taskId)}&comment=${comment.id}`)
                     .then(() => toast.success('Link copied'))
                     .catch(() => toast.error('Could not copy the link'))
                 }}

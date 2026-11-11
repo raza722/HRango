@@ -193,7 +193,6 @@ export function ApplicationsPage() {
         <FilterField label="Search">
           {(id) => (
             <SearchBox
-              key={search.q ?? ''}
               id={id}
               value={search.q}
               label="Search applications"

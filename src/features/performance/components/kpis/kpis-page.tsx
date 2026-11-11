@@ -262,7 +262,6 @@ export function KpisPage() {
         toolbar={
           <>
             <SearchBox
-              key={search.q ?? ''}
               value={search.q}
               label="Search KPIs"
               onSearch={(q) => {

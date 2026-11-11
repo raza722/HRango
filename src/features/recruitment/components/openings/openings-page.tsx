@@ -249,7 +249,6 @@ export function OpeningsPage() {
         <FilterField label="Search">
           {(id) => (
             <SearchBox
-              key={search.q ?? ''}
               id={id}
               value={search.q}
               label="Search openings"

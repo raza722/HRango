@@ -72,6 +72,7 @@ export function ListView({
   onCompose,
   onCloseComposer,
   onOpenList,
+  onOpenTask,
   highlightedId,
 }: {
   layout?: TaskLayout
@@ -95,6 +96,8 @@ export function ListView({
   onCompose: (composer: Composer) => void
   onCloseComposer: () => void
   onOpenList: (listId: string) => void
+  /** Opens the task panel (a row's name, a card). */
+  onOpenTask: (task: Pick<TaskRow, 'id'>) => void
   highlightedId: string | null
 }) {
   const router = useRouter()
@@ -222,16 +225,6 @@ export function ListView({
     })
   }
 
-  /** A card's or row's task, in the List view of its list, scrolled to and marked. */
-  const openTask = (task: TaskRow) => {
-    void router.navigate({
-      to: '/project-management/workspaces/$workspaceId',
-      params: { workspaceId: workspace.id },
-      search: task.listId ? { list: task.listId } : {},
-      hash: task.id,
-    })
-  }
-
   const value: ListViewContextValue = {
     layout,
     workspace,
@@ -285,12 +278,12 @@ export function ListView({
     onDragging: setDraggingId,
     actions,
     onOpenList,
+    onOpenTask,
     taskHref: (task) => {
       const location = router.buildLocation({
         to: '/project-management/workspaces/$workspaceId',
         params: { workspaceId: workspace.id },
-        search: task.listId ? { list: task.listId } : {},
-        hash: task.id,
+        search: task.listId ? { list: task.listId, task: task.id } : { task: task.id },
       })
       return new URL(location.href, window.location.origin).href
     },
@@ -338,7 +331,7 @@ export function ListView({
           listId={listId}
           composer={composer}
           onCloseComposer={onCloseComposer}
-          onOpenTask={openTask}
+          onOpenTask={onOpenTask}
         />
       ) : layout === 'table' ? (
         <TableBody

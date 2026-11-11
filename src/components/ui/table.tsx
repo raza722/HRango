@@ -2,9 +2,13 @@ import type { ComponentProps } from 'react'
 
 import { cn } from '@/lib/utils'
 
+/**
+ * A table in its own scroll area (`table-scroll`): wide tables scroll sideways, long pages (Show
+ * 25 / 50) scroll up and down inside it with the header row kept in view.
+ */
 function Table({ className, ...props }: ComponentProps<'table'>) {
   return (
-    <div data-slot="table-container" className="relative w-full overflow-x-auto">
+    <div data-slot="table-container" className="table-scroll relative scrollbar-brand w-full">
       <table
         data-slot="table"
         className={cn('w-full caption-bottom text-sm sm:text-base', className)}

@@ -30,8 +30,12 @@ export const wz = {
   intro: 'text-base leading-relaxed text-[#3D3D3D] sm:text-[1.125rem] sm:leading-[1.6875rem]',
   /** Field labels: Poppins SemiBold 18 / 27 #3D3D3D. */
   label: 'text-base leading-[1.6875rem] font-semibold text-[#3D3D3D] sm:text-[1.125rem]',
-  /** "28/50 character": Poppins Regular 14 / 21, Danger Colors/500. */
-  counter: 'text-[0.875rem] leading-[1.3125rem] tracking-[0.0168rem] text-[#EC474F]',
+  /**
+   * "28/50 characters": Poppins Regular 14 / 21. The design draws it red; it is grey while there
+   * is room and `counterFull` turns it red near the limit (red read as an error).
+   */
+  counter: 'text-[0.875rem] leading-[1.3125rem] tracking-[0.0168rem] text-[#707070]',
+  counterFull: 'text-[#DC3545]',
   /** Values and placeholders in the fields: Poppins Regular 20 / 30 #454545. */
   value:
     'text-base leading-[1.875rem] tracking-[0.0168rem] text-[#454545] sm:text-[1.25rem] sm:leading-[1.875rem]',
@@ -108,12 +112,10 @@ export const wz = {
     'flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-base leading-[1.6875rem] text-[#262626] outline-none select-none focus:bg-[#F3F0FE] data-[disabled]:pointer-events-none data-[disabled]:opacity-50 sm:text-[1.125rem]',
 
   // --- choices ----------------------------------------------------------------------------------
-  /** Thin scrollbars like the design's (7px track rgba(41,55,73,.07), thumb #E4E4E4). */
-  scrollbar:
-    '[scrollbar-color:#E4E4E4_rgba(41,55,73,0.07)] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-[7px] [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-[#E4E4E4] [&::-webkit-scrollbar-track]:rounded-lg [&::-webkit-scrollbar-track]:bg-[rgba(41,55,73,0.07)]',
-  /** The statuses and organizer columns use a darker thumb (#B4BBC1). */
-  scrollbarDark:
-    '[scrollbar-color:#B4BBC1_rgba(41,55,73,0.07)] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-[7px] [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-[#B4BBC1] [&::-webkit-scrollbar-track]:rounded-lg [&::-webkit-scrollbar-track]:bg-[rgba(41,55,73,0.07)]',
+  /** Scrollbars: the app's slim theme scrollbar (the design's grey thin ones, in the theme colours). */
+  scrollbar: 'scrollbar-thin',
+  /** The statuses and organizer columns: the same slim theme scrollbar. */
+  scrollbarDark: 'scrollbar-thin',
   /** Purple option titles: Poppins SemiBold 20, Primary Colors. */
   optionTitle:
     'text-[1.125rem] leading-[1.875rem] font-semibold tracking-[0.0168rem] text-[#7127EA] sm:text-[1.25rem]',

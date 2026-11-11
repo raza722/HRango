@@ -177,7 +177,6 @@ export function CandidatesPage() {
         <FilterField label="Search" className="@4xl:col-span-2">
           {(id) => (
             <SearchBox
-              key={search.q ?? ''}
               id={id}
               value={search.q}
               label="Search candidates"

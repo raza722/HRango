@@ -29,6 +29,8 @@ import type { ApiItem, Paginated } from '@/types/api'
 
 import type { MockCollection } from '../collection'
 import { mockFileUrl, mockUploadName } from '../files/handlers'
+import { salaryRevisions } from '../payroll/db-records'
+import { nextCode as nextRevisionCode } from '../payroll/http'
 import { checkRowVersion, conflict, invalidField, validationFailed } from '../settings/crud'
 import { areas, branches, jobTitles, locations } from '../settings/handlers'
 import {
@@ -145,6 +147,12 @@ const employeeBody = z.object({
   joiningDate: optionalDay,
   probationEndDate: optionalDay,
   confirmationDate: optionalDay,
+  /** Add only (an edit ignores it): the first salary, from the joining date. */
+  joiningSalary: z
+    .number({ error: 'Enter a salary of 0 or more.' })
+    .min(0, 'Enter a salary of 0 or more.')
+    .nullable()
+    .optional(),
   rowVersion,
 })
 type EmployeeBody = z.infer<typeof employeeBody>
@@ -420,9 +428,30 @@ const employeeHandlers: HttpHandler[] = [
     const raw = await readJson(request)
     const parsed = employeeBody.safeParse(raw)
     if (!parsed.success) return validationFailed(parsed.error.issues)
+    const { joiningSalary } = parsed.data
+    if (joiningSalary != null && !parsed.data.joiningDate) {
+      return invalidField('joiningDate', 'Joining date is required.')
+    }
     const rec = writeEmployee(parsed.data, raw, undefined)
     if (rec instanceof Response) return rec
     employees.insert(rec)
+    // As the API does: the first salary row (source joining), which Salary Revision starts from.
+    if (joiningSalary != null && rec.joiningDate) {
+      salaryRevisions.insert({
+        id: createId('sr'),
+        code: nextRevisionCode(
+          'SR-',
+          salaryRevisions.all().map((revision) => revision.code),
+        ),
+        employeeId: rec.id,
+        effectiveDate: rec.joiningDate,
+        type: 'flat',
+        percentage: null,
+        previousSalary: 0,
+        salary: joiningSalary,
+        source: 'joining',
+      })
+    }
     return item(toEmployee(rec), 201)
   }),
 

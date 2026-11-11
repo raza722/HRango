@@ -48,9 +48,8 @@ export function ViewsPage({ template, setup, onSave, onDiscard, onClose }: Views
     >
       <h3 className={wz.title}>Required Views</h3>
       <p className={cn(wz.intro, 'mt-3')}>
-        When navigating to the Workspaces, Folders, and List in HRango, so you can set which views
-        are automatically created and required, without having to create them manually. These views
-        cannot be deleted.
+        Choose the views this workspace opens with, so nobody has to add them by hand. Switch a view
+        on or off, and use its menu to make it the view the workspace opens on. List is always on.
       </p>
       <hr className="mt-10 border-0 border-t-[2.5px] border-black/8" />
       <ul className="mt-[0.4375rem] grid gap-x-[1.6875rem] gap-y-[1.5625rem] pt-[1.625rem] pb-4 md:grid-cols-2">

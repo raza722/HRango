@@ -17,6 +17,8 @@ export type WorkspacesSearch = z.infer<typeof workspacesSearchSchema>
  */
 export const workspaceSearchSchema = z.object({
   list: z.string().max(60).optional().catch(undefined),
+  /** The task panel's task (Copy link, the dashboards, the inbox's notification links). */
+  task: z.string().max(60).optional().catch(undefined),
   view: z.enum(VIEW_KINDS).optional().catch(undefined),
   overdue: z.boolean().optional().catch(undefined),
   on: z

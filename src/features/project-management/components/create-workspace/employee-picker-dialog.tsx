@@ -20,6 +20,8 @@ interface EmployeePickerDialogProps {
   multiple: boolean
   selected: readonly string[]
   onConfirm: (ids: string[]) => void
+  /** The purple button: "Select Owner" for the owner, "Add Members" for members. */
+  confirmLabel?: string
 }
 
 /**
@@ -53,6 +55,7 @@ function PickerBody({
   multiple,
   selected,
   onConfirm,
+  confirmLabel = multiple ? 'Add Members' : 'Select',
   onClose,
 }: Omit<EmployeePickerDialogProps, 'open' | 'onOpenChange'> & { onClose: () => void }) {
   const [search, setSearch] = useState('')
@@ -199,7 +202,7 @@ function PickerBody({
           }}
           className={wz.addMember}
         >
-          Add Member
+          {confirmLabel}
         </button>
       </div>
     </div>

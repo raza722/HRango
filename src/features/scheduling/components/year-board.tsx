@@ -41,7 +41,7 @@ export function YearBoard({
   const monthDay = (month: number) => `${year}-${String(month + 1).padStart(2, '0')}-01`
 
   return (
-    <div className="scrollbar-brand overflow-x-auto rounded-md border">
+    <div className="table-scroll scrollbar-brand rounded-md border">
       <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
         <caption className="sr-only">Planned hours per month, {rangeLabel}</caption>
         <thead>

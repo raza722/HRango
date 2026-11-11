@@ -1,4 +1,11 @@
-import { type ComponentType, type RefObject, type SVGProps, useId, useState } from 'react'
+import {
+  type ComponentType,
+  type ReactNode,
+  type RefObject,
+  type SVGProps,
+  useId,
+  useState,
+} from 'react'
 import { useFormContext, useWatch } from 'react-hook-form'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -65,8 +72,8 @@ export function WorkflowStep({ departments }: { departments: readonly PmDepartme
         Define Your New Workflow <span className="text-[#DC3545]">*</span>
       </h2>
       <p className={cn(wz.intro, 'mt-3 max-w-[53.875rem]')}>
-        Create your workflow from scratch according to your need to customize the required views,
-        task statuses, and organizer.
+        Pick the template closest to how this team works. It sets the starting views, task statuses
+        and organizer, and you can change each of them on the next step.
       </p>
       <div
         role="radiogroup"
@@ -111,19 +118,33 @@ export function WorkflowStep({ departments }: { departments: readonly PmDepartme
   )
 }
 
-/** Select Your Department: the field and its open list (3061:738595) with a search. */
-function DepartmentField({
+/**
+ * Select Your Department: the field and its open list (3061:738595) with a search. Departments
+ * come A–Z with their sub-departments indented under them (see `pmApi.departments`). Workspace
+ * Settings uses it too, with its own title.
+ */
+export function DepartmentField({
   headingRef,
   departments,
   value,
   error,
   onChange,
+  title = (
+    <>
+      Select Your Department <span className="text-[#DC3545]">*</span>
+    </>
+  ),
+  titleClassName = wz.title,
+  hint = 'The department that runs this workspace.',
 }: {
-  headingRef: RefObject<HTMLHeadingElement | null>
+  headingRef?: RefObject<HTMLHeadingElement | null>
   departments: readonly PmDepartment[]
   value: string | null
   error: string | undefined
   onChange: (departmentId: string) => void
+  title?: ReactNode
+  titleClassName?: string
+  hint?: string
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -136,12 +157,21 @@ function DepartmentField({
     ? departments.filter((entry) => entry.name.toLowerCase().includes(query))
     : departments
   const chosen = departments.find((entry) => entry.id === value)
+  const parentName = (entry: PmDepartment) =>
+    entry.parentId ? departments.find((other) => other.id === entry.parentId)?.name : undefined
+  const chosenParent = chosen ? parentName(chosen) : undefined
 
   return (
     <div>
-      <h2 id={headingId} ref={headingRef} tabIndex={-1} className={cn(wz.title, 'outline-none')}>
-        Select Your Department <span className="text-[#DC3545]">*</span>
+      <h2
+        id={headingId}
+        ref={headingRef}
+        tabIndex={-1}
+        className={cn(titleClassName, 'outline-none')}
+      >
+        {title}
       </h2>
+      {hint && <p className="mt-1 text-sm text-[#707070] dark:text-grey">{hint}</p>}
       <Popover
         open={open}
         onOpenChange={(next) => {
@@ -162,7 +192,11 @@ function DepartmentField({
                 <DepartmentIcon className={cn('size-[1.125rem]', wz.iconPurple)} />
               </IconTile>
               <span id={valueId} className={cn(wz.value, 'min-w-0 flex-1 truncate text-[#3D3D3D]')}>
-                {chosen?.name ?? 'Select Your Department'}
+                {chosen
+                  ? chosenParent
+                    ? `${chosen.name} (${chosenParent})`
+                    : chosen.name
+                  : 'Select Your Department'}
               </span>
               <DropdownChevronIcon
                 className={cn(
@@ -212,12 +246,15 @@ function DepartmentField({
           >
             {shown.map((entry) => {
               const selected = entry.id === value
+              const parent = parentName(entry)
               return (
                 <button
                   key={entry.id}
                   type="button"
                   role="option"
                   aria-selected={selected}
+                  // A sub-department says whose it is (it sits indented under it).
+                  aria-label={parent ? `${entry.name}, in ${parent}` : undefined}
                   data-list-item
                   onClick={() => {
                     onChange(entry.id)
@@ -226,10 +263,16 @@ function DepartmentField({
                   }}
                   className={cn(
                     'flex min-h-[3.1875rem] w-full shrink-0 items-center rounded-xl border border-transparent bg-[#F6F6F6] px-3 text-left text-base leading-[1.6875rem] font-medium tracking-[0.0168rem] text-[#454545] transition-colors outline-none hover:bg-[#EEE7FF] focus-visible:ring-2 focus-visible:ring-[#A181FF] sm:text-[1.125rem]',
+                    parent &&
+                      'ml-6 min-h-[2.75rem] w-[calc(100%-1.5rem)] text-[0.9375rem] sm:text-base',
                     selected && 'border-[#7127EA] bg-[#EEE7FF]',
                   )}
                 >
                   {entry.name}
+                  {/* While searching, a sub-department also names its department. */}
+                  {parent && query && (
+                    <span className="ml-2 text-sm font-normal text-[#909090]">in {parent}</span>
+                  )}
                 </button>
               )
             })}

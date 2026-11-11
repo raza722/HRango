@@ -7,13 +7,13 @@ import { cn } from '@/lib/utils'
 
 import { COLUMN_LABELS, PRIORITY_META, VIEW_LABELS } from '../../constants'
 import {
+  BUILT_VIEWS,
   type ListColumn,
   type PmPerson,
   PRIORITIES,
   TASK_COLUMN_KEYS,
   type TaskColumnKey,
   type TaskType,
-  VIEW_KINDS,
   type ViewKind,
   type Workspace,
 } from '../../types/pm.types'
@@ -40,9 +40,6 @@ import { popupStyles } from './workspace-styles'
 /** View, Filters and Customize buttons: 51 px, 12 px radius, Medium 18 #3D3D3D, icons #5D5D5D. */
 const barButton =
   'inline-flex h-[3.1875rem] shrink-0 items-center gap-[0.6875rem] rounded-xl px-4 text-lg leading-[1.5] font-medium text-[#3D3D3D] dark:text-title outline-none transition-colors hover:bg-[#F8F5FF] dark:hover:bg-[#7127EA]/15 focus-visible:ring-2 focus-visible:ring-[#A181FF] data-[state=open]:bg-[#F8F5FF] dark:data-[state=open]:bg-[#7127EA]/15 [&_svg]:text-[#5D5D5D] dark:[&_svg]:text-title'
-
-/** Views the design has no screen for yet (the workspace page shows "not designed yet"). */
-const UNDESIGNED: ReadonlySet<ViewKind> = new Set(['gantt', 'workload', 'mind-map'])
 
 /** The 35 px grey rules between the view buttons and before Add Task. */
 const Divider = () => (
@@ -84,13 +81,21 @@ export function ViewBar({
   /** Shared views are kept by workspace admins and HR. */
   canAddView: boolean
 }) {
-  const views = VIEW_KINDS.filter((kind) => kind === 'list' || workspace.setup.views.includes(kind))
-  // A view with no screen yet is not offered (adding one would save an empty page for everyone).
-  const missing = VIEW_KINDS.filter((kind) => !views.includes(kind) && !UNDESIGNED.has(kind))
+  // Only built views are shown or offered (the setup already leaves the others out).
+  const views = BUILT_VIEWS.filter(
+    (kind) => kind === 'list' || workspace.setup.views.includes(kind),
+  )
+  const missing = BUILT_VIEWS.filter((kind) => !views.includes(kind))
 
   return (
     <div className="flex min-h-[4.6875rem] flex-wrap items-center gap-2 rounded-xl bg-white p-3 dark:bg-card">
-      <nav aria-label="Views" className="flex min-w-0 flex-wrap items-center gap-2">
+      {/* One row of views that scrolls sideways when it does not fit (it used to wrap onto
+          up to five rows on a small laptop); the tools take the next row until the screen is
+          wide enough for both. */}
+      <nav
+        aria-label="Views"
+        className="flex scrollbar-thin min-w-0 basis-full items-center gap-2 overflow-x-auto pb-1 2xl:flex-1 2xl:basis-auto 2xl:pb-0"
+      >
         {views.map((kind) => {
           const { Icon, size } = VIEW_ICONS[kind]
           const active = kind === view && !overdue.active

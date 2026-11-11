@@ -84,7 +84,7 @@ export function StatusGroupSection({
           <PopoverTrigger asChild>
             <AddStatusColorChip
               disabled={!editable}
-              aria-label={`Add Status Color to ${label}`}
+              aria-label={`Add a status to ${label}`}
               className="ml-auto"
             />
           </PopoverTrigger>

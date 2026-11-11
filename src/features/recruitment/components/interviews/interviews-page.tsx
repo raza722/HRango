@@ -232,7 +232,6 @@ export function InterviewsPage() {
         <FilterField label="Search">
           {(id) => (
             <SearchBox
-              key={search.q ?? ''}
               id={id}
               value={search.q}
               label="Search interviews"

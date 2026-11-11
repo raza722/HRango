@@ -19,6 +19,7 @@ import {
   warningPolicyCountQueryOptions,
 } from '../api/module-queries'
 import type { DashboardAccess } from '../hooks/use-dashboard-access'
+import type { DashboardPeriod } from '../routing'
 import {
   formatCount,
   formatDay,
@@ -321,13 +322,14 @@ export function PerformanceCard({
 
 // --- Leaves ---------------------------------------------------------------------------------------
 
-export function LeavesCard({ month, monthEnd }: { month: string; monthEnd: string }) {
+/** Pending and cancelling as they stand; approved and rejected within From → To. */
+export function LeavesCard({ from, to }: { from: string; to: string }) {
   const all = useQuery(leaveCountsQueryOptions())
-  const inMonth = useQuery(leaveCountsQueryOptions({ fromDate: `${month}-01`, toDate: monthEnd }))
+  const inDates = useQuery(leaveCountsQueryOptions({ fromDate: from, toDate: to }))
   return (
     <Widget
       title="Leaves"
-      description={formatMonthYear(month)}
+      description={formatSpan(from, to)}
       action={
         <WidgetLink
           link={{ to: '/leaves/applications', search: { status: 'pending' } }}
@@ -342,8 +344,8 @@ export function LeavesCard({ month, monthEnd }: { month: string; monthEnd: strin
           query={countOf(all, 'pending')}
           note="waiting for a decision"
         />
-        <QueryFigure label="Approved" query={countOf(inMonth, 'approved')} note="in this month" />
-        <QueryFigure label="Rejected" query={countOf(inMonth, 'rejected')} note="in this month" />
+        <QueryFigure label="Approved" query={countOf(inDates, 'approved')} note="in these dates" />
+        <QueryFigure label="Rejected" query={countOf(inDates, 'rejected')} note="in these dates" />
         <QueryFigure label="Cancelling" query={countOf(all, 'cancelling')} note="asked to cancel" />
       </dl>
     </Widget>
@@ -427,23 +429,24 @@ export function WarningCard() {
   )
 }
 
-/** The module cards the user may see, in a grid that adds columns as the page widens. */
+/**
+ * The module cards the user may see, in a grid that adds columns as the page widens. Payroll and
+ * Recruitment show the month of To (their APIs are monthly); Leaves the dates themselves.
+ */
 export function ModuleCards({
-  month,
-  monthEnd,
+  period,
   access,
   personal,
 }: {
-  month: string
-  monthEnd: string
+  period: DashboardPeriod
   access: DashboardAccess
   personal: boolean
 }) {
   const cards = [
-    access.payroll && <PayrollCard key="payroll" month={month} access={access} />,
-    access.recruitment && <RecruitmentCard key="recruitment" month={month} />,
+    access.payroll && <PayrollCard key="payroll" month={period.month} access={access} />,
+    access.recruitment && <RecruitmentCard key="recruitment" month={period.month} />,
     access.performance && <PerformanceCard key="performance" access={access} personal={personal} />,
-    access.leaves && <LeavesCard key="leaves" month={month} monthEnd={monthEnd} />,
+    access.leaves && <LeavesCard key="leaves" from={period.from} to={period.to} />,
     (access.exits || access.settlements) && <SeparationCard key="separation" access={access} />,
     access.benefits && <BenefitsCard key="benefits" />,
     access.warning && <WarningCard key="warning" />,

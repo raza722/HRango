@@ -9,7 +9,7 @@ import { formatCellDate } from '../task-fields/field-utils'
 /**
  * A task at a glance, from a Calendar chip or a Timeline bar: its code, status and people, its
  * Start and Due Date (the List view's date cells: the calendar popup with times and repeats),
- * and "Open in List view". It is also the keyboard's way to change a task's dates there.
+ * and "Open task" (the task panel). It is also the keyboard's way to change a task's dates there.
  */
 export function TaskPeek({
   task,
@@ -95,7 +95,7 @@ export function TaskPeek({
           }}
           className="justify-self-start rounded-lg px-2 py-1 text-sm font-semibold text-[#7127EA] outline-none hover:bg-[#F8F5FF] focus-visible:ring-2 focus-visible:ring-[#A181FF] dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/15"
         >
-          Open in List view
+          Open task
         </button>
       </div>
     </FieldPopover>

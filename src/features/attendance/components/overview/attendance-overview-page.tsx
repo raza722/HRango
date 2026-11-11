@@ -80,8 +80,6 @@ export function AttendanceOverviewView({
 
   const meta = overview.data?.meta
   const rows = overview.data?.data ?? []
-  // Remount the filters when the URL changes them (back / forward).
-  const filterKey = [search.status, search.departmentId, month].join('|')
 
   return (
     <PageContainer>
@@ -103,7 +101,6 @@ export function AttendanceOverviewView({
       />
 
       <OverviewFilters
-        key={filterKey}
         search={search}
         month={month}
         onExport={async () => {

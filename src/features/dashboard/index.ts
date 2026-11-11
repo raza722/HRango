@@ -30,4 +30,10 @@ export {
   type Workforce,
 } from './api/dashboard.api'
 export { DashboardPage } from './components/dashboard-page'
-export { type DashboardSearch, dashboardSearchSchema } from './routing'
+export {
+  type DashboardPeriod,
+  dashboardPeriodFor,
+  type DashboardSearch,
+  dashboardSearchFor,
+  dashboardSearchSchema,
+} from './routing'

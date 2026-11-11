@@ -9,9 +9,9 @@ import { folders, lists, tasks, workspaces } from './db'
 import { nextRowVersion } from './seed'
 
 /**
- * Development-only answers for the dashboards' pending endpoints (Backend Dependencies T1 Docs,
- * T7 Recents, T11 Personal List): none exists on the backend yet, and the screens mark what they
- * show from here as sample data. Names come from the Project Management mock, so they match.
+ * The dashboards' extra endpoints, as the backend now has them (`routers/projects_extras.py`,
+ * `projects_docs.py`): Recents (`GET`/`POST /recents`), a workspace's docs and the Personal List.
+ * Names come from the Project Management mock, so they match the rest of the module.
  */
 
 const base = (path: string) => apiPath(`/projects${path}`)
@@ -40,6 +40,26 @@ const RECENT_SEED: { entityType: RecentType; entityId: string; hours: number }[]
   { entityType: 'workspace', entityId: 'ws_qa', hours: 96 },
   { entityType: 'task', entityId: 'tk_wire', hours: 130 },
 ]
+
+interface RecentRecord {
+  /** `<entityType>:<entityId>`: opening the same thing again moves it to the top. */
+  id: string
+  entityType: RecentType
+  entityId: string
+  openedAt: string
+}
+
+/** What the caller opened, as `POST /recents` records it (seeded with the sample visits). */
+const recents = createMockCollection<RecentRecord>({
+  storageKey: 'hrms-mock-pm-v2-recents',
+  seed: () =>
+    RECENT_SEED.map((entry) => ({
+      id: `${entry.entityType}:${entry.entityId}`,
+      entityType: entry.entityType,
+      entityId: entry.entityId,
+      openedAt: hoursAgo(entry.hours),
+    })),
+})
 
 interface Located {
   name: string
@@ -191,12 +211,12 @@ const personalList = createMockCollection<PersonalRecord>({
 export function resetPmDashboardMocks(): void {
   docs.reset()
   personalList.reset()
+  recents.reset()
 }
 
 const id = z.union([z.string(), z.number()]).transform(String)
 
 export const pmDashboardHandlers = [
-  // TODO(backend): Backend Dependencies T7.
   http.get(base('/recents'), async ({ request }) => {
     const denied = await authed(request)
     if (denied) return denied
@@ -204,26 +224,48 @@ export const pmDashboardHandlers = [
     const workspaceId = url.searchParams.get('workspaceId')
     const folderId = url.searchParams.get('folderId')
     const limit = Number(url.searchParams.get('limit') ?? '8') || 8
-    const items = RECENT_SEED.flatMap((entry) => {
-      const found = locate(entry.entityType, entry.entityId)
-      if (!found) return []
-      if (workspaceId && found.workspaceId !== workspaceId) return []
-      if (folderId && found.folderId !== folderId) return []
-      return [
-        {
-          entityType: entry.entityType,
-          entityId: entry.entityId,
-          name: found.name,
-          workspaceId: found.workspaceId,
-          workspaceName: workspaces.find(found.workspaceId)?.name ?? null,
-          openedAt: hoursAgo(entry.hours),
-        },
-      ]
-    })
+    const items = recents
+      .all()
+      .toSorted((a, b) => b.openedAt.localeCompare(a.openedAt))
+      .flatMap((entry) => {
+        const found = locate(entry.entityType, entry.entityId)
+        if (!found) return []
+        if (workspaceId && found.workspaceId !== workspaceId) return []
+        if (folderId && found.folderId !== folderId) return []
+        return [
+          {
+            entityType: entry.entityType,
+            entityId: entry.entityId,
+            name: found.name,
+            workspaceId: found.workspaceId,
+            workspaceName: workspaces.find(found.workspaceId)?.name ?? null,
+            openedAt: entry.openedAt,
+          },
+        ]
+      })
     return ok(items.slice(0, limit))
   }),
 
-  // TODO(backend): Backend Dependencies T1.
+  // Records a visit (the workspace page, a list, the task panel); the newest visit wins.
+  http.post(base('/recents'), async ({ request }) => {
+    const denied = await authed(request)
+    if (denied) return denied
+    const parsed = await readBody(
+      request,
+      z.object({
+        entityType: z.enum(['workspace', 'folder', 'task_list', 'task', 'doc']),
+        entityId: id,
+      }),
+    )
+    if (!parsed.success) return rejected(parsed.error)
+    const { entityType, entityId } = parsed.data
+    if (!locate(entityType, entityId)) return notFound(entityType.replace('_', ' '))
+    const key = `${entityType}:${entityId}`
+    if (recents.find(key)) recents.remove(key)
+    recents.insert({ id: key, entityType, entityId, openedAt: hoursAgo(0) })
+    return new HttpResponse(null, { status: 204 })
+  }),
+
   http.get(base('/workspaces/:id/docs'), async ({ request, params }) => {
     const denied = await authed(request)
     if (denied) return denied
@@ -239,7 +281,6 @@ export const pmDashboardHandlers = [
     return HttpResponse.json(paginate(rows, page, pageSize))
   }),
 
-  // TODO(backend): Backend Dependencies T11.
   http.get(base('/personal-list'), async ({ request }) => {
     const denied = await authed(request)
     if (denied) return denied

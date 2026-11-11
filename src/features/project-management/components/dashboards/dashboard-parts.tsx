@@ -1,11 +1,10 @@
 import { type ReactNode, useId } from 'react'
 import { Link } from '@tanstack/react-router'
-import { CloudOff, FlaskConical, LayoutGrid, Lock } from 'lucide-react'
+import { CloudOff, LayoutGrid, Lock } from 'lucide-react'
 
 import { ErrorState } from '@/components/feedback/error-state'
 import { PageContainer } from '@/components/layout'
 import { Skeleton } from '@/components/ui/skeleton'
-import { isMockApi } from '@/lib/env'
 import { cn } from '@/lib/utils'
 
 import { chartVars, dash } from './dashboard-styles'
@@ -260,27 +259,6 @@ export function NotAvailable({ what, dependency }: { what: string; dependency: s
         {what} need a feature this server doesn&apos;t have yet.
       </WidgetEmpty>
     </div>
-  )
-}
-
-/**
- * Beside the title of a widget whose endpoint is pending, once it has data: in mock mode that
- * data is the development mock's sample, which this says.
- */
-export function PreviewBadge({ dependency }: { dependency: string }) {
-  if (!isMockApi) return null
-  return (
-    <span
-      className={cn(dash.chip, dash.warning)}
-      title={`No backend endpoint yet (Backend Dependencies ${dependency}): sample data from the development mock.`}
-    >
-      <FlaskConical aria-hidden="true" className="size-3" />
-      Sample data
-      <span className="sr-only">
-        : no backend endpoint yet (Backend Dependencies {dependency}); these come from the
-        development mock
-      </span>
-    </span>
   )
 }
 

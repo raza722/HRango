@@ -411,7 +411,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
       { label: 'Workspace Dashboard', to: '/project-management/workspace-dashboard' },
       { label: 'Project Dashboard', to: '/project-management/project-dashboard' },
       { label: 'Task Dashboard', to: '/project-management/task-dashboard' },
-      { label: 'Create Workspace', to: '/project-management/workspaces' },
+      // The workspaces you can open, with Create Workspace (the design's menu says "Create
+      // Workspace", which hid the way back to existing workspaces).
+      { label: 'Workspaces', to: '/project-management/workspaces' },
       // Not drawn: the BRD's "own reminders", listed (they are set from a task's Remind Me).
       { label: 'Reminders', to: '/project-management/reminders' },
     ],

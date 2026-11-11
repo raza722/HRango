@@ -33,7 +33,7 @@ function StatusChip({ reminder, now }: { reminder: ReminderEntry; now: number })
   )
 }
 
-/** What the reminder is about: a task opens in its workspace's List view. */
+/** What the reminder is about: a task opens its panel in its workspace (`?task=`). */
 function Subject({ reminder }: { reminder: ReminderEntry }) {
   const name = reminder.entityName ?? reminder.name
   if (reminder.entityType !== 'task') return <span>{name}</span>
@@ -41,7 +41,7 @@ function Subject({ reminder }: { reminder: ReminderEntry }) {
     <Link
       to="/project-management/workspaces/$workspaceId"
       params={{ workspaceId: reminder.workspaceId }}
-      hash={reminder.entityId}
+      search={{ task: reminder.entityId }}
       className="text-primary underline-offset-2 hover:underline"
     >
       {name}

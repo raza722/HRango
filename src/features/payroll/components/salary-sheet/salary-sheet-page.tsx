@@ -199,7 +199,7 @@ export function SalarySheetPage() {
       ) : isEmpty ? (
         <NoRecord />
       ) : (
-        <div className="scrollbar-thin overflow-x-auto">
+        <div className="table-scroll scrollbar-thin">
           <table
             aria-label={`Salary Sheet, ${title}`}
             className="w-full min-w-[60rem] text-sm text-title"

@@ -117,7 +117,6 @@ export function TimeSheetPage() {
   const meta = sheet.data?.meta
   const rows = sheet.data?.data ?? []
   const personName = employeeId ? rows[0]?.employeeName : undefined
-  const filterKey = [search.scope, search.status, employeeId, from, to].join('|')
   const close = () => {
     setDialog(null)
   }
@@ -153,7 +152,6 @@ export function TimeSheetPage() {
       </div>
 
       <TimeSheetFilters
-        key={filterKey}
         scope={search.scope}
         initial={{ status: search.status, employeeId, from, to }}
         knownEmployee={

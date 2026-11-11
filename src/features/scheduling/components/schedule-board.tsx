@@ -161,7 +161,7 @@ export function ScheduleBoard({
 
   return (
     <div className="@container/board min-w-0">
-      <div className="scrollbar-brand overflow-x-auto overscroll-x-contain rounded-md border">
+      <div className="table-scroll scrollbar-brand rounded-md border">
         <table
           aria-busy={isLoading || isFetching}
           className={cn(

@@ -6,18 +6,20 @@ import {
   WORKSPACE_DESCRIPTION_MAX,
   WORKSPACE_NAME_MAX,
 } from '../../constants'
-import type {
-  OrganizerFeature,
-  StatusGroup,
-  StatusTemplate,
-  StatusTemplateId,
-  TaskStatus,
-  ViewKind,
-  Visibility,
-  WorkflowTemplate,
-  WorkflowTemplateId,
-  WorkspaceInput,
-  WorkspaceSetup,
+import {
+  BUILT_VIEWS,
+  isBuiltView,
+  type OrganizerFeature,
+  type StatusGroup,
+  type StatusTemplate,
+  type StatusTemplateId,
+  type TaskStatus,
+  type ViewKind,
+  type Visibility,
+  type WorkflowTemplate,
+  type WorkflowTemplateId,
+  type WorkspaceInput,
+  type WorkspaceSetup,
 } from '../../types/pm.types'
 
 /** The wizard's three steps, in order (the progress header). */
@@ -191,20 +193,18 @@ export function stepOfField(field: string): WizardStep {
 
 // --- views ---------------------------------------------------------------------------------------
 
-/** The views drawn on "Default Settings for Views" (610:201097), in its two-column order. */
-export const DRAWN_VIEWS: readonly ViewKind[] = [
-  'list',
-  'board',
-  'calendar',
-  'activity',
-  'team',
-  'timeline',
-  'table',
-]
+/**
+ * The views drawn on "Default Settings for Views" (610:201097), in its two-column order: every
+ * built view (Gantt, Workload and Mind Map are left out by the BRD, see BUILT_VIEWS).
+ */
+export const DRAWN_VIEWS: readonly ViewKind[] = BUILT_VIEWS
 
-/** Views a page lists: the drawn ones, plus any other view the template starts with. */
+/**
+ * The rows of "Default Settings for Views": every drawn view once, then any other built view the
+ * template or the draft names (none today). Each view is listed once, however many sources name it.
+ */
 export function listedViews(templateViews: readonly ViewKind[]): ViewKind[] {
-  return [...DRAWN_VIEWS, ...templateViews.filter((view) => !DRAWN_VIEWS.includes(view))]
+  return [...new Set([...DRAWN_VIEWS, ...templateViews.filter(isBuiltView)])]
 }
 
 /** Switches a view on or off; List stays on and the default falls back to List. */

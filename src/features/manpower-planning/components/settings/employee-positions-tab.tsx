@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { ErrorState } from '@/components/feedback/error-state'
 import { DataTable, type DataTableColumn } from '@/components/layout'
 import { parseCsv } from '@/features/payroll'
+import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
@@ -152,7 +153,9 @@ export function EmployeePositionsTab({
 }) {
   const lookups = useManpowerLookups()
   const [draft, setDraft] = useState<Filters>(NO_FILTERS)
-  const [applied, setApplied] = useState<Filters>(NO_FILTERS)
+  // The filters apply as they change: the choices at once, the code once typing pauses.
+  const typedCode = useDebouncedValue(draft.q.trim())
+  const applied: Filters = { ...draft, q: typedCode }
   const [dialog, setDialog] = useState<{ position: EmployeePosition | null } | null>(null)
   const [ranges, setRanges] = useState<EmployeePosition | null>(null)
   const [deleting, setDeleting] = useState<EmployeePosition | null>(null)
@@ -211,6 +214,7 @@ export function EmployeePositionsTab({
 
   const set = (field: keyof Filters) => (value: string) => {
     setDraft((current) => ({ ...current, [field]: value }))
+    if (page !== 1) goTo(1)
   }
   const select = (field: keyof Filters, label: string, options: readonly MpOption[]) => (
     <MpField label={label}>
@@ -234,9 +238,9 @@ export function EmployeePositionsTab({
           aria-label="Employee position filters"
           className="grid grid-cols-1 items-end gap-x-5 gap-y-6 px-4 sm:px-6 @md:grid-cols-2 @3xl:grid-cols-4"
           onSubmit={(event) => {
+            // The filters already apply as they change; Search (or Enter) refreshes the list.
             event.preventDefault()
-            setApplied(draft)
-            goTo(1)
+            void list.refetch()
           }}
         >
           <MpField label="Position Code">
@@ -269,7 +273,6 @@ export function EmployeePositionsTab({
               type="button"
               onClick={() => {
                 setDraft(NO_FILTERS)
-                setApplied(NO_FILTERS)
                 goTo(1)
                 void list.refetch()
               }}

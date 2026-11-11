@@ -21,6 +21,9 @@ export interface TimeSheetFilterValues {
   to: string
 }
 
+const sameValues = (a: TimeSheetFilterValues, b: TimeSheetFilterValues) =>
+  a.status === b.status && a.employeeId === b.employeeId && a.from === b.from && a.to === b.to
+
 function rangeError(from: string, to: string): string | null {
   const start = parseDateValue(from)
   const end = parseDateValue(to)
@@ -33,7 +36,8 @@ function rangeError(from: string, to: string): string | null {
 /**
  * My: "My Time Sheet" with From, To and Search. Subordinates / All: Employee
  * Status, Employee Name (all, or one person the user reaches), From, To and
- * Search. Nothing applies until Search.
+ * Search. Each choice applies as soon as it is made (the dates once From → To
+ * is valid); Search applies them again.
  */
 export function TimeSheetFilters({
   scope,
@@ -48,9 +52,17 @@ export function TimeSheetFilters({
   knownEmployee?: { value: string; label: string; hint?: string } | undefined
 }) {
   const [values, setValues] = useState(initial)
+  // The URL changed elsewhere (Back, Forward, another tab): show what it says.
+  const [shown, setShown] = useState(initial)
+  if (!sameValues(initial, shown)) {
+    setShown(initial)
+    setValues(initial)
+  }
   const error = rangeError(values.from, values.to)
   const set = (patch: Partial<TimeSheetFilterValues>) => {
-    setValues((current) => ({ ...current, ...patch }))
+    const next = { ...values, ...patch }
+    setValues(next)
+    if (!rangeError(next.from, next.to)) onApply(next)
   }
 
   return (

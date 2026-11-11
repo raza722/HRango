@@ -26,7 +26,11 @@ import {
   useUpdateRequest,
 } from '../../hooks/use-requests'
 import { punchRequestSchema, type PunchRequestValues } from '../../schemas/request-forms.schema'
-import { PUNCH_REQUEST_TYPES, type PunchRequest } from '../../types/requests.types'
+import {
+  PUNCH_REQUEST_TYPES,
+  type PunchRequest,
+  type PunchRequestType,
+} from '../../types/requests.types'
 import { clock } from '../../utils/request-format'
 import { RequestEmployeeField } from '../shared/request-employee-field'
 import { RequestFileField, RequestFileLinks } from '../shared/request-files'
@@ -67,21 +71,34 @@ function ReadOnlyTime({ label, value }: { label: string; value: string }) {
   )
 }
 
+/** A new punch request's starting values. */
+export interface PunchRequestStart {
+  /** Whose punch (asking for someone else); named so the picker shows them at once. */
+  employee?: { id: string; name: string; code?: string | null } | undefined
+  /** `yyyy-MM-dd`. */
+  date: string
+  punchType?: PunchRequestType | undefined
+}
+
 /**
  * Punch Request Create (and Edit): the day's expected times come from the
  * schedule (`/scheduling/schedules`); All adds the Employee picker. The punch
  * goes to the API as `details { punchDate, punchType, punchTime }`; an
- * attachment is uploaded first and sent by id.
+ * attachment is uploaded first and sent by id. `initial` fills a new request in (Attendance →
+ * Missing Punch opens it on the day and the punch that is missing).
  */
 export function PunchRequestDialog({
   forOthers,
   request,
+  initial,
   onClose,
 }: {
   /** All: pick the employee; My: the signed-in person. */
   forOthers: boolean
   /** Edit this request; create a new one when absent. */
   request?: PunchRequest
+  /** A new request's starting values: the person (with `forOthers`), the day, the punch. */
+  initial?: PunchRequestStart | undefined
   onClose: () => void
 }) {
   const create = useCreateRequest('punch')
@@ -98,7 +115,13 @@ export function PunchRequestDialog({
           punchTime: request.payload.punchTime.slice(0, 5),
           description: request.description ?? '',
         }
-      : { employeeId: '', date: '', punchType: '', punchTime: '', description: '' },
+      : {
+          employeeId: initial?.employee?.id ?? '',
+          date: initial?.date ?? '',
+          punchType: initial?.punchType ?? '',
+          punchTime: '',
+          description: '',
+        },
   })
   const { control } = form
   const [employeeId, date] = useWatch({ control, name: ['employeeId', 'date'] })
@@ -207,6 +230,7 @@ export function PunchRequestDialog({
               control={control}
               name="employeeId"
               permission={typePermission('punch', 'create')}
+              current={initial?.employee}
               placeholder="Enter name"
               required
               className="@2xl:col-span-3"

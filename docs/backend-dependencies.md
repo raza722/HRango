@@ -1,5 +1,10 @@
 # Backend dependencies (frontend gaps)
 
+> **Project Management, 11 Nov 2026:** the backend has since added T1 (docs), T4 (reminder
+> delivery), T7 (recents, dashboards) and T11 (personal list). The newest requests for the module
+> (visibility, task codes, notifications, partial list/view updates) are in
+> [`backend-handoff/project-management-2026-11-11.md`](backend-handoff/project-management-2026-11-11.md).
+
 Endpoints the frontend needs and the HRango API (`/openapi.json`, checked 27 Oct 2026, 620 paths)
 does not have yet. Each entry gives the method, path, request and response the UI will be built
 against. Until an entry exists, its screen calls a typed API function marked
@@ -401,6 +406,29 @@ Meanwhile (28 Oct 2026): Forms, My Forms and Responses call these as typed pendi
 marked `// TODO(backend): endpoint not available`. In development the MSW mock answers them with
 sample data and a "Sample data" badge; against the real API the list calls get 404 and each page
 shows "Waiting for the server" instead of an error or made-up data.
+
+## Dashboard
+
+### D1. The dashboard for a date range
+
+The dashboard has From and To (added 10 Nov 2026). `GET /api/dashboard/hr` and `/ceo` take only
+`month` (the monthly figures) and `day` (one attendance day); `/dashboard/me` takes only `day`.
+The attendance tiles and the Leaves card already follow From → To through
+`GET /api/attendance/time-sheet/summary` and the leave counts. The rest still shows the month of To,
+and the header says so when the dates are not one month from its 1st.
+
+```
+GET /api/dashboard/hr|ceo?fromDate=yyyy-MM-dd&toDate=yyyy-MM-dd
+  workforce.hired / left / turnoverPercent   people who joined / left within the dates
+  workforce.turnoverByMonth                  the months the dates touch
+  attendance.byMonth                         the months the dates touch, counting only days inside them
+  (headcount and the workforce charts as on toDate; attendance.day = toDate)
+GET /api/dashboard/me?fromDate&toDate        attendance.byMonth as above
+GET /api/payroll/dashboard and /api/recruitment/dashboard: the same fromDate / toDate (today year / month)
+// month and day keep working; fromDate after toDate → 422
+```
+
+Meanwhile those figures follow the month of To; nothing is mocked for this.
 
 ## Other modules
 

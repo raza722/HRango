@@ -283,7 +283,7 @@ export function AttendanceInsightsView({
           onRetry={() => void overview.refetch()}
         />
       ) : (
-        <div className="scrollbar-thin min-w-0 overflow-x-auto overscroll-x-contain">
+        <div className="table-scroll scrollbar-thin min-w-0">
           <table
             aria-busy={overview.isPending || overview.isFetching}
             className={cn(

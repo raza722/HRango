@@ -72,6 +72,8 @@ export {
   reportSearchSchema,
   type SalarySheetSearch,
   salarySheetSearchSchema,
+  searchPageSchema,
+  type SearchPageSearch,
   SETTINGS_TABS,
   SETTINGS_VIEWS,
   settingsViewSchema,

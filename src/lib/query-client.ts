@@ -17,6 +17,10 @@ declare module '@tanstack/react-query' {
       errorMessage?: string
       /** Skip the global error toast (the caller handles it, e.g. inline field errors). */
       suppressErrorToast?: boolean
+      /** Words in the saving pill while it runs ("Deleting the policy"); default "Saving changes". */
+      pendingLabel?: string
+      /** No saving pill: a background or instant change (marking a notification read). */
+      quiet?: boolean
     }
   }
 }

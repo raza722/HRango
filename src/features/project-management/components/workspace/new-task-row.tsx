@@ -1,11 +1,9 @@
-import { useState } from 'react'
-
 import { cn } from '@/lib/utils'
 
-import { useCreateTask } from '../../hooks/use-pm'
 import type { TaskStatus, TaskType } from '../../types/pm.types'
 import { useListView } from './list-context'
 import { COLUMN_WIDTHS, TAIL_WIDTH } from './list-utils'
+import { useTaskComposer } from './use-task-composer'
 import { MilestoneIcon, StatusRingIcon } from './workspace-icons'
 import { listStyles } from './workspace-styles'
 
@@ -25,40 +23,21 @@ export function NewTaskRow({
   onClose: () => void
 }) {
   const { workspace } = useListView()
-  const create = useCreateTask()
-  const [name, setName] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const label = type === 'milestone' ? 'milestone' : 'task'
+  // Enter clears the box at once and saves in the background (see useTaskComposer).
+  const { name, change, error, submit, savingText, label } = useTaskComposer({
+    workspaceId: workspace.id,
+    listId,
+    statusId: status.id,
+    type,
+  })
   const errorId = `new-task-error-${status.id}`
-
-  const save = async () => {
-    const trimmed = name.trim()
-    if (!trimmed) {
-      setError(`Enter the ${label} name`)
-      return
-    }
-    setError(null)
-    try {
-      await create.mutateAsync({
-        workspaceId: workspace.id,
-        listId,
-        parentId: null,
-        name: trimmed,
-        statusId: status.id,
-        type,
-      })
-      setName('')
-    } catch {
-      // The global mutation toast explains; the row stays open with the name.
-    }
-  }
 
   return (
     <form
       aria-label={`New ${label} in ${status.name}`}
       onSubmit={(event) => {
         event.preventDefault()
-        void save()
+        submit()
       }}
       className={listStyles.row}
     >
@@ -88,8 +67,7 @@ export function NewTaskRow({
             aria-describedby={error ? errorId : undefined}
             placeholder={type === 'milestone' ? 'Milestone Name' : 'Task Name'}
             onChange={(event) => {
-              setName(event.target.value)
-              if (error) setError(null)
+              change(event.target.value)
             }}
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
@@ -108,19 +86,21 @@ export function NewTaskRow({
           </button>
           <button
             type="submit"
-            disabled={create.isPending}
-            className="h-9 shrink-0 rounded-lg bg-[#318845] px-4 text-sm font-semibold text-white hover:bg-[#287238] disabled:opacity-60"
+            className="h-9 shrink-0 rounded-lg bg-[#318845] px-4 text-sm font-semibold text-white hover:bg-[#287238]"
           >
             Save
           </button>
         </div>
       </div>
-      <div className={cn(listStyles.middle, 'px-5')}>
+      <div className={cn(listStyles.middle, 'gap-4 px-5')}>
         {error && (
           <span id={errorId} role="alert" className="text-sm text-[#DC3545] dark:text-[#FF8A94]">
             {error}
           </span>
         )}
+        <span role="status" className="text-sm text-[#707070] dark:text-grey">
+          {savingText}
+        </span>
       </div>
       <div className={listStyles.tail} style={{ width: TAIL_WIDTH }} />
     </form>

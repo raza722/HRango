@@ -438,7 +438,6 @@ export function AppraisalsView({ search, onSearch }: AppraisalsViewProps) {
             />
             <div className="flex flex-wrap items-center gap-3">
               <SearchBox
-                key={search.q ?? ''}
                 value={search.q}
                 label="Search appraisals"
                 onSearch={(q) => {

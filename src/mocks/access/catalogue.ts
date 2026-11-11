@@ -221,7 +221,7 @@ const MODULES: readonly ModuleRow[] = [
     module: 'Project Management',
     screens: [
       ['projects.workspaces', 'Workspaces', CRUD],
-      ['projects.lists', 'Lists', ['view', 'create']],
+      ['projects.lists', 'Folders and lists', CRUD],
       ['projects.tasks', 'Tasks', [...CRUD, 'assign']],
       ['projects.comments', 'Comments', CRUD],
       ['projects.time_tracking', 'Time Tracking', ['view', 'create', 'delete']],

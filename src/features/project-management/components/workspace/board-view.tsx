@@ -6,12 +6,12 @@ import { EmployeeAvatar } from '@/components/layout/employee-avatar'
 import { cn } from '@/lib/utils'
 
 import { PRIORITY_META } from '../../constants'
-import { useCreateTask } from '../../hooks/use-pm'
 import type { TaskRow, TaskStatus, TaskType } from '../../types/pm.types'
 import { formatCellDate, fromDay } from '../task-fields/field-utils'
 import { useListView } from './list-context'
 import { PmMenu, PmMenuContent, PmMenuItem, PmMenuLabel, PmMenuTrigger } from './menu-parts'
 import { TaskRowMenu } from './task-row-menu'
+import { useTaskComposer } from './use-task-composer'
 import { MilestoneIcon, PlusIcon, StatusRingIcon, SubtaskIcon } from './workspace-icons'
 
 /** The column a dragged card would join: the end of it (after its last card). */
@@ -48,9 +48,13 @@ function AddCard({
   onOpenChange: (open: boolean) => void
 }) {
   const { workspace } = useListView()
-  const create = useCreateTask()
-  const [name, setName] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  // Enter clears the box at once and saves in the background (see useTaskComposer).
+  const { name, change, error, submit, savingText } = useTaskComposer({
+    workspaceId: workspace.id,
+    listId,
+    statusId: status.id,
+    type,
+  })
   const input = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (open) input.current?.focus()
@@ -72,34 +76,12 @@ function AddCard({
     )
   }
 
-  const save = async () => {
-    const trimmed = name.trim()
-    if (!trimmed) {
-      setError(`Enter the ${type === 'milestone' ? 'milestone' : 'task'} name`)
-      return
-    }
-    setError(null)
-    try {
-      await create.mutateAsync({
-        workspaceId: workspace.id,
-        listId,
-        parentId: null,
-        name: trimmed,
-        statusId: status.id,
-        type,
-      })
-      setName('')
-    } catch {
-      // The global mutation toast explains; the box keeps the name.
-    }
-  }
-
   return (
     <form
       aria-label={`New ${type === 'milestone' ? 'milestone' : 'task'} in ${status.name}`}
       onSubmit={(event) => {
         event.preventDefault()
-        void save()
+        submit()
       }}
       className="grid gap-1 rounded-xl border border-[#7127EA] bg-white p-2 dark:bg-card"
     >
@@ -111,8 +93,7 @@ function AddCard({
         aria-invalid={Boolean(error)}
         placeholder={type === 'milestone' ? 'Milestone name' : 'Task name'}
         onChange={(event) => {
-          setName(event.target.value)
-          if (error) setError(null)
+          change(event.target.value)
         }}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
@@ -122,8 +103,14 @@ function AddCard({
         }}
         className="h-9 rounded-lg px-2 text-sm text-[#303030] outline-none placeholder:text-[#909090] dark:text-title"
       />
-      {error && <p className="px-2 text-xs text-[#DC3545] dark:text-[#FF8A94]">{error}</p>}
-      <p className="px-2 text-[0.6875rem] text-[#909090]">Enter adds it; Escape closes.</p>
+      {error && (
+        <p role="alert" className="px-2 text-xs text-[#DC3545] dark:text-[#FF8A94]">
+          {error}
+        </p>
+      )}
+      <p role="status" className="px-2 text-[0.6875rem] text-[#909090]">
+        {savingText || 'Enter adds it; Escape closes.'}
+      </p>
     </form>
   )
 }
@@ -231,7 +218,7 @@ function BoardCard({
             onClick={() => {
               onOpenTask(task)
             }}
-            title="Open in the List view"
+            title="Open the task"
             className="min-w-0 flex-1 text-left text-sm leading-snug font-medium text-[#303030] outline-none hover:text-[#7127EA] focus-visible:ring-2 focus-visible:ring-[#A181FF] dark:text-title dark:hover:text-[#C4ABFF]"
           >
             {task.name}

@@ -149,6 +149,11 @@ export interface EmployeeInput {
   joiningDate?: string | null
   probationEndDate?: string | null
   confirmationDate?: string | null
+  /**
+   * A new employee only: their first salary (from the joining date), in rupees. Needs
+   * `employees.salary.edit`; later changes go through Payroll → Salary Revision.
+   */
+  joiningSalary?: number | null
   rowVersion?: string | null
 }
 

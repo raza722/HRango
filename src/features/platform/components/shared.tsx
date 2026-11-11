@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from 'react'
+import type { ReactNode } from 'react'
 import { type Control, useForm } from 'react-hook-form'
 import { AlertCircle, Search } from 'lucide-react'
 
@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Chip } from '@/features/access/components/shared/parts'
+import { useSearchAsYouType } from '@/hooks/use-search-as-you-type'
 import { ApiError } from '@/lib/api-error'
 
 import { labelOf } from '../format'
@@ -209,7 +210,13 @@ export function ListPage<T>({
   rowActions?: (row: T) => ReactNode
   emptyText: string
 }) {
-  const [text, setText] = useState('')
+  // Searches as you type (a pause after the last key); Enter searches at once.
+  const textSearch = useSearchAsYouType({
+    value: list.q || undefined,
+    onSearch: (q) => {
+      list.setSearch(q ?? '')
+    },
+  })
   return (
     <PageContainer>
       <PageHeader title={title} description={description} actions={actions} />
@@ -235,7 +242,7 @@ export function ListPage<T>({
                 className="relative w-full max-w-xs"
                 onSubmit={(event) => {
                   event.preventDefault()
-                  list.setSearch(text)
+                  textSearch.flush()
                 }}
               >
                 <Search
@@ -245,12 +252,8 @@ export function ListPage<T>({
                 <Input
                   aria-label={search}
                   placeholder={search}
-                  value={text}
+                  {...textSearch.inputProps}
                   className="pl-9!"
-                  onChange={(event) => {
-                    setText(event.target.value)
-                    if (!event.target.value) list.setSearch('')
-                  }}
                 />
               </form>
             )}

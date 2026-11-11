@@ -32,6 +32,44 @@ export const employeeListSearchSchema = z.object({
 })
 export type EmployeeListSearch = z.infer<typeof employeeListSearchSchema>
 
+/** Where the list was (search, filters, page) without its Add / Edit dialog. */
+export type EmployeeListView = Omit<EmployeeListSearch, 'dialog' | 'edit'>
+
+const LIST_VIEW_KEY = 'hrms-tm-employee-list-view'
+
+const listView = (search: EmployeeListSearch): EmployeeListView => ({
+  q: search.q,
+  status: search.status,
+  branchId: search.branchId,
+  departmentId: search.departmentId,
+  designationId: search.designationId,
+  includeInactive: search.includeInactive,
+  page: search.page,
+  pageSize: search.pageSize,
+})
+
+/**
+ * The Employee Record keeps its place for this browser tab, so "Employee Record" on a profile
+ * returns to the same search, filters and page, as the browser's Back button does.
+ */
+export function saveEmployeeListView(search: EmployeeListSearch) {
+  try {
+    sessionStorage.setItem(LIST_VIEW_KEY, JSON.stringify(listView(search)))
+  } catch {
+    // Storage switched off: the link opens the list from the start.
+  }
+}
+
+/** The list's last place in this tab (checked again, so a stale or edited value falls back). */
+export function savedEmployeeListView(): EmployeeListView | undefined {
+  try {
+    const raw = sessionStorage.getItem(LIST_VIEW_KEY)
+    return raw ? listView(employeeListSearchSchema.parse(JSON.parse(raw))) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Defaults left out of the profile URL. */
 export const EMPLOYEE_PROFILE_SEARCH_DEFAULTS = { tab: 'personal' } as const
 

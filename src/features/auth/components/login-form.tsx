@@ -1,17 +1,23 @@
 import { useState } from 'react'
 import { useController, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlertCircle, Eye, EyeOff, Loader2, LogIn } from 'lucide-react'
+import { AlertCircle, ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail } from 'lucide-react'
 
-import { FormField, TextField } from '@/components/form'
+import { FormField } from '@/components/form'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ApiError } from '@/lib/api-error'
 import { env, isMockApi } from '@/lib/env'
+import { cn } from '@/lib/utils'
 
 import { DEMO_ACCOUNT } from '../constants'
 import { useLogin } from '../hooks/use-auth'
 import { type LoginInput, loginSchema } from '../schemas/login.schema'
+
+/** Tall sign-in fields with room for the icon in front. */
+const FIELD = 'h-12 rounded-xl pl-11 sm:pl-11 sm:text-[0.9375rem] pointer-coarse:h-12'
+const LEADING_ICON =
+  'pointer-events-none absolute top-1/2 left-4 size-[1.125rem] -translate-y-1/2 text-label'
 
 interface LoginFormProps {
   /** Runs after the session is stored. */
@@ -53,6 +59,7 @@ export function CredentialsForm({
     defaultValues: { email: '', password: '' },
     mode: 'onTouched',
   })
+  const email = useController({ control: form.control, name: 'email' })
   const password = useController({ control: form.control, name: 'password' })
   const serverError = form.formState.errors.root?.server?.message
 
@@ -80,18 +87,30 @@ export function CredentialsForm({
         </div>
       )}
 
-      <TextField
-        control={form.control}
-        name="email"
-        label="Email"
-        type="email"
-        autoComplete="username"
-        placeholder={emailPlaceholder}
-      />
+      <FormField label="Email" error={email.fieldState.error?.message}>
+        {(a11y) => (
+          <div className="relative">
+            <Mail aria-hidden="true" className={LEADING_ICON} />
+            <Input
+              {...a11y}
+              ref={email.field.ref}
+              name={email.field.name}
+              value={email.field.value}
+              onChange={email.field.onChange}
+              onBlur={email.field.onBlur}
+              type="email"
+              autoComplete="username"
+              placeholder={emailPlaceholder}
+              className={FIELD}
+            />
+          </div>
+        )}
+      </FormField>
 
       <FormField label="Password" error={password.fieldState.error?.message}>
         {(a11y) => (
           <div className="relative">
+            <LockKeyhole aria-hidden="true" className={LEADING_ICON} />
             <Input
               {...a11y}
               ref={password.field.ref}
@@ -101,7 +120,8 @@ export function CredentialsForm({
               onBlur={password.field.onBlur}
               type={showPassword ? 'text' : 'password'}
               autoComplete="current-password"
-              className="pr-11"
+              placeholder="Enter your password"
+              className={cn(FIELD, 'pr-12 sm:pr-12')}
             />
             <button
               type="button"
@@ -110,17 +130,26 @@ export function CredentialsForm({
               }}
               aria-label={showPassword ? 'Hide password' : 'Show password'}
               aria-pressed={showPassword}
-              className="absolute inset-y-0 right-0 flex w-11 items-center justify-center rounded-r-md text-label outline-none hover:text-field-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+              className="absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-xl text-label outline-none hover:text-field-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
             >
-              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              {showPassword ? (
+                <EyeOff className="size-[1.125rem]" />
+              ) : (
+                <Eye className="size-[1.125rem]" />
+              )}
             </button>
           </div>
         )}
       </FormField>
 
-      <Button type="submit" size="lg" disabled={form.formState.isSubmitting} className="mt-1">
-        {form.formState.isSubmitting ? <Loader2 className="animate-spin" /> : <LogIn />}
+      <Button
+        type="submit"
+        size="lg"
+        disabled={form.formState.isSubmitting}
+        className="mt-1 h-12 rounded-xl text-[0.9375rem] shadow-[0_12px_32px_-14px_var(--primary)] pointer-coarse:h-12"
+      >
         Sign in
+        {form.formState.isSubmitting ? <Loader2 className="animate-spin" /> : <ArrowRight />}
       </Button>
 
       {demoNote && (

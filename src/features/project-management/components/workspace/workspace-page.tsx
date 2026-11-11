@@ -9,6 +9,7 @@ import { VIEW_LABELS } from '../../constants'
 import {
   usePeople,
   usePmLookups,
+  useRecordRecent,
   useTags,
   useTaskList,
   useWorkspace,
@@ -16,8 +17,14 @@ import {
 } from '../../hooks/use-pm'
 import { usePmAccess } from '../../hooks/use-pm-access'
 import type { WorkspaceSearch } from '../../pm-search'
-import type { TaskRow, TaskType, ViewKind } from '../../types/pm.types'
-import type { Workspace, WorkspaceTree } from '../../types/pm.types'
+import {
+  isBuiltView,
+  type TaskRow,
+  type TaskType,
+  type ViewKind,
+  type Workspace,
+  type WorkspaceTree,
+} from '../../types/pm.types'
 import { ActivityView } from './activity-view'
 import { CalendarView } from './calendar-view'
 import {
@@ -30,11 +37,11 @@ import {
 } from './list-utils'
 import { type Composer, ListView } from './list-view'
 import { OverdueView } from './overdue-view'
+import { TaskPanel } from './task-panel'
 import { TeamView } from './team-view'
 import { TimelineView } from './timeline-view'
 import { useWorkspacePatch } from './use-workspace-patch'
 import { ViewBar } from './view-bar'
-import { VIEW_ICONS } from './view-icons'
 import { WorkspaceBanner } from './workspace-banner'
 import { PlusIcon } from './workspace-icons'
 import { membersOf } from './workspace-members'
@@ -97,6 +104,9 @@ function WorkspaceContent({
   const tags = useTags(workspace.id)
   const { save, saving } = useWorkspacePatch(workspace)
   const hash = useRouterState({ select: (state) => state.location.hash })
+  // Recents: the workspace, and the list when one is open.
+  useRecordRecent('workspace', workspace.id)
+  useRecordRecent('task_list', listId)
 
   // The route's head says "Workspace" until the workspace loads; then the tab shows its name.
   useEffect(() => {
@@ -108,7 +118,9 @@ function WorkspaceContent({
   const [sort, setSort] = useState<ListSort | null>(null)
   const [composer, setComposer] = useState<Composer | null>(null)
 
-  const view: ViewKind = search.view ?? workspace.setup.defaultView
+  // A view with no screen (an old link to Gantt, say) opens the workspace's default instead.
+  const view: ViewKind =
+    search.view && isBuiltView(search.view) ? search.view : workspace.setup.defaultView
   const overdueTab = search.overdue === true
   const members = useMemo(() => membersOf(workspace, people), [workspace, people])
 
@@ -125,8 +137,6 @@ function WorkspaceContent({
   // Timeline and Team are views of their own over the same tasks, Activity of their history.
   const layout =
     view === 'board' ? 'board' : view === 'table' ? 'table' : view === 'list' ? 'list' : null
-  const ownView =
-    view === 'calendar' || view === 'timeline' || view === 'activity' || view === 'team'
   const addTask = (type: TaskType) => {
     if (!access.addTasks) return
     // The Board adds in its first column; elsewhere the List view's new-task row opens.
@@ -135,9 +145,9 @@ function WorkspaceContent({
     } else if (overdueTab) onSearch({ overdue: undefined })
     if (firstStatus) setComposer({ statusId: firstStatus.id, type })
   }
-  /** From the Overdue tab and the other views: the task in the List view, scrolled to and marked. */
+  /** Any view's task (a row, a card, a chip, a history line): the task panel, over this view. */
   const openTask = (task: Pick<TaskRow, 'id'>) => {
-    onSearch({ view: viewParam('list'), overdue: undefined }, { hash: task.id })
+    onSearch({ task: task.id })
   }
   /** From the Team view: the List view with only that person's tasks (or the unassigned ones). */
   const showPerson = (assigneeId: string) => {
@@ -146,7 +156,10 @@ function WorkspaceContent({
     onSearch({ view: viewParam('list'), overdue: undefined })
   }
 
-  const highlightedId = hash && rows.some((task) => task.id === hash) ? hash : null
+  // The open task: `?task=`, or an older `#<id>` link (from before the task panel).
+  const openTaskId = search.task ?? (hash && taskIds.has(hash) ? hash : null)
+  // Its row in the List, Table or Board is scrolled to and marked behind the panel.
+  const highlightedId = openTaskId && taskIds.has(openTaskId) ? openTaskId : null
 
   return (
     <section aria-labelledby="workspace-title" className="flex min-w-0 flex-col">
@@ -203,13 +216,6 @@ function WorkspaceContent({
             ) : (
               <OverdueView tasks={rows} access={access} onOpenTask={openTask} />
             )
-          ) : layout === null && !ownView ? (
-            <ViewNotDesigned
-              view={view}
-              onBack={() => {
-                onSearch({ view: viewParam('list') })
-              }}
-            />
           ) : tasks.isPending ? (
             <ListSkeleton />
           ) : tasks.isError ? (
@@ -298,39 +304,27 @@ function WorkspaceContent({
               onOpenList={(id) => {
                 onSearch({ list: id })
               }}
+              onOpenTask={openTask}
               highlightedId={highlightedId}
             />
           )}
         </div>
       </div>
-    </section>
-  )
-}
 
-function ViewNotDesigned({ view, onBack }: { view: ViewKind; onBack: () => void }) {
-  const { Icon } = VIEW_ICONS[view]
-  return (
-    <div
-      role="status"
-      className="flex flex-col items-center gap-3 rounded-[0.875rem] border border-[#ECECEC] bg-white px-6 py-14 text-center dark:border-border dark:bg-card"
-    >
-      <span className="flex size-12 items-center justify-center rounded-xl bg-[#F0E9FD] text-[#7127EA] dark:bg-[#7127EA]/20 dark:text-[#C4ABFF]">
-        <Icon className="size-6" />
-      </span>
-      <h2 className="text-base font-medium text-[#303030] dark:text-title">
-        This view is not designed yet
-      </h2>
-      <p className="max-w-md text-sm text-[#707070] dark:text-grey">
-        The {VIEW_LABELS[view]} view has no screen in the design. Your tasks are in the List view.
-      </p>
-      <button
-        type="button"
-        onClick={onBack}
-        className="mt-1 inline-flex h-10 items-center rounded-xl bg-[#7127EA] px-5 text-sm font-semibold text-white hover:bg-[#5f1fd0]"
-      >
-        Open List view
-      </button>
-    </div>
+      <TaskPanel
+        taskId={openTaskId}
+        workspace={workspace}
+        tasks={rows}
+        hiddenColumns={tasks.data?.hiddenColumns ?? []}
+        access={access}
+        onOpenTask={(id) => {
+          onSearch({ task: id })
+        }}
+        onClose={() => {
+          onSearch({ task: undefined })
+        }}
+      />
+    </section>
   )
 }
 

@@ -264,31 +264,46 @@ const columns: DataTableColumn<AttendanceRow>[] = [
   },
 ]
 
-/** Today's time sheet rows: who is in (earliest first), with first in, last out and the state. */
+/**
+ * Today's time sheet rows: who is in (earliest first), with first in, last out and the state.
+ * With `day` (a past month on the dashboard) the rows are that day's.
+ */
 export function WhosInWidget({
   query,
+  day,
   link,
 }: {
   query: QueryState<DashboardAttendance>
+  /** The day shown when it is not today, `yyyy-MM-dd`. */
+  day?: string | undefined
   link?: DashLink | undefined
 }) {
   const [all, setAll] = useState(false)
+  const title = day ? `Who was in on ${formatDay(day)}` : 'Who’s in today'
   return (
     <Widget
-      title="Who’s in today"
+      title={title}
       description={
         query.data
           ? `${plural(query.data.rows.filter((row) => row.firstIn).length, 'person', 'people')} clocked in`
           : undefined
       }
-      action={link && <WidgetLink link={link} label="Time sheet" name="Open today’s time sheet" />}
+      action={
+        link && (
+          <WidgetLink
+            link={link}
+            label="Time sheet"
+            name={day ? `Open the time sheet of ${formatDay(day)}` : 'Open today’s time sheet'}
+          />
+        )
+      }
     >
       <WidgetBody
         query={query}
-        what="Who’s in today"
+        what={title}
         skeleton="list"
         isEmpty={(data) => data.rows.length === 0}
-        empty="Nobody has a shift today."
+        empty={day ? 'Nobody had a shift that day.' : 'Nobody has a shift today.'}
       >
         {(data) => {
           const sorted = data.rows.toSorted(byFirstIn)
@@ -296,7 +311,7 @@ export function WhosInWidget({
           return (
             <div className="grid gap-3">
               <DataTable
-                caption="Who’s in today"
+                caption={title}
                 columns={columns}
                 data={rows}
                 getRowId={(row) => row.employeeId}

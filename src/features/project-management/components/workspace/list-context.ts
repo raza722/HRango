@@ -59,7 +59,9 @@ export interface ListViewContextValue {
   actions: TaskActions
   /** Opens a list (after Convert to List). */
   onOpenList: (listId: string) => void
-  /** The link that opens the page on a task (Copy link, Open in new tab). */
+  /** Opens the task panel (`?task=`): a row's name, a Board card. */
+  onOpenTask: (task: Pick<TaskRow, 'id'>) => void
+  /** The link that opens the page on a task (Copy link, Open in new tab): `?task=<id>`. */
   taskHref: (task: TaskRow) => string
 }
 

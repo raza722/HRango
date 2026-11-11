@@ -1,7 +1,14 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { comments, dependencies, lists, shares, tasks } from '@/mocks/project-management/db'
+import {
+  comments,
+  dependencies,
+  lists,
+  shares,
+  tasks,
+  workspaces,
+} from '@/mocks/project-management/db'
 import { renderApp, renderWithQueryClient, signIn } from '@/test/test-utils'
 
 import { pmApi } from './api/pm.api'
@@ -10,10 +17,18 @@ import { CommentsProvider } from './components/comments/comments-panel'
 import { ShareDialog } from './components/task-fields/share-dialog'
 
 describe('Project Management shell', () => {
-  it('shows the Create Workspace page, the panel tree and the sidebar menu', async () => {
+  it('lists the workspaces beside the panel tree, with the sidebar menu', async () => {
     const { user } = renderApp('/project-management/workspaces')
 
-    expect(await screen.findByRole('heading', { name: 'Create your own workspace!' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Workspaces', level: 1 })).toBeVisible()
+    const main = screen.getByRole('main')
+    // A card per workspace, favourites first.
+    const cards = await within(main).findAllByRole('link', { name: /Owner:/ })
+    expect(cards[0]).toHaveTextContent('UX/UI Design Team Work Space')
+    expect(cards[0]).toHaveAttribute('href', '/project-management/workspaces/ws_uxui')
+    const page = screen.getByRole('region', { name: 'Workspaces' })
+    expect(within(page).getByRole('button', { name: 'Create Workspace' })).toBeVisible()
+
     const panel = screen.getByRole('complementary', { name: 'Workspaces' })
     expect(await within(panel).findByText('QA Testing Phase')).toBeVisible()
     // The favourite workspace is listed under Favorites too.
@@ -24,7 +39,7 @@ describe('Project Management shell', () => {
       'Workspace Dashboard',
       'Project Dashboard',
       'Task Dashboard',
-      'Create Workspace',
+      'Workspaces',
     ]) {
       expect(screen.getAllByRole('link', { name }).length).toBeGreaterThan(0)
     }
@@ -36,8 +51,73 @@ describe('Project Management shell', () => {
     expect(within(panel).getByText('QA Testing Phase')).toBeVisible()
   })
 
-  it('opens a workspace tree and adds a list to it', async () => {
+  it('shows the Create Workspace page while there is no workspace', async () => {
+    for (const workspace of workspaces.all()) workspaces.remove(workspace.id)
+    renderApp('/project-management/workspaces')
+    expect(await screen.findByRole('heading', { name: 'Create your own workspace!' })).toBeVisible()
+    const landing = screen.getByRole('region', { name: 'Create your own workspace!' })
+    expect(within(landing).getByRole('button', { name: /^Create Workspace/ })).toBeVisible()
+  })
+
+  it('renames, moves and deletes folders and lists from their menus', async () => {
     const { user } = renderApp('/project-management/workspaces/ws_uxui')
+    const panel = await screen.findByRole('complementary', { name: 'Workspaces' })
+    expect(await within(panel).findByText('UX Design Process')).toBeVisible()
+
+    // Rename a folder.
+    await user.click(
+      within(panel).getByRole('button', { name: 'Options for folder UX Design Process' }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Rename' }))
+    const rename = await screen.findByRole('dialog', { name: 'Rename folder' })
+    const name = within(rename).getByRole('textbox', { name: 'Name' })
+    await user.clear(name)
+    await user.type(name, 'Design Process')
+    await user.click(within(rename).getByRole('button', { name: 'Save' }))
+    expect(await within(panel).findByText('Design Process')).toBeVisible()
+
+    // Move a list to the top level: its other settings go back unchanged (PUT replaces them).
+    const flow = lists.find('it_flow')
+    await user.click(
+      within(panel).getByRole('button', {
+        name: 'Options for list User Flow and Information Architecture',
+      }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Top level (no folder)' }))
+    await waitFor(() => {
+      expect(lists.find('it_flow')?.folderId).toBeNull()
+    })
+    expect(lists.find('it_flow')?.privacy).toBe(flow?.privacy)
+
+    // A list with tasks cannot be deleted; the menu says why.
+    await user.click(
+      within(panel).getByRole('button', {
+        name: 'Options for list User Flow and Information Architecture',
+      }),
+    )
+    expect(await screen.findByRole('menuitem', { name: /Move or delete its/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    await user.keyboard('{Escape}')
+
+    // Delete the folder: its lists stay, at the top level.
+    await user.click(
+      within(panel).getByRole('button', { name: 'Options for folder Design Process' }),
+    )
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+    await user.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete' }),
+    )
+    await waitFor(() => {
+      expect(within(panel).queryByText('Design Process')).not.toBeInTheDocument()
+    })
+    expect(lists.all().filter((list) => list.folderId === 'fd_ux_process')).toHaveLength(0)
+    expect(within(panel).getByText('Low & High Fidelity Wire-frames')).toBeVisible()
+  })
+
+  it('opens a workspace tree and adds a list to it', async () => {
+    const { user, router } = renderApp('/project-management/workspaces/ws_uxui')
 
     const panel = await screen.findByRole('complementary', { name: 'Workspaces' })
     // Folders and lists come with the workspace (`GET /projects/workspaces/{id}`).
@@ -49,10 +129,24 @@ describe('Project Management shell', () => {
     // Docs have no API: the menu offers folders and lists.
     expect(screen.queryByRole('menuitem', { name: 'Doc' })).not.toBeInTheDocument()
     await user.click(await screen.findByRole('menuitem', { name: 'List' }))
+    // The list is named first (it used to be made as "New List 1"), optionally in a folder.
+    const dialog = await screen.findByRole('dialog', { name: 'New list' })
+    await user.click(within(dialog).getByRole('button', { name: 'Create list' }))
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Name the list')
+    await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Usability round 2')
+    await user.click(within(dialog).getByRole('combobox'))
+    await user.click(await screen.findByRole('option', { name: 'UX Design Process' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Create list' }))
     await waitFor(() => {
       expect(lists.all()).toHaveLength(before + 1)
     })
-    expect(await within(panel).findByText('New List 1')).toBeVisible()
+    const made = lists.all().find((list) => list.name === 'Usability round 2')
+    expect(made?.folderId).toBe('fd_ux_process')
+    expect(await within(panel).findByText('Usability round 2')).toBeVisible()
+    // The new list opens, ready for its first task.
+    await waitFor(() => {
+      expect(router.state.location.search).toHaveProperty('list', made?.id)
+    })
 
     // A folder folds away.
     await user.click(within(panel).getByRole('button', { name: 'UX Design Process' }))

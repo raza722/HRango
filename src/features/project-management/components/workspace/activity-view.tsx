@@ -8,144 +8,14 @@ import { downloadText, toCsv } from '@/features/payroll'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { cn } from '@/lib/utils'
 
-import { PRIORITY_META } from '../../constants'
 import { useWorkspaceActivity } from '../../hooks/use-pm'
-import type { ActivityEntry, PmPerson, Priority, Workspace } from '../../types/pm.types'
-
-/**
- * What each action is called in the Action filter and the CSV. The API's action names are not
- * documented; these are the ones the mock writes, and any other name is shown as it comes.
- */
-const ACTION_LABELS: Record<string, string> = {
-  created: 'Created',
-  updated: 'Changed',
-  deleted: 'Deleted',
-  commented: 'Commented',
-  extension_requested: 'Extension requested',
-  extension_approved: 'Extension approved',
-  extension_rejected: 'Extension rejected',
-}
-
-const FIELD_LABELS: Record<string, string> = {
-  name: 'Name',
-  description: 'Description',
-  status: 'Status',
-  priority: 'Priority',
-  start_date: 'Start date',
-  due_date: 'Due date',
-  assignees: 'Assignees',
-  task_list: 'List',
-  tags: 'Tags',
-  time_estimate: 'Time estimate',
-}
-
-/** `dueDate` and `due_date` alike. */
-const snake = (name: string) => name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
-
-function humanise(name: string): string {
-  const words = snake(name).replace(/[_-]+/g, ' ').trim()
-  return words.charAt(0).toUpperCase() + words.slice(1)
-}
-
-const actionLabel = (action: string) => ACTION_LABELS[action] ?? humanise(action)
-const fieldLabel = (field: string) => FIELD_LABELS[snake(field)] ?? humanise(field)
-
-/** A logged value as people read it: dates as `5 Nov 2026`, priorities by their label. */
-function valueText(field: string, value: string): string {
-  const name = snake(field)
-  if (name.endsWith('date') && /^\d{4}-\d{2}-\d{2}/.test(value)) {
-    return format(parseISO(value.slice(0, 10)), 'd MMM yyyy')
-  }
-  if (name === 'priority' && value in PRIORITY_META) return PRIORITY_META[value as Priority].label
-  return value
-}
+import type { ActivityEntry, PmPerson, Workspace } from '../../types/pm.types'
+import { ACTION_LABELS, actionLabel, fieldLabel, valueText } from './activity-labels'
+import { ActivitySentence } from './activity-sentence'
 
 const Value = ({ children }: { children: ReactNode }) => (
   <span className="font-medium text-[#303030] dark:text-title">{children}</span>
 )
-
-/** The line's sentence after the person's name ("changed Status of [task] from A to B"). */
-function describe(entry: ActivityEntry, item: ReactNode): ReactNode {
-  const field = entry.fieldName
-  const from = field && entry.oldValue !== null ? valueText(field, entry.oldValue) : null
-  const to = field && entry.newValue !== null ? valueText(field, entry.newValue) : null
-  switch (entry.action) {
-    case 'created':
-      return <>created {item}</>
-    case 'deleted':
-      return <>deleted {item}</>
-    case 'commented':
-      return <>commented on {item}</>
-    case 'extension_requested':
-      return (
-        <>
-          asked for more time on {item}
-          {to && (
-            <>
-              {' '}
-              (due date <Value>{to}</Value>
-              {from && (
-                <>
-                  , was <Value>{from}</Value>
-                </>
-              )}
-              )
-            </>
-          )}
-        </>
-      )
-    case 'extension_approved':
-      return (
-        <>
-          approved the extension of {item}
-          {to && (
-            <>
-              {' '}
-              to <Value>{to}</Value>
-            </>
-          )}
-        </>
-      )
-    case 'extension_rejected':
-      return <>rejected the extension of {item}</>
-  }
-  const verb = entry.action === 'updated' ? null : actionLabel(entry.action).toLowerCase()
-  if (!field)
-    return verb ? (
-      <>
-        {verb} {item}
-      </>
-    ) : (
-      <>changed {item}</>
-    )
-  const label = <Value>{fieldLabel(field)}</Value>
-  if (from === null && to === null) {
-    return (
-      <>
-        {verb ?? 'changed'} {label} of {item}
-      </>
-    )
-  }
-  if (from === null) {
-    return (
-      <>
-        {verb ?? 'set'} {label} of {item} to <Value>{to}</Value>
-      </>
-    )
-  }
-  if (to === null) {
-    return (
-      <>
-        {verb ?? 'cleared'} {label} of {item} (was <Value>{from}</Value>)
-      </>
-    )
-  }
-  return (
-    <>
-      {verb ?? 'changed'} {label} of {item} from <Value>{from}</Value> to <Value>{to}</Value>
-    </>
-  )
-}
 
 function dayLabel(day: Date, now: Date): string {
   if (isSameDay(day, now)) return 'Today'
@@ -411,7 +281,7 @@ export function ActivityView({
                           fallbackClassName="text-[0.625rem]"
                         />
                         <p className="min-w-0 flex-1 pt-1 text-sm break-words text-[#5A5A5A] dark:text-title">
-                          <Value>{who}</Value> {describe(entry, item(entry))}
+                          <Value>{who}</Value> <ActivitySentence entry={entry} item={item(entry)} />
                         </p>
                         <time
                           dateTime={entry.performedAt}

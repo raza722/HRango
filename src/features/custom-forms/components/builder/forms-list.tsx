@@ -13,6 +13,7 @@ import {
 } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useSearchAsYouType } from '@/hooks/use-search-as-you-type'
 import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
@@ -83,7 +84,13 @@ export function FormsList({
   /** Open the builder on a form, or `new`. */
   onOpen: (id: string) => void
 }) {
-  const [text, setText] = useState(search.q ?? '')
+  // Searches as you type (a pause after the last key); Search or Enter searches at once.
+  const textSearch = useSearchAsYouType({
+    value: search.q,
+    onSearch: (q) => {
+      onSearchChange({ q, page: 1 })
+    },
+  })
   const [confirm, setConfirm] = useState<Confirm>(null)
   const can = {
     create: useCan(CF_CODES.formsCreate),
@@ -99,7 +106,7 @@ export function FormsList({
 
   const onSearch = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault()
-    onSearchChange({ q: text.trim() || undefined, page: 1 })
+    textSearch.flush()
   }
 
   const actions = (row: FormSummary): RowAction[] => {
@@ -283,10 +290,7 @@ export function FormsList({
               <Input
                 aria-label="Search forms"
                 placeholder="Search title or category…"
-                value={text}
-                onChange={(event) => {
-                  setText(event.target.value)
-                }}
+                {...textSearch.inputProps}
                 className="h-9 min-w-0 flex-1"
               />
               <Button
@@ -301,7 +305,6 @@ export function FormsList({
               <Button
                 variant="outline"
                 onClick={() => {
-                  setText('')
                   onSearchChange({ q: undefined, status: undefined, page: 1 })
                 }}
                 className={cn(toolbarButtonClass, outlineButtonClass, 'px-4 text-xs')}

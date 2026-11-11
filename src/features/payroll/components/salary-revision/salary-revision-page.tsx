@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
+import { Search } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -10,6 +11,8 @@ import {
   rowMenuItemClass,
 } from '@/components/layout'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { useSearchAsYouType } from '@/hooks/use-search-as-you-type'
 import { ApiError } from '@/lib/api-error'
 import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
@@ -60,7 +63,9 @@ const columns: DataTableColumn<SalaryRevisionRow>[] = [
     id: 'employee',
     header: 'Employee',
     mobile: 'heading',
-    cell: (row) => <PersonCell person={{ name: row.employeeName, photoUrl: null, employeeId: row.employeeId }} />,
+    cell: (row) => (
+      <PersonCell person={{ name: row.employeeName, photoUrl: null, employeeId: row.employeeId }} />
+    ),
   },
   { id: 'effective', header: 'Effective Date', cell: (row) => formatLong(row.effectiveDate) },
   {
@@ -78,8 +83,15 @@ const columns: DataTableColumn<SalaryRevisionRow>[] = [
  * (`canEdit` false for rows the screen may not change).
  */
 export function SalaryRevisionPage() {
-  const { page } = routeApi.useSearch()
+  const { page, q } = routeApi.useSearch()
   const navigate = routeApi.useNavigate()
+  // Name or code, searched as you type (a pause after the last key).
+  const textSearch = useSearchAsYouType({
+    value: q,
+    onSearch: (next) => {
+      void navigate({ search: (prev) => ({ ...prev, q: next, page: 1 }) })
+    },
+  })
   const options = usePayrollOptions('payroll.salary_revision.view')
   const can = {
     create: useCan(`${CODE}.create`),
@@ -94,6 +106,7 @@ export function SalaryRevisionPage() {
   const list = useSalaryRevisions({
     page,
     pageSize: PAGE_SIZE,
+    q,
     employeeId: filters.employeeId,
     from: filters.from,
     to: filters.to,
@@ -192,6 +205,19 @@ export function SalaryRevisionPage() {
         </>
       }
     >
+      <div role="search" className="relative w-full sm:max-w-xs">
+        <Search
+          aria-hidden="true"
+          className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-label"
+        />
+        <Input
+          type="search"
+          aria-label="Search salary revisions"
+          placeholder="Search name or code"
+          {...textSearch.inputProps}
+          className="h-10 pl-9 font-inter placeholder:text-grey sm:pl-9"
+        />
+      </div>
       <DataTable
         columns={columns}
         data={list.data?.data ?? []}

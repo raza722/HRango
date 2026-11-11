@@ -1,20 +1,31 @@
 import { useMemo, useState } from 'react'
-import { Link } from '@tanstack/react-router'
-import { PanelLeft, Star } from 'lucide-react'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { MoreHorizontal, PanelLeft, Star } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { BREAKPOINTS, useMediaQuery } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
 
-import { useCreateItem, useWorkspace, useWorkspaceTree } from '../../hooks/use-pm'
+import {
+  useCreateItem,
+  useDeleteItem,
+  useUpdateItem,
+  useWorkspace,
+  useWorkspaceTree,
+} from '../../hooks/use-pm'
 import { usePmAccess } from '../../hooks/use-pm-access'
 import type { WorkspaceItem, WorkspaceItemKind, WorkspaceSummary } from '../../types/pm.types'
+import { type ItemDialogState, ItemNameDialog } from './item-dialogs'
 import {
   PanelCaretIcon,
   PanelDotsIcon,
@@ -22,6 +33,44 @@ import {
   PanelPlusIcon,
   PanelSearchIcon,
 } from './panel-icons'
+
+/** Where the panel's shown / hidden choice is kept (per browser). */
+const PANEL_STATE_KEY = 'hrms-pm-workspaces-panel'
+
+/**
+ * Whether the panel is hidden: the person's last choice, else hidden on phones and tablets (where
+ * it would push the tasks below a screen of navigation) and shown beside the page on desktops.
+ */
+function usePanelCollapsed(): [boolean, (collapsed: boolean) => void] {
+  const desktop = useMediaQuery(BREAKPOINTS.desktop)
+  const [choice, setChoice] = useState<boolean | null>(() => {
+    try {
+      const saved = localStorage.getItem(PANEL_STATE_KEY)
+      return saved === null ? null : saved === 'hidden'
+    } catch {
+      return null
+    }
+  })
+  const set = (collapsed: boolean) => {
+    setChoice(collapsed)
+    try {
+      localStorage.setItem(PANEL_STATE_KEY, collapsed ? 'hidden' : 'shown')
+    } catch {
+      // Storage can be blocked; the choice then lasts for this page only.
+    }
+  }
+  return [choice ?? !desktop, set]
+}
+
+/** What the folder / list row menus can do (managers and above, by permission). */
+interface ItemActions {
+  canEdit: boolean
+  canDelete: boolean
+  folders: readonly WorkspaceItem[]
+  onRename: (item: WorkspaceItem) => void
+  onMove: (item: WorkspaceItem, parentId: string | null) => void
+  onDelete: (item: WorkspaceItem) => void
+}
 
 interface WorkspacesPanelProps {
   workspaceId: string | null
@@ -34,11 +83,6 @@ const rowText = 'truncate font-medium text-[#4F4F4F] dark:text-title'
 const squareButton =
   'flex size-8 shrink-0 items-center justify-center rounded-lg bg-[rgba(132,78,255,0.1)] text-[#7127EA] dark:text-[#C4ABFF] transition-colors hover:bg-[rgba(132,78,255,0.18)]'
 
-const NEW_ITEM_LABELS: Record<WorkspaceItemKind, string> = {
-  folder: 'New Folder',
-  list: 'New List',
-}
-
 /**
  * The Workspaces panel (Workspace Navigation 411:146521, Workspace Page 1:2755): search, the
  * "+" that opens Create Workspace, Favorites, and each workspace with its folders and lists.
@@ -47,9 +91,14 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
   const { data, isPending, isError } = useWorkspaceTree()
   const open = useWorkspace(workspaceId)
   const access = usePmAccess(open.data)
+  const navigate = useNavigate()
   const createItem = useCreateItem()
+  const updateItem = useUpdateItem()
+  const deleteItem = useDeleteItem()
   const [search, setSearch] = useState('')
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = usePanelCollapsed()
+  const [dialog, setDialog] = useState<ItemDialogState | null>(null)
+  const [deleting, setDeleting] = useState<WorkspaceItem | null>(null)
   const [favoritesOpen, setFavoritesOpen] = useState(true)
   const [closed, setClosed] = useState<ReadonlySet<string>>(new Set())
 
@@ -79,18 +128,114 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
     })
   }
 
+  const folders = items.filter((item) => item.kind === 'folder')
+
+  /** New folder / list: named in a dialog first (no more "New Folder 1"). */
   const addItem = (kind: WorkspaceItemKind) => {
-    if (!current) return
-    const label = NEW_ITEM_LABELS[kind]
-    const taken = items.filter(
-      (item) => item.workspaceId === current.id && item.name.startsWith(label),
-    ).length
-    const name = `${label} ${taken + 1}`
+    setDialog({ mode: 'create', kind, parentId: null })
+  }
+
+  const submitDialog = (name: string, parentId: string | null) => {
+    if (!dialog || !current) return
+    if (dialog.mode === 'rename') {
+      updateItem.mutate(
+        { item: dialog.item, patch: { name } },
+        {
+          onSuccess: () => {
+            setDialog(null)
+            toast.success(`Renamed to ${name}`)
+          },
+        },
+      )
+      return
+    }
+    const { kind } = dialog
     createItem.mutate(
-      { workspaceId: current.id, input: { kind, name, parentId: null } },
-      { onSuccess: () => toast.success(`${name} added to ${current.name}`) },
+      { workspaceId: current.id, input: { kind, name, parentId } },
+      {
+        onSuccess: (made) => {
+          setDialog(null)
+          toast.success(`${name} added to ${current.name}`)
+          // A new list opens, ready for its first task.
+          if (kind === 'list') {
+            void navigate({
+              to: '/project-management/workspaces/$workspaceId',
+              params: { workspaceId: current.id },
+              search: { list: made.id },
+            })
+          }
+        },
+      },
     )
   }
+
+  const actions: ItemActions = {
+    canEdit: access.editLists,
+    canDelete: access.deleteLists,
+    folders,
+    onRename: (item) => {
+      setDialog({ mode: 'rename', item })
+    },
+    onMove: (item, parentId) => {
+      const target = parentId ? folders.find((folder) => folder.id === parentId)?.name : null
+      updateItem.mutate(
+        { item, patch: { parentId } },
+        {
+          onSuccess: () =>
+            toast.success(
+              target ? `${item.name} moved to ${target}` : `${item.name} moved to the top level`,
+            ),
+        },
+      )
+    },
+    onDelete: setDeleting,
+  }
+
+  const confirmDelete = () => {
+    const item = deleting
+    if (!item) return
+    deleteItem.mutate(item, {
+      onSuccess: () => {
+        toast.success(`${item.name} deleted`)
+        // Leaving a list that no longer exists.
+        if (item.id === listId && current) {
+          void navigate({
+            to: '/project-management/workspaces/$workspaceId',
+            params: { workspaceId: current.id },
+          })
+        }
+      },
+    })
+  }
+
+  const dialogs = (
+    <>
+      <ItemNameDialog
+        state={dialog}
+        folders={folders}
+        saving={createItem.isPending || updateItem.isPending}
+        onSubmit={submitDialog}
+        onClose={() => {
+          setDialog(null)
+        }}
+      />
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setDeleting(null)
+        }}
+        title={deleting?.kind === 'folder' ? 'Delete this folder?' : 'Delete this list?'}
+        description={
+          deleting?.kind === 'folder'
+            ? `${deleting.name} will be deleted. Its lists and their tasks stay in the workspace, at the top level.`
+            : `${deleting?.name ?? 'The list'} will be deleted. It has no tasks.`
+        }
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={confirmDelete}
+      />
+    </>
+  )
 
   if (collapsed) {
     return (
@@ -104,10 +249,15 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
             setCollapsed(false)
           }}
           aria-label="Show workspaces"
-          className="flex size-10 items-center justify-center rounded-lg bg-white text-[#5D5D5D] shadow-xs dark:bg-card dark:text-title"
+          className="flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-3 text-sm font-medium text-[#5D5D5D] shadow-xs lg:w-10 lg:px-0 dark:bg-card dark:text-title"
         >
-          <PanelLeft className="size-4" />
+          <PanelLeft aria-hidden="true" className="size-4" />
+          {/* On phones and tablets the button says what it opens. */}
+          <span aria-hidden="true" className="lg:hidden">
+            Workspaces
+          </span>
         </button>
+        {dialogs}
       </aside>
     )
   }
@@ -119,7 +269,8 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
       // under the top bar (74px bar + 24px page padding = 6.125rem) and is the screen's height,
       // so its own list scrolls inside it. Stacked above the page on smaller screens it scrolls
       // away with it.
-      className="flex shrink-0 flex-col rounded-[1.625rem] bg-white p-2.5 shadow-xs lg:sticky lg:top-[6.125rem] lg:h-[calc(100dvh-8rem)] lg:w-[18.75rem] lg:self-start dark:bg-card"
+      // Narrower on small laptops (1024–1279 px), so the page beside it keeps room for its views.
+      className="flex shrink-0 flex-col rounded-[1.625rem] bg-white p-2.5 shadow-xs lg:sticky lg:top-[6.125rem] lg:h-[calc(100dvh-8rem)] lg:w-[15.5rem] lg:self-start xl:w-[18.75rem] dark:bg-card"
     >
       <div className="flex items-center justify-between pt-2.5 pl-2.5">
         <h2 className="text-base leading-6 font-medium text-[#4F4F4F] dark:text-title">
@@ -233,7 +384,7 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
 
       <nav
         aria-label="Workspace tree"
-        className="mt-3 flex min-h-0 flex-1 [scrollbar-width:thin] [scrollbar-color:#7127EA_transparent] flex-col gap-1.5 overflow-y-auto pr-2"
+        className="mt-3 flex scrollbar-thin min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-2"
       >
         {favorites.length > 0 && (
           <div className="mb-1">
@@ -303,6 +454,7 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
                   listId={listId}
                   closed={closed}
                   onToggle={toggle}
+                  actions={actions}
                 />
               )}
             </div>
@@ -314,15 +466,98 @@ export function WorkspacesPanel({ workspaceId, listId, onCreate }: WorkspacesPan
         <button
           type="button"
           onClick={onCreate}
-          className="mt-3 flex h-[4.5rem] w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#A181FF] bg-[#F0E9FD] text-sm font-medium text-[#7127EA] hover:bg-[#e6dafc] dark:bg-[#7127EA]/20 dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/30"
+          className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[#A181FF] bg-[#F0E9FD] text-sm font-medium whitespace-nowrap text-[#7127EA] hover:bg-[#e6dafc] dark:bg-[#7127EA]/20 dark:text-[#C4ABFF] dark:hover:bg-[#7127EA]/30"
         >
-          <span className="flex items-center gap-1.5">
-            <PanelPlusIcon className="size-3" /> Create
-          </span>
-          Workspace
+          <PanelPlusIcon className="size-3" />
+          Create Workspace
         </button>
       )}
+      {dialogs}
     </aside>
+  )
+}
+
+/**
+ * The "…" of a folder or list row: Rename, Move to a folder (lists), Delete. A list that still
+ * has tasks cannot be deleted (the API refuses it), so the item says why instead.
+ */
+function ItemMenu({ item, actions }: { item: WorkspaceItem; actions: ItemActions }) {
+  if (!actions.canEdit && !actions.canDelete) return null
+  const kind = item.kind === 'folder' ? 'folder' : 'list'
+  const moveTargets =
+    item.kind === 'list' ? actions.folders.filter((folder) => folder.id !== item.parentId) : []
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Options for ${kind} ${item.name}`}
+          className="flex size-7 shrink-0 items-center justify-center rounded-md text-[#7A7A7A] opacity-0 outline-none group-hover/item:opacity-100 hover:bg-white focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[#A181FF] data-[state=open]:opacity-100 dark:text-grey dark:hover:bg-white/10 [@media(hover:none)]:opacity-100"
+        >
+          <MoreHorizontal className="size-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-48">
+        {actions.canEdit && (
+          <DropdownMenuItem
+            onSelect={() => {
+              actions.onRename(item)
+            }}
+          >
+            Rename
+          </DropdownMenuItem>
+        )}
+        {actions.canEdit && item.kind === 'list' && (moveTargets.length > 0 || item.parentId) && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs font-medium text-[#909090]">
+              Move to
+            </DropdownMenuLabel>
+            {item.parentId && (
+              <DropdownMenuItem
+                onSelect={() => {
+                  actions.onMove(item, null)
+                }}
+              >
+                Top level (no folder)
+              </DropdownMenuItem>
+            )}
+            {moveTargets.map((folder) => (
+              <DropdownMenuItem
+                key={folder.id}
+                onSelect={() => {
+                  actions.onMove(item, folder.id)
+                }}
+              >
+                {folder.name}
+              </DropdownMenuItem>
+            ))}
+          </>
+        )}
+        {actions.canDelete && (
+          <>
+            <DropdownMenuSeparator />
+            {item.kind === 'list' && item.taskCount > 0 ? (
+              <DropdownMenuItem disabled className="flex-col items-start gap-0.5">
+                Delete
+                <span className="text-xs text-[#909090]">
+                  Move or delete its {item.taskCount} task{item.taskCount === 1 ? '' : 's'} first
+                </span>
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => {
+                  actions.onDelete(item)
+                }}
+              >
+                Delete
+              </DropdownMenuItem>
+            )}
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -388,6 +623,7 @@ function ItemTree({
   listId,
   closed,
   onToggle,
+  actions,
 }: {
   workspaceId: string
   items: readonly WorkspaceItem[]
@@ -395,6 +631,7 @@ function ItemTree({
   listId: string | null
   closed: ReadonlySet<string>
   onToggle: (id: string) => void
+  actions: ItemActions
 }) {
   const level = items.filter((item) => item.parentId === parentId)
   if (level.length === 0) return null
@@ -405,23 +642,26 @@ function ItemTree({
           const open = !closed.has(item.id)
           return (
             <li key={item.id}>
-              <button
-                type="button"
-                onClick={() => {
-                  onToggle(item.id)
-                }}
-                aria-expanded={open}
-                className="flex w-full items-center rounded-[0.72rem] bg-[#EEE7FF] pr-2.5 text-left dark:bg-[#7127EA]/10"
-              >
-                <span className="flex size-10 shrink-0 items-center justify-center text-[#7127EA] dark:text-[#C4ABFF]">
-                  <PanelCaretIcon
-                    className={cn('h-[0.45rem] w-3 transition-transform', !open && '-rotate-90')}
-                  />
-                </span>
-                <span className={cn(rowText, 'flex-1 py-2 text-[0.8rem] leading-[1.2rem]')}>
-                  {item.name}
-                </span>
-              </button>
+              <div className="group/item flex items-center rounded-[0.72rem] bg-[#EEE7FF] pr-1.5 dark:bg-[#7127EA]/10">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onToggle(item.id)
+                  }}
+                  aria-expanded={open}
+                  className="flex min-w-0 flex-1 items-center text-left"
+                >
+                  <span className="flex size-10 shrink-0 items-center justify-center text-[#7127EA] dark:text-[#C4ABFF]">
+                    <PanelCaretIcon
+                      className={cn('h-[0.45rem] w-3 transition-transform', !open && '-rotate-90')}
+                    />
+                  </span>
+                  <span className={cn(rowText, 'flex-1 py-2 text-[0.8rem] leading-[1.2rem]')}>
+                    {item.name}
+                  </span>
+                </button>
+                <ItemMenu item={item} actions={actions} />
+              </div>
               {open && (
                 <ItemTree
                   workspaceId={workspaceId}
@@ -430,6 +670,7 @@ function ItemTree({
                   listId={listId}
                   closed={closed}
                   onToggle={onToggle}
+                  actions={actions}
                 />
               )}
             </li>
@@ -443,22 +684,27 @@ function ItemTree({
         )
         return (
           <li key={item.id}>
-            <Link
-              to="/project-management/workspaces/$workspaceId"
-              params={{ workspaceId }}
-              search={{ list: item.id }}
-              activeOptions={{ exact: true }}
-              aria-current={current ? 'page' : undefined}
+            <div
               className={cn(
-                'flex items-center gap-2.5 rounded-[0.48rem] p-1.5',
+                'group/item flex items-center rounded-[0.48rem] pr-1',
                 current
                   ? 'bg-[#EEE7FF] dark:bg-[#7127EA]/10'
                   : 'bg-[#F7F7F7] hover:bg-[#F0E9FD] dark:bg-white/5 dark:hover:bg-[#7127EA]/25',
               )}
             >
-              {tile}
-              <span className={cn(rowText, 'text-[0.8rem] leading-[1.2rem]')}>{item.name}</span>
-            </Link>
+              <Link
+                to="/project-management/workspaces/$workspaceId"
+                params={{ workspaceId }}
+                search={{ list: item.id }}
+                activeOptions={{ exact: true }}
+                aria-current={current ? 'page' : undefined}
+                className="flex min-w-0 flex-1 items-center gap-2.5 p-1.5"
+              >
+                {tile}
+                <span className={cn(rowText, 'text-[0.8rem] leading-[1.2rem]')}>{item.name}</span>
+              </Link>
+              <ItemMenu item={item} actions={actions} />
+            </div>
           </li>
         )
       })}

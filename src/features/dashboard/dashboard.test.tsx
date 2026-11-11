@@ -1,5 +1,13 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { format, subMonths } from 'date-fns'
+import {
+  eachDayOfInterval,
+  endOfMonth,
+  format,
+  parseISO,
+  setDate,
+  startOfMonth,
+  subMonths,
+} from 'date-fns'
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 
@@ -54,13 +62,33 @@ function attendanceToday() {
   return counts
 }
 
+/** The days worked, absent and on leave from → to, as the time sheet counts them. */
+function attendanceBetween(from: string, to: string) {
+  const snap = takeSnapshot()
+  const counts = { present: 0, absent: 0, onLeave: 0 }
+  for (const date of eachDayOfInterval({ start: parseISO(from), end: parseISO(to) })) {
+    const value = format(date, 'yyyy-MM-dd')
+    for (const person of DIRECTORY) {
+      const status = computeDay(snap, person.id, value).day.status
+      if (status === null) continue
+      const wire = wireStatus(status)
+      if (PRESENT_STATUSES.has(wire)) counts.present += 1
+      else if (wire === 'absent') counts.absent += 1
+      else if (wire === 'leave') counts.onLeave += 1
+    }
+  }
+  return counts
+}
+
 /** Talent Management's people who joined in a month (`yyyy-MM`). */
 const hiresIn = (month: string) =>
   employees.all().filter((person) => person.joiningDate?.startsWith(month)).length
 
 describe('Dashboard', { timeout: 60_000 }, () => {
   it('shows key figures that agree with Talent Management, Attendance and Recruitment', async () => {
-    renderApp('/')
+    // From and To both today: the attendance tiles are today's people.
+    const todayValue = format(new Date(), 'yyyy-MM-dd')
+    renderApp(`/?from=${todayValue}&to=${todayValue}`)
 
     expect(
       await screen.findByRole('heading', { name: 'Dashboard', level: 1 }, FIRST_LOAD),
@@ -113,9 +141,14 @@ describe('Dashboard', { timeout: 60_000 }, () => {
 
     const headcount = await screen.findByRole('link', { name: /^Headcount: / }, FIRST_LOAD)
     expect(headcount).toHaveAttribute('href', '/talent-management/employees')
-    const present = screen.getByRole('link', { name: /^Present today: / })
+    // By default the dates are this month up to today (one day on the 1st).
+    const monthStart = `${day.slice(0, 7)}-01`
+    const present = await screen.findByRole('link', {
+      name: monthStart === day ? /^Present today: / : /^Present: /,
+    })
     expect(present.getAttribute('href')).toContain('/attendance/time-sheet?')
-    expect(present.getAttribute('href')).toContain(`from=${day}`)
+    expect(present.getAttribute('href')).toContain(`from=${monthStart}`)
+    expect(present.getAttribute('href')).toContain(`to=${day}`)
     expect(screen.getByRole('link', { name: /^Absenteeism: / }).getAttribute('href')).toContain(
       'dayStatus=absent',
     )
@@ -209,7 +242,8 @@ describe('Dashboard', { timeout: 60_000 }, () => {
   })
 
   it('shows the employee their own day, with no company figures', async () => {
-    renderAs('/', ['dashboard.employee.view'])
+    // Every employee may open their own time sheet.
+    renderAs('/', ['dashboard.employee.view', 'attendance.time_sheet.view'])
 
     expect(await screen.findByRole('list', { name: 'My key figures' }, FIRST_LOAD)).toBeVisible()
     expect(screen.getByText('My day')).toBeVisible()
@@ -224,6 +258,10 @@ describe('Dashboard', { timeout: 60_000 }, () => {
     expect(within(applications).getAllByRole('listitem')).toHaveLength(mine.length)
     expect(screen.getByRole('region', { name: 'My attendance today' })).toBeVisible()
     expect(screen.getByRole('region', { name: 'Notice board' })).toBeVisible()
+    // The month tiles open the month's time sheet; Days absent only the absent days.
+    const absent = screen.getByRole('link', { name: /^Days absent: / })
+    expect(absent.getAttribute('href')).toContain(`from=${format(new Date(), 'yyyy-MM')}-01`)
+    expect(absent.getAttribute('href')).toContain('dayStatus=absent')
 
     expect(screen.queryByText('Headcount')).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Workforce' })).not.toBeInTheDocument()
@@ -247,33 +285,80 @@ describe('Dashboard', { timeout: 60_000 }, () => {
     expect(screen.queryByRole('region', { name: 'Notice board' })).not.toBeInTheDocument()
   })
 
-  it('moves the monthly figures with the month picker', async () => {
-    const { user, router } = renderApp('/')
-    const earlier = format(subMonths(new Date(), 2), 'yyyy-MM')
+  it('moves the figures with From and To', async () => {
+    const then = subMonths(new Date(), 2)
+    const earlier = format(then, 'yyyy-MM')
+    const lastDay = format(endOfMonth(then), 'yyyy-MM-dd')
+    const { user, router } = renderApp(`/?from=${earlier}-01&to=${lastDay}`)
 
     await screen.findByRole('link', { name: /^Headcount: / }, FIRST_LOAD)
-    expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: 'Previous month' }))
-    await user.click(screen.getByRole('button', { name: 'Previous month' }))
+    const dates = screen.getByRole('group', { name: 'Dates the figures cover' })
+    expect(
+      within(dates).getByRole('button', {
+        name: `From: ${format(startOfMonth(then), 'd MMMM yyyy')}`,
+      }),
+    ).toBeVisible()
+    expect(
+      within(dates).getByRole('button', { name: `To: ${format(endOfMonth(then), 'd MMMM yyyy')}` }),
+    ).toBeVisible()
 
-    await waitFor(() => {
-      expect(router.state.location.search).toMatchObject({ month: earlier })
-    })
+    // The figures the API gives per month: the month of To (a whole month needs no note).
     const hires = hiresIn(earlier)
     expect(hires).toBeGreaterThan(0)
     await waitFor(() => {
       expect(screen.getByRole('link', { name: `New hires: ${String(hires)}` })).toBeVisible()
     })
+    expect(within(tile('New hires')).getByText(format(then, 'MMMM yyyy'))).toBeVisible()
+    expect(screen.queryByText(/are given per month/)).not.toBeInTheDocument()
+
+    // The attendance tiles: the time sheet's totals for the dates, opening the same dates.
+    const counts = attendanceBetween(`${earlier}-01`, lastDay)
+    const present = await screen.findByRole('link', {
+      name: `Present: ${counts.present.toLocaleString('en-US')}`,
+    })
+    expect(present.getAttribute('href')).toContain(`from=${earlier}-01`)
+    expect(present.getAttribute('href')).toContain(`to=${lastDay}`)
+    const leave = screen.getByRole('link', { name: /^On leave: / })
+    expect(leave.getAttribute('href')).toContain('dayStatus=leave')
+    expect(leave.getAttribute('href')).toContain(`to=${lastDay}`)
+    expect(screen.getByRole('link', { name: /^Absenteeism: / }).getAttribute('href')).toContain(
+      'dayStatus=absent',
+    )
+    // Who's in shows To; the Leaves card the dates.
     expect(
-      within(tile('New hires')).getByText(format(subMonths(new Date(), 2), 'MMMM yyyy')),
+      screen.getByRole('region', {
+        name: `Who was in on ${format(endOfMonth(then), 'd MMM yyyy')}`,
+      }),
+    ).toBeVisible()
+    expect(
+      within(screen.getByRole('region', { name: 'Leaves' })).getByText(
+        `${format(startOfMonth(then), 'd MMM')} – ${format(endOfMonth(then), 'd MMM yyyy')}`,
+      ),
     ).toBeVisible()
 
-    // Back to this month: the month leaves the URL.
-    await user.click(screen.getByRole('button', { name: 'Next month' }))
-    await user.click(screen.getByRole('button', { name: 'Next month' }))
+    // Picking To = the 15th: the URL keeps both dates and a note names the monthly figures' month.
+    await user.click(within(dates).getByRole('button', { name: /^To: / }))
+    await user.click(
+      await screen.findByRole('button', {
+        name: new RegExp(format(setDate(then, 15), 'MMMM do, yyyy')),
+      }),
+    )
     await waitFor(() => {
-      expect(router.state.location.search).not.toHaveProperty('month')
+      expect(router.state.location.search).toEqual({ from: `${earlier}-01`, to: `${earlier}-15` })
     })
+    expect(
+      screen.getByText(new RegExp(`they show ${format(then, 'MMMM yyyy')}, the month of To`)),
+    ).toBeVisible()
+  })
+
+  it('opens an older month link as that whole month', async () => {
+    const then = subMonths(new Date(), 1)
+    const lastDay = format(endOfMonth(then), 'yyyy-MM-dd')
+    renderApp(`/?month=${format(then, 'yyyy-MM')}`)
+
+    const present = await screen.findByRole('link', { name: /^Present: / }, FIRST_LOAD)
+    expect(present.getAttribute('href')).toContain(`from=${format(then, 'yyyy-MM')}-01`)
+    expect(present.getAttribute('href')).toContain(`to=${lastDay}`)
   })
 
   it('works at phone width', async () => {
@@ -285,6 +370,6 @@ describe('Dashboard', { timeout: 60_000 }, () => {
     // The table becomes a list of cards, so nothing scrolls sideways.
     expect(await within(whosIn).findByRole('list', { name: 'Who’s in today' })).toBeVisible()
     expect(within(whosIn).queryByRole('table')).not.toBeInTheDocument()
-    expect(screen.getByRole('group', { name: 'Month' })).toBeVisible()
+    expect(screen.getByRole('group', { name: 'Dates the figures cover' })).toBeVisible()
   })
 })

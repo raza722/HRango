@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 
 import { ErrorState } from '@/components/feedback/error-state'
 import { DataTable, type DataTableColumn } from '@/components/layout'
+import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { ApiError } from '@/lib/api-error'
 import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
@@ -62,7 +63,9 @@ export function PlanningPage() {
   const lookups = useManpowerLookups()
   const [filtersOpen, setFiltersOpen] = useState(true)
   const [draft, setDraft] = useState<Filters>(NO_FILTERS)
-  const [applied, setApplied] = useState<Filters>(NO_FILTERS)
+  // The filters apply as they change: the choices at once, the title once typing pauses.
+  const typedTitle = useDebouncedValue(draft.q.trim())
+  const applied: Filters = { ...draft, q: typedTitle }
   const [durationId, setDurationId] = useState('')
   const [approvalsOf, setApprovalsOf] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<Plan | null>(null)
@@ -157,6 +160,7 @@ export function PlanningPage() {
 
   const setField = (field: keyof Filters) => (value: string) => {
     setDraft((current) => ({ ...current, [field]: value }))
+    if (page !== 1) goTo(1)
   }
   const durations = lookups.data?.durations ?? []
 
@@ -205,9 +209,9 @@ export function PlanningPage() {
             aria-label="Plan filters"
             className="grid grid-cols-1 gap-3 px-4 sm:px-6 @md:grid-cols-2 @3xl:grid-cols-[repeat(4,minmax(0,11.875rem))_auto] @3xl:items-end"
             onSubmit={(event) => {
+              // The filters already apply as they change; Search (or Enter) refreshes the list.
               event.preventDefault()
-              setApplied(draft)
-              goTo(1)
+              void list.refetch()
             }}
           >
             <MpField label="Planning Title">
@@ -273,7 +277,6 @@ export function PlanningPage() {
                 type="button"
                 onClick={() => {
                   setDraft(NO_FILTERS)
-                  setApplied(NO_FILTERS)
                   setDurationId('')
                   goTo(1)
                   void list.refetch()

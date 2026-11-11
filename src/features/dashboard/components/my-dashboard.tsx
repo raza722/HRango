@@ -8,7 +8,12 @@ import {
   Inbox,
 } from 'lucide-react'
 
-import { DAY_STATUS_META, DAY_STATUSES, type DayStatus } from '@/features/attendance'
+import {
+  DAY_STATUS_META,
+  DAY_STATUSES,
+  type DayStatus,
+  summaryQueryOptions,
+} from '@/features/attendance'
 
 import {
   dashboardParamsFor,
@@ -17,7 +22,8 @@ import {
   waitingApprovalsQueryOptions,
 } from '../api/dashboard.api'
 import type { DashboardAccess } from '../hooks/use-dashboard-access'
-import { formatClock, formatCount, formatMonthYear } from '../utils/format'
+import type { DashboardPeriod } from '../routing'
+import { formatClock, formatCount, formatDay, formatMonthYear, formatSpan } from '../utils/format'
 import { approvalsLink } from '../utils/links'
 import {
   EventsWidget,
@@ -27,16 +33,16 @@ import {
 } from './activity-widgets'
 import { AttendanceByMonthWidget, AttendanceTodayWidget } from './attendance-widgets'
 import { KpiRow, KpiTile } from './kpi-tiles'
-import type { DashboardPeriod } from './org-dashboard'
 import { type QueryState, Section } from './widget'
 
 const isDayStatus = (value: string | null | undefined): value is DayStatus =>
   typeof value === 'string' && (DAY_STATUSES as readonly string[]).includes(value)
 
 /**
- * The employee's own dashboard (`GET /dashboard/me`): today's state and times, this month's
- * days, their leave applications, notices and events, and the requests waiting for them if they
- * approve any. No company-wide figure appears here.
+ * The employee's own dashboard (`GET /dashboard/me`): the state and times of To (today by
+ * default), their days present / absent / on leave in From → To, their leave applications,
+ * notices and events, and the requests waiting for them if they approve any. No company-wide
+ * figure appears here.
  */
 export function MyDashboardView({
   period,
@@ -45,9 +51,14 @@ export function MyDashboardView({
   period: DashboardPeriod
   access: DashboardAccess
 }) {
-  const params = dashboardParamsFor(period.month === period.currentMonth ? undefined : period.month)
   const dashboard = useQuery({
-    ...dashboardQueryOptions('me', params),
+    ...dashboardQueryOptions('me', dashboardParamsFor(period)),
+    placeholderData: keepPreviousData,
+  })
+  // Days present / absent / on leave in From → To: the time sheet's totals, as My Time Sheet shows.
+  const sheet = useQuery({
+    ...summaryQueryOptions({ scope: 'my', from: period.from, to: period.to }),
+    enabled: access.timeSheet,
     placeholderData: keepPreviousData,
   })
   const waiting = useQuery({ ...waitingApprovalsQueryOptions(), enabled: access.approvals })
@@ -66,17 +77,37 @@ export function MyDashboardView({
   const loading = dashboard.isPending
   const monthNo = Number(period.month.slice(5, 7))
   const year = Number(period.month.slice(0, 4))
-  const mine = data?.attendance.byMonth.find((row) => row.month === monthNo)
+  // The day tile and card show To (today by default).
+  const onToday = period.to === period.today
   const today = data?.attendance.rows[0]
   const status = isDayStatus(today?.status) ? today.status : null
   const pending = data?.leaveApplications.filter((item) => item.status === 'pending').length
   const topWaiting = waiting.data?.byType[0]
-  const lastMonth =
-    period.month.slice(0, 4) < period.currentMonth.slice(0, 4)
-      ? 12
-      : Number(period.currentMonth.slice(5, 7))
-  const monthLabel = formatMonthYear(period.month)
-  const myTimeSheet = access.timeSheet ? { to: '/attendance/time-sheet' as const } : undefined
+  // Without the time sheet, the month of To from the dashboard's by-month figures.
+  const s = sheet.data
+  const byMonth = data?.attendance.byMonth.find((row) => row.month === monthNo)
+  const days = access.timeSheet
+    ? s && {
+        present: s.present + s.halfDay + s.shortDay + s.wfh + s.officialVisit,
+        absent: s.absent,
+        onLeave: s.leave,
+      }
+    : data && {
+        present: byMonth?.present ?? 0,
+        absent: byMonth?.absent ?? 0,
+        onLeave: byMonth?.onLeave ?? 0,
+      }
+  const daysNote = access.timeSheet
+    ? formatSpan(period.from, period.to)
+    : formatMonthYear(period.month)
+  const daysLoading = access.timeSheet ? sheet.isPending : loading
+  const sheetLink = (from: string, to: string, dayStatus?: 'absent') =>
+    access.timeSheet
+      ? {
+          to: '/attendance/time-sheet' as const,
+          search: { from, to, ...(dayStatus ? { dayStatus } : {}) },
+        }
+      : undefined
 
   return (
     <>
@@ -98,7 +129,7 @@ export function MyDashboardView({
         {!dashboard.isError && (
           <>
             <KpiTile
-              label="Today"
+              label={onToday ? 'Today' : formatDay(period.to)}
               value={data ? (status ? DAY_STATUS_META[status].label : 'No shift') : ''}
               note={
                 today?.firstIn
@@ -108,32 +139,32 @@ export function MyDashboardView({
                     : undefined
               }
               icon={CalendarClock}
-              link={myTimeSheet}
+              link={sheetLink(period.to, period.to)}
               loading={loading}
             />
             <KpiTile
               label="Days present"
-              value={data ? formatCount(mine?.present ?? 0) : ''}
-              note={monthLabel}
+              value={days ? formatCount(days.present) : ''}
+              note={daysNote}
               icon={CalendarCheck2}
-              link={myTimeSheet}
-              loading={loading}
+              link={sheetLink(period.from, period.to)}
+              loading={daysLoading}
             />
             <KpiTile
               label="Days absent"
-              value={data ? formatCount(mine?.absent ?? 0) : ''}
-              note={monthLabel}
+              value={days ? formatCount(days.absent) : ''}
+              note={daysNote}
               icon={CalendarX2}
-              link={myTimeSheet}
-              loading={loading}
+              link={sheetLink(period.from, period.to, 'absent')}
+              loading={daysLoading}
             />
             <KpiTile
               label="Days on leave"
-              value={data ? formatCount(mine?.onLeave ?? 0) : ''}
-              note={monthLabel}
+              value={days ? formatCount(days.onLeave) : ''}
+              note={daysNote}
               icon={CalendarOff}
               link={access.myLeaves ? { to: '/leaves/my-leaves' } : undefined}
-              loading={loading}
+              loading={daysLoading}
             />
             <KpiTile
               label="Pending leave requests"
@@ -178,8 +209,8 @@ export function MyDashboardView({
         <div className="grid gap-4 sm:gap-5 @3xl/page:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
           <AttendanceTodayWidget
             query={view((item) => item.attendance)}
-            title="My attendance today"
-            link={myTimeSheet}
+            title={onToday ? 'My attendance today' : `My attendance on ${formatDay(period.to)}`}
+            link={sheetLink(period.to, period.to)}
             personal
           />
           <AttendanceByMonthWidget
@@ -188,7 +219,8 @@ export function MyDashboardView({
             unit="days"
             year={year}
             month={monthNo}
-            lastMonth={lastMonth}
+            // The API counts the months up to To.
+            lastMonth={monthNo}
           />
         </div>
       </Section>

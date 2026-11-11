@@ -6,10 +6,35 @@ import type {
   StatusGroup,
   TaskColumnKey,
   ViewKind,
+  Visibility,
 } from './types/pm.types'
 
 export const WORKSPACE_NAME_MAX = 50
 export const WORKSPACE_DESCRIPTION_MAX = 300
+
+/**
+ * Who can see a workspace (the API's `privacy`), as the wizard and Workspace Settings offer it.
+ * The titles and texts say plainly how the three differ; the backend today treats "workspace"
+ * and "public" alike (any employee can read, only members change things): see
+ * docs/backend-handoff/project-management-2026-11-11.md, B1.
+ */
+export const VISIBILITY_OPTIONS: readonly { value: Visibility; title: string; text: string }[] = [
+  {
+    value: 'private',
+    title: 'Private',
+    text: 'Only the owner and the members you invite can see this workspace.',
+  },
+  {
+    value: 'public',
+    title: 'Everyone can view',
+    text: 'Everyone in the company can open this workspace and read its tasks. Only its members can make changes.',
+  },
+  {
+    value: 'workspace',
+    title: 'Everyone can work in it',
+    text: 'Everyone in the company can open this workspace and work on its tasks, like a member.',
+  },
+]
 
 export const VIEW_LABELS: Record<ViewKind, string> = {
   list: 'List',

@@ -40,6 +40,7 @@ import { Route as AppAttendanceIndexRouteImport } from './routes/_app/attendance
 import { Route as AppAttendanceSectionRouteImport } from './routes/_app/attendance/$section'
 import { Route as AppAttendanceInsightsRouteImport } from './routes/_app/attendance/insights'
 import { Route as AppAttendanceLogsRouteImport } from './routes/_app/attendance/logs'
+import { Route as AppAttendanceMissingPunchRouteImport } from './routes/_app/attendance/missing-punch'
 import { Route as AppAttendanceMyWarningsRouteImport } from './routes/_app/attendance/my-warnings'
 import { Route as AppAttendanceOfficialVisitsRouteImport } from './routes/_app/attendance/official-visits'
 import { Route as AppAttendanceOvertimeRouteImport } from './routes/_app/attendance/overtime'
@@ -346,6 +347,12 @@ const AppAttendanceLogsRoute = AppAttendanceLogsRouteImport.update({
   path: '/attendance/logs',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAttendanceMissingPunchRoute =
+  AppAttendanceMissingPunchRouteImport.update({
+    id: '/attendance/missing-punch',
+    path: '/attendance/missing-punch',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppAttendanceMyWarningsRoute = AppAttendanceMyWarningsRouteImport.update({
   id: '/attendance/my-warnings',
   path: '/attendance/my-warnings',
@@ -1215,6 +1222,7 @@ export interface FileRoutesByFullPath {
   '/attendance/$section': typeof AppAttendanceSectionRoute
   '/attendance/insights': typeof AppAttendanceInsightsRoute
   '/attendance/logs': typeof AppAttendanceLogsRoute
+  '/attendance/missing-punch': typeof AppAttendanceMissingPunchRoute
   '/attendance/my-warnings': typeof AppAttendanceMyWarningsRoute
   '/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
   '/attendance/overtime': typeof AppAttendanceOvertimeRoute
@@ -1385,6 +1393,7 @@ export interface FileRoutesByTo {
   '/attendance/$section': typeof AppAttendanceSectionRoute
   '/attendance/insights': typeof AppAttendanceInsightsRoute
   '/attendance/logs': typeof AppAttendanceLogsRoute
+  '/attendance/missing-punch': typeof AppAttendanceMissingPunchRoute
   '/attendance/my-warnings': typeof AppAttendanceMyWarningsRoute
   '/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
   '/attendance/overtime': typeof AppAttendanceOvertimeRoute
@@ -1564,6 +1573,7 @@ export interface FileRoutesById {
   '/_app/attendance/$section': typeof AppAttendanceSectionRoute
   '/_app/attendance/insights': typeof AppAttendanceInsightsRoute
   '/_app/attendance/logs': typeof AppAttendanceLogsRoute
+  '/_app/attendance/missing-punch': typeof AppAttendanceMissingPunchRoute
   '/_app/attendance/my-warnings': typeof AppAttendanceMyWarningsRoute
   '/_app/attendance/official-visits': typeof AppAttendanceOfficialVisitsRoute
   '/_app/attendance/overtime': typeof AppAttendanceOvertimeRoute
@@ -1749,6 +1759,7 @@ export interface FileRouteTypes {
     | '/attendance/$section'
     | '/attendance/insights'
     | '/attendance/logs'
+    | '/attendance/missing-punch'
     | '/attendance/my-warnings'
     | '/attendance/official-visits'
     | '/attendance/overtime'
@@ -1919,6 +1930,7 @@ export interface FileRouteTypes {
     | '/attendance/$section'
     | '/attendance/insights'
     | '/attendance/logs'
+    | '/attendance/missing-punch'
     | '/attendance/my-warnings'
     | '/attendance/official-visits'
     | '/attendance/overtime'
@@ -2097,6 +2109,7 @@ export interface FileRouteTypes {
     | '/_app/attendance/$section'
     | '/_app/attendance/insights'
     | '/_app/attendance/logs'
+    | '/_app/attendance/missing-punch'
     | '/_app/attendance/my-warnings'
     | '/_app/attendance/official-visits'
     | '/_app/attendance/overtime'
@@ -2476,6 +2489,13 @@ declare module '@tanstack/react-router' {
       path: '/attendance/logs'
       fullPath: '/attendance/logs'
       preLoaderRoute: typeof AppAttendanceLogsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/attendance/missing-punch': {
+      id: '/_app/attendance/missing-punch'
+      path: '/attendance/missing-punch'
+      fullPath: '/attendance/missing-punch'
+      preLoaderRoute: typeof AppAttendanceMissingPunchRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/attendance/my-warnings': {
@@ -4031,6 +4051,7 @@ interface AppRouteChildren {
   AppAttendanceSectionRoute: typeof AppAttendanceSectionRoute
   AppAttendanceInsightsRoute: typeof AppAttendanceInsightsRoute
   AppAttendanceLogsRoute: typeof AppAttendanceLogsRoute
+  AppAttendanceMissingPunchRoute: typeof AppAttendanceMissingPunchRoute
   AppAttendanceMyWarningsRoute: typeof AppAttendanceMyWarningsRoute
   AppAttendanceOfficialVisitsRoute: typeof AppAttendanceOfficialVisitsRoute
   AppAttendanceOvertimeRoute: typeof AppAttendanceOvertimeRoute
@@ -4074,6 +4095,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAttendanceSectionRoute: AppAttendanceSectionRoute,
   AppAttendanceInsightsRoute: AppAttendanceInsightsRoute,
   AppAttendanceLogsRoute: AppAttendanceLogsRoute,
+  AppAttendanceMissingPunchRoute: AppAttendanceMissingPunchRoute,
   AppAttendanceMyWarningsRoute: AppAttendanceMyWarningsRoute,
   AppAttendanceOfficialVisitsRoute: AppAttendanceOfficialVisitsRoute,
   AppAttendanceOvertimeRoute: AppAttendanceOvertimeRoute,

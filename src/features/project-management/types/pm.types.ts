@@ -17,6 +17,8 @@ export interface PmPerson {
 export interface PmDepartment {
   id: string
   name: string
+  /** The department a sub-department belongs to; null for a department. */
+  parentId: string | null
 }
 
 export interface PmLookups {
@@ -44,6 +46,24 @@ export const VIEW_KINDS = [
   'mind-map',
 ] as const
 export type ViewKind = (typeof VIEW_KINDS)[number]
+
+/**
+ * The views that have a screen, in the order the wizard and "+ View" list them. Gantt, Workload
+ * and Mind Map are left out by the BRD: a template or workspace that names them still loads, but
+ * they are never shown or offered (a workspace whose default is one of them opens on List).
+ */
+export const BUILT_VIEWS = [
+  'list',
+  'board',
+  'calendar',
+  'activity',
+  'team',
+  'timeline',
+  'table',
+] as const satisfies readonly ViewKind[]
+
+export const isBuiltView = (kind: ViewKind): boolean =>
+  (BUILT_VIEWS as readonly ViewKind[]).includes(kind)
 
 export const STATUS_GROUPS = ['not-started', 'active', 'done', 'closed'] as const
 export type StatusGroup = (typeof STATUS_GROUPS)[number]
@@ -201,9 +221,45 @@ export interface WorkspaceView {
   isDefault: boolean
   isRequired: boolean
   isPrivate: boolean
+  /** Kept as they are when the view is saved (`PUT /views/{id}` replaces every field). */
+  isPinned: boolean
+  isProtected: boolean
   ownerId: string | null
   config: Record<string, unknown> | null
   rowVersion: string
+}
+
+/** What `POST /projects/recents` remembers the caller opened (the Recents widgets). */
+export type RecentEntity = 'workspace' | 'folder' | 'task_list' | 'task'
+
+/** Workspace Settings → Views: the shared views wanted and the one the workspace opens on. */
+export interface ViewsDraft {
+  views: ViewKind[]
+  defaultView: ViewKind
+}
+
+/** Workspace Settings → Details (`PUT /workspaces/{id}`). */
+export interface WorkspaceDetailsInput {
+  name: string
+  description: string
+  visibility: Visibility
+  ownerId: string
+  departmentId: string
+}
+
+/** Workspace Settings → Task Statuses (`PUT /workspaces/{id}/statuses`). */
+export interface StatusesInput {
+  statusMode: StatusMode
+  statusTemplate: StatusTemplateId | null
+  statuses: TaskStatus[]
+}
+
+/** What Workspace Settings saves; only the parts that changed are sent. */
+export interface WorkspaceSettingsInput {
+  details?: WorkspaceDetailsInput
+  views?: ViewsDraft
+  statuses?: StatusesInput
+  organizer?: OrganizerFeature[]
 }
 
 /** A workspace as the Workspaces panel lists it (`GET /projects/workspaces`). */
@@ -229,6 +285,19 @@ export interface WorkspaceSummary {
 
 export type WorkspaceItemKind = 'folder' | 'list'
 
+/**
+ * A list's own settings as the API keeps them. `PUT /lists/{id}` replaces every one, so a rename
+ * or move sends them back unchanged.
+ */
+export interface ListSettings {
+  privacy: string | null
+  color: string | null
+  description: string | null
+  startAt: string | null
+  endAt: string | null
+  priority: string | null
+}
+
 /** A folder or list in a workspace ("Workspace Navigation"). */
 export interface WorkspaceItem {
   id: string
@@ -238,7 +307,17 @@ export interface WorkspaceItem {
   kind: WorkspaceItemKind
   name: string
   order: number
+  /** A list's settings (null for a folder). */
+  list: ListSettings | null
+  /** How many tasks a list holds (0 for a folder); a list with tasks cannot be deleted. */
+  taskCount: number
   rowVersion: string
+}
+
+/** Rename an item, or move a list into a folder (`parentId`) or to the top level (null). */
+export interface WorkspaceItemPatch {
+  name?: string
+  parentId?: string | null
 }
 
 /** One workspace with everything its page needs (`GET /projects/workspaces/{id}` + column permissions). */

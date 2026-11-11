@@ -1,26 +1,20 @@
-import { Loader2 } from 'lucide-react'
-
-import { cn } from '@/lib/utils'
+import { BrandLoader } from './brand-loader'
 
 interface SpinnerProps {
   className?: string
   label?: string
 }
 
+/** A card, dialog or section loading: the Pegasus loader with its words under it. */
 export function Spinner({ className, label = 'Loading' }: SpinnerProps) {
-  return (
-    <span role="status" className={cn('inline-flex items-center gap-2', className)}>
-      <Loader2 className="size-5 animate-spin text-primary" aria-hidden="true" />
-      <span className="sr-only">{label}</span>
-    </span>
-  )
+  return <BrandLoader size="sm" label={label} showLabel className={className} />
 }
 
-/** Centred spinner for route-level pending states. */
-export function PageSpinner({ label }: { label?: string }) {
+/** Centred loader for route-level pending states. */
+export function PageSpinner({ label = 'Loading' }: { label?: string }) {
   return (
     <div className="flex min-h-[40vh] items-center justify-center">
-      <Spinner label={label} className="[&_svg]:size-8" />
+      <BrandLoader size="lg" label={label} showLabel />
     </div>
   )
 }

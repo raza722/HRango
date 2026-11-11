@@ -218,9 +218,12 @@ export function AddStatusColorChip({ className, ...props }: ButtonProps) {
         'inline-flex h-[1.875rem] shrink-0 items-center gap-2.5 rounded-lg bg-[#844EFF]/10 px-2.5 text-[0.875rem] leading-[1.3125rem] font-medium tracking-[0.0168rem] text-[#666666] transition-colors hover:bg-[#844EFF]/15 focus-visible:ring-2 focus-visible:ring-[#A181FF] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60',
         className,
       )}
+      // While disabled (default statuses), the tooltip says how to unlock it.
+      title={props.disabled ? 'Choose "Use custom statuses" to add statuses' : undefined}
       {...props}
     >
-      Add Status Color
+      {/* It adds a status (its colour is picked first), so it says so. */}
+      Add Status
       <PlusIcon className="size-[0.9rem] text-[#7127EA]" />
     </button>
   )

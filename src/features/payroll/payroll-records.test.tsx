@@ -190,6 +190,27 @@ describe('Salary Revision', () => {
     expect(saved).toMatchObject({ type: 'percentage', percentage: 10, salary: expected })
     expect(salaryOn('em_hina', format(day, 'yyyy-MM-dd'))).toBe(expected)
   })
+
+  it('searches by name as you type, without a Search button', async () => {
+    const { user, router } = renderApp('/payroll/salary-revision')
+    const table = await screen.findByRole('table', { name: 'Salary revisions' })
+    expect(await within(table).findByText('Rehan Ahmad')).toBeVisible()
+    expect(within(table).getByText('Maryam Javed')).toBeVisible()
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search salary revisions' }), 'maryam')
+    await waitFor(() => {
+      expect(router.state.location.search).toMatchObject({ q: 'maryam' })
+    })
+    await waitFor(() => {
+      expect(within(table).queryByText('Rehan Ahmad')).not.toBeInTheDocument()
+    })
+    expect(within(table).getByText('Maryam Javed')).toBeVisible()
+
+    // Escape empties the box and brings everyone back.
+    await user.keyboard('{Escape}')
+    expect(await within(table).findByText('Rehan Ahmad')).toBeVisible()
+    expect(router.state.location.search).not.toHaveProperty('q')
+  })
 })
 
 describe('Final Settlement', () => {

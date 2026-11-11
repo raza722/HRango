@@ -11,6 +11,7 @@ import { useCan } from '@/lib/permissions'
 
 import { isInactiveStatus, PROFILE_TAB_LABELS, TM_CODES } from '../../constants'
 import { useEmployee, useSetEmployeeActive } from '../../hooks/use-employees'
+import { savedEmployeeListView } from '../../routing'
 import { type Employee, PROFILE_TABS, type ProfileTab } from '../../types/employees.types'
 import { formatDay } from '../../utils/format'
 import { cardTitleClass, profileTabClass, sectionLinkClass } from '../../utils/styles'
@@ -129,9 +130,11 @@ export function EmployeeProfilePage() {
     setDialog(null)
   }
 
+  // Back to the list as it was left (search, filters, page), like the browser's Back button.
   const back = canList ? (
     <Link
       to="/talent-management/employees"
+      search={savedEmployeeListView()}
       className={`${sectionLinkClass} inline-flex w-fit items-center gap-1.5 text-sm`}
     >
       <ArrowLeft aria-hidden="true" className="size-4" />

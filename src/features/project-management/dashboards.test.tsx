@@ -67,7 +67,7 @@ describe('Home Dashboard', { timeout: 60_000 }, () => {
     )
     expect(
       within(myWork).getByRole('link', { name: /^Accessibility audit of the old portal/ }),
-    ).toHaveAttribute('href', '/project-management/workspaces/ws_qa#tk_audit')
+    ).toHaveAttribute('href', '/project-management/workspaces/ws_qa?task=tk_audit')
     expect(within(myWork).getByText('3 days overdue')).toBeVisible()
     expect(within(myWork).getByRole('link', { name: /^Prepare interview questions/ })).toBeVisible()
 
@@ -131,10 +131,9 @@ describe('Home Dashboard', { timeout: 60_000 }, () => {
     expect(within(kpi).getByText('50%')).toBeVisible()
   })
 
-  it('keeps a personal list (sample data until the backend has one)', async () => {
+  it('keeps a personal list', async () => {
     const { user } = renderApp(HOME)
     const panel = await region(/^Personal List/)
-    expect(await within(panel).findByText('Sample data')).toBeVisible()
     expect(await within(panel).findByText('Prepare the sprint review slides')).toBeVisible()
 
     await user.click(within(panel).getByRole('button', { name: 'Add' }))
@@ -155,13 +154,12 @@ describe('Home Dashboard', { timeout: 60_000 }, () => {
     })
   })
 
-  it('marks Recents as sample data, and says when the backend has no such endpoint', async () => {
+  it('lists what was opened lately in Recents', async () => {
     renderApp(HOME)
     const recents = await region(/^Recents/)
-    expect(await within(recents).findByText('Sample data')).toBeVisible()
     expect(
       await within(recents).findByRole('link', { name: /^User Qualitative Research/ }),
-    ).toHaveAttribute('href', '/project-management/workspaces/ws_uxui#tk_quali')
+    ).toHaveAttribute('href', '/project-management/workspaces/ws_uxui?task=tk_quali')
     // A project (folder) opens its Project Dashboard.
     expect(
       within(recents).getByRole('link', { name: /^User Research & Planning/ }),
@@ -287,7 +285,6 @@ describe('Workspace Dashboard', { timeout: 60_000 }, () => {
     ).toBeVisible()
 
     const docs = await region(/^Docs/)
-    expect(await within(docs).findByText('Sample data')).toBeVisible()
     expect(await within(docs).findByText('Interview guide')).toBeVisible()
   })
 

@@ -31,7 +31,6 @@ export function CustomizeStep({
 }: CustomizeStepProps) {
   const { name } = useWorkflowTemplate(template)
   const headingRef = useFocusOnMount<HTMLHeadingElement>(focusHeading)
-  const statuses = orderedStatuses(setup.statuses)
 
   return (
     <div className="pb-4">
@@ -52,56 +51,75 @@ export function CustomizeStep({
 
       <hr className="mt-[2.5rem] mb-[1.5625rem] border-0 border-t-[2.5px] border-black/8" />
 
-      <div className="flex flex-col gap-[1.5625rem]">
-        <SummaryRow
-          page="views"
-          title="Default Views"
-          icon={<DefaultViewsIcon className="size-5" />}
-          help={SUMMARY_HELP.views}
-          onOpen={onOpenPage}
-          focus={returnTo === 'views'}
+      <SetupSummary setup={setup} onOpenPage={onOpenPage} returnTo={returnTo} />
+    </div>
+  )
+}
+
+/**
+ * The Default Views, Task Statuses and Organizer rows, each opening its page. Step 3 of the
+ * wizard shows them; so does Workspace Settings, for a workspace that already exists.
+ */
+export function SetupSummary({
+  setup,
+  onOpenPage,
+  returnTo,
+}: {
+  setup: WorkspaceSetup
+  onOpenPage: (page: DetailPage) => void
+  returnTo: DetailPage | null
+}) {
+  const statuses = orderedStatuses(setup.statuses)
+  return (
+    <div className="flex flex-col gap-[1.5625rem]">
+      <SummaryRow
+        page="views"
+        title="Default Views"
+        icon={<DefaultViewsIcon className="size-5" />}
+        help={SUMMARY_HELP.views}
+        onOpen={onOpenPage}
+        focus={returnTo === 'views'}
+      >
+        <p className={cn(wz.cardText, 'truncate')}>{viewsSummary(setup.views)}</p>
+      </SummaryRow>
+      <SummaryRow
+        page="statuses"
+        title="Task Statuses"
+        icon={<StatusRing color="#2E64E2" />}
+        help={SUMMARY_HELP.statuses}
+        onOpen={onOpenPage}
+        focus={returnTo === 'statuses'}
+      >
+        <p className="sr-only">{statuses.map((status) => status.name).join(', ')}</p>
+        <div
+          aria-hidden="true"
+          className="flex min-w-0 items-center gap-4 overflow-hidden whitespace-nowrap"
         >
-          <p className={cn(wz.cardText, 'truncate')}>{viewsSummary(setup.views)}</p>
-        </SummaryRow>
-        <SummaryRow
-          page="statuses"
-          title="Task Statuses"
-          icon={<StatusRing color="#2E64E2" />}
-          help={SUMMARY_HELP.statuses}
-          onOpen={onOpenPage}
-          focus={returnTo === 'statuses'}
-        >
-          <p className="sr-only">{statuses.map((status) => status.name).join(', ')}</p>
-          <div
-            aria-hidden="true"
-            className="flex min-w-0 items-center gap-4 overflow-hidden whitespace-nowrap"
-          >
-            {statuses.map((status, index) => (
-              <span key={status.id} className="flex shrink-0 items-center gap-4">
-                {index > 0 && (
-                  <StatusArrowIcon className="h-[0.9325rem] w-[3.25rem] text-[#979797]" />
-                )}
-                <span className="flex items-center gap-2.5">
-                  <StatusRing color={status.color} />
-                  <span className={wz.cardText}>{status.name}</span>
-                </span>
+          {statuses.map((status, index) => (
+            <span key={status.id} className="flex shrink-0 items-center gap-4">
+              {index > 0 && (
+                <StatusArrowIcon className="h-[0.9325rem] w-[3.25rem] text-[#979797]" />
+              )}
+              <span className="flex items-center gap-2.5">
+                <StatusRing color={status.color} />
+                <span className={wz.cardText}>{status.name}</span>
               </span>
-            ))}
-          </div>
-        </SummaryRow>
-        <SummaryRow
-          page="organizer"
-          title="Organizer"
-          icon={<OrganizerIcon className="size-5" />}
-          help={SUMMARY_HELP.organizer}
-          onOpen={onOpenPage}
-          focus={returnTo === 'organizer'}
-        >
-          <p className={cn(wz.cardText, 'truncate')}>
-            {organizerSummary(setup.organizer) || 'No organizer features'}
-          </p>
-        </SummaryRow>
-      </div>
+            </span>
+          ))}
+        </div>
+      </SummaryRow>
+      <SummaryRow
+        page="organizer"
+        title="Organizer"
+        icon={<OrganizerIcon className="size-5" />}
+        help={SUMMARY_HELP.organizer}
+        onOpen={onOpenPage}
+        focus={returnTo === 'organizer'}
+      >
+        <p className={cn(wz.cardText, 'truncate')}>
+          {organizerSummary(setup.organizer) || 'No organizer features'}
+        </p>
+      </SummaryRow>
     </div>
   )
 }

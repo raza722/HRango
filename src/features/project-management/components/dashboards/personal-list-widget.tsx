@@ -12,14 +12,7 @@ import {
   useSetPersonalItemDone,
 } from '../../hooks/use-dashboards'
 import { toDay } from '../task-fields/field-utils'
-import {
-  NotAvailable,
-  PreviewBadge,
-  Widget,
-  WidgetEmpty,
-  WidgetError,
-  WidgetSkeleton,
-} from './dashboard-parts'
+import { NotAvailable, Widget, WidgetEmpty, WidgetError, WidgetSkeleton } from './dashboard-parts'
 import { dash } from './dashboard-styles'
 import { dueLabel } from './dashboard-utils'
 
@@ -197,7 +190,6 @@ export function PersonalListWidget({ className }: { className?: string }) {
       icon={<ListTodo />}
       description="Your own to-dos, visible only to you."
       count={open}
-      badge={list.data?.available ? <PreviewBadge dependency="T11" /> : undefined}
       className={className}
     >
       {body}

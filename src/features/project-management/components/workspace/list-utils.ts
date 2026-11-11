@@ -445,3 +445,20 @@ export function reminderQuickPicks(now: Date): QuickPick[] {
     { label: 'Later', hint: format(later, 'h:mm a'), at: later },
   ]
 }
+
+/**
+ * Columns whose cell is only a popup to edit the value: read-only, they become inert. Comments
+ * (Latest Comment), the files list and time entries still open to read.
+ */
+export const READ_ONLY_INERT: ReadonlySet<string> = new Set([
+  'assignees',
+  'startDate',
+  'dueDate',
+  'priority',
+  'tags',
+  'labels',
+  'status',
+  'timeEstimate',
+  'storyPoints',
+  'dependencies',
+])

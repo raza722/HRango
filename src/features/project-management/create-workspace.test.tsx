@@ -16,20 +16,28 @@ async function openWizard() {
 
 async function chooseOwner(user: UserEvent, name: RegExp) {
   await user.click(within(wizard()).getByRole('button', { name: /^Workspace Owner/ }))
-  const picker = await screen.findByRole('dialog', { name: 'Add Workspace Owner' })
+  const picker = await screen.findByRole('dialog', { name: 'Choose Workspace Owner' })
   await user.click(within(picker).getByRole('radio', { name }))
-  await user.click(within(picker).getByRole('button', { name: 'Add Member' }))
+  await user.click(within(picker).getByRole('button', { name: 'Select Owner' }))
   await waitFor(() => {
-    expect(screen.queryByRole('dialog', { name: 'Add Workspace Owner' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Choose Workspace Owner' })).not.toBeInTheDocument()
   })
 }
 
-async function chooseVisibility(
-  user: UserEvent,
-  option: 'Make Private' | 'Public' | 'Only Workspace',
-) {
+type VisibilityChoice = 'private' | 'public' | 'workspace'
+
+/** The options' titles, by the API's privacy value. */
+const VISIBILITY_TITLE: Record<VisibilityChoice, string> = {
+  private: 'Private',
+  public: 'Everyone can view',
+  workspace: 'Everyone can work in it',
+}
+
+async function chooseVisibility(user: UserEvent, option: VisibilityChoice) {
   await user.click(within(wizard()).getByRole('button', { name: /^Share Visibility/ }))
-  await user.click(await screen.findByRole('radio', { name: new RegExp(`^${option}`) }))
+  await user.click(
+    await screen.findByRole('radio', { name: new RegExp(`^${VISIBILITY_TITLE[option]}`) }),
+  )
 }
 
 /** Step 1 with a public workspace, then step 2 with Software and a workflow; ends on step 3. */
@@ -38,8 +46,8 @@ async function toCustomize(
   {
     name = 'Design Ops Hub',
     template = /^Work Starter/,
-    visibility = 'Public',
-  }: { name?: string; template?: RegExp; visibility?: 'Public' | 'Only Workspace' } = {},
+    visibility = 'public',
+  }: { name?: string; template?: RegExp; visibility?: 'public' | 'workspace' } = {},
 ) {
   await user.type(within(wizard()).getByRole('textbox', { name: 'Workspace Name' }), name)
   await chooseOwner(user, /^Bilal Ahmed/)
@@ -95,20 +103,20 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
     expect(continueButton).toBeDisabled()
 
     // Make Private needs members before Continue.
-    await chooseVisibility(user, 'Make Private')
+    await chooseVisibility(user, 'private')
     expect(screen.getByText('Share only with members')).toBeVisible()
     expect(continueButton).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Add members' }))
     const members = await screen.findByRole('dialog', { name: 'Add Members' })
     await user.click(within(members).getByRole('checkbox', { name: /^Maryam Javed/ }))
     await user.click(within(members).getByRole('checkbox', { name: /^Haroon Jalani/ }))
-    await user.click(within(members).getByRole('button', { name: 'Add Member' }))
+    await user.click(within(members).getByRole('button', { name: 'Add Members' }))
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Add Members' })).not.toBeInTheDocument()
     })
     await user.keyboard('{Escape}')
     expect(
-      within(dialog).getByRole('button', { name: /^Share Visibility Make Private, 2 members/ }),
+      within(dialog).getByRole('button', { name: /^Share Visibility Private, 2 members/ }),
     ).toBeVisible()
     expect(continueButton).toBeEnabled()
     await user.click(continueButton)
@@ -118,6 +126,10 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
       await within(dialog).findByRole('heading', { name: /^Select Your Department/ }),
     ).toHaveFocus()
     expect(within(progress).getByText(/Add Workspace Details/)).toHaveTextContent('(completed)')
+    // It starts on the owner's department (Bilal Ahmed works in Software).
+    expect(
+      within(dialog).getByRole('button', { name: /^Select Your Department/ }),
+    ).toHaveTextContent('Software')
     const step2Continue = within(dialog).getByRole('button', { name: 'Continue' })
     expect(step2Continue).toBeDisabled()
     await user.click(within(dialog).getByRole('button', { name: /^Select Your Department/ }))
@@ -190,21 +202,23 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
     const { user, dialog } = await openWizard()
 
     await user.click(within(dialog).getByRole('button', { name: /^Share Visibility/ }))
-    const option = await screen.findByRole('radio', { name: /^Only Workspace/ })
+    const option = await screen.findByRole('radio', { name: /^Everyone can work in it/ })
     expect(option).toHaveAccessibleName(
-      /All members of the HRango workspace can see and edit this workspace/,
+      /Everyone in the company can open this workspace and work on its tasks/,
     )
     await user.click(option)
     // It closes the list, needs no member list and shows as the field's value.
     await waitFor(() => {
-      expect(screen.queryByRole('radio', { name: /^Only Workspace/ })).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('radio', { name: /^Everyone can work in it/ }),
+      ).not.toBeInTheDocument()
     })
     expect(within(dialog).getByRole('button', { name: /^Share Visibility/ })).toHaveTextContent(
-      'Only Workspace',
+      'Everyone can work in it',
     )
     expect(screen.queryByText('Share only with members')).not.toBeInTheDocument()
 
-    await toCustomize(user, { name: 'Company Handbook', visibility: 'Only Workspace' })
+    await toCustomize(user, { name: 'Company Handbook', visibility: 'workspace' })
     await user.click(within(dialog).getByRole('button', { name: 'Create Workspace' }))
     await waitFor(() => {
       expect(workspaces.all().find((entry) => entry.name === 'Company Handbook')).toMatchObject({
@@ -248,10 +262,18 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
   it('picks and removes the owner and members, and Escape closes popups first', async () => {
     const { user, dialog } = await openWizard()
 
+    // You are the owner to start with.
+    expect(
+      await within(dialog).findByRole('button', { name: /^Workspace Owner Shelley Kannes/ }),
+    ).toBeVisible()
     await user.click(within(dialog).getByRole('button', { name: /^Workspace Owner/ }))
-    const picker = await screen.findByRole('dialog', { name: 'Add Workspace Owner' })
+    const picker = await screen.findByRole('dialog', { name: 'Choose Workspace Owner' })
     expect(within(picker).getByText('Showing 34 Employees')).toBeVisible()
-    expect(within(picker).getByRole('button', { name: 'Add Member' })).toBeDisabled()
+    expect(within(picker).getByRole('radio', { name: /^Shelley Kannes/ })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    expect(within(picker).getByRole('button', { name: 'Select Owner' })).toBeEnabled()
     await user.type(within(picker).getByRole('searchbox', { name: 'Search employee' }), 'marketing')
     expect(within(picker).getByText('Showing 5 Employees')).toBeVisible()
     await user.click(within(picker).getByRole('radio', { name: /^Jack Roy/ }))
@@ -264,11 +286,14 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
     // Escape closes the popup, not the wizard.
     await user.keyboard('{Escape}')
     await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: 'Add Workspace Owner' })).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('dialog', { name: 'Choose Workspace Owner' }),
+      ).not.toBeInTheDocument()
     })
     expect(wizard()).toBeVisible()
+    // Escape keeps the owner as it was.
     expect(within(dialog).getByRole('button', { name: /^Workspace Owner/ })).toHaveTextContent(
-      'Add workspace owner',
+      'Shelley Kannes',
     )
 
     await chooseOwner(user, /^Areeba Hameed/)
@@ -281,7 +306,7 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
     )
 
     // Four members: three avatars and "+1 Members", whose list can remove one.
-    await chooseVisibility(user, 'Make Private')
+    await chooseVisibility(user, 'private')
     await user.click(screen.getByRole('button', { name: 'Add members' }))
     const members = await screen.findByRole('dialog', { name: 'Add Members' })
     for (const person of [/^Maryam Javed/, /^Haroon Jalani/, /^Rehan Ahmad/, /^Talha Aziz/]) {
@@ -289,7 +314,7 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
     }
     await user.click(within(members).getByRole('checkbox', { name: /^Talha Aziz/ }))
     await user.click(within(members).getByRole('checkbox', { name: /^Asad Mehmood/ }))
-    await user.click(within(members).getByRole('button', { name: 'Add Member' }))
+    await user.click(within(members).getByRole('button', { name: 'Add Members' }))
     const overflow = await screen.findByRole('button', { name: 'Show all 4 members' })
     expect(overflow).toHaveTextContent('+1 Members')
     await user.click(overflow)
@@ -305,10 +330,10 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Members' })).not.toBeInTheDocument()
     })
-    expect(screen.getByRole('radio', { name: /^Make Private/ })).toBeVisible()
+    expect(screen.getByRole('radio', { name: /^Private/ })).toBeVisible()
     await user.keyboard('{Escape}')
     await waitFor(() => {
-      expect(screen.queryByRole('radio', { name: /^Make Private/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('radio', { name: /^Private/ })).not.toBeInTheDocument()
     })
     expect(wizard()).toBeVisible()
     await user.keyboard('{Escape}')
@@ -381,9 +406,7 @@ describe('Create Workspace wizard', { timeout: 60_000 }, () => {
     expect(
       within(dialog).queryByRole('button', { name: 'Add status to Active' }),
     ).not.toBeInTheDocument()
-    expect(
-      within(dialog).getByRole('button', { name: 'Add Status Color to Active' }),
-    ).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Add a status to Active' })).toBeDisabled()
     expect(within(dialog).queryByRole('heading', { name: 'Done' })).not.toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: /^Status Templates/ })).toHaveTextContent(
       'Select a status template',

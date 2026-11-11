@@ -4,29 +4,14 @@ import { EmployeeAvatar } from '@/components/layout'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 
+import { VISIBILITY_OPTIONS } from '../../constants'
 import type { PmPerson, Visibility } from '../../types/pm.types'
 import { EmployeePickerDialog } from './employee-picker-dialog'
 import { FormError, IconTile, RadioMark } from './wizard-controls'
 import { AddMemberIcon, CloseIcon, DropdownChevronIcon, VisibilityIcon } from './wizard-icons'
 import { wz } from './wizard-styles'
 
-const OPTIONS: { value: Visibility; title: string; text: string }[] = [
-  {
-    value: 'private',
-    title: 'Make Private',
-    text: 'Only you and invited members can see this workspace. Workspace admins can delete the workspace or remove members.',
-  },
-  {
-    value: 'public',
-    title: 'Public',
-    text: 'Everyone in your organisation who uses hRango can see this workspace; only its members can edit it.',
-  },
-  {
-    value: 'workspace',
-    title: 'Only Workspace',
-    text: 'All members of the HRango workspace can see and edit this workspace',
-  },
-]
+const OPTIONS = VISIBILITY_OPTIONS
 
 /** Avatars shown before the overflow count. */
 const STACK_SIZE = 3

@@ -1,4 +1,4 @@
-import { type SyntheticEvent, useState } from 'react'
+import type { SyntheticEvent } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
 import { Search } from 'lucide-react'
 
@@ -6,6 +6,7 @@ import { type DataTableColumn, PageContainer, PaginatedTableCard } from '@/compo
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useSearchAsYouType } from '@/hooks/use-search-as-you-type'
 import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
@@ -62,7 +63,6 @@ export function MyFormsPage() {
   const navigate = routeApi.useNavigate()
   const canView = useCan(CF_CODES.myFormsView)
   const canSubmit = useCan(CF_CODES.myFormsSubmit)
-  const [text, setText] = useState(search.q ?? '')
   const params = { q: search.q, page: search.page, pageSize: search.pageSize }
   // Always read: it also tells whether the backend has the endpoints at all.
   const assigned = useAssignedForms(
@@ -73,6 +73,13 @@ export function MyFormsPage() {
   const update = (patch: Partial<MyFormsSearch>) => {
     void navigate({ search: (current) => ({ ...current, ...patch }) })
   }
+  // Searches as you type (a pause after the last key); Search or Enter searches at once.
+  const textSearch = useSearchAsYouType({
+    value: search.q,
+    onSearch: (q) => {
+      update({ q, page: 1 })
+    },
+  })
 
   if (!canView) {
     return (
@@ -109,7 +116,6 @@ export function MyFormsPage() {
             update({ fill: undefined })
           }}
           onSubmitted={() => {
-            setText('')
             update({ fill: undefined, tab: 'submissions', q: undefined, page: 1 })
           }}
           onViewResponse={(id) => {
@@ -214,17 +220,14 @@ export function MyFormsPage() {
 
   const onSearch = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault()
-    update({ q: text.trim() || undefined, page: 1 })
+    textSearch.flush()
   }
   const toolbar = (
     <form role="search" onSubmit={onSearch} className="flex min-w-0 flex-1 gap-2 sm:max-w-md">
       <Input
         aria-label="Search my forms"
         placeholder="Search forms…"
-        value={text}
-        onChange={(event) => {
-          setText(event.target.value)
-        }}
+        {...textSearch.inputProps}
         className="h-9 min-w-0 flex-1"
       />
       <Button
@@ -255,7 +258,6 @@ export function MyFormsPage() {
         onValueChange={(next) => {
           const tab = MY_FORMS_TABS.find((item) => item === next)
           if (!tab) return
-          setText('')
           update({ tab, q: undefined, page: 1 })
         }}
         className="gap-4 sm:gap-5"

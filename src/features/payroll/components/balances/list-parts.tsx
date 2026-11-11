@@ -153,6 +153,7 @@ export function RsField<T extends FieldValues>({
   disabled,
   readOnly,
   prefix,
+  description,
   className,
 }: {
   control: Control<T>
@@ -162,6 +163,8 @@ export function RsField<T extends FieldValues>({
   disabled?: boolean
   readOnly?: boolean
   prefix?: string
+  /** A hint under the box (hidden while there is an error). */
+  description?: ReactNode
   className?: string
 }) {
   const { field, fieldState } = useController({ control, name })
@@ -170,6 +173,7 @@ export function RsField<T extends FieldValues>({
       label={label}
       required={required}
       error={fieldState.error?.message}
+      description={description}
       className={className}
     >
       {(a11y) => (

@@ -34,7 +34,7 @@ export function SubMenuTabs({
 }) {
   return (
     <nav aria-label="Benefits" className="min-w-0">
-      <ul className="flex [scrollbar-width:thin] gap-3 overflow-x-auto px-4 sm:px-6">
+      <ul className="flex scrollbar-thin gap-3 overflow-x-auto px-4 sm:px-6">
         {items.map((item) => {
           const active = item.to === current
           return (
@@ -92,7 +92,7 @@ export function StepTabs<T extends string>({
 }) {
   return (
     <div className={cn('flex flex-wrap items-end justify-between gap-x-4 gap-y-2', className)}>
-      <ol aria-label={label} className="flex min-w-0 [scrollbar-width:thin] gap-3 overflow-x-auto">
+      <ol aria-label={label} className="flex scrollbar-thin min-w-0 gap-3 overflow-x-auto">
         {steps.map((step, index) => {
           const isDone = done.includes(step.value) && step.value !== current
           const isCurrent = step.value === current

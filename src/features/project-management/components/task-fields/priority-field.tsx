@@ -13,7 +13,7 @@ import { useTaskSave } from './use-task-save'
 
 /**
  * Set Priority column (1:27555): the flag in its colour and the name ("Urgent"), or the purple
- * outline flag and "Priorities this task"; the popup lists Urgent, High, Normal and Low with
+ * outline flag and "Set priority"; the popup lists Urgent, High, Normal and Low with
  * their flags and a purple Clear.
  */
 export function PriorityCell({ task }: TaskCellProps) {
@@ -44,7 +44,7 @@ export function PriorityCell({ task }: TaskCellProps) {
               <FlagIcon />
             )}
           </span>
-          <span className={fieldStyles.placeholder}>{label ?? 'Priorities this task'}</span>
+          <span className={fieldStyles.placeholder}>{label ?? 'Set priority'}</span>
           <ChevronDownIcon className={fieldStyles.cellChevron} />
         </button>
       }

@@ -26,7 +26,7 @@ const group = async (name: string) => screen.findByRole('table', { name })
 const namesIn = (table: HTMLElement) =>
   within(table)
     .queryAllByRole('row')
-    .map((row) => row.querySelector('span[title][class*="truncate"]')?.textContent)
+    .map((row) => row.querySelector('[title][class*="truncate"]')?.textContent)
     .filter(Boolean)
 
 async function openRowMenu(user: UserEvent, task: string) {
@@ -344,11 +344,14 @@ describe('Workspace page', { timeout: 60_000 }, () => {
         10, 20, 30,
       ])
     })
-    expect(namesIn(todo)).toEqual([
-      'User Persona List',
-      'Prototype the List view',
-      'User Qualitative Research',
-    ])
+    // The rows follow once the tasks are read again.
+    await waitFor(() => {
+      expect(namesIn(todo)).toEqual([
+        'User Persona List',
+        'Prototype the List view',
+        'User Qualitative Research',
+      ])
+    })
   })
 
   it('sets a reminder from Remind Me', async () => {
