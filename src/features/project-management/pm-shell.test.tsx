@@ -59,6 +59,20 @@ describe('Project Management shell', () => {
     expect(within(landing).getByRole('button', { name: /^Create Workspace/ })).toBeVisible()
   })
 
+  it('scales its pages to the design while open, and only then', async () => {
+    const { user } = renderApp('/project-management/workspaces')
+    expect(await screen.findByRole('heading', { name: 'Workspaces', level: 1 })).toBeVisible()
+    // globals.css shrinks the rem with the screen width for `html.design-scale`.
+    expect(document.documentElement).toHaveClass('design-scale')
+
+    const [leaves] = screen.getAllByRole('link', { name: 'Leaves' })
+    if (!leaves) throw new Error('No Leaves link in the sidebar')
+    await user.click(leaves)
+    await waitFor(() => {
+      expect(document.documentElement).not.toHaveClass('design-scale')
+    })
+  })
+
   it('renames, moves and deletes folders and lists from their menus', async () => {
     const { user } = renderApp('/project-management/workspaces/ws_uxui')
     const panel = await screen.findByRole('complementary', { name: 'Workspaces' })

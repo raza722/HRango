@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useLayoutEffect, useState } from 'react'
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
 
 import { NAV_ITEMS } from '@/app/navigation'
@@ -30,6 +30,23 @@ function NoAccess() {
 }
 
 /**
+ * Project Management was built at its Figma frame's sizes (1920 px wide). On a narrower screen
+ * its pages scale with the width, as the frame would (`html.design-scale` in globals.css: the
+ * rem shrinks to the screen's share of 1920 px, never below 80% so text stays readable); the
+ * shell (sidebar, top bar) is in rem too, so the whole screen keeps the design's proportions.
+ * Set before paint, so a page never flashes at the other size.
+ */
+function useDesignScale(on: boolean) {
+  useLayoutEffect(() => {
+    const root = document.documentElement
+    root.classList.toggle('design-scale', on)
+    return () => {
+      root.classList.remove('design-scale')
+    }
+  }, [on])
+}
+
+/**
  * Shell for every signed-in page: navy sidebar, white top bar, grey content area. It shows the
  * matched route, or `children` when given (the 404 page for an unknown URL).
  */
@@ -41,6 +58,7 @@ export function AuthenticatedLayout({ children }: { children?: ReactNode } = {})
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const [changingPassword, setChangingPassword] = useState(false)
   useSessionRefresh()
+  useDesignScale(pathname.startsWith('/project-management'))
 
   const offset = isDesktop ? (collapsed ? SIDEBAR_WIDTH.collapsed : SIDEBAR_WIDTH.expanded) : 0
 
