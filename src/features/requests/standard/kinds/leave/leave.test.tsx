@@ -82,13 +82,22 @@ describe('Leave (the shared standard request pages, on /requests/leave)', () => 
       'true',
     )
     expect(await screen.findByRole('cell', { name: 'LV-0001' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Approved' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Unapproved' })).toBeVisible()
+    // Deciding is only on Approvals: everyone's requests here have no Approved / Unapproved
+    // and nothing to tick.
+    expect(screen.queryByRole('button', { name: 'Approved' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Unapproved' })).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
 
     await user.click(screen.getByRole('tab', { name: 'My Request' }))
     expect(await screen.findByRole('cell', { name: 'LV-0007' })).toBeVisible()
     expect(screen.getByRole('cell', { name: /Short Leave/ })).toBeVisible()
     expect(screen.queryByRole('cell', { name: 'LV-0001' })).not.toBeInTheDocument()
+
+    // Approved / Unapproved and the tick boxes are on Approvals.
+    await user.click(screen.getByRole('tab', { name: 'Approvals' }))
+    expect(await screen.findByRole('button', { name: 'Approved' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Unapproved' })).toBeVisible()
+    expect((await screen.findAllByRole('checkbox')).length).toBeGreaterThan(0)
   })
 
   it('checks the fields, then saves a leave of the shift days', async () => {

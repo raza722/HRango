@@ -159,9 +159,9 @@ function UnapproveDialog({
 }
 
 /**
- * Transfer: Requests (everyone's transfer requests, Filter, Create, and
- * Approved / Unapproved for the ticked ones) and Approvals (Requested,
- * Delegates) with Approve/Reject, Flow and View.
+ * Transfer: Requests (everyone's transfer requests, Filter, Create) and
+ * Approvals (Requested, Delegates, and Approved / Unapproved for the ticked
+ * ones) with Approve/Reject, Flow and View. Deciding is only on Approvals.
  */
 export function TransferRequestsPage() {
   const search = routeApi.useSearch()
@@ -392,10 +392,12 @@ export function TransferRequestsPage() {
           }}
         />
         <DataTable
-          columns={[
-            selectColumn(rows, selected, setSelected),
-            ...(isRequest ? transferRequestColumns : transferApprovalColumns),
-          ]}
+          // Ticking is only for Approved / Unapproved, which are on Approvals.
+          columns={
+            isRequest
+              ? transferRequestColumns
+              : [selectColumn(rows, selected, setSelected), ...transferApprovalColumns]
+          }
           data={rows}
           getRowId={(row) => row.id}
           caption={isRequest ? 'Transfer requests' : 'Transfer approvals'}

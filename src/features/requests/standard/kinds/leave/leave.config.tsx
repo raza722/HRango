@@ -108,8 +108,8 @@ const listColumns = (): readonly Column[] => [
 /**
  * Leave (section 2697:5532, frames 4189:54603 … 4220:76856): Requests with My
  * Request / All Requests, the balance card and "Request" heading over the
- * status tabs, bulk Approved / Unapproved; Approvals with Requested and
- * Delegates. The Approve popup adds the person's balance of the leave type.
+ * status tabs; Approvals with Requested and Delegates and bulk Approved /
+ * Unapproved. The Approve popup adds the person's balance of the leave type.
  */
 export const leaveConfig: StandardKindConfig<LeavePayload> = {
   kind: 'leave',
