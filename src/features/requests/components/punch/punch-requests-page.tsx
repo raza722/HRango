@@ -71,9 +71,10 @@ const statusOf = (value: string | undefined) => REQUEST_STATUSES.find((status) =
 
 /**
  * Punch, laid out as the newer Requests frames draw it (section 2697:5532):
- * Requests with "My Punch Request | All Punch Requests", Filter, Create,
- * Approved / Unapproved, the status tabs and the list; Approvals with
- * Requested / Delegates / Consents. The popups are Punch's own.
+ * Requests with "My Punch Request | All Punch Requests", Filter, Create, the
+ * status tabs and the list; Approvals with Requested / Delegates / Consents and
+ * Approved / Unapproved for the ticked ones (deciding is only on Approvals).
+ * The popups are Punch's own.
  */
 export function PunchRequestsPage() {
   const search = routeApi.useSearch()
@@ -290,10 +291,12 @@ export function PunchRequestsPage() {
           }}
         />
         <DataTable
-          columns={[
-            selectColumn(rows, selected, setSelected),
-            ...(isRequest ? punchRequestColumns : punchApprovalColumns),
-          ]}
+          // Ticking is only for Approved / Unapproved, which are on Approvals.
+          columns={
+            isRequest
+              ? punchRequestColumns
+              : [selectColumn(rows, selected, setSelected), ...punchApprovalColumns]
+          }
           data={rows}
           getRowId={(row) => row.id}
           caption={isRequest ? 'Punch requests' : 'Punch approvals'}

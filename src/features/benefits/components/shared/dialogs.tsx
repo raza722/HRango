@@ -1,13 +1,11 @@
 import type { ReactNode } from 'react'
 import { AlertDialog as AlertDialogPrimitive, Dialog as DialogPrimitive } from 'radix-ui'
 
+import { popupOverlayClass } from '@/components/ui/overlay'
 import { cn } from '@/lib/utils'
 
 import { CloseIcon, DeleteIllustration } from './benefit-icons'
 import { accent, buttonClass, dialogTitleText, mediumText } from './benefit-styles'
-
-const overlayClass =
-  'fixed inset-0 z-50 bg-black/40 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0'
 
 const panelClass =
   'fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-1.5rem)] w-[calc(100%-1.5rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[10px] bg-card text-card-foreground shadow-[0_4px_4px_rgba(0,0,0,0.25)] outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95'
@@ -39,7 +37,7 @@ export function BxDialog({
       }}
     >
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className={overlayClass} />
+        <DialogPrimitive.Overlay className={popupOverlayClass} />
         <DialogPrimitive.Content className={cn(panelClass, 'max-w-[48.9375rem]', className)}>
           <div className="flex items-start justify-between gap-4 px-4 pt-5 sm:px-[1.375rem] sm:pt-[1.8rem]">
             <DialogPrimitive.Title className={dialogTitleText}>{title}</DialogPrimitive.Title>
@@ -89,7 +87,7 @@ export function DeleteConfirm({
       }}
     >
       <AlertDialogPrimitive.Portal>
-        <AlertDialogPrimitive.Overlay className={overlayClass} />
+        <AlertDialogPrimitive.Overlay className={popupOverlayClass} />
         <AlertDialogPrimitive.Content
           className={cn(panelClass, 'max-w-[31.5625rem] items-center px-6 pt-7 pb-9 text-center')}
         >

@@ -90,7 +90,7 @@ function filterFields({ kind, tab, view, lookups }: StandardFilterContext): read
  * the frames could not be read when this was built, so the columns and
  * filters still need checking against them). "Promotion Requests" is one list
  * of everyone's requests (HR makes them for the employee), with the status
- * tabs and Approved / Unapproved; Approvals has Requested and Delegates. The
+ * tabs; Approvals has Requested and Delegates and Approved / Unapproved. The
  * popups the frames title "Loan & Advances Request View / Approve/Reject" are
  * titled Promotion here.
  */

@@ -139,7 +139,7 @@ function filterFields({
 
 /**
  * Loan & Advances (section 2697:5532): Requests with My / All, Approvals with
- * Requested / Delegates, the status tabs and Approved / Unapproved, and a
+ * Requested / Delegates and Approved / Unapproved, the status tabs, and a
  * Settings tab (Types, Categories, Repayment). The approver fills in the
  * approved amount, payment method and repayment date.
  */

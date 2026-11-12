@@ -4,6 +4,7 @@ import { Dialog as SheetPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
 
+import { panelOverlayClass } from './overlay'
 import { useReturnFocus } from './return-focus'
 
 function Sheet(props: ComponentProps<typeof SheetPrimitive.Root>) {
@@ -31,10 +32,7 @@ function SheetContent({
   return (
     <SheetPrimitive.Portal>
       {overlay && (
-        <SheetPrimitive.Overlay
-          data-slot="sheet-overlay"
-          className="fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0"
-        />
+        <SheetPrimitive.Overlay data-slot="sheet-overlay" className={panelOverlayClass} />
       )}
       <SheetPrimitive.Content
         data-slot="sheet-content"

@@ -79,10 +79,14 @@
   --sidebar-link-active: #60a5fa; /* render: current Settings sub-page (blue) */
   --sidebar-scrollbar: #2f4159; /* chosen: thumb a shade lighter than the navy */
   --sidebar-scrollbar-hover: #4b5f7b;
-  /* Every other scrollbar: the theme's purple on the muted track (as under the tables). */
-  --scrollbar-thumb: var(--primary);
-  --scrollbar-thumb-hover: color-mix(in oklab, var(--primary) 78%, black);
-  --scrollbar-track: var(--muted);
+  /*
+   * Every other scrollbar, light: a soft lavender thumb on the pale track that turns the brand
+   * purple while hovered (a solid purple bar under every table drew too much attention). Dark
+   * mode has its own below.
+   */
+  --scrollbar-thumb: #c9bdf7;
+  --scrollbar-thumb-hover: var(--primary);
+  --scrollbar-track: #eef2f7;
 }
 
 .dark {
@@ -142,6 +146,11 @@
   --sidebar-link-active: #7cb4ff;
   --sidebar-scrollbar: #24344b;
   --sidebar-scrollbar-hover: #3b4e69;
+  /* Scrollbars, dark: a quiet slate thumb a step lighter than the cards, a hint of the brand purple
+     while hovered, on a track a shade darker than the cards (no bright bar on a dark page). */
+  --scrollbar-thumb: #34445d;
+  --scrollbar-thumb-hover: #6d5bc4;
+  --scrollbar-track: #111a27;
 }
 
 /*
@@ -679,4 +688,14 @@
     animation-duration: 1.5s !important;
     animation-iteration-count: infinite !important;
   }
+}
+
+/*
+ * A popup opened over another one (a "Delete?" over an edit form): the first layer already tints
+ * and blurs the page, so this one adds only a faint tint and no second blur
+ * (components/ui/overlay.ts). Popups render straight into <body>, in the order they open.
+ */
+.popup-overlay ~ .popup-overlay {
+  backdrop-filter: none;
+  background-color: rgb(23 38 58 / 0.12);
 }

@@ -4,6 +4,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
 
+import { popupOverlayClass } from './overlay'
 import { useReturnFocus } from './return-focus'
 
 function Dialog(props: ComponentProps<typeof DialogPrimitive.Root>) {
@@ -34,10 +35,7 @@ function DialogContent({
   const focus = useReturnFocus({ onOpenAutoFocus, onCloseAutoFocus })
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay
-        data-slot="dialog-overlay"
-        className="fixed inset-0 z-50 bg-black/40 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0"
-      />
+      <DialogPrimitive.Overlay data-slot="dialog-overlay" className={popupOverlayClass} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(

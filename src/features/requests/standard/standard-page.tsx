@@ -116,10 +116,14 @@ const statusOf = (value: string | undefined) => REQUEST_STATUSES.find((status) =
 
 /**
  * A request type on the newer Requests frames: Requests (My / All, Filter,
- * Create, Approved / Unapproved, the status tabs and the list) and Approvals
- * (Requested / Cancellations / Delegates) with Approve/Reject, Flow, View and
- * History; optionally a Settings tab. The type supplies its columns, filters,
- * form and the rows of its View / Approve popups.
+ * Create, the status tabs and the list) and Approvals (Requested /
+ * Cancellations / Delegates, ticked rows' Approved / Unapproved) with
+ * Approve/Reject, Flow, View and History; optionally a Settings tab. The type
+ * supplies its columns, filters, form and the rows of its View / Approve popups.
+ *
+ * Deciding happens only on Approvals. The frames also draw Approved / Unapproved
+ * and tick boxes on Requests → All, but a list of requests next to an Approvals
+ * tab should not decide them too (user review, 12 Nov 2026).
  */
 export function StandardRequestsPage<P>({
   config,
@@ -302,8 +306,9 @@ export function StandardRequestsPage<P>({
                 }}
               />
             )}
-            {/* Not on My Requests: nobody decides their own, so nothing there can be ticked. */}
-            {config.bulk && (can.approve || can.reject) && !(isRequest && scope === 'my') && (
+            {/* Deciding is the Approvals tab's job: the Requests tab only shows requests, even
+                other people's (All / Subordinates), so it has no Approved / Unapproved. */}
+            {config.bulk && !isRequest && (can.approve || can.reject) && (
               <StandardBulkButtons
                 disabled={bulk.isPending || !anyDecidable}
                 onApprove={() => {
@@ -330,7 +335,12 @@ export function StandardRequestsPage<P>({
             />
           )}
           <DataTable
-            columns={[selectColumn(rows, selected, setSelected, ownUndecidable), ...columns]}
+            // Ticking is only for Approved / Unapproved, so only on Approvals.
+            columns={
+              config.bulk && !isRequest
+                ? [selectColumn(rows, selected, setSelected, ownUndecidable), ...columns]
+                : columns
+            }
             data={rows}
             getRowId={(row) => row.id}
             caption={isRequest ? config.requestsTitle : config.approvalsTitle}

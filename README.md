@@ -234,6 +234,10 @@ src/
   toast through the global `MutationCache`; set `meta.successMessage` / `meta.errorMessage` /
   `meta.suppressErrorToast` per mutation.
 - Public hooks carry JSDoc; components document non-obvious behaviour only.
+- **Popups and scrollbars**: every popup softly blurs the page behind it with a light navy tint
+  (`components/ui/overlay.ts`; a confirmation over a form adds no second blur; side panels are
+  not blurred). Scrollbars differ by theme (`--scrollbar-*` in `globals.css`): a lavender thumb on
+  a pale track in light mode, a quiet slate one in dark mode, both turning purple while hovered.
 
 ## How the reference feature is wired
 
@@ -763,9 +767,12 @@ remaining types on one layout, so they share one page, one set of popups and one
 
 - **Page** (`features/requests/standard/standard-page.tsx`): Requests / Approvals tabs (plus a
   Settings tab where a type has one), the title, Filter and Create, the type's My / All pill
-  ("My Requests | All Requests", "My Loan & Advances | …"), Approved / Unapproved for the ticked
-  rows, the status tabs, the list and the pager. Approvals has Requested / Cancellations /
-  Delegates as the type draws them.
+  ("My Requests | All Requests", "My Loan & Advances | …"), the status tabs, the list and the
+  pager. Approvals has Requested / Cancellations / Delegates as the type draws them, and the tick
+  boxes with Approved / Unapproved for the ticked rows. **Deciding is only on Approvals** (12 Nov
+  2026): the frames also draw Approved / Unapproved and tick boxes on Requests → All, but a list
+  of requests beside an Approvals tab should not decide them too. Punch and Transfer follow the
+  same rule; Asset Clearance, which has no Approvals tab, keeps them on its list.
 - **Popups** (`standard-dialogs.tsx`): View and Approve/Reject (the employee card, the type's
   fields, Created, the approvers' remarks, the Remarks box or "Reason for Approval *", and the
   type's own approval fields), Flow, History, Cancel ("Reason for Cancellation *"), Delete

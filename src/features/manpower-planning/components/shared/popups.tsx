@@ -1,13 +1,11 @@
 import type { ComponentType, ReactNode, SVGProps } from 'react'
 import { AlertDialog, Dialog } from 'radix-ui'
 
+import { popupOverlayClass } from '@/components/ui/overlay'
 import { cn } from '@/lib/utils'
 
 import { CloseIcon } from './mp-icons'
 import { accent, dialogButton } from './mp-styles'
-
-const overlayClass =
-  'fixed inset-0 z-50 bg-black/30 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0'
 
 const panelClass =
   'fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-[10px] bg-card text-heading shadow-[0_4px_4px_rgba(0,0,0,0.25)] outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95'
@@ -39,7 +37,7 @@ export function ConfirmPopup({
   return (
     <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className={overlayClass} />
+        <AlertDialog.Overlay className={popupOverlayClass} />
         <AlertDialog.Content
           className={cn(panelClass, 'max-w-[31.5625rem] items-center px-6 py-7')}
         >
@@ -88,7 +86,7 @@ export function MpDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className={overlayClass} />
+        <Dialog.Overlay className={popupOverlayClass} />
         <Dialog.Content
           aria-describedby={undefined}
           className={cn(panelClass, 'max-w-[33.1875rem]', className)}

@@ -68,8 +68,8 @@ function filterFields({
 /**
  * Work From Home (frames 2697:5533 … 4013:36535): Requests with My / All /
  * Subordinates (the third drawn on one frame: `view=subordinates`, the people
- * who report to you), the status tabs and bulk Approved / Unapproved; Approvals
- * with Requested and Delegates. "Completed" replaces "Approved". The API's type
+ * who report to you) and the status tabs; Approvals with Requested and Delegates
+ * and bulk Approved / Unapproved. "Completed" replaces "Approved". The API's type
  * is `work_from_home` (`/requests/work-from-home`).
  */
 export const workFromHomeConfig: StandardKindConfig<WorkFromHomePayload> = {
