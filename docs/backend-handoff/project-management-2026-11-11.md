@@ -8,6 +8,31 @@ changes, for reference.
 Conventions are the API's own: JSON bodies, ids sent as numbers, `rowVersion` on every edit,
 errors as `{ message, code?, fieldErrors? }`.
 
+> **Status, 12 Nov 2026: B1 to B6 are built in `hRango-Backend`** (not yet run against a database:
+> there was none on the machine they were written on). Before merging, please seed a `*_dev`
+> database (`scripts.seed`, which applies the new migrations `0002_pm_workspace_task_key.sql` and
+> `0003_pm_task_due_notice.sql`) and run `pytest tests/test_projects*.py tests/test_leaves*.py`.
+> What each change does is in section 1a below; `comparison/08-projects.md` has the same notes.
+
+## 1a. What was built (12 Nov 2026)
+
+| #   | Built                                                                                                                                                                                                                                                                                                                                                                                  |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| B1  | `fn_workspace_access`: in a `workspace` workspace a company employee who is not a member works as a contributor (`myRole: "contributor"`); `public` stays read only. New output `isMember` on workspaces. `fn_column_levels` gives them the contributor column rules. Only members can be assigned tasks (unchanged).                                                                  |
+| B2  | `pm.workspace.task_key` (2–5 letters from the name: initials of several words, else the first three letters; a clash adds a letter) and `pm.workspace_task_sequence` (one counter per workspace, kept off the workspace row so adding a task does not change its rowVersion). New codes `ONB-12`; old codes kept. Output `key`; `PUT /workspaces/{id}` accepts an optional `key`.      |
+| B3  | Notifications `projects.comment` (assignees), `projects.comment_reply` (the parent comment's author), `projects.extension_requested` (workspace admins, HR, managers), `projects.extension_decided` (the requester), and a daily job `pm.usp_task_due_notify` in `scripts/nightly.py` for `projects.task_due_tomorrow` / `projects.task_overdue` (once per task, person and due date). |
+| B4  | `PATCH /projects/lists/{id}` and `PATCH /projects/views/{id}`: a field left out keeps its value, `null` clears it, `rowVersion` required. PUT unchanged.                                                                                                                                                                                                                               |
+| B5  | `gantt` removed from the `project_management` template seed.                                                                                                                                                                                                                                                                                                                           |
+| B6  | Most roles already held `projects.lists.edit/delete`; HR Officer lacked delete (its `*.delete` exclusion). `default_roles.py` now has `exclude_ok` and gives it back.                                                                                                                                                                                                                  |
+
+Frontend changes made for them: workspaces read `isMember` (the dashboards' "my workspaces" and the
+default workspace used `myRole !== null`, which B1 would have widened) and `key`; comments link
+`#ONB-12` codes as well as `#HR000000001` (`comment-text.ts`), and a mention of `#ONB-1` is no
+longer found inside `#ONB-12` (`mentionsIn`). The demo API does the same (codes, keys, roles).
+
+Not done yet (frontend): an editable key in Workspace Settings, and sending PATCH instead of the
+whole list on rename/move (PUT still works).
+
 ---
 
 ## 1. Backend changes requested

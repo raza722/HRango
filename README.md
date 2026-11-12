@@ -938,6 +938,28 @@ How it works:
   and Check (the 14 px checkbox tick) where no export draws them; Filter is the design's own
   page_info icon; the slab tables' "Select Type" uses the shared Select and its chevron.
 
+### Update of 12 Nov 2026: giving leave to a new employee
+
+A new employee is covered by the company level policy automatically, but has no days until an
+allotment run posts them, and nothing on screen said so or let HR do it for one person. Now:
+
+- **Leave Policies**: an employee level policy has an **Enroll** button beside its count (it was
+  a bare number that opened the dialog); a company level policy says "Everyone (else),
+  automatically" and counts only the people it really covers (the backend's count is fixed too).
+- **Enroll Employee**: "Give the people added their leave for this year now" (on by default, for
+  an active distribution policy and someone holding `leaves.allotment.process`) runs the allotment
+  for the people just added.
+- **Allotment** dialog: an optional **Employee** (blank = everyone), and a note that a run is safe
+  to repeat. One person who gets nothing is told why it can be.
+- **Talent Management → employee → Leave**: **Allot Leave** (the allotment for this person, in
+  their current leave year) and **Adjust Balance** (`AdjustBalanceDialog`: an opening balance or
+  a +/− adjustment with a reason, `POST /leaves/ledger`, `leaves.balances.edit`). A person covered
+  but not yet given leave sees "No leave has been given to … yet".
+- Mock: `mockPeople()` includes people added in Talent Management, and `/leaves/balances` lists
+  the types a person's policy covers before any allotment, as the API does.
+
+The backend notes are in `docs/backend-handoff/leaves-2026-11-12.md`.
+
 ## Payroll
 
 **Payroll** in the sidebar opens a tree, as drawn: Dashboard; Payroll Settings (General, Tax,
@@ -1232,6 +1254,14 @@ Workspace; named folders and lists with Rename, Move and Delete; a Workspaces pa
 sidebar; Gantt, Workload and Mind Map never shown; the wizard defaults the owner to you and
 the department to theirs; clearer visibility options; the panel and view bar fit small laptops
 and phones.
+
+**Design scale.** The module is built at its Figma frames' sizes (1920 px wide), so on a smaller
+laptop it looked zoomed in next to the design. While a Project Management page is open the shell
+sets `html.design-scale` (`app/layouts/authenticated-layout.tsx`), and `globals.css` makes the
+rem follow the screen's share of 1920 px between 1024 and 1920 px (13.3 px at 1600, never below
+80%, 12.8 px): the whole screen, sidebar included, keeps the frame's proportions, as in Figma.
+Other modules, phones and screens of 1920 px and up are unchanged. The view bar is one row again,
+as drawn; only when it cannot fit do the tools move to a second row.
 
 ### Dashboards
 

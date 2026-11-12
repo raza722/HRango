@@ -150,7 +150,7 @@ async function remove(url: string, rowVersion?: string | null) {
 
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** What a comment mentions: `@Name` of a person, `#HR…` of a task. */
+/** What a comment mentions: `@Name` of a person, `#ONB-12` (or an older `#HR…`) of a task. */
 export interface MentionContext {
   people: readonly PmPerson[]
   tasks: readonly Pick<TaskRow, 'id' | 'code'>[]
@@ -164,7 +164,10 @@ export function mentionsIn(body: string, context: MentionContext): MentionInDto[
     }
   }
   for (const task of context.tasks) {
-    if (task.code && body.includes(`#${task.code}`)) out.push({ taskId: toApiId(task.id) })
+    // Not followed by a digit: `#ONB-1` is not mentioned by `#ONB-12`.
+    if (task.code && new RegExp(`#${escape(task.code)}(?!\\d)`).test(body)) {
+      out.push({ taskId: toApiId(task.id) })
+    }
   }
   return out
 }

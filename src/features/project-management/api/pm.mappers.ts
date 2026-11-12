@@ -275,6 +275,8 @@ export const workspaceSummaryFromApi = (dto: WorkspaceSummaryDto): WorkspaceSumm
   ownerId: dto.ownerId,
   ownerName: dto.ownerName,
   myRole: roleFromApi(dto.myRole),
+  isMember: dto.isMember ?? dto.myRole !== null,
+  key: dto.key ?? null,
   favorite: dto.isFavorite,
   hidden: dto.isHidden,
   memberCount: dto.memberCount,

@@ -80,7 +80,7 @@ export function useScopeWorkspaces(scope: 'members' | 'readable') {
   const workspaces = useMemo(
     () =>
       (tree.data?.workspaces ?? []).filter(
-        (workspace) => !workspace.hidden && (scope === 'readable' || workspace.myRole !== null),
+        (workspace) => !workspace.hidden && (scope === 'readable' || workspace.isMember),
       ),
     [tree.data, scope],
   )
