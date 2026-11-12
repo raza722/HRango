@@ -41,16 +41,33 @@ function clearMonday(): Date {
   return monday
 }
 
-/** The next Iqbal Day (9 November, a public holiday in the mock) from today. */
-function nextIqbalDay(): Date {
+/**
+ * The next company-wide public holiday still in this leave year (Iqbal Day, then Quaid-e-Azam Day),
+ * on a weekday with a working day next to it. Next year's would have no balance to apply against.
+ * None is left in the last days of December, and the test that needs one is skipped then.
+ */
+function nextHoliday(): { name: string; date: Date } | null {
   const today = iso(new Date())
+  const yearEnd = `${String(new Date().getFullYear())}-12-31`
   const found = holidays
     .all()
-    .filter((holiday) => holiday.name === 'Iqbal Day' && holiday.startDate >= today)
-    .sort((a, b) => a.startDate.localeCompare(b.startDate))[0]
-  if (!found) throw new Error('No Iqbal Day ahead in the mock holidays')
-  return parseISO(found.startDate)
+    .filter(
+      (holiday) =>
+        ['Iqbal Day', 'Quaid-e-Azam Day'].includes(holiday.name) &&
+        holiday.startDate > today &&
+        holiday.startDate <= yearEnd,
+    )
+    .sort((a, b) => a.startDate.localeCompare(b.startDate))
+    .map((holiday) => ({ name: holiday.name, date: parseISO(holiday.startDate) }))
+    .find(({ date }) => {
+      const weekday = (day: Date) => day.getDay() !== 0 && day.getDay() !== 6 && !isHoliday(day)
+      return (
+        ![0, 6].includes(date.getDay()) && (weekday(addDays(date, -1)) || weekday(addDays(date, 1)))
+      )
+    })
+  return found ?? null
 }
+const holidayAhead = nextHoliday()
 
 /** Opens a date field's calendar (on `opensOn`'s month) and picks the day. */
 async function pickDate(user: UserEvent, label: RegExp, date: Date, opensOn = new Date()) {
@@ -237,56 +254,59 @@ describe('Leaves', { timeout: 60_000 }, () => {
     expect(screen.getByRole('dialog', { name: 'Apply Leave' })).toBeVisible()
   })
 
-  it('names the holidays and days off a leave does not count, and refuses one of only those', async () => {
-    const { user } = renderApp('/leaves/my-leaves')
-    await user.click(
-      await screen.findByRole('button', { name: '+ Apply Leave' }, { timeout: 15_000 }),
-    )
-    const dialog = await screen.findByRole('dialog', { name: 'Apply Leave' })
-    await choose(user, /^Leave Type/, /Casual Leaves/)
-    expect(within(dialog).getByText(/holidays and days off are not counted/i)).toBeVisible()
+  it.runIf(holidayAhead)(
+    'names the holidays and days off a leave does not count, and refuses one of only those',
+    async () => {
+      const { user } = renderApp('/leaves/my-leaves')
+      await user.click(
+        await screen.findByRole('button', { name: '+ Apply Leave' }, { timeout: 15_000 }),
+      )
+      const dialog = await screen.findByRole('dialog', { name: 'Apply Leave' })
+      await choose(user, /^Leave Type/, /Casual Leaves/)
+      expect(within(dialog).getByText(/holidays and days off are not counted/i)).toBeVisible()
 
-    // One day, on a public holiday: named, and refused.
-    const iqbal = nextIqbalDay()
-    await pickDate(user, /^Leave Date/, iqbal)
-    const when = format(iqbal, 'EEEE, d MMMM')
-    expect(
-      await within(dialog).findByText(`No working day to take off: Iqbal Day (${when}).`),
-    ).toBeVisible()
-    expect(within(dialog).getByText('Selected Days').nextElementSibling).toHaveTextContent('0')
-    await user.type(within(dialog).getByRole('textbox', { name: /^Reason/ }), 'Long weekend.')
-    await user.click(within(dialog).getByRole('button', { name: 'Apply' }))
-    expect(
-      await within(dialog).findByText('Iqbal Day is a holiday: choose a working day'),
-    ).toBeVisible()
-    expect(leaveRequestRows().find((row) => row.reason === 'Long weekend.')).toBeUndefined()
+      // One day, on a public holiday: named, and refused.
+      const { name, date: iqbal } = holidayAhead ?? { name: '', date: new Date() }
+      await pickDate(user, /^Leave Date/, iqbal)
+      const when = format(iqbal, 'EEEE, d MMMM')
+      expect(
+        await within(dialog).findByText(`No working day to take off: ${name} (${when}).`),
+      ).toBeVisible()
+      expect(within(dialog).getByText('Selected Days').nextElementSibling).toHaveTextContent('0')
+      await user.type(within(dialog).getByRole('textbox', { name: /^Reason/ }), 'Long weekend.')
+      await user.click(within(dialog).getByRole('button', { name: 'Apply' }))
+      expect(
+        await within(dialog).findByText(`${name} is a holiday: choose a working day`),
+      ).toBeVisible()
+      expect(leaveRequestRows().find((row) => row.reason === 'Long weekend.')).toBeUndefined()
 
-    // Several days around it: the holiday is named and left out of Selected Days. The sample data
-    // dates the demo user's own leave from today, so clear any of it from those days first (in
-    // the week before Iqbal Day a pending half day lands on the day after it).
-    const around = [addDays(iqbal, -1), iqbal, addDays(iqbal, 1)].map(iso)
-    for (const request of standardRequests.all()) {
-      const dates = request.payload.dates
-      if (
-        request.employeeId === DEMO_USER.employeeId &&
-        Array.isArray(dates) &&
-        dates.some((date) => typeof date === 'string' && around.includes(date))
-      ) {
-        standardRequests.remove(request.id)
+      // Several days around it: the holiday is named and left out of Selected Days. The sample data
+      // dates the demo user's own leave from today, so clear any of it from those days first (in
+      // the week before the holiday a pending half day can land on the day after it).
+      const around = [addDays(iqbal, -1), iqbal, addDays(iqbal, 1)].map(iso)
+      for (const request of standardRequests.all()) {
+        const dates = request.payload.dates
+        if (
+          request.employeeId === DEMO_USER.employeeId &&
+          Array.isArray(dates) &&
+          dates.some((date) => typeof date === 'string' && around.includes(date))
+        ) {
+          standardRequests.remove(request.id)
+        }
       }
-    }
-    await user.click(within(dialog).getByRole('switch', { name: 'Category: Single' }))
-    // Start Date opens on the day already chosen; End Date on the start.
-    await pickDate(user, /^Start Date/, addDays(iqbal, -1), iqbal)
-    await pickDate(user, /^End Date/, addDays(iqbal, 1), addDays(iqbal, -1))
-    expect(await within(dialog).findByText(/^Not counted: .*Iqbal Day/)).toBeVisible()
-    await user.click(within(dialog).getByRole('button', { name: 'Apply' }))
-    expect((await screen.findAllByText('Leave applied')).length).toBeGreaterThan(0)
-    const saved = leaveRequestRows().find((row) => row.reason === 'Long weekend.')
-    expect(saved).toBeDefined()
-    // The server counts the same working days the form showed, without the holiday.
-    expect(standardRequests.find(saved?.id ?? '')?.payload.dates).not.toContain(iso(iqbal))
-  })
+      await user.click(within(dialog).getByRole('switch', { name: 'Category: Single' }))
+      // Start Date opens on the day already chosen; End Date on the start.
+      await pickDate(user, /^Start Date/, addDays(iqbal, -1), iqbal)
+      await pickDate(user, /^End Date/, addDays(iqbal, 1), addDays(iqbal, -1))
+      expect(await within(dialog).findByText(new RegExp(`^Not counted: .*${name}`))).toBeVisible()
+      await user.click(within(dialog).getByRole('button', { name: 'Apply' }))
+      expect((await screen.findAllByText('Leave applied')).length).toBeGreaterThan(0)
+      const saved = leaveRequestRows().find((row) => row.reason === 'Long weekend.')
+      expect(saved).toBeDefined()
+      // The server counts the same working days the form showed, without the holiday.
+      expect(standardRequests.find(saved?.id ?? '')?.payload.dates).not.toContain(iso(iqbal))
+    },
+  )
 
   it('views one of my applications and withdraws a pending one', async () => {
     const { user } = renderApp('/leaves/my-leaves')
