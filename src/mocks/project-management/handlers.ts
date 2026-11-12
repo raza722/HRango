@@ -123,7 +123,52 @@ const RANK: Record<string, number> = {
 const roleIn = (workspace: WorkspaceRecord, employeeId = ME) =>
   workspace.members.find((member) => member.employeeId === employeeId)?.memberRole ?? null
 
-const rankIn = (workspace: WorkspaceRecord) => RANK[roleIn(workspace) ?? ''] ?? 0
+/**
+ * The role in effect (`pm.fn_workspace_access`): a member's own; in a `workspace` workspace
+ * ("Everyone can work in it") anyone else works as a contributor; otherwise none (read only).
+ */
+const roleInEffect = (workspace: WorkspaceRecord) =>
+  roleIn(workspace) ?? (workspace.privacy === 'workspace' ? 'contributor' : null)
+
+const rankIn = (workspace: WorkspaceRecord) => RANK[roleInEffect(workspace) ?? ''] ?? 0
+
+/** `pm.fn_workspace_key_base`: the initials of a name of several words, else its first 3 letters. */
+function keyBase(name: string): string {
+  const words = name.toUpperCase().match(/[A-Z]+/g) ?? []
+  if (words.length >= 2)
+    return words
+      .map((word) => word.charAt(0))
+      .join('')
+      .slice(0, 5)
+  const first = words[0] ?? ''
+  return first.length >= 2 ? first.slice(0, 3) : 'WS'
+}
+
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
+
+/** `pm.fn_workspace_key_free`'s order: the base, then a letter more, then two. */
+const keyCandidates = (base: string) => [
+  base,
+  ...LETTERS.map((a) => base.slice(0, 4) + a),
+  ...LETTERS.flatMap((a) => LETTERS.map((b) => base.slice(0, 3) + a + b)),
+]
+
+/**
+ * A workspace's task-code key (`ONB` in `ONB-12`), unique in the company: the oldest workspace
+ * keeps the plain key. The demo works it out from the current name (the API stores it).
+ */
+function keyOf(workspace: WorkspaceRecord): string {
+  const taken = new Set<string>()
+  const ordered = workspaces
+    .all()
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+  for (const other of ordered) {
+    const key = keyCandidates(keyBase(other.name)).find((item) => !taken.has(item)) ?? 'WS'
+    if (other.id === workspace.id) return key
+    taken.add(key)
+  }
+  return keyBase(workspace.name)
+}
 
 /** Managers and above answer extension requests. */
 const MANAGER_RANK = 3
@@ -170,7 +215,9 @@ function summary(workspace: WorkspaceRecord): WorkspaceSummaryDto {
     departmentName: DEPARTMENTS.find((entry) => entry.id === workspace.departmentId)?.name ?? null,
     ownerId: workspace.ownerId,
     ownerName: nameOf(workspace.ownerId),
-    myRole: roleIn(workspace),
+    myRole: roleInEffect(workspace),
+    isMember: roleIn(workspace) !== null,
+    key: keyOf(workspace),
     isFavorite: isFavorite('workspace', workspace.id),
     isHidden: false,
     memberCount: workspace.members.length,
@@ -242,7 +289,7 @@ function detail(workspace: WorkspaceRecord): WorkspaceDto {
 
 /** Levels in effect for the caller: their own row, then their role's, then the default. */
 function myLevels(workspace: WorkspaceRecord): Record<string, string> {
-  const role = roleIn(workspace)
+  const role = roleInEffect(workspace)
   const out: Record<string, string> = {}
   for (const entry of columnPermissions.all().filter((row) => row.workspaceId === workspace.id)) {
     const level =
@@ -406,7 +453,7 @@ function taskDetail(task: TaskRecord): TaskDto {
     })
   return {
     ...row(task, hidden),
-    myRole: workspace ? roleIn(workspace) : null,
+    myRole: workspace ? roleInEffect(workspace) : null,
     isFavorite: isFavorite('task', task.id),
     dependencies: hidden.includes('dependencies') ? [] : links,
     checklist: [],
@@ -516,12 +563,21 @@ function commentDto(comment: CommentRecord): CommentDto {
   }
 }
 
-function nextCode(): string {
-  const highest = tasks.all().reduce((max, task) => {
-    const number = Number(task.code.replace(/\D/g, ''))
-    return Number.isFinite(number) && number > max ? number : max
+/**
+ * A new task's code (`usp_task_save`): the workspace's key and its next number (`ONB-12`),
+ * counting on from its tasks (and above any code with that key), as migration 0002 starts the
+ * counters. The seed's older `HR000000001` codes stay as they are.
+ */
+function nextCode(workspace: WorkspaceRecord): string {
+  const prefix = `${keyOf(workspace)}-`
+  const all = tasks.all()
+  const highest = all.reduce((max, task) => {
+    if (!task.code.startsWith(prefix)) return max
+    const number = Number(task.code.slice(prefix.length))
+    return Number.isInteger(number) && number > max ? number : max
   }, 0)
-  return `HR${String(highest + 1).padStart(9, '0')}`
+  const count = all.filter((task) => task.workspaceId === workspace.id).length
+  return `${prefix}${String(Math.max(highest, count) + 1)}`
 }
 
 /** A task and every subtask below it. */
@@ -1261,7 +1317,7 @@ export const projectManagementHandlers = [
     if (denied) return denied
     const workspace = readable(param(params))
     if (!workspace) return notFound('workspace')
-    if (!roleIn(workspace)) return forbidden('Only workspace members can keep views.')
+    if (!roleInEffect(workspace)) return forbidden('Only workspace members can keep views.')
     const parsed = await readBody(request, viewIn)
     if (!parsed.success) return rejected(parsed.error)
     if (!parsed.data.isPrivate && rankIn(workspace) < 4) {
@@ -1786,7 +1842,7 @@ export const projectManagementHandlers = [
       workspaceId,
       taskListId,
       parentTaskId: parent?.id ?? null,
-      code: nextCode(),
+      code: nextCode(workspace),
       name: input.name,
       description: input.description ?? null,
       taskType: input.taskType,

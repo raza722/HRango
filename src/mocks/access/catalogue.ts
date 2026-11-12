@@ -115,7 +115,7 @@ const MODULES: readonly ModuleRow[] = [
     module: 'Leaves',
     screens: [
       ['leaves.applications', 'Leave Applications', ['view']],
-      ['leaves.balances', 'Leave Balances', ['view']],
+      ['leaves.balances', 'Leave Balances', ['view', 'edit']],
       ['leaves.allotment', 'Allotment', ['view', 'process']],
       ['leaves.settings.general', 'Settings › General', ['view', 'edit']],
       ['leaves.settings.types', 'Settings › Leave Types', CRUD],

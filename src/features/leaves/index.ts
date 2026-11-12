@@ -1,7 +1,9 @@
 // Public API of the leaves feature. Import from '@/features/leaves', not from deep paths.
 export { leavesApi, leavesKeys } from './api/leaves.api'
 export { LeaveApplicationsPage, MyLeavesPage } from './components/applications/leave-pages'
+export { AdjustBalanceDialog } from './components/balances/adjust-balance-dialog'
 export { LeavesLayout } from './components/layout/leaves-layout'
+export { AllotmentDialog } from './components/settings/allotment-dialog'
 export { LeaveGeneralSettingsPage } from './components/settings/general-settings-page'
 export { LeavePoliciesPage } from './components/settings/leave-policies-page'
 export { LeaveTypesPage } from './components/settings/leave-types-page'

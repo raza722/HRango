@@ -13,8 +13,8 @@ export type CommentPart =
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /**
- * A comment's body split into plain text, `@Name` mentions of people and `#HR…` task
- * references, so the card can draw mentions blue and tasks as status chips.
+ * A comment's body split into plain text, `@Name` mentions of people and `#ONB-12` (or older
+ * `#HR000000001`) task references, so the card can draw mentions blue and tasks as status chips.
  */
 export function commentParts(
   body: string,
@@ -24,14 +24,15 @@ export function commentParts(
   const byName = [...people].sort((a, b) => b.name.length - a.name.length)
   const byCode = new Map(tasks.map((task) => [task.code, task]))
   const names = byName.map((person) => `@${escape(person.name)}`)
-  const pattern = new RegExp(`(${[...names, '#HR\\d{9}'].join('|')})`, 'g')
+  // Task codes: the workspace key and a number (`#ONB-12`), or the older company-wide `#HR000000001`.
+  const pattern = new RegExp(`(${[...names, '#[A-Z]{2,5}-\\d+', '#HR\\d{9}'].join('|')})`, 'g')
   const parts: CommentPart[] = []
   let last = 0
   for (const match of body.matchAll(pattern)) {
     const token = match[0]
     const index = match.index
     if (index > last) parts.push({ kind: 'text', text: body.slice(last, index) })
-    // Task codes are `HR000000001`; the text writes them `#HR000000001`.
+    // The text writes a task code with a `#` before it.
     const task = byCode.get(token.replace(/^#/, ''))
     const person = byName.find((entry) => `@${entry.name}` === token)
     if (task) parts.push({ kind: 'task', task })

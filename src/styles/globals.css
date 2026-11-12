@@ -619,6 +619,19 @@
     font-size: clamp(100%, calc(100% + (100vw - 1920px) * 0.00625), 125%);
   }
 
+  /*
+   * Design scale (Project Management, set by the shell): those pages were built at their Figma
+   * frame's sizes, 1920px wide. Below 1920px the rem follows the screen's share of that width
+   * (100vw / 120 = 16px at 1920, 13.3px at 1600), as the frame would shrink, but never below 80%
+   * so text stays readable. From 1920px up the large-screen scale above applies as everywhere;
+   * below 1024px (tablets, phones) the pages use their own small-screen layouts at full size.
+   */
+  @media (min-width: 1024px) and (max-width: 1919.98px) {
+    html.design-scale {
+      font-size: clamp(80%, calc(100vw / 120), 100%);
+    }
+  }
+
   html.dark {
     color-scheme: dark;
   }

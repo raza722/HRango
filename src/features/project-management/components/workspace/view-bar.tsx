@@ -89,12 +89,12 @@ export function ViewBar({
 
   return (
     <div className="flex min-h-[4.6875rem] flex-wrap items-center gap-2 rounded-xl bg-white p-3 dark:bg-card">
-      {/* One row of views that scrolls sideways when it does not fit (it used to wrap onto
-          up to five rows on a small laptop); the tools take the next row until the screen is
-          wide enough for both. */}
+      {/* As the design draws it: the views and the tools in one row. When both do not fit,
+          the tools move to a second row and the views stay one row that scrolls sideways
+          (they never wrap onto several rows). */}
       <nav
         aria-label="Views"
-        className="flex scrollbar-thin min-w-0 basis-full items-center gap-2 overflow-x-auto pb-1 2xl:flex-1 2xl:basis-auto 2xl:pb-0"
+        className="flex scrollbar-thin min-w-0 flex-[1_1_auto] items-center gap-2 overflow-x-auto"
       >
         {views.map((kind) => {
           const { Icon, size } = VIEW_ICONS[kind]

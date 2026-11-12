@@ -272,8 +272,15 @@ export interface WorkspaceSummary {
   departmentName: string | null
   ownerId: string
   ownerName: string | null
-  /** The caller's workspace role; null when they read a workspace they are not a member of. */
+  /**
+   * The caller's workspace role in effect; null when they only read it. A non-member of a
+   * "Everyone can work in it" workspace works as a contributor, so use `isMember` for membership.
+   */
   myRole: PmRole | null
+  /** The caller is one of its members (not just someone the visibility lets in). */
+  isMember: boolean
+  /** Its task codes' key (`ONB` in `ONB-12`); null from an API that has none. */
+  key: string | null
   favorite: boolean
   hidden: boolean
   memberCount: number

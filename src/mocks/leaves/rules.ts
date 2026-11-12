@@ -73,12 +73,28 @@ export function policyOut(policy: StoredLeavePolicy): LeavePolicy {
       policy.policyKind === 'distribution'
         ? types.reduce((sum, row) => sum + (row.effectiveAllowance ?? 0), 0)
         : null,
+    // A company level policy covers everyone not enrolled in an active employee level policy of
+    // its kind (`lv.fn_leave_policy_rows`).
     enrolledCount:
       policy.policyLevel === 'company'
-        ? mockPeople().filter((person) => person.status === 'active').length
+        ? mockPeople().filter(
+            (person) =>
+              person.status === 'active' && !enrolledElsewhere(person.id, policy.policyKind),
+          ).length
         : enrolled.length,
   }
 }
+
+const enrolledElsewhere = (employeeId: string, kind: StoredLeavePolicy['policyKind']) =>
+  leavePolicies
+    .all()
+    .some(
+      (other) =>
+        other.policyLevel === 'employee' &&
+        other.isActive &&
+        other.policyKind === kind &&
+        other.enrolled.some((row) => row.employeeId === employeeId),
+    )
 
 /** The active policy of a kind covering the person: their enrolment first, else the company's. */
 export function policyFor(employeeId: string, kind: 'distribution' | 'half_short') {
@@ -218,7 +234,10 @@ export function balanceRows(year: number, employeeId?: string): LeaveBalanceRow[
   const requests = leaveRequestRows()
   for (const person of mockPeople()) {
     if (employeeId && person.id !== employeeId) continue
+    // As `lv.usp_leave_balance_list`: the types their policy covers (with no days until an
+    // allotment gives them, as for a new employee), then any type they have postings of.
     const typeIds = new Set([
+      ...(person.status === 'active' ? coveredTypes(person.id).map(({ type }) => type.id) : []),
       ...leaveLedger
         .all()
         .filter((row) => row.employeeId === person.id && row.fiscalYear === year)

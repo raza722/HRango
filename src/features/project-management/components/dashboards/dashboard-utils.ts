@@ -378,7 +378,7 @@ export function defaultWorkspace(
 ): WorkspaceSummary | undefined {
   return (
     workspaces.find((workspace) => workspace.favorite) ??
-    workspaces.find((workspace) => workspace.myRole !== null) ??
+    workspaces.find((workspace) => workspace.isMember) ??
     workspaces[0]
   )
 }

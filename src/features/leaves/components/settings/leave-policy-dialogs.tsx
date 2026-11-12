@@ -1,14 +1,17 @@
 import { useId, useState } from 'react'
 import { type Control, useController, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { toast } from 'sonner'
 
 import { SelectField, TextField } from '@/components/form'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import { EmployeeMultiSearchSelect, PayrollDialog, SearchSelect } from '@/features/payroll'
 import { useEmployeeLookupSearch } from '@/hooks/use-employee-lookup'
 import { ApiError } from '@/lib/api-error'
+import { useCan } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 
 import { LEAVE_CODES, POLICY_KIND_LABELS, POLICY_LEVEL_LABELS } from '../../constants'
@@ -16,6 +19,7 @@ import {
   useAllLeaveTypes,
   useEnrolledEmployees,
   useEnrollEmployees,
+  useProcessAllotment,
   useSaveLeavePolicy,
 } from '../../hooks/use-leaves'
 import {
@@ -25,6 +29,8 @@ import {
   leavePolicyToInput,
 } from '../../schemas/leave-forms.schema'
 import { type LeavePolicy, POLICY_KINDS, type PolicyLevel } from '../../types/leaves.types'
+import { balanceDays } from '../../utils/format'
+import { currentLeaveYearOf } from '../../utils/leave-year'
 import {
   formSwitchClass,
   leaveSettingsFieldsClass,
@@ -367,11 +373,53 @@ export function EnrollEmployeesDialog({
   // Names of the people picked from `GET /employees/lookup` (any page the picker read).
   const lookup = useEmployeeLookupSearch(ENROLL_FILTERS, { enabled: false })
   const enroll = useEnrollEmployees()
+  const allot = useProcessAllotment()
+  const canAllot = useCan(LEAVE_CODES.allotment)
   const [picked, setPicked] = useState<string[] | null>(null)
+  const [allotNow, setAllotNow] = useState(true)
+  const [allotting, setAllotting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fieldId = useId()
+  const allotId = useId()
   const current = enrolled.data?.data.map((row) => row.employeeId)
   const chosen = picked ?? current ?? []
+  const added = chosen.filter((id) => !(current ?? []).includes(id))
+  // Only an active distribution policy gives leave types; an inactive one covers nobody yet.
+  const offerAllot = canAllot && policy.isActive && policy.policyKind === 'distribution'
+
+  /**
+   * Enrolling only changes which policy covers someone; the days come from the allotment. Runs
+   * it for the people just added (`POST /leaves/allotment/process` with `employeeId`, for their
+   * current leave year): types they already have this year are never given twice.
+   */
+  const giveLeave = async (ids: string[]) => {
+    setAllotting(true)
+    try {
+      const year = await currentLeaveYearOf(ids[0] ?? '')
+      let allotted = 0
+      let days = 0
+      for (const employeeId of ids) {
+        const result = await allot.mutateAsync({ fiscalYear: year, employeeId })
+        allotted += result.allotted + result.earned
+        days += result.days
+      }
+      if (allotted === 0) {
+        toast.info(
+          `Nothing to allot for ${String(year)}: the people added already have this year’s leave, or no leave type of this policy applies to them.`,
+        )
+      } else {
+        toast.success(
+          `Gave ${balanceDays(days)} days of ${String(year)} leave to ${String(ids.length)} ${ids.length === 1 ? 'person' : 'people'}`,
+        )
+      }
+    } catch (failure) {
+      toast.error(
+        `Enrolled, but their leave was not allotted: ${failure instanceof Error ? failure.message : 'try Allotment'}`,
+      )
+    } finally {
+      setAllotting(false)
+    }
+  }
   const names = new Map<string, { name: string; hint: string }>()
   for (const row of enrolled.data?.data ?? []) {
     names.set(row.employeeId, {
@@ -399,19 +447,26 @@ export function EnrollEmployeesDialog({
       title="Enroll Employee"
       onClose={onClose}
       saveLabel="Enroll"
-      pending={enroll.isPending || !current}
+      pending={enroll.isPending || allotting || !current}
       error={error ?? enrolled.error?.message}
       onSave={() => {
         const before = new Set(current ?? [])
         const after = new Set(chosen)
+        const add = chosen.filter((id) => !before.has(id))
         enroll.mutate(
           {
             id: policy.id,
-            add: chosen.filter((id) => !before.has(id)),
+            add,
             remove: [...before].filter((id) => !after.has(id)),
           },
           {
-            onSuccess: onClose,
+            onSuccess: () => {
+              if (offerAllot && allotNow && add.length > 0) {
+                void giveLeave(add).then(onClose)
+              } else {
+                onClose()
+              }
+            },
             onError: (failure) => {
               setError(failure.message)
             },
@@ -447,6 +502,26 @@ export function EnrollEmployeesDialog({
               : `${String(chosen.length)} enrolled. Someone already in another active employee level policy of this kind is refused.`}
           </p>
         </div>
+        {offerAllot && added.length > 0 && (
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id={allotId}
+              checked={allotNow}
+              onCheckedChange={(checked) => {
+                setAllotNow(checked === true)
+              }}
+              className="mt-0.5"
+            />
+            <label htmlFor={allotId} className="grid gap-0.5 font-inter text-sm text-heading">
+              Give the {added.length === 1 ? 'person' : `${String(added.length)} people`} added
+              their leave for this year now
+              <span className="text-xs text-muted-foreground">
+                Runs the allotment for them only. Leave types they already have this year are not
+                given twice.
+              </span>
+            </label>
+          </div>
+        )}
         {chosen.length > 0 && (
           <ul className="flex flex-wrap gap-2" aria-label="Enrolled employees">
             {chosen.map((id) => {

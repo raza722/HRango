@@ -144,7 +144,12 @@ export interface WorkspaceSummaryDto {
   departmentName: string | null
   ownerId: string
   ownerName: string | null
+  /** The role in effect: `contributor` too for a non-member of a `workspace` workspace (B1). */
   myRole: string | null
+  /** Sent since B1; absent from an older API, where myRole alone told members apart. */
+  isMember?: boolean
+  /** The task-code key (`ONB` in `ONB-12`); absent from an older API. */
+  key?: string | null
   isFavorite: boolean
   isHidden: boolean
   memberCount: number
