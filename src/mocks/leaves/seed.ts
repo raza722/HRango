@@ -11,6 +11,8 @@ import { joiningDate } from '../attendance/seed'
 import { DIRECTORY, type DirectoryEmployee } from '../employees/seed'
 import { lineManagerOf } from '../requests/people'
 import { CURRENT_EMPLOYEE_ID, profileOf } from '../scheduling/seed'
+import { employees as talentEmployees } from '../talent-management/db'
+import type { EmployeeRec } from '../talent-management/seed'
 
 /*
  * Seed data of the Leaves mock, in the backend's shapes (backend/app/schemas/leaves.py).
@@ -61,10 +63,36 @@ function toPerson(employee: DirectoryEmployee, index: number): MockPerson {
 
 let people: readonly MockPerson[] | null = null
 
-/** Everyone in the directory, as the leave rules read them (worked out on first use). */
+/** Someone added in Talent Management (not in the shared directory), as the leave rules read them. */
+function addedPerson(employee: EmployeeRec): MockPerson {
+  return {
+    id: employee.id,
+    code: employee.code,
+    name: `${employee.firstName} ${employee.lastName}`.trim(),
+    departmentId: employee.departmentId ?? '',
+    departmentName: employee.departmentName ?? '',
+    designationName: employee.designationName ?? employee.jobTitleName ?? '',
+    gender: employee.gender === 'female' ? 'female' : 'male',
+    maritalStatus: employee.maritalStatus === 'married' ? 'married' : 'single',
+    joiningDate: employee.joiningDate ?? new Date().toISOString().slice(0, 10),
+    lineManagerId: employee.lineManagerId,
+    status: employee.status === 'left' || employee.status === 'inactive' ? 'inactive' : 'active',
+  }
+}
+
+/**
+ * Everyone the leave rules read: the directory (worked out on first use), then the people added
+ * in Talent Management since (read each time), so a new employee is covered by the company level
+ * policy and gets leave from an allotment run, as on the real API.
+ */
 export function mockPeople(): readonly MockPerson[] {
   people ??= DIRECTORY.map(toPerson)
-  return people
+  const known = new Set(people.map((person) => person.id))
+  const added = talentEmployees
+    .all()
+    .filter((employee) => !known.has(employee.id))
+    .map(addedPerson)
+  return added.length === 0 ? people : [...people, ...added]
 }
 
 /** The directory's departments, as the department look-up lists them. */

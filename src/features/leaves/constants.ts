@@ -157,6 +157,8 @@ export const POLICY_KIND_LABELS: Record<PolicyKind, string> = {
 export const LEAVE_CODES = {
   applicationsView: 'leaves.applications.view',
   balancesView: 'leaves.balances.view',
+  /** Opening balances and manual adjustments (`POST /leaves/ledger`). */
+  balancesEdit: 'leaves.balances.edit',
   allotment: 'leaves.allotment.process',
   generalView: 'leaves.settings.general.view',
   generalEdit: 'leaves.settings.general.edit',

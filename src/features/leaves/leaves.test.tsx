@@ -13,11 +13,12 @@ import { describe, expect, it } from 'vitest'
 
 import { holidays } from '@/mocks/attendance/settings-db'
 import { DEMO_USER } from '@/mocks/auth/handlers'
-import { currentLeaveSettings, leavePolicies, leaveTypeStore } from '@/mocks/leaves/db'
+import { currentLeaveSettings, leaveLedger, leavePolicies, leaveTypeStore } from '@/mocks/leaves/db'
 import { leaveRequestRow, leaveRequestRows } from '@/mocks/leaves/requests'
 import { balanceOf } from '@/mocks/leaves/rules'
 import { server } from '@/mocks/node'
 import { standardRequests } from '@/mocks/requests/standard'
+import { employees as talentEmployees } from '@/mocks/talent-management/db'
 import { apiPath } from '@/mocks/utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { renderApp } from '@/test/test-utils'
@@ -531,6 +532,129 @@ describe('Leaves', { timeout: 60_000 }, () => {
     await user.click(within(dialog).getByRole('button', { name: 'Run' }))
     // The seed's year is allotted already: the run is idempotent.
     expect(await screen.findByText(/^Allotted 0 balances/)).toBeInTheDocument()
+  })
+
+  it('runs the allotment for one employee only', async () => {
+    const year = new Date().getFullYear()
+    const maryams = (row: { employeeId: string; reason: string; fiscalYear: number }) =>
+      row.employeeId === 'em_maryam' && row.reason === 'allotment' && row.fiscalYear === year
+    // Maryam's allotment of the year is undone, so the run has something to give her.
+    for (const row of leaveLedger.all().filter(maryams)) leaveLedger.remove(row.id)
+    const before = leaveLedger.all().length
+    const { user } = renderApp('/leaves/settings/leave-types')
+    await user.click(await screen.findByRole('link', { name: 'Allotment' }, { timeout: 15_000 }))
+    const dialog = await screen.findByRole('dialog', { name: 'Allotment' })
+    await user.click(within(dialog).getByRole('combobox', { name: 'Employee' }))
+    await user.click(await screen.findByRole('option', { name: /Maryam Javed/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }))
+
+    expect(await screen.findByText(/^Allotted [1-9]\d* balances? /)).toBeInTheDocument()
+    const given = leaveLedger.all().filter(maryams)
+    expect(given.length).toBeGreaterThan(0)
+    // Nobody else got anything.
+    expect(leaveLedger.all()).toHaveLength(before + given.length)
+  })
+
+  it('gives the people enrolled in a distribution policy their leave at once', async () => {
+    const year = new Date().getFullYear()
+    leavePolicies.insert({
+      id: 'lp_seniors',
+      title: 'Seniors Leave',
+      policyKind: 'distribution',
+      policyLevel: 'employee',
+      allowHalfDay: false,
+      allowShortLeave: false,
+      isActive: true,
+      types: [{ leaveTypeId: 'lt_annual', allowance: 20 }],
+      enrolled: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: null,
+      rowVersion: '00000000000099aa',
+    })
+    // Maryam has no Annual Leave of the year yet (as if she had just joined).
+    const annual = (row: { employeeId: string; leaveTypeId: string; fiscalYear: number }) =>
+      row.employeeId === 'em_maryam' && row.leaveTypeId === 'lt_annual' && row.fiscalYear === year
+    for (const row of leaveLedger.all().filter(annual)) leaveLedger.remove(row.id)
+
+    const { user } = renderApp('/leaves/settings/policies')
+    const row = await screen.findByRole('row', { name: /Seniors Leave/ }, { timeout: 15_000 })
+    // A company level policy needs no enrolling; it says so instead of offering it.
+    const company = screen.getByRole('row', { name: /^\d+ Leave Distribution Policy/ })
+    expect(within(company).getByText('Everyone else, automatically')).toBeVisible()
+
+    await user.click(
+      within(row).getByRole('button', { name: /^Enroll employees in Seniors Leave/ }),
+    )
+    const enroll = await screen.findByRole('dialog', { name: 'Enroll Employee' })
+    await user.click(within(enroll).getByRole('combobox', { name: 'Employees' }))
+    await user.click(await screen.findByRole('option', { name: /Maryam Javed/ }))
+    await user.keyboard('{Escape}')
+    const allotNow = within(enroll).getByRole('checkbox', {
+      name: /Give the person added their leave for this year now/,
+    })
+    expect(allotNow).toBeChecked()
+    await waitFor(() => {
+      expect(within(enroll).getByRole('button', { name: 'Enroll' })).toBeEnabled()
+    })
+    await user.click(within(enroll).getByRole('button', { name: 'Enroll' }))
+
+    expect(
+      await screen.findByText(`Gave 20 days of ${String(year)} leave to 1 person`),
+    ).toBeInTheDocument()
+    expect(leaveLedger.all().filter(annual)).toMatchObject([{ reason: 'allotment', days: 20 }])
+  })
+
+  it('gives a new employee leave from their profile: Allot Leave, then Adjust Balance', async () => {
+    const year = new Date().getFullYear()
+    const [template] = talentEmployees.all()
+    if (!template) throw new Error('No employee in the seed')
+    // Someone just added in Talent Management: covered by the company policy, nothing given yet.
+    talentEmployees.insert({
+      ...template,
+      id: 'em_newjoiner',
+      code: 'EMP-9001',
+      firstName: 'Nida',
+      lastName: 'Qureshi',
+      status: 'active',
+      joiningDate: `${String(year)}-01-05`,
+    })
+    const hers = () => leaveLedger.all().filter((row) => row.employeeId === 'em_newjoiner')
+
+    const { user } = renderApp('/talent-management/employees/em_newjoiner?tab=leave')
+    expect(
+      await screen.findByText(
+        `No leave has been given to Nida Qureshi for ${String(year)} yet. Use Allot Leave to give it now.`,
+        undefined,
+        { timeout: 15_000 },
+      ),
+    ).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: 'Allot Leave' }))
+    const allot = await screen.findByRole('dialog', { name: 'Allot Leave · Nida Qureshi' })
+    expect(within(allot).getByRole('textbox', { name: /^Leave Year/ })).toHaveValue(String(year))
+    await user.click(within(allot).getByRole('button', { name: 'Run' }))
+    expect(await screen.findByText(/^Allotted [1-9]\d* balances? /)).toBeInTheDocument()
+    expect(hers().length).toBeGreaterThan(0)
+    expect(hers().every((row) => row.reason === 'allotment')).toBe(true)
+    await waitFor(() => {
+      expect(screen.queryByText(/^No leave has been given/)).not.toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Adjust Balance' }))
+    const adjust = await screen.findByRole('dialog', { name: 'Adjust Balance · Nida Qureshi' })
+    await user.click(within(adjust).getByRole('button', { name: 'Save' }))
+    expect(await within(adjust).findByText('Choose a leave type')).toBeVisible()
+    expect(within(adjust).getByText('Say why the balance is adjusted')).toBeVisible()
+    await user.click(within(adjust).getByRole('combobox', { name: /^Leave Type/ }))
+    await user.click(await screen.findByRole('option', { name: /Casual Leaves/ }))
+    await user.type(within(adjust).getByRole('textbox', { name: /^Days/ }), '2')
+    await user.type(within(adjust).getByRole('textbox', { name: /^Reason/ }), 'Worked two Sundays')
+    await user.click(within(adjust).getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Leave balance updated')).toBeInTheDocument()
+    expect(hers().filter((row) => row.reason === 'adjustment')).toMatchObject([
+      { leaveTypeId: 'lt_casual', days: 2, remarks: 'Worked two Sundays' },
+    ])
   })
 
   it('creates policies, with leave types and enrolment', async () => {

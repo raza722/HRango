@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { getRouteApi } from '@tanstack/react-router'
+import { UserPlus } from 'lucide-react'
 
 import { ConfirmDialog } from '@/components/feedback/confirm-dialog'
 import { ErrorState } from '@/components/feedback/error-state'
@@ -26,7 +27,8 @@ const routeApi = getRouteApi('/_app/leaves/settings/policies')
 /**
  * Settings → Leave Policies (frame 4428:90410, `/leaves/policies`): Sr#, Leave Policy (with
  * the policy kind under the title when they differ), No. of Leaves (what its leave types add up to), Enroll Employee (how many
- * people the policy covers; on an employee level policy it opens Enroll Employee), Policy
+ * people the policy covers: a company level policy covers everyone else automatically, new
+ * employees too; an employee level policy has an Enroll button for Enroll Employee), Policy
  * Level, the Status switch and the pencil in Actions. "+ Add New" in the title row opens
  * Add Policy. Buttons follow `leaves.settings.policies.*`.
  */
@@ -43,6 +45,7 @@ export function LeavePoliciesPage() {
   const canEdit = useCan(LEAVE_CODES.policiesEdit)
   const canDelete = useCan(LEAVE_CODES.policiesDelete)
   const canEnroll = useCan(LEAVE_CODES.policiesEnroll)
+  const rows = list.data?.data ?? []
   const closeAdd = () => {
     void navigate({ search: (prev) => ({ ...prev, dialog: undefined }) })
   }
@@ -83,19 +86,41 @@ export function LeavePoliciesPage() {
       id: 'enrolled',
       header: 'Enroll Employee',
       cell: (row) =>
-        row.policyLevel === 'employee' && canEnroll ? (
-          <button
-            type="button"
-            aria-label={`Enroll employees in ${row.title} (${String(row.enrolledCount)} enrolled)`}
-            onClick={() => {
-              setEnrolling(row)
-            }}
-            className="rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
+        row.policyLevel === 'company' ? (
+          // Nobody is enrolled by hand: it covers everyone not in an employee level policy.
+          <span
+            className="grid"
+            title="Covers every employee who is not enrolled in an employee level policy of this kind. New employees are covered automatically."
           >
-            {String(row.enrolledCount)}
-          </button>
+            <span>{String(row.enrolledCount)}</span>
+            <span className="max-w-[7rem] text-[0.625rem] leading-tight whitespace-normal text-grey">
+              {rows.some(
+                (other) =>
+                  other.policyLevel === 'employee' &&
+                  other.isActive &&
+                  other.policyKind === row.policyKind,
+              )
+                ? 'Everyone else, automatically'
+                : 'Everyone, automatically'}
+            </span>
+          </span>
         ) : (
-          String(row.enrolledCount)
+          <span className="flex items-center gap-3">
+            <span>{String(row.enrolledCount)}</span>
+            {canEnroll && (
+              <button
+                type="button"
+                aria-label={`Enroll employees in ${row.title} (${String(row.enrolledCount)} enrolled)`}
+                onClick={() => {
+                  setEnrolling(row)
+                }}
+                className="inline-flex h-7 items-center gap-1 rounded-[5px] border border-sidebar/40 px-2 text-xs font-medium whitespace-nowrap text-sidebar outline-none hover:bg-sidebar/5 focus-visible:ring-2 focus-visible:ring-ring/50 dark:border-input dark:text-heading"
+              >
+                <UserPlus aria-hidden="true" className="size-3.5" />
+                Enroll
+              </button>
+            )}
+          </span>
         ),
     },
     { id: 'level', header: 'Policy Level', cell: (row) => POLICY_LEVEL_LABELS[row.policyLevel] },
@@ -129,7 +154,7 @@ export function LeavePoliciesPage() {
       ) : (
         <DataTable
           columns={columns}
-          data={list.data?.data ?? []}
+          data={rows}
           getRowId={(row) => row.id}
           caption="Leave Policy"
           className={leaveTableClass}

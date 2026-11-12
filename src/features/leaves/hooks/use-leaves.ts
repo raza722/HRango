@@ -26,6 +26,7 @@ import type {
   LeaveSettingsInput,
   LeaveTypeInput,
   LeaveTypeListParams,
+  LedgerEntryInput,
 } from '../types/leaves.types'
 
 export const useLeaveApplications = (params: LeaveApplicationListParams) =>
@@ -238,6 +239,13 @@ export const useEnrollEmployees = () =>
 
 export const useProcessAllotment = () =>
   useSettingsMutation((input: AllotmentInput) => leavesApi.processAllotment(input), undefined)
+
+/** An opening balance or a manual adjustment (`POST /leaves/ledger`); every balance re-reads. */
+export const useAddLedgerEntry = () =>
+  useSettingsMutation(
+    (input: LedgerEntryInput) => leavesApi.addLedgerEntry(input),
+    'Leave balance updated',
+  )
 
 export const useProcessCarryForward = () =>
   useSettingsMutation((input: CarryForwardInput) => leavesApi.processCarryForward(input), undefined)
